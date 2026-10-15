@@ -1,0 +1,19 @@
+{
+  "name": "woot",
+  "display_name": "Woot",
+  "base_url": "https://www.woot.com",
+  "deals_page_url": "https://www.woot.com/alldeals?ref=w_ngh_et_1#ref=www.woot.com/header/tab@0.10-everything",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 167,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (167 deals). Needs manual selector verification. Auto-corrected 2026-10-02T16:23:22Z: https://www.woot.com/sale -> https://www.woot.com/alldeals?ref=w_ngh_et_1#ref=www.woot.com/header/tab@0.10-everything (old path returned 404); candidate verified 2xx via Tor; selectors still need rendered-page verification.",
+  "probe_status": 200,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

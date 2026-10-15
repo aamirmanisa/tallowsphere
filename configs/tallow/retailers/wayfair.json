@@ -1,0 +1,37 @@
+{
+  "name": "wayfair",
+  "base_url": "https://www.wayfair.com",
+  "deals_page_url": "https://www.wayfair.com/daily-sales/",
+  "clearance_page_url": "https://www.wayfair.com/clearance/",
+  "product_selector": "div[data-hb-id='ProductCard'], div.ProductCard-container",
+  "price_selector": "span[data-hb-id='ProductCardPrice'], div.ProductCard-price",
+  "title_selector": "a[data-hb-id='ProductCardName'], div.ProductCard-name a",
+  "image_selector": "img[data-hb-id='ProductCardImage'], img.ProductCard-image",
+  "was_price_selector": "span[data-hb-id='ProductCardWasPrice'], s.ProductCard-was-price, span.ProductCard-crossed-out-price",
+  "stock_selector": "span:contains('In Stock'), span:contains('Add to Cart')",
+  "sku_pattern": "/pdp/[^/]*/(\\d+)",
+  "api_endpoints": {
+    "search_api": "https://www.wayfair.com/api/v1/search?keyword={query}",
+    "product_api": "https://www.wayfair.com/api/v1/product/{sku}",
+    "price_api": "https://www.wayfair.com/api/v1/product/{sku}/price",
+    "graphql_api": "https://www.wayfair.com/api/graphql"
+  },
+  "affiliate": {
+    "network": "Impact Radius (primary), CJ Affiliate (secondary)",
+    "network_id": "wayfair",
+    "program_url": "https://www.wayfair.com/affiliate/",
+    "commission_rate": "3-7% (varies by category \u2014 7% on most items, lower on specialty)",
+    "cookie_duration_days": 7,
+    "product_api_available": true,
+    "api_details": "Wayfair GraphQL API (internal, requires session). Product data feed available through affiliate networks. Daily sales page features deep discounts on specific items."
+  },
+  "rate_limit_ms": 2000,
+  "requires_browser": true,
+  "notes": "React-based SPA. Product cards use data-hb-id (HiveBox) attributes or ProductCard-prefixed class names. Daily sales at /daily-sales/ with rotating deals. Clearance at /clearance/. Internal GraphQL API can be reverse-engineered from browser DevTools. Product detail pages use /pdp/{slug}/{sku} pattern. Moderate bot detection. Live-probed 2026-10-02T16:23:22Z: plain fetch walled (403; browser-required site) \u2014 path not disproven; verify via browser lane.",
+  "product_url_pattern": "https://www.wayfair.com/{brand}/pdp/{slug}-{sku}.html",
+  "store_url_pattern": null,
+  "pagination_pattern": "?page={page}",
+  "page_size": 48,
+  "probe_status": 403,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

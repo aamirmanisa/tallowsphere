@@ -1,0 +1,46 @@
+{
+  "name": "bestbuy",
+  "base_url": "https://www.bestbuy.com",
+  "deals_page_url": "https://www.bestbuy.com/site/global/deals/pcmcat186100050011.c",
+  "clearance_page_url": "https://www.bestbuy.com/site/global/clearance/pcmcat185700050011.c",
+  "product_selector": "li.sku-item, div.sku-list-item",
+  "price_selector": "div.priceView-customer-price span[aria-hidden='true'], div[data-testid='customer-price'] span",
+  "title_selector": "h4.sku-title a, h4.sku-header a",
+  "image_selector": "img.product-image, img[data-testid='product-image']",
+  "was_price_selector": "div.pricing-price__regular-price, div[data-testid='regular-price']",
+  "stock_selector": "button.add-to-cart-button:not([disabled]), span:contains('Add to Cart')",
+  "sku_pattern": "/sku/(\\d+)\\.p",
+  "api_endpoints": {
+    "search_api": "https://www.bestbuy.com/api/2.0/search?query={query}",
+    "product_api": "https://www.bestbuy.com/api/2.0/product/{sku}",
+    "price_api": "https://www.bestbuy.com/api/2.0/product/{sku}/price",
+    "store_api": "https://www.bestbuy.com/api/2.0/store/{store_id}",
+    "developers_api": "https://developer.bestbuy.com"
+  },
+  "affiliate": {
+    "network": "Impact Radius",
+    "network_id": "bestbuy",
+    "program_url": "https://www.bestbuy.com/affiliate",
+    "commission_rate": "0.5-6% (varies by category \u2014 0.5% computers, 2.5% appliances, 6% accessories)",
+    "cookie_duration_days": 1,
+    "product_api_available": true,
+    "api_details": "Best Buy Developer API (developer.bestbuy.com) \u2014 free tier with 50k queries/day. Provides product search with prices, availability, stores, categories. Requires API key registration."
+  },
+  "rate_limit_ms": 2000,
+  "requires_browser": true,
+  "notes": "Moderate bot protection. Product cards use li.sku-item with nested div.sku-list-item. Price in div.priceView-customer-price > span. Best Buy has a public Developer API with generous free tier \u2014 the best official API among all retailers. Clearance page URL includes 'clearance' in path. Deal of the Day items on dedicated pages. Live-probed 2026-10-02T16:23:22Z: plain fetch walled (403; browser-required site) \u2014 path not disproven; verify via browser lane.",
+  "product_url_pattern": "https://www.bestbuy.com/site/{slug}/{sku}.p",
+  "store_url_pattern": "https://www.bestbuy.com/site/store-locator/{store_id}",
+  "pagination_pattern": "?cp={page}",
+  "page_size": 24,
+  "hidden_json_apis": [
+    {
+      "name": "Best Buy Developer API",
+      "url": "https://api.bestbuy.com/v1/products(sku={sku})?format=json&apiKey={key}",
+      "auth_required": true,
+      "description": "Official JSON API \u2014 product details, prices, availability, store pickup. 50k queries/day free tier."
+    }
+  ],
+  "probe_status": 403,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

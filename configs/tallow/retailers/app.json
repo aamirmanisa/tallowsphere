@@ -1,0 +1,19 @@
+{
+  "name": "app",
+  "display_name": "App",
+  "base_url": "https://www.app.com",
+  "deals_page_url": "https://www.app.com/sale",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 121,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (121 deals). Needs manual selector verification. Live-probed 2026-10-02T16:23:22Z: plain fetch walled (402; browser-required site) \u2014 path not disproven; verify via browser lane; 2026-10-02 wave3: NOT a deals site \u2014 Asbury Park Press news homepage; /sale now 404. Registry correction: retirement candidate.",
+  "probe_status": "not-a-deals-site",
+  "probe_date": "2026-10-02T20:07:41Z"
+}

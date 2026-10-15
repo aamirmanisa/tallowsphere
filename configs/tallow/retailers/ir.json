@@ -1,0 +1,19 @@
+{
+  "name": "ir",
+  "display_name": "Ir",
+  "base_url": "https://www.ir.com",
+  "deals_page_url": "https://www.ir.com/sale",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 1,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (1 deals). Needs manual selector verification.ir.com/sale -> https://www.ir.com/contact-sales (old path returned 404); candidate verified 2xx via Tor; selectors still need rendered-page verification. Live-probed 2026-10-02T16:23:22Z: auto-candidate https://www.ir.com/contact-sales rejected (not a deals page); original URL restored \u2014 needs manual review.",
+  "probe_status": 404,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

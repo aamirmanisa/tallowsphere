@@ -1,0 +1,218 @@
+From 7c9bfcc867866fbef95727311979cef04ddef942 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:24:59 +0000
+Subject: [PATCH 06/27] provenance: commit hash_bytes, the callee the committed
+ fs_ffi.rs calls
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+16fb48c4 landed src/runtime/fs_ffi.rs, which calls
+crate::stdlib::provenance::hash_bytes — but this file, which defines it, was
+excluded as "unattributed". It was not unattributed: fs_ffi.rs:222-224 names it
+in its own doc comment ("provenance::hash_bytes, so the digest is identical by
+construction"). HEAD therefore did not build from a clean checkout, with one
+distinct error: E0425 cannot find function `hash_bytes`.
+
+The change is one unit: hash_bytes is the binary-safe digest (raw bytes, the
+one to use on fs.read_bytes) and hash_body becomes a thin delegate that
+fingerprints UTF-8 bytes. Consumed by the FS native's hash lowering.
+---
+ src/stdlib/provenance.rs | 150 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 146 insertions(+), 4 deletions(-)
+
+diff --git a/src/stdlib/provenance.rs b/src/stdlib/provenance.rs
+index 491a302..4c19239 100644
+--- a/src/stdlib/provenance.rs
++++ b/src/stdlib/provenance.rs
+@@ -29,7 +29,10 @@
+ //! - `Provenance.add_validator(rec, validator, passed, adjustment, note?)` → CollectionRecord
+ //! - `Provenance.grade(rec)` → CollectionRecord with recomputed confidence + letter grade
+ //! - `Provenance.freshness(rec)` → "Fresh" | "Recent" | "Stale" | "Old"
+-//! - `Provenance.hash_body(body)` → sha256 hex digest
++//! - `Provenance.hash_body(body)` → sha256 hex digest of the body's UTF-8 bytes
++//! - `Provenance.hash_bytes(data)` → sha256 hex digest of raw `Bytes` (binary-safe; the one to
++//!   use on `fs.read_bytes` — `hash_body` refuses a `Bytes` argument rather than fingerprint its
++//!   encoded form)
+ //! - `Provenance.to_json(rec)` / `Provenance.from_json(json)` → durable roundtrip
+ //!
+ //! Lowercase `provenance.record` etc. resolve identically (namespace-case
+@@ -329,13 +332,28 @@ fn letter_for(idx: i32) -> char {
+ 
+ // ── Content fingerprinting ─────────────────────────────────────────────
+ 
+-/// sha256 hex digest of a fetched body — the `body_hash` stored on records.
+-pub fn hash_body(body: &str) -> String {
++/// sha256 hex digest of raw bytes — the binary-safe sibling of [`hash_body`].
++///
++/// This is the function to use for a file's contents (`fs.read_bytes`) or any
++/// other `Bytes` value: it never goes through text encoding, so the digest is
++/// the artifact's true sha256.
++pub fn hash_bytes(data: &[u8]) -> String {
+     let mut h = Sha256::new();
+-    h.update(body.as_bytes());
++    h.update(data);
+     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+ }
+ 
++/// sha256 hex digest of a fetched body — the `body_hash` stored on records.
++///
++/// Fingerprints the argument's **UTF-8 bytes** (that is what a fetched body is:
++/// text). It is not a file hasher — feeding it the `Bytes` value from
++/// `fs.read_bytes` would fingerprint that value's encoded form. That
++/// composition is refused at runtime (see `hash_body_dispatch`); use
++/// [`hash_bytes`] instead.
++pub fn hash_body(body: &str) -> String {
++    hash_bytes(body.as_bytes())
++}
++
+ fn now_unix() -> i64 {
+     std::time::SystemTime::now()
+         .duration_since(std::time::UNIX_EPOCH)
+@@ -540,6 +558,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
+         "grade" => Some(record_op_dispatch(args, "grade", op_grade)),
+         "freshness" => Some(record_op_dispatch(args, "freshness", op_freshness)),
+         "hash_body" => Some(hash_body_dispatch(args)),
++        "hash_bytes" => Some(hash_bytes_dispatch(args)),
+         "to_json" => Some(record_op_dispatch(args, "to_json", op_to_json)),
+         "from_json" => Some(from_json_dispatch(args)),
+         _ => None,
+@@ -689,10 +708,39 @@ fn op_to_json(rec: &mut CollectionRecord) -> Result<Value, String> {
+ }
+ 
+ fn hash_body_dispatch(args: Vec<Value>) -> StdlibResult {
++    // A `Bytes` argument is the G-14 composition (`hash_body(read_bytes(p))`).
++    // While `read_bytes` handed back base64 text this ran at rc=0 and produced
++    // the sha256 of the encoding — a plausible, wrong, silent digest. Name the
++    // reason and the fix instead.
++    if let Some(Value::Bytes(_)) = args.first() {
++        return Err(
++            "provenance.hash_body: argument 1 expected String, got Bytes — hash_body fingerprints \
++             text (the argument's UTF-8 bytes), not raw content; use provenance.hash_bytes for a \
++             file's true sha256"
++                .into(),
++        );
++    }
+     let body = str_arg(&args, 0, "hash_body")?;
+     Ok(Value::String(hash_body(body)))
+ }
+ 
++/// `provenance.hash_bytes(data: Bytes) -> String` — sha256 of raw bytes.
++///
++/// `Bytes` only: accepting a `String` here would recreate the ambiguity this
++/// pair exists to remove (a base64 `String` would be decoded by one caller and
++/// hashed literally by the next).
++fn hash_bytes_dispatch(args: Vec<Value>) -> StdlibResult {
++    match args.first() {
++        Some(Value::Bytes(b)) => Ok(Value::String(hash_bytes(b))),
++        Some(other) => Err(format!(
++            "provenance.hash_bytes: argument 1 expected Bytes, got {} — hash_bytes fingerprints raw \
++             content; hash text with provenance.hash_body",
++            type_name(other)
++        )),
++        None => Err("provenance.hash_bytes: missing argument 1".into()),
++    }
++}
++
+ fn from_json_dispatch(args: Vec<Value>) -> StdlibResult {
+     let json = str_arg(&args, 0, "from_json")?;
+     let rec = CollectionRecord::from_json(json)?;
+@@ -1134,4 +1182,98 @@ mod tests {
+         );
+         assert_eq!(interp.output[3], "Fresh");
+     }
++
++    /// G-14 regression, end-to-end through the real interpreter: a file's raw
++    /// bytes must fingerprint to the file's true sha256, and the old silent
++    /// composition must fail loudly instead of reporting a plausible wrong one.
++    ///
++    /// Fixture is the card's payload.bin (16 bytes, non-UTF-8):
++    ///   true sha256      274d198c0ff7f261224e0b8d53c5fd7de6dc4041c320819772b71028fd187fdc
++    ///   true BLAKE3      78fe41492badfb8986070d7f34ec720eaedb57e58c67a52f200d2cd2767fa42b
++    ///   sha256(base64)   dafabbf68b59101b3b5cd4f7caecb0b9b6e52374f8e2ee19e3996042be4f920b
++    #[test]
++    fn interp_read_bytes_hashes_to_true_sha256_and_refuses_hash_body() {
++        const PAYLOAD: &[u8] = b"binary\x00payload\xff\xfe";
++        let dir = tempfile::tempdir().expect("tempdir");
++        let path = dir.path().join("payload.bin");
++        std::fs::write(&path, PAYLOAD).expect("write fixture");
++        let path = path.to_string_lossy().to_string();
++
++        let run = |src: &str| -> (Vec<String>, Option<String>) {
++            let (tokens, lex_errs) = crate::lexer::tokenize(src);
++            assert!(lex_errs.is_empty(), "lex errors: {lex_errs:?}");
++            let program = crate::parser::Parser::parse(tokens).expect("parse error");
++            let mut interp = crate::interp::Interpreter::new();
++            let err = interp.run(&program).err().map(|e| e.to_string());
++            (interp.output.clone(), err)
++        };
++
++        // (a) the binary-safe path: raw bytes in, true sha256 out.
++        let (out, err) = run(&format!(
++            "fn main() {{ let b = fs.read_bytes(\"{path}\")\n print(provenance.hash_bytes(b)) }}"
++        ));
++        assert_eq!(err, None, "hash_bytes must succeed");
++        assert_eq!(
++            out,
++            vec!["274d198c0ff7f261224e0b8d53c5fd7de6dc4041c320819772b71028fd187fdc".to_string()],
++            "hash_bytes(read_bytes(file)) must be the file's true sha256"
++        );
++
++        // (b) the composition the card filed: it must NOT succeed silently.
++        let (out, err) = run(&format!(
++            "fn main() {{ let b = fs.read_bytes(\"{path}\")\n print(provenance.hash_body(b)) }}"
++        ));
++        assert!(out.is_empty(), "nothing may be printed: {out:?}");
++        let msg = err.expect("hash_body(read_bytes) must fail, not report a wrong digest");
++        assert!(msg.contains("Bytes"), "reason must name the type: {msg}");
++        assert!(
++            msg.contains("hash_bytes"),
++            "reason must name the fix: {msg}"
++        );
++        assert!(
++            !msg.contains("dafabbf6"),
++            "must not fall through to hashing the encoded form: {msg}"
++        );
++
++        // (c) control: the old value really was sha256(base64(file)) — pinned so
++        // a future change that re-merges the two paths is visible here.
++        let (out, _) = run(
++            "fn main() { print(provenance.hash_body(\"YmluYXJ5AHBheWxvYWT//g==\")) }",
++        );
++        assert_eq!(
++            out,
++            vec!["dafabbf68b59101b3b5cd4f7caecb0b9b6e52374f8e2ee19e3996042be4f920b".to_string()],
++            "text hashing is unchanged: sha256 of the base64 text"
++        );
++    }
++
++    /// `hash_bytes` is Bytes-only and `hash_body` is String-only, so neither can
++    /// silently absorb the other's input.
++    #[test]
++    fn hash_bytes_and_hash_body_are_type_separated() {
++        let payload: &[u8] = b"binary\x00payload\xff\xfe";
++        let raw = dispatch("hash_bytes", vec![Value::Bytes(payload.to_vec())])
++            .expect("routable")
++            .expect("hash_bytes ok");
++        match raw {
++            Value::String(s) => assert_eq!(
++                s,
++                "274d198c0ff7f261224e0b8d53c5fd7de6dc4041c320819772b71028fd187fdc"
++            ),
++            other => panic!("expected hex digest String, got {other:?}"),
++        }
++        assert_eq!(hash_body("hello body"), hash_bytes(b"hello body"));
++
++        let err = dispatch("hash_bytes", vec![Value::String("hello body".into())])
++            .expect("routable")
++            .expect_err("a String is not Bytes");
++        assert!(err.contains("expected Bytes, got String"), "{err}");
++        assert!(err.contains("hash_body"), "{err}");
++
++        let err = dispatch("hash_body", vec![Value::Bytes(payload.to_vec())])
++            .expect("routable")
++            .expect_err("Bytes is not String");
++        assert!(err.contains("expected String, got Bytes"), "{err}");
++        assert!(err.contains("hash_bytes"), "{err}");
++    }
+ }

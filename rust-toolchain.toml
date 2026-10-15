@@ -1,0 +1,6 @@
+[toolchain]
+# Tallow dev toolchain pin (6.3 L1 — reproducibility).
+# 1.98.1 is the exact compiler the repro pilot (4881442f…) and the S1 release
+# build ran on. The named toolchain is already installed locally; bumping this
+# file is a deliberate, reviewed change (see repro-builds/REPRODUCIBLE-BUILDS-6.3.md).
+channel = "1.98.1"

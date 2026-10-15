@@ -1,0 +1,19 @@
+{
+  "name": "simon",
+  "display_name": "Simon",
+  "base_url": "https://www.simon.com",
+  "deals_page_url": "https://www.simon.com/sale",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 12,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (12 deals). Needs manual selector verification. Live-probed 2026-10-02T16:23:22Z: 307 via plain fetch \u2014 path dead or unresolved redirect; manual URL review.",
+  "probe_status": 307,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

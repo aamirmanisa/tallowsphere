@@ -1,0 +1,72 @@
+From c8e1f49291e9b09d19d1b97d43593de6b5e8dc23 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:52:30 +0000
+Subject: [PATCH 09/27] Cargo.toml: declare `real-ml`, whose enabled branch is
+ an honest refusal
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The feature was referenced by `#[cfg(feature = "real-ml")]` in
+src/browser/ml/embeddings.rs but never declared, so that branch had never been
+compiled and every build emitted two `unexpected_cfgs` warnings for a feature
+Cargo did not define.
+
+Declaring it is safe, and that was verified rather than assumed: the gated branch
+does not attempt a candle loader — with `real-ml` on, `EmbeddingEngine::new`
+returns a documented MlError ("real-ml is not shipped") instead of silently
+falling back to the mock. Enabling it therefore cannot quietly substitute a
+non-semantic engine for a semantic one.
+
+Verified: default `cargo check --lib --bins` RC=0 with the warnings gone;
+`cargo check --features real-ml` RC=0, so the branch compiles.
+
+Also in this commit: stdlib/browser.tl's `StructuredData.extract` comment now says
+which backend runs it. It claimed `// native:` in the file's established idiom
+("implemented by the runtime, not in .tl"), which is true of the interpreter but
+silent about the AOT backend having no lowering — so `tallow run` falls back and
+`--require-native` refuses. Results are correct either way; the comment now says
+so instead of leaving it to be inferred.
+---
+ Cargo.toml        | 8 ++++++++
+ stdlib/browser.tl | 8 ++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index d27c5b8..21d8c55 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -296,6 +296,14 @@ s3-storage = ["dep:object_store"]
+ # src/browser/job_queue.rs). Requires a reachable Redis server; see
+ # deploy/redis-backend.md for how to run a distributed Tallow cluster.
+ redis-backend = ["dep:redis"]
++# `real-ml`: NOT SHIPPED. There is no candle-based loader in this build, so
++# enabling it cannot yield a real model — `EmbeddingEngine::new` returns a
++# documented `MlError` rather than silently falling back to the mock (a silent
++# fallback would let callers believe they got semantic embeddings when they did
++# not). Declared so the `#[cfg(feature = "real-ml")]` sites are legal — they
++# previously emitted `unexpected_cfgs` warnings for a feature Cargo did not
++# define — and so `--features real-ml` is an honest, testable switch.
++real-ml = []
+ # Real Cranelift JIT backend (`src/codegen_cranelift.rs` + `src/jit.rs`).
+ # OFF by default so a stock build stays dependency-light. When enabled, the
+ # tracing JIT hooks the interpreter to hot-compile basic blocks to native
+diff --git a/stdlib/browser.tl b/stdlib/browser.tl
+index c196c47..6b1299e 100644
+--- a/stdlib/browser.tl
++++ b/stdlib/browser.tl
+@@ -440,6 +440,14 @@ struct StructuredData {
+ /// Extract structured data (JSON-LD, OpenGraph) from HTML.
+ fn structured_data_extract(html: String) -> StructuredData {
+     // native: parses script[type="application/ld+json"] and meta[property^="og:"]
++    //
++    // Which engine: the interpreter reaches this through the `stdlib::browser`
++    // facade. The AOT native backend has NO lowering for this method, so
++    // `tallow run` falls back to the interpreter and `--require-native` refuses
++    // loudly rather than pretending. Results are correct either way; only the
++    // backend differs. (Binding `tallow_structured_data_extract` is the open
++    // P2.T1 item: it needs a native that builds the `%struct.StructuredData`
++    // layout, including the runtime representation of `[]String` and `Map`.)
+ }
+ 
+ // ── Page v2 methods ─────────────────────────────────────────────

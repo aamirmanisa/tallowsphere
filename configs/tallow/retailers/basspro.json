@@ -1,0 +1,19 @@
+{
+  "name": "basspro",
+  "display_name": "Basspro",
+  "base_url": "https://www.basspro.com",
+  "deals_page_url": "https://www.basspro.com/s/en/sale",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 2,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (2 deals). Needs manual selector verification. Live-probed 2026-10-02T16:23:22Z: plain fetch walled (403; browser-required site) \u2014 path not disproven; verify via browser lane.",
+  "probe_status": 403,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

@@ -1,0 +1,65 @@
+From b5cf636d947ccb195c76096308c2b73af486d7b3 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 03:58:12 +0000
+Subject: [PATCH 22/27] docs: P2.T3/T4 verified, including the defect the
+ refusal test found
+
+T3 passes 2/0 with the three graded assertions (both legs exit 0 with no fallback, stdout
+byte-identical, and a pinned reference matched over four discriminating documents).
+
+T4 passes only because the test found a real defect: extract(42) exited 0 and printed
+false in the interpreter, refused in the compiled path, and passed tallow check. The
+interpreter arm was coercing the argument and fabricating a plausible value. The plan
+records all three behaviours before and after, plus the two limits that bound what the
+test can promise: the type checker does not enforce the declared type, and argument
+coercion is the interpreter's convention at 549 sites, so the sibling question is a
+language-level audit rather than part of this binding.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 27 ++++++++++++++++---
+ 1 file changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index d53e97b..ff05687 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -277,7 +277,7 @@ established this three-assertion shape for the class) + fixtures
+ `tests/parity/parity_programs/17_structured_data.tl` and `18_structured_data_refusal.tl`.
+ **Steps:** one program, run under both engines — the interpreter forced via `--target x86_64-linux`
+ (a cross target takes the tree-walking path), the native via `--require-native`.
+-**Verify:** `cargo test --test structured_data_parity -- --nocapture` → pass.
++**Verify:** `cargo test --test structured_data_parity -- --nocapture` → **PASS 2/0** (`381475fb`).
+ **Acceptance, in increasing strength** (the third is what catches two engines agreeing on the *wrong*
+ answer, which the second alone cannot):
+ 1. both legs exit 0, and the native leg must not report a fallback;
+@@ -295,9 +295,28 @@ parity. It is recorded in `runtime::structured_data_ffi`'s header instead.
+ **Steps:** the refusal arms reachable for **this** native: a non-string argument, over
+ `18_structured_data_refusal.tl`. (The plan's original arms — blank seed URL, malformed HTML — belong to
+ the crawler/sitemap natives, which remain unbound; they were mis-assigned to this native.)
+-**Verify:** both engines name the **same cause** — asserted on the shared phrase, since the binding
+-prefixes its own name where the interpreter surfaces the facade's message verbatim — and the native
+-path must not emit output before refusing.
++**Verify:** both engines name the **same cause**, and the native path must not emit output before
++refusing. **PASS — and only after the test found a real defect** (`381475fb`):
++
++`StructuredData.extract(42)` behaved three different ways, and only one was right:
++
++| Leg | Before | After |
++|---|---|---|
++| interpreter | exit 0, printed `false` — coerced the argument with `v.as_string()`, parsed `"42"` as HTML, returned a plausible value | refuses, naming the cause |
++| compiled | refused (its arm requires an `I8Ptr`; no coercion exists to offer) | unchanged |
++| `tallow check` | **passed** on the bad argument (`1 items, 1 warning`) | unchanged — the checker still does not enforce `html: String` |
++
++That is the "plausible success, wrong answer" class, so T4's requirement was unmet by the
++**interpreter**. The arm now matches `Value::String` and refuses anything else; the two legs agree on
++the phrase "expected an HTML string argument" (the compiled leg refuses at lowering time, the
++interpreter at run time — the cause matches, the kind of failure does not, and the test asserts the
++cause).
++
++**Two limits recorded in the test, not implied:** refusing at run time is a floor — the declared
++`html: String` is not enforced by the type checker, so the real fix belongs there; and `v.as_string()`
++appears **549 times** in `interp.rs`, i.e. argument coercion is the interpreter's house convention, so
++this arm is deliberately the strict one and whether its siblings should match is a language-level
++question needing its own audit — not a patch smuggled in under a binding.
+ 
+ ---
+ 

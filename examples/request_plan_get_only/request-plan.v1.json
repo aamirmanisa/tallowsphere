@@ -1,0 +1,85 @@
+{
+  "schema_version": "tallow.request_plan.v1",
+  "manifest_id": "example-request-plan-get-only-local-fixture",
+  "request_count": 2,
+  "requests": [
+    {
+      "index": 0,
+      "target_id": "fixture_status",
+      "url": "https://example.invalid/status?case=get-only",
+      "method": "GET",
+      "headers": {
+        "Accept": "application/json",
+        "User-Agent": "TallowExamples/1.0 local-fixture",
+        "X-Example": "get-only-status"
+      },
+      "browser_fallback": {
+        "mode": "never"
+      },
+      "artifact_policy": {
+        "capture_body": "redacted",
+        "response_snippet_bytes": 512,
+        "screenshots": "never",
+        "har": "never",
+        "dom": "never"
+      },
+      "compliance": {
+        "source_authority": "local_fixture_public_web",
+        "purpose": "release_example_request_plan_get_only",
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "requires_approval": false
+      }
+    },
+    {
+      "index": 1,
+      "target_id": "fixture_products_json",
+      "url": "https://example.invalid/api/products",
+      "method": "GET",
+      "headers": {
+        "Accept": "application/json",
+        "User-Agent": "TallowExamples/1.0 local-fixture",
+        "X-Example": "get-only-products"
+      },
+      "browser_fallback": {
+        "mode": "never"
+      },
+      "artifact_policy": {
+        "capture_body": "redacted",
+        "response_snippet_bytes": 512,
+        "screenshots": "never",
+        "har": "never",
+        "dom": "never"
+      },
+      "compliance": {
+        "source_authority": "local_fixture_public_web",
+        "purpose": "release_example_request_plan_get_only",
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "requires_approval": false
+      }
+    }
+  ],
+  "legacy_http_batch": {
+    "compatible": false,
+    "blocked_reasons": [
+      "fixture_status: per-target headers cannot be represented in legacy http.batch TL",
+      "fixture_status: artifact_policy cannot be represented in legacy http.batch TL",
+      "fixture_products_json: per-target headers cannot be represented in legacy http.batch TL",
+      "fixture_products_json: artifact_policy cannot be represented in legacy http.batch TL"
+    ],
+    "headers": {
+      "Accept": "application/json",
+      "User-Agent": "TallowExamples/1.0 local-fixture"
+    },
+    "target_urls": [
+      "https://example.invalid/status?case=get-only",
+      "https://example.invalid/api/products"
+    ]
+  },
+  "status_boundary": "Release example: local/mock request-plan GET execution only. External network, secrets, browser fallback, and production compliance are not claimed."
+}

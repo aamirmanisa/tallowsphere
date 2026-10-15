@@ -1,0 +1,628 @@
+From 934549a84cbb48a29bac8dce246a8946f2fb52d3 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 04:19:13 +0000
+Subject: [PATCH 23/27] codegen+runtime+interp: bind Crawler.from_sitemap, and
+ stop the crawler arms coercing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The last unbound native now has all three legs, so the declared `// native` surface is fully
+bound and that claim is checkable by grep rather than by trusting a plan note. Like the
+StructuredData binding, this adds no capability: the interpreter already fetched through
+`SitemapParser` over `runtime::egress_http` (Tor by default, refusing rather than falling
+back to the box IP). What it removes is the asymmetry where the compiled path silently fell
+back to the interpreter, and refused outright under --require-native.
+
+The FFI returns the discovered `seed_url` and writes the echoed `sitemap_url`, the constant
+`strategy` and the four integers through out-params — the `tallow_crawler_from_links`
+convention, including reading every field BY NAME so a reordered field refuses rather than
+shifting silently.
+
+Both crawler arms also stopped coercing their argument. They used `v.as_string()`, so
+`Crawler.from_links(42)` planned a crawler for the seed "42" and `Crawler.from_sitemap(42)`
+would have attempted discovery on it. That is the same defect class the structured-data
+refusal test exposed, in the same file, and it is fixed the same way: match `Value::String`,
+refuse anything else, and share the wording with the compiled arm so the two engines name
+the same cause.
+
+Scope, stated rather than implied: `Crawler.from_links` plans offline (`crawler_from_links_plan`
+is pure), so it gets the full three-assertion parity treatment with a pinned reference.
+`Crawler.from_sitemap` FETCHES, so its happy path cannot be exercised offline — a local fixture
+can never be fetched, which the facade's own doc records. What is deterministic offline is the
+refusal, rejected before any egress, and that is what the tests pin.
+
+Verified: cargo check --lib --bins; crawler_parity 3/0; structured_data_parity 2/0;
+the runtime FFI suite; the codegen suite.
+---
+ src/codegen.rs                                |  84 +++++++-
+ src/interp.rs                                 |  28 ++-
+ src/runtime/crawler_ffi.rs                    | 131 ++++++++++++
+ tests/crawler_parity.rs                       | 190 ++++++++++++++++++
+ .../parity_programs/19_crawler_from_links.tl  |  27 +++
+ .../20_crawler_from_links_refusal.tl          |   9 +
+ .../21_crawler_from_sitemap_refusal.tl        |  10 +
+ 7 files changed, 474 insertions(+), 5 deletions(-)
+ create mode 100644 tests/crawler_parity.rs
+ create mode 100644 tests/parity/parity_programs/19_crawler_from_links.tl
+ create mode 100644 tests/parity/parity_programs/20_crawler_from_links_refusal.tl
+ create mode 100644 tests/parity/parity_programs/21_crawler_from_sitemap_refusal.tl
+
+diff --git a/src/codegen.rs b/src/codegen.rs
+index 428d2c2..4766042 100644
+--- a/src/codegen.rs
++++ b/src/codegen.rs
+@@ -1335,6 +1335,7 @@ void tallow_async_runtime_shutdown(void) {
+         ir.push_str("declare double @tallow_fingerprint_similarity(ptr, ptr)\n");
+         ir.push_str("declare ptr @tallow_page_cache_create(ptr, i32, i64, i32, i64)\n");
+         ir.push_str("declare ptr @tallow_crawler_from_links(ptr, i32, i64, ptr, ptr, ptr)\n");
++        ir.push_str("declare ptr @tallow_crawler_from_sitemap(ptr, ptr, ptr, ptr)\n");
+         ir.push_str("declare ptr @tallow_structured_data_extract(ptr, ptr, ptr)\n");
+         ir.push_str("declare i32 @gettimeofday(ptr, ptr)\n");
+         ir.push_str("declare i32 @usleep(i32)\n");
+@@ -6621,6 +6622,9 @@ void tallow_async_runtime_shutdown(void) {
+             if recv == "Crawler" && method == "from_links" {
+                 return self.emit_crawler_from_links(args);
+             }
++            if recv == "Crawler" && method == "from_sitemap" {
++                return self.emit_crawler_from_sitemap(args);
++            }
+             if recv == "StructuredData" && method == "extract" {
+                 return self.emit_structured_data_extract(args);
+             }
+@@ -19024,6 +19028,82 @@ impl<'a> CodeGen<'a> {
+         Ok(LLValue::new(struct_ptr, LLType::I8Ptr))
+     }
+ 
++    /// `Crawler.from_sitemap(url) -> Crawler`
++    ///
++    /// NETWORK DISCOVERY: the runtime fetches and parses the sitemap (`SitemapParser` over
++    /// `runtime::egress_http` — Tor by default, refusing rather than falling back to the box
++    /// IP) and returns the discovered `seed_url`; this arm only marshals. The echoed
++    /// `sitemap_url` and the constant `strategy` come back through out-params and the four
++    /// integers through one buffer, the convention `Crawler.from_links` established.
++    fn emit_crawler_from_sitemap(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
++        if args.len() != 1 {
++            return Err(format!(
++                "Crawler.from_sitemap takes 1 argument (url), got {}",
++                args.len()
++            ));
++        }
++        let Some(layout) = self.struct_layouts.get("Crawler").cloned() else {
++            return Err("Crawler.from_sitemap: struct layout missing".into());
++        };
++
++        let url = self.emit_expr(&args[0].value)?;
++        if !matches!(url.ty, LLType::I8Ptr) {
++            // Wording shared with the interpreter arm (`interp.rs`, same method).
++            return Err(format!(
++                "Crawler.from_sitemap: expected a sitemap URL string argument, got {}",
++                url.ty.to_ir()
++            ));
++        }
++
++        let sitemap_slot = self.fresh_reg();
++        self.emit_line(&format!("{sitemap_slot} = alloca ptr"));
++        let strategy_slot = self.fresh_reg();
++        self.emit_line(&format!("{strategy_slot} = alloca ptr"));
++        let buffer = self.fresh_reg();
++        self.emit_line(&format!("{buffer} = alloca [4 x i64], align 8"));
++
++        let seed_out = self.fresh_reg();
++        self.emit_line(&format!(
++            "{seed_out} = call ptr @tallow_crawler_from_sitemap(ptr {}, ptr {sitemap_slot}, ptr {strategy_slot}, ptr {buffer})",
++            url.reg
++        ));
++        let seed_checked =
++            self.emit_runtime_string_null_check(seed_out, "Crawler.from_sitemap: ")?;
++
++        // sizeof via the emitted type, so the arm never hardcodes a byte count.
++        let size_ptr = self.fresh_reg();
++        self.emit_line(&format!(
++            "{size_ptr} = getelementptr inbounds {0}, ptr null, i32 1",
++            layout.llvm_name
++        ));
++        let size = self.fresh_reg();
++        self.emit_line(&format!("{size} = ptrtoint ptr {size_ptr} to i64"));
++        let struct_ptr = self.fresh_reg();
++        self.emit_line(&format!("{struct_ptr} = call ptr @malloc(i64 {size})"));
++
++        self.emit_store_ptr_field(&struct_ptr, &layout, "seed_url", &seed_checked.reg)?;
++        let sitemap = self.fresh_reg();
++        self.emit_line(&format!("{sitemap} = load ptr, ptr {sitemap_slot}"));
++        self.emit_store_ptr_field(&struct_ptr, &layout, "sitemap_url", &sitemap)?;
++        let strategy = self.fresh_reg();
++        self.emit_line(&format!("{strategy} = load ptr, ptr {strategy_slot}"));
++        self.emit_store_ptr_field(&struct_ptr, &layout, "strategy", &strategy)?;
++
++        for (i, field) in ["max_depth", "max_pages", "pages_crawled", "rate_limit_ms"]
++            .iter()
++            .enumerate()
++        {
++            let slot = self.fresh_reg();
++            self.emit_line(&format!(
++                "{slot} = getelementptr inbounds [4 x i64], ptr {buffer}, i32 0, i32 {i}"
++            ));
++            let value = self.fresh_reg();
++            self.emit_line(&format!("{value} = load i64, ptr {slot}"));
++            self.emit_store_i64_field(&struct_ptr, &layout, field, &value)?;
++        }
++        Ok(LLValue::new(struct_ptr, LLType::I8Ptr))
++    }
++
+     /// `Crawler.from_links(url, max_depth?) -> Crawler`
+     ///
+     /// `max_depth` is optional and its presence is compiled in as the flag the
+@@ -19045,8 +19125,10 @@ impl<'a> CodeGen<'a> {
+ 
+         let seed = self.emit_expr(&args[0].value)?;
+         if !matches!(seed.ty, LLType::I8Ptr) {
++            // Wording shared with the interpreter arm (`interp.rs`, the same method) so the
++            // two engines refuse in the same words; the refusal-parity test asserts on it.
+             return Err(format!(
+-                "Crawler.from_links: seed URL must be a string, got {}",
++                "Crawler.from_links: expected a seed URL string argument, got {}",
+                 seed.ty.to_ir()
+             ));
+         }
+diff --git a/src/interp.rs b/src/interp.rs
+index cea6177..cde3a9b 100644
+--- a/src/interp.rs
++++ b/src/interp.rs
+@@ -9796,11 +9796,21 @@ impl Interpreter {
+             // for content it had never seen. One implementation, shared with the
+             // native path.
+             "Crawler.from_sitemap" => {
++                // Refused, not coerced — the same defect the parity test found on
++                // `StructuredData.extract`: `v.as_string()` here turned an int argument
++                // into a URL string and attempted discovery on it.
+                 let url = match positional.first() {
+-                    Some(v) => v.as_string(),
++                    Some(Value::String(s)) => s.clone(),
++                    Some(other) => {
++                        return Err(RuntimeError::Error(format!(
++                            "Crawler.from_sitemap: expected a sitemap URL string argument, got {}",
++                            type_name(other)
++                        )));
++                    }
+                     None => {
+                         return Err(RuntimeError::Error(
+-                            "Crawler.from_sitemap requires URL".into(),
++                            "Crawler.from_sitemap: expected a sitemap URL string argument, got no argument"
++                                .into(),
+                         ));
+                     }
+                 };
+@@ -9814,11 +9824,21 @@ impl Interpreter {
+ 
+             // ── Crawler.from_links(url, max_depth?) ──
+             "Crawler.from_links" => {
++                // Refused, not coerced — see `StructuredData.extract`. Wording shared with
++                // the compiled arm (`codegen.rs`), which refuses a non-I8Ptr with the same
++                // phrase, because the refusal-parity test asserts on that cause.
+                 let url = match positional.first() {
+-                    Some(v) => v.as_string(),
++                    Some(Value::String(s)) => s.clone(),
++                    Some(other) => {
++                        return Err(RuntimeError::Error(format!(
++                            "Crawler.from_links: expected a seed URL string argument, got {}",
++                            type_name(other)
++                        )));
++                    }
+                     None => {
+                         return Err(RuntimeError::Error(
+-                            "Crawler.from_links requires seed URL".into(),
++                            "Crawler.from_links: expected a seed URL string argument, got no argument"
++                                .into(),
+                         ));
+                     }
+                 };
+diff --git a/src/runtime/crawler_ffi.rs b/src/runtime/crawler_ffi.rs
+index f237258..099cbfb 100644
+--- a/src/runtime/crawler_ffi.rs
++++ b/src/runtime/crawler_ffi.rs
+@@ -30,6 +30,7 @@
+ use std::os::raw::c_char;
+ 
+ use super::{cstr_to_str, set_last_error, string_to_cstr};
++use crate::interp::Value;
+ use crate::stdlib::browser::crawler_from_links_plan;
+ 
+ /// Integer fields written into the `out_fields` buffer, in declaration order:
+@@ -103,6 +104,136 @@ pub extern "C" fn tallow_crawler_from_links(
+     seed_out
+ }
+ 
++/// `Crawler.from_sitemap(url) -> Crawler`.
++///
++/// **Network discovery.** Delegates to `stdlib::browser::crawler_from_sitemap`, the same
++/// function the interpreter's `Crawler.from_sitemap` arm calls — which fetches through
++/// `browser::sitemap::SitemapParser` and `runtime::egress_http` (Tor by default, refusing
++/// rather than falling back to the box IP). This binding adds no capability the interpreter
++/// did not already have; it removes the asymmetry where one engine fetched while the other
++/// silently fell back to the interpreter.
++///
++/// Returns the discovered `seed_url` (the FIRST parsed entry; empty for an empty sitemap,
++/// which is a valid "nothing found" rather than an invented URL), writing the echoed
++/// `sitemap_url` and the constant `strategy` through out-params and the four integers into
++/// `out_fields`. Null on refusal, with `tallow_last_error` set and nothing written.
++#[unsafe(no_mangle)]
++pub extern "C" fn tallow_crawler_from_sitemap(
++    sitemap_url: *const c_char,
++    out_sitemap_url: *mut *mut c_char,
++    out_strategy: *mut *mut c_char,
++    out_fields: *mut i64,
++) -> *mut c_char {
++    if out_sitemap_url.is_null() || out_strategy.is_null() || out_fields.is_null() {
++        set_last_error("crawler_from_sitemap: missing out-parameter slot".to_string());
++        return std::ptr::null_mut();
++    }
++    let Some(url) = (unsafe { cstr_to_str(sitemap_url) }) else {
++        set_last_error(
++            "Crawler.from_sitemap: expected a sitemap URL string argument".to_string(),
++        );
++        return std::ptr::null_mut();
++    };
++    let fields = match crate::stdlib::browser::crawler_from_sitemap(vec![Value::String(
++        url.to_string(),
++    )]) {
++        Ok(Value::Struct { fields, .. }) => fields,
++        Ok(other) => {
++            set_last_error(format!(
++                "crawler_from_sitemap: expected a Struct, got {}",
++                crate::interp::type_name(&other)
++            ));
++            return std::ptr::null_mut();
++        }
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++
++    // Read by NAME, never by position: a reordered field would otherwise shift silently.
++    let seed_url = match string_field(&fields, "seed_url") {
++        Ok(v) => v,
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++    let echoed = match string_field(&fields, "sitemap_url") {
++        Ok(v) => v,
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++    let strategy = match string_field(&fields, "strategy") {
++        Ok(v) => v,
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++    let values = match int_fields(
++        &fields,
++        &["max_depth", "max_pages", "pages_crawled", "rate_limit_ms"],
++    ) {
++        Ok(v) => v,
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++
++    // Allocate every string first: a null return means nothing was written, so a late
++    // failure must not leave the out-params half-filled.
++    let sitemap_out = string_to_cstr(&echoed);
++    let strategy_out = string_to_cstr(&strategy);
++    let seed_out = string_to_cstr(&seed_url);
++    if sitemap_out.is_null() || strategy_out.is_null() || seed_out.is_null() {
++        set_last_error("crawler_from_sitemap: could not allocate an output string".to_string());
++        return std::ptr::null_mut();
++    }
++
++    unsafe {
++        for (i, value) in values.iter().enumerate() {
++            *out_fields.add(i) = *value;
++        }
++        *out_sitemap_url = sitemap_out;
++        *out_strategy = strategy_out;
++    }
++    seed_out
++}
++
++/// The named field as a string, or a refusal naming the field that is wrong.
++fn string_field(fields: &[(String, Value)], name: &str) -> Result<String, String> {
++    match fields.iter().find(|(k, _)| k == name).map(|(_, v)| v) {
++        Some(Value::String(s)) => Ok(s.clone()),
++        Some(other) => Err(format!(
++            "crawler_from_sitemap: field {name:?} must be a string, got {}",
++            crate::interp::type_name(other)
++        )),
++        None => Err(format!("crawler_from_sitemap: no field named {name:?}")),
++    }
++}
++
++/// The named integer fields in the given order. `max_pages` is the number of discovered
++/// entries, so it is the one field carrying a discovered value.
++fn int_fields(fields: &[(String, Value)], names: &[&str]) -> Result<Vec<i64>, String> {
++    names
++        .iter()
++        .map(|name| match fields.iter().find(|(k, _)| k == name).map(|(_, v)| v) {
++            Some(Value::Int(n)) => i64::try_from(*n).map_err(|_| {
++                format!("crawler_from_sitemap: field {name:?} does not fit in an i64")
++            }),
++            Some(other) => Err(format!(
++                "crawler_from_sitemap: field {name:?} must be an integer, got {}",
++                crate::interp::type_name(other)
++            )),
++            None => Err(format!("crawler_from_sitemap: no field named {name:?}")),
++        })
++        .collect()
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/tests/crawler_parity.rs b/tests/crawler_parity.rs
+new file mode 100644
+index 0000000..d8c259f
+--- /dev/null
++++ b/tests/crawler_parity.rs
+@@ -0,0 +1,190 @@
++//! Crawler natives: value parity where it is offline-testable, refusal parity everywhere.
++//!
++//! Two natives, deliberately treated differently, because they are not the same kind of
++//! thing:
++//!
++//! * **`Crawler.from_links`** plans without any network (`crawler_from_links_plan` is pure),
++//!   so it gets the full three-assertion parity treatment: both legs exit 0, stdout is
++//!   byte-identical, and stdout matches a **pinned reference** — the third assertion is what
++//!   catches two engines agreeing on the wrong answer.
++//! * **`Crawler.from_sitemap`** FETCHES: the facade drives `SitemapParser` over
++//!   `runtime::egress_http` (Tor by default, refusing rather than falling back to the box IP).
++//!   Its happy path therefore cannot be exercised offline — a local fixture can never be
++//!   fetched, which the facade's own doc records. What IS deterministic offline is the
++//!   **refusal**: a non-string argument is rejected before any egress. That is what is
++//!   pinned here, and the gap is stated rather than papered over.
++//!
++//! The refusal tests also pin a defect this suite found in the same class as
++//! `StructuredData.extract(42)`: both crawler arms used `v.as_string()`, which coerced an int
++//! argument into a URL string and proceeded. The arms now refuse, naming the same cause as the
++//! compiled legs (`interp.rs`, `codegen.rs`).
++//!
++//! Harness shape (engine forcing, binary resolution, caps) follows
++//! `tests/regex_engine_parity.rs` and `tests/structured_data_parity.rs`.
++
++use std::path::{Path, PathBuf};
++use std::process::Command;
++
++const LINKS_FIXTURE: &str = "tests/parity/parity_programs/19_crawler_from_links.tl";
++const LINKS_REFUSAL: &str = "tests/parity/parity_programs/20_crawler_from_links_refusal.tl";
++const SITEMAP_REFUSAL: &str = "tests/parity/parity_programs/21_crawler_from_sitemap_refusal.tl";
++
++/// The interpreter's answer for the `from_links` fixture, pinned and not derived.
++/// A supplied depth of 5; B the omitted depth, whose shared default is 3.
++const EXPECTED: &str = "\
++A_seed
++https://example.com
++A_strategy
++link_follow
++A_maxdepth
++5
++A_maxpages
++1
++A_crawled
++0
++A_rate
++0
++B_maxdepth
++3
++";
++
++fn repo_root() -> PathBuf {
++    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
++}
++
++fn tallow_bin() -> PathBuf {
++    if let Some(p) = std::env::var_os("TALLOW_BIN") {
++        if !p.is_empty() {
++            return PathBuf::from(p);
++        }
++    }
++    let release = repo_root().join("target/release/tallow");
++    if release.is_file() {
++        release
++    } else {
++        repo_root().join("target/debug/tallow")
++    }
++}
++
++struct Out {
++    rc: i32,
++    stdout: String,
++    stderr: String,
++}
++
++fn run(args: &[String], cwd: &Path) -> Out {
++    let out = Command::new(tallow_bin())
++        .args(args)
++        .current_dir(cwd)
++        .output()
++        .expect("spawn tallow");
++    Out {
++        rc: out.status.code().unwrap_or(-1),
++        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
++        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
++    }
++}
++
++/// Cross target ⇒ `is_cross` ⇒ the tree-walking interpreter path.
++fn run_interp(file: &Path) -> Out {
++    let args: Vec<String> = vec![
++        "run".into(),
++        file.display().to_string(),
++        "--target".into(),
++        "x86_64-linux".into(),
++    ];
++    run(&args, &repo_root())
++}
++
++/// `--require-native` refuses the interpreter fallback, so a pass here is a real
++/// compiled-path pass.
++fn run_native(file: &Path) -> Out {
++    let args: Vec<String> = vec![
++        "run".into(),
++        "--require-native".into(),
++        file.display().to_string(),
++    ];
++    run(&args, &repo_root())
++}
++
++#[test]
++fn crawler_from_links_engines_agree_byte_for_byte() {
++    let fixture = repo_root().join(LINKS_FIXTURE);
++    assert!(fixture.is_file(), "fixture missing: {}", fixture.display());
++
++    let interp = run_interp(&fixture);
++    assert_eq!(
++        interp.rc, 0,
++        "interpreter leg failed (rc={}): {}",
++        interp.rc, interp.stderr
++    );
++    let native = run_native(&fixture);
++    assert_eq!(
++        native.rc, 0,
++        "native leg failed (rc={}); stderr={}",
++        native.rc, native.stderr
++    );
++    assert!(
++        !native.stderr.contains("native build unavailable")
++            && !native.stderr.contains("interpreter fallback"),
++        "native leg fell back to the interpreter: {}",
++        native.stderr
++    );
++    assert_eq!(
++        native.stdout, interp.stdout,
++        "interp↔native stdout divergence\n--- interp ---\n{}\n--- native ---\n{}",
++        interp.stdout, native.stdout
++    );
++    assert_eq!(
++        interp.stdout, EXPECTED,
++        "reference block drifted (interpreter is the reference engine)"
++    );
++    assert_eq!(
++        native.stdout, EXPECTED,
++        "native output is not the reference block"
++    );
++}
++
++/// The same helper for both refusal tests: both engines must refuse, name the same cause,
++/// and the compiled leg must not have emitted output first.
++fn assert_refusal_parity(fixture_rel: &str, cause: &str) {
++    let fixture = repo_root().join(fixture_rel);
++    assert!(fixture.is_file(), "fixture missing: {}", fixture.display());
++
++    let interp = run_interp(&fixture);
++    let native = run_native(&fixture);
++
++    assert_ne!(interp.rc, 0, "the interpreter must refuse: {}", interp.stdout);
++    assert_ne!(native.rc, 0, "the native path must refuse: {}", native.stdout);
++    assert!(
++        interp.stderr.contains(cause),
++        "interpreter refusal does not name the cause ({cause}): {}",
++        interp.stderr
++    );
++    assert!(
++        native.stderr.contains(cause),
++        "native refusal does not name the cause ({cause}): {}",
++        native.stderr
++    );
++    assert!(
++        native.stdout.trim().is_empty(),
++        "the native path emitted output before refusing: {:?}",
++        native.stdout
++    );
++}
++
++#[test]
++fn a_non_string_seed_url_is_refused_by_both_engines() {
++    assert_refusal_parity(
++        LINKS_REFUSAL,
++        "expected a seed URL string argument",
++    );
++}
++
++#[test]
++fn a_non_string_sitemap_url_is_refused_by_both_engines() {
++    assert_refusal_parity(
++        SITEMAP_REFUSAL,
++        "expected a sitemap URL string argument",
++    );
++}
+diff --git a/tests/parity/parity_programs/19_crawler_from_links.tl b/tests/parity/parity_programs/19_crawler_from_links.tl
+new file mode 100644
+index 0000000..3187b3f
+--- /dev/null
++++ b/tests/parity/parity_programs/19_crawler_from_links.tl
+@@ -0,0 +1,27 @@
++// Parity fixture: `Crawler.from_links` — the ALREADY-BOUND native, now with a compiling
++// path pinned against the interpreter's values.
++//
++// Offline by construction: `crawler_from_links_plan` is pure, so this needs no egress.
++// Tag+value lines rather than interpolation, for the same reason as the structured-data
++// fixture: interpolating would test the interpolation rules, not the binding.
++
++fn main() {
++    let c = Crawler.from_links("https://example.com", 5)
++    print("A_seed")
++    print(c.seed_url)
++    print("A_strategy")
++    print(c.strategy)
++    print("A_maxdepth")
++    print(c.max_depth)
++    print("A_maxpages")
++    print(c.max_pages)
++    print("A_crawled")
++    print(c.pages_crawled)
++    print("A_rate")
++    print(c.rate_limit_ms)
++
++    // The optional argument's shared default (3) is a decided value, not an absence.
++    let d = Crawler.from_links("https://example.com")
++    print("B_maxdepth")
++    print(d.max_depth)
++}
+diff --git a/tests/parity/parity_programs/20_crawler_from_links_refusal.tl b/tests/parity/parity_programs/20_crawler_from_links_refusal.tl
+new file mode 100644
+index 0000000..6676514
+--- /dev/null
++++ b/tests/parity/parity_programs/20_crawler_from_links_refusal.tl
+@@ -0,0 +1,9 @@
++// Refusal-parity fixture: a non-string seed URL.
++//
++// The interpreter used to COERCE this (`v.as_string()` → "42") and plan a crawler from it;
++// the compiled leg refused. Both now refuse, naming the same cause.
++
++fn main() {
++    let c = Crawler.from_links(42)
++    print(c.strategy)
++}
+diff --git a/tests/parity/parity_programs/21_crawler_from_sitemap_refusal.tl b/tests/parity/parity_programs/21_crawler_from_sitemap_refusal.tl
+new file mode 100644
+index 0000000..95bc300
+--- /dev/null
++++ b/tests/parity/parity_programs/21_crawler_from_sitemap_refusal.tl
+@@ -0,0 +1,10 @@
++// Refusal-parity fixture: a non-string sitemap URL.
++//
++// Offline by construction, which matters here: `Crawler.from_sitemap` fetches. A non-string
++// argument is refused BEFORE any egress, so this test can never touch the network. The
++// happy path (a real fetch) is deliberately NOT covered — see tests/crawler_parity.rs.
++
++fn main() {
++    let c = Crawler.from_sitemap(42)
++    print(c.strategy)
++}

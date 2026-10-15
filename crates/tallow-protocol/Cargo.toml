@@ -1,0 +1,91 @@
+[package]
+name = "tallow-protocol"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Wire protocol, file transfer, compression, chat, rooms for Tallow"
+
+[features]
+default = ["full"]
+# Opt-in: self-signed relay/test certs in dev lanes; never release.
+dev-insecure = ["tallow-net?/dangerous_skip_verify"]
+full = [
+    "dep:tallow-net",
+    "dep:zstd",
+    "dep:brotli",
+    "dep:lz4_flex",
+    "dep:lzma-rs",
+    "dep:notify",
+    "dep:ignore",
+    "dep:tar",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:futures",
+    "dep:serde_json",
+    "dep:bytes",
+    "dep:rand",
+    "dep:img-parts",
+    "dep:kamadak-exif",
+    "dep:strip-ansi-escapes",
+    "dep:tracing",
+]
+wasm = ["dep:rand"]
+
+[dependencies]
+tallow-crypto = { path = "../tallow-crypto" }
+
+# Always available (WASM-compatible)
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1.1", features = ["use-std"] }
+thiserror = "2"
+blake3 = "1"
+zeroize = { version = "1", features = ["derive", "serde"] }
+subtle = "2"
+
+# Full-only dependencies (gated behind "full" feature)
+tallow-net = { path = "../tallow-net", optional = true, default-features = false, features = ["quic"] }
+
+# Compression (full only)
+zstd = { version = "0.13", optional = true }
+brotli = { version = "7", optional = true }
+lz4_flex = { version = "0.11", optional = true }
+lzma-rs = { version = "0.3", optional = true }
+
+# File watching (full only)
+notify = { version = "8", optional = true }
+
+# File exclusion (full only)
+ignore = { version = "0.4", optional = true }
+
+# Tar streaming (full only)
+tar = { version = "0.4", optional = true }
+
+# Async (full only)
+tokio = { version = "1", features = ["full"], optional = true }
+tokio-util = { version = "0.7", features = ["codec", "io"], optional = true }
+futures = { version = "0.3", optional = true }
+
+# Serialization (full only extras)
+serde_json = { version = "1", optional = true }
+
+# Utilities (full only)
+bytes = { version = "1", optional = true }
+rand = { version = "0.8", optional = true }
+tracing = { version = "0.1", optional = true }
+
+# Metadata stripping (full only)
+img-parts = { version = "0.3", optional = true }
+kamadak-exif = { version = "0.5", optional = true }
+
+# Filename sanitization (full only)
+strip-ansi-escapes = { version = "0.2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "protocol_benchmarks"
+harness = false

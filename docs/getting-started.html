@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tallow Getting Started Guide</title>
+<style>
+@page { size: A4; margin: 20mm; }
+@media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0a0e1a; color: #e2e8f0; line-height: 1.7; }
+.container { max-width: 900px; margin: 0 auto; padding: 40px 30px; }
+
+/* Cover */
+.cover { text-align: center; padding: 120px 0 80px; border-bottom: 2px solid #1e293b; margin-bottom: 60px; }
+.cover h1 { font-size: 3.5em; font-weight: 800; background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }
+.cover .subtitle { font-size: 1.4em; color: #94a3b8; margin-bottom: 30px; }
+.cover .version { display: inline-block; background: #1e293b; padding: 8px 20px; border-radius: 20px; color: #60a5fa; font-family: monospace; }
+.cover p { font-size: 1.1em; color: #94a3b8; margin: 30px 0; line-height: 1.8; }
+
+/* Section Headers */
+h2 { font-size: 2em; margin: 60px 0 20px; padding-bottom: 10px; border-bottom: 2px solid #1e3a5f; color: #60a5fa; }
+h3 { font-size: 1.4em; margin: 35px 0 15px; color: #a78bfa; }
+h4 { font-size: 1.1em; margin: 20px 0 10px; color: #f472b6; }
+
+/* Code blocks */
+pre { background: #1e293b; border-radius: 10px; padding: 20px; margin: 15px 0; overflow-x: auto; border-left: 4px solid #3b82f6; font-size: 0.9em; }
+code { font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; }
+pre code { color: #e2e8f0; }
+.cmd { color: #22c55e; font-weight: 600; }
+.kw { color: #60a5fa; font-weight: 500; }
+.str { color: #fbbf24; }
+.comment { color: #64748b; font-style: italic; }
+.type-kw { color: #a78bfa; font-weight: 500; }
+
+/* Inline code */
+p code, li code, td code { background: #1e293b; padding: 2px 8px; border-radius: 4px; color: #f472b6; font-size: 0.88em; }
+
+/* Cards */
+.card { background: linear-gradient(135deg, #1e293b, #0f172a); border-radius: 12px; padding: 24px; margin: 20px 0; border: 1px solid #334155; }
+.card.highlight { border-color: #3b82f6; border-left: 4px solid #60a5fa; }
+.card.note { border-color: #f59e0b; border-left: 4px solid #f59e0b; background: linear-gradient(135deg, #1e293b, #1a1500); }
+.card.success { border-color: #22c55e; border-left: 4px solid #22c55e; }
+.card h4 { margin-top: 0; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th { background: #1e293b; padding: 12px 16px; text-align: left; color: #60a5fa; font-weight: 600; border-bottom: 2px solid #334155; }
+td { padding: 10px 16px; border-bottom: 1px solid #1e293b; }
+tr:hover { background: #1e293b30; }
+
+/* Tags */
+.tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600; margin-right: 6px; margin-bottom: 6px; }
+.tag.beginner { background: #1e3a8a; color: #93c5fd; }
+.tag.intermediate { background: #581c87; color: #d8b4fe; }
+.tag.advanced { background: #7c2d12; color: #fdba74; }
+
+/* Lists */
+ul, ol { padding-left: 24px; margin: 10px 0; }
+li { margin: 6px 0; }
+li::marker { color: #60a5fa; }
+
+/* Grid */
+.feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+@media (max-width: 768px) { .feature-grid { grid-template-columns: 1fr; } }
+.feature-item { background: #1e293b; border-radius: 8px; padding: 16px; border-left: 3px solid #3b82f6; }
+.feature-item h5 { color: #60a5fa; margin-bottom: 8px; font-size: 1em; }
+.feature-item p { color: #94a3b8; font-size: 0.9em; }
+
+/* Divider */
+.divider { height: 2px; background: linear-gradient(90deg, transparent, #334155, transparent); margin: 50px 0; }
+
+/* TOC */
+.toc { background: #1e293b; border-radius: 12px; padding: 30px; margin: 30px 0; border: 1px solid #334155; }
+.toc h3 { margin-top: 0; color: #e2e8f0; }
+.toc ol { counter-reset: toc; list-style: none; padding: 0; }
+.toc li { counter-increment: toc; padding: 6px 0; border-bottom: 1px solid #0f172a; }
+.toc li:last-child { border-bottom: none; }
+.toc li::before { content: counter(toc) ". "; color: #60a5fa; font-weight: 600; }
+
+/* Step-by-step */
+.step { background: #1e293b; border-radius: 8px; padding: 16px 20px; margin: 12px 0; border-left: 4px solid #60a5fa; }
+.step .step-num { display: inline-block; background: #3b82f6; color: #fff; width: 24px; height: 24px; border-radius: 50%; text-align: center; line-height: 24px; font-size: 0.9em; font-weight: 600; margin-right: 12px; }
+
+/* Page break for PDF */
+.page-break { page-break-before: always; }
+
+/* Command reference */
+.cmd-ref { background: #1e293b; border-radius: 8px; padding: 12px 16px; margin: 8px 0; border-left: 3px solid #22c55e; font-family: monospace; font-size: 0.9em; }
+.cmd-ref .cmd { color: #22c55e; }
+.cmd-ref .desc { color: #94a3b8; margin-left: 20px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- COVER PAGE -->
+<div class="cover">
+<h1>TALLOW</h1>
+<div class="subtitle">Getting Started Guide</div>
+<div class="version">v0.4.0 (doc: March 2026)</div>
+<p><strong>Privacy-first systems language</strong></p>
+<p>Learn to build fast, secure, legally compliant programs from zero to deployed in one guide.</p>
+</div>
+
+<!-- TABLE OF CONTENTS -->
+<div class="toc">
+<h3>Table of Contents</h3>
+<ol>
+<li><a href="#intro">What is Tallow?</a></li>
+<li><a href="#install">Installation</a></li>
+<li><a href="#hello">Your First Program</a></li>
+<li><a href="#types">Variables and Types</a></li>
+<li><a href="#functions">Functions and Control Flow</a></li>
+<li><a href="#structs">Structs and Enums</a></li>
+<li><a href="#errors">Error Handling</a></li>
+<li><a href="#browser">Browser Automation Example</a></li>
+<li><a href="#privacy">Privacy Types and @legal</a></li>
+<li><a href="#crypto">Encryption and Cryptography</a></li>
+<li><a href="#cli">Building and Running</a></li>
+<li><a href="#commands">CLI Commands Reference</a></li>
+</ol>
+</div>
+
+<div class="divider"></div>
+
+<!-- SECTION 1: WHAT IS TALLOW? -->
+<h2 id="intro">1. What is Tallow?</h2>
+
+<p>Tallow is a privacy-first systems programming language designed to eliminate the most dangerous data handling errors at compile time, not runtime. While Rust prevents memory errors, Tallow prevents <em>legal</em> errors.</p>
+
+<p>Every program you write in Tallow is:</p>
+
+<div class="feature-grid">
+<div class="feature-item">
+<h5>Type-safe for privacy</h5>
+<p>Private and secret types are tracked through your entire program. The compiler rejects illegal data operations before your code compiles.</p>
+</div>
+<div class="feature-item">
+<h5>Legally compliant by default</h5>
+<p>Network operations require @legal annotations that prove your code respects robots.txt, rate limits, and data retention laws.</p>
+</div>
+<div class="feature-item">
+<h5>Post-quantum secure</h5>
+<p>ML-KEM-768 cryptography is the default. Your data is secure against future quantum computers today.</p>
+</div>
+<div class="feature-item">
+<h5>Blazing fast</h5>
+<p>Native binary compilation, zero garbage collection. Sub-millisecond startup and microsecond HTTP are targets, not yet measured (the default HTTP path adds Tor and a 250&nbsp;ms/host politeness delay).</p>
+</div>
+</div>
+
+<p>Tallow compiles to standalone executables. No runtime, no interpreter, no dependencies. Copy your binary anywhere and it just works.</p>
+
+<div class="divider"></div>
+
+<!-- SECTION 2: INSTALLATION -->
+<h2 id="install">2. Installation</h2>
+
+<h3>On Windows (PowerShell)</h3>
+<pre><code><span class="kw">iwr</span> https://github.com/tallow-lang/tallow/releases/download/v0.4.0/tallow-windows-x86_64.zip -OutFile tallow.zip
+<span class="kw">Expand-Archive</span> tallow.zip -DestinationPath <span class="str">$env:ProgramFiles\Tallow</span>
+$env:PATH += <span class="str">";$env:ProgramFiles\Tallow"</span></code></pre>
+
+<h3>On Linux / macOS (Bash)</h3>
+<pre><code><span class="cmd">curl</span> -L https://github.com/tallow-lang/tallow/releases/download/v0.4.0/tallow-linux-x86_64-musl.tar.gz | tar xz
+<span class="cmd">sudo mv</span> tallow /usr/local/bin/</code></pre>
+
+<h3>Verify Installation</h3>
+<pre><code><span class="cmd">tallow</span> version</code></pre>
+
+<p>Should output: <code>tallow 0.4.0</code> (dev builds also print <code>build: dev</code> and <code>git: unknown</code>).</p>
+
+<p><em>Note: archive names follow <code>.github/workflows/release.yml</code> (5 targets: linux x86_64/aarch64 musl, tallow-macos-x86_64.tar.gz, tallow-macos-aarch64.tar.gz, Windows x86_64). No release has been published from this checkout yet &mdash; no git remote is configured and the installer signing key is still a placeholder, so the installers fail closed until it is pinned.</em></p>
+
+<div class="divider"></div>
+
+<!-- SECTION 3: YOUR FIRST PROGRAM -->
+<h2 id="hello">3. Your First Program</h2>
+
+<h3>Create a file: hello.tl</h3>
+<pre><code><span class="kw">fn</span> main() {
+    <span class="kw">print</span>(<span class="str">"Hello, Tallow!"</span>)
+}</code></pre>
+
+<h3>Run it immediately</h3>
+<pre><code><span class="cmd">tallow run</span> hello.tl</code></pre>
+
+<p>Output:</p>
+<pre><code>Hello, Tallow!</code></pre>
+
+<h3>Or build it to an executable</h3>
+<pre><code><span class="cmd">tallow build</span> hello.tl</code></pre>
+
+<p>This creates <code>hello.exe</code> (Windows) or <code>hello</code> (Linux/macOS). The binary is self-contained and requires no runtime.</p>
+
+<div class="card highlight">
+<h4>Key insight</h4>
+<p><code>tallow run</code> = compile and execute immediately. Good for learning.</p>
+<p><code>tallow build</code> = compile to reusable binary. Use for distribution.</p>
+</div>
+
+<div class="divider"></div>
+
+<!-- SECTION 4: VARIABLES AND TYPES -->
+<h2 id="types">4. Variables and Types</h2>
+
+<h3>Immutable Variables (let)</h3>
+<pre><code><span class="kw">let</span> name = <span class="str">"Alice"</span>
+<span class="kw">let</span> age = <span class="str">30</span>
+<span class="kw">let</span> score = <span class="str">98.5</span></code></pre>
+
+<p>Variables created with <code>let</code> cannot be changed. This is the default.</p>
+
+<h3>Mutable Variables (var)</h3>
+<pre><code><span class="kw">var</span> count = <span class="str">0</span>
+count = count + <span class="str">1</span>
+<span class="kw">print</span>(count)</code></pre>
+
+<p>Use <code>var</code> when you need to reassign. Use <code>let</code> everywhere else.</p>
+
+<h3>Constants</h3>
+<pre><code><span class="kw">const</span> MAX_CONNECTIONS = <span class="str">10000</span>
+<span class="kw">const</span> VERSION = <span class="str">"0.4.0"</span></code></pre>
+
+<h3>Type Annotations</h3>
+<pre><code><span class="kw">let</span> port: u16 = <span class="str">8080</span>              <span class="comment">// unsigned 16-bit integer</span>
+<span class="kw">let</span> timeout: i32 = <span class="str">30</span>             <span class="comment">// signed 32-bit integer</span>
+<span class="kw">let</span> rate: f64 = <span class="str">2.5</span>               <span class="comment">// 64-bit float</span>
+<span class="kw">let</span> active: bool = <span class="str">true</span>           <span class="comment">// boolean</span>
+<span class="kw">let</span> greeting: String = <span class="str">"hello"</span>   <span class="comment">// heap-allocated string</span></code></pre>
+
+<h3>Collections</h3>
+<pre><code><span class="comment">// Arrays (variable length)</span>
+<span class="kw">let</span> numbers = [<span class="str">1</span>, <span class="str">2</span>, <span class="str">3</span>]
+
+<span class="comment">// Arrays with type annotation</span>
+<span class="kw">let</span> items: []String = [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]
+
+<span class="comment">// Maps (dictionaries)</span>
+<span class="kw">let</span> config = {
+    <span class="str">"host"</span>: <span class="str">"localhost"</span>,
+    <span class="str">"port"</span>: <span class="str">"8080"</span>
+}</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 5: FUNCTIONS AND CONTROL FLOW -->
+<h2 id="functions">5. Functions and Control Flow</h2>
+
+<h3>Basic Functions</h3>
+<pre><code><span class="kw">fn</span> add(a: i32, b: i32) <span class="kw">-></span> i32 {
+    a + b
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> result = add(<span class="str">5</span>, <span class="str">3</span>)
+    <span class="kw">print</span>(result)
+}</code></pre>
+
+<p>Functions use implicit returns (no <code>return</code> keyword needed for the last expression).</p>
+
+<h3>If/Else</h3>
+<pre><code><span class="kw">let</span> age = <span class="str">25</span>
+
+<span class="kw">if</span> age >= <span class="str">18</span> {
+    <span class="kw">print</span>(<span class="str">"adult"</span>)
+} <span class="kw">else if</span> age >= <span class="str">13</span> {
+    <span class="kw">print</span>(<span class="str">"teen"</span>)
+} <span class="kw">else</span> {
+    <span class="kw">print</span>(<span class="str">"child"</span>)
+}</code></pre>
+
+<h3>Match (Exhaustive Pattern Matching)</h3>
+<pre><code><span class="kw">let</span> status = <span class="str">200</span>
+
+<span class="kw">match</span> status {
+    <span class="str">200</span> <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"ok"</span>)
+    <span class="str">404</span> <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"not found"</span>)
+    <span class="str">500</span> <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"error"</span>)
+    _   <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"unknown"</span>)
+}</code></pre>
+
+<h3>Loops</h3>
+<pre><code><span class="comment">// For loop</span>
+<span class="kw">for</span> i <span class="kw">in</span> <span class="str">0..10</span> {
+    <span class="kw">print</span>(i)
+}
+
+<span class="comment">// For loop over collection</span>
+<span class="kw">let</span> items = [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]
+<span class="kw">for</span> item <span class="kw">in</span> items {
+    <span class="kw">print</span>(item)
+}
+
+<span class="comment">// While loop</span>
+<span class="kw">var</span> count = <span class="str">0</span>
+<span class="kw">while</span> count < <span class="str">5</span> {
+    count = count + <span class="str">1</span>
+}</code></pre>
+
+<h3>String Interpolation</h3>
+<pre><code><span class="kw">let</span> name = <span class="str">"World"</span>
+<span class="kw">let</span> count = <span class="str">42</span>
+<span class="kw">print</span>(<span class="str">"Hello, {name}! Count: {count}"</span>)</code></pre>
+
+<p>Output: <code>Hello, World! Count: 42</code></p>
+
+<div class="divider"></div>
+
+<!-- SECTION 6: STRUCTS AND ENUMS -->
+<h2 id="structs">6. Structs and Enums</h2>
+
+<h3>Structs (Structured Data)</h3>
+<pre><code><span class="kw">struct</span> Person {
+    name: String,
+    age: i32,
+    email: String
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> alice = Person {
+        name: <span class="str">"Alice"</span>,
+        age: <span class="str">30</span>,
+        email: <span class="str">"alice@example.com"</span>
+    }
+
+    <span class="kw">print</span>(<span class="str">"{alice.name} is {alice.age} years old"</span>)
+}</code></pre>
+
+<h3>Methods on Structs</h3>
+<pre><code><span class="kw">struct</span> Rectangle {
+    width: i32,
+    height: i32
+}
+
+<span class="kw">impl</span> Rectangle {
+    <span class="kw">fn</span> area(self) <span class="kw">-></span> i32 {
+        self.width * self.height
+    }
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> rect = Rectangle { width: <span class="str">10</span>, height: <span class="str">20</span> }
+    <span class="kw">print</span>(rect.area())
+}</code></pre>
+
+<h3>Enums (Multiple Variants)</h3>
+<pre><code><span class="kw">enum</span> Status {
+    Active,
+    Inactive,
+    Pending(reason: String)
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> status = Status.Pending(reason: <span class="str">"awaiting approval"</span>)
+
+    <span class="kw">match</span> status {
+        Status.Active          <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"running"</span>)
+        Status.Inactive        <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"stopped"</span>)
+        Status.Pending(reason) <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"pending: {reason}"</span>)
+    }
+}</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 7: ERROR HANDLING -->
+<h2 id="errors">7. Error Handling</h2>
+
+<p>Tallow has no exceptions. Errors are values using the <code>Result&lt;T&gt;</code> type.</p>
+
+<h3>Result Type</h3>
+<pre><code><span class="type-kw">Result&lt;T&gt;</span> = Ok(T) <span class="kw">or</span> Err(String)</code></pre>
+
+<h3>The ? Operator (Error Propagation)</h3>
+<pre><code><span class="kw">fn</span> parse_number(text: String) <span class="kw">-></span> <span class="type-kw">Result&lt;i32&gt;</span> {
+    <span class="comment">// ? propagates Err upward automatically</span>
+    <span class="kw">let</span> num = text.parse::<i32>()?
+    Ok(num * <span class="str">2</span>)
+}</code></pre>
+
+<h3>Matching on Results</h3>
+<pre><code><span class="kw">let</span> result = parse_number(<span class="str">"42"</span>)
+
+<span class="kw">match</span> result {
+    Ok(value) <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"parsed: {value}"</span>)
+    Err(msg)  <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"error: {msg}"</span>)
+}</code></pre>
+
+<h3>bail (Early Return with Error)</h3>
+<pre><code><span class="kw">fn</span> validate_age(age: i32) <span class="kw">-></span> <span class="type-kw">Result&lt;()&gt;</span> {
+    <span class="kw">if</span> age < <span class="str">0</span> { <span class="kw">bail</span> <span class="str">"age cannot be negative"</span> }
+    <span class="kw">if</span> age > <span class="str">150</span> { <span class="kw">bail</span> <span class="str">"age too high"</span> }
+    Ok(())
+}</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 8: BROWSER AUTOMATION -->
+<h2 id="browser">8. Browser Automation Example</h2>
+
+<p><span class="tag beginner">Beginner</span> Tallow's built-in Browser API makes web automation simple and legal.</p>
+
+<h3>A Complete Web Scraper</h3>
+<pre><code><span class="kw">@legal</span>(
+    basis: <span class="str">.public_data</span>,
+    purpose: <span class="str">"extract public content"</span>,
+    personal_data: <span class="str">false</span>,
+    robots_txt: <span class="str">.respect</span>,
+    rate_limit: <span class="str">1.per_second</span>
+)
+<span class="kw">fn</span> scrape_title(url: String) <span class="kw">-></span> <span class="type-kw">Result&lt;String&gt;</span> {
+    <span class="comment">// Launch headless browser</span>
+    <span class="kw">let</span> browser = Browser.launch(<span class="str">true</span>)?
+
+    <span class="comment">// Create new tab</span>
+    <span class="kw">let</span> page = browser.new_page()?
+
+    <span class="comment">// Navigate to URL</span>
+    page.goto(url)?
+
+    <span class="comment">// Get page title</span>
+    <span class="kw">let</span> title = page.title()?
+
+    browser.close()
+    Ok(title)
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> url = <span class="str">"https://example.com"</span>
+
+    <span class="kw">match</span> scrape_title(url) {
+        Ok(title) <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"Page title: {title}"</span>)
+        Err(e)    <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"Error: {e}"</span>)
+    }
+}</code></pre>
+
+<div class="card note">
+<h4>Required @legal annotation</h4>
+<p>Any function that makes network requests, touches files, or stores data <strong>must</strong> have a <code>@legal</code> annotation. The compiler rejects it otherwise. This proves your code is legally compliant.</p>
+</div>
+
+<div class="divider"></div>
+
+<!-- SECTION 9: PRIVACY TYPES AND @legal -->
+<h2 id="privacy">9. Privacy Types and @legal Annotations</h2>
+
+<h3>What are Private and Secret Types?</h3>
+
+<p>Tallow enforces privacy through the type system. Some data is more sensitive than others:</p>
+
+<div class="feature-grid">
+<div class="feature-item">
+<h5>private types</h5>
+<p>Personal data subject to GDPR/CCPA: Email, Name, Phone, Location. Cannot be logged raw, sent unencrypted, or stored without a retention limit.</p>
+</div>
+<div class="feature-item">
+<h5>secret types</h5>
+<p>Credentials: Password, APIKey, Token, PrivateKey. All privacy rules PLUS never serializable, zero-wiped from memory on scope exit.</p>
+</div>
+</div>
+
+<h3>Built-in Private Types</h3>
+<pre><code><span class="type-kw">type Email</span> = <span class="kw">private</span> String
+<span class="type-kw">type Phone</span> = <span class="kw">private</span> String
+<span class="type-kw">type Location</span> = <span class="kw">private</span> (f64, f64)
+<span class="type-kw">type Name</span> = <span class="kw">private</span> String</code></pre>
+
+<h3>Built-in Secret Types</h3>
+<pre><code><span class="type-kw">type Password</span> = <span class="kw">secret</span> String
+<span class="type-kw">type APIKey</span> = <span class="kw">secret</span> String
+<span class="type-kw">type Token</span> = <span class="kw">secret</span> String</code></pre>
+
+<h3>Safe Ways to Use Private Types</h3>
+<pre><code><span class="kw">let</span> email = <span class="str">"alice@example.com"</span> <span class="kw">as</span> Email
+
+<span class="comment">// ❌ COMPILER ERROR: Cannot log email directly</span>
+<span class="comment">print(email)</span>
+
+<span class="comment">// ✅ CORRECT: Log a redacted version</span>
+<span class="kw">print</span>(email.redact())   <span class="comment">// outputs: a***@***.com</span>
+<span class="kw">print</span>(email.hash())     <span class="comment">// outputs: sha256 hex digest</span>
+<span class="kw">print</span>(email.mask())     <span class="comment">// outputs: ****@example.com</span></code></pre>
+
+<h3>The @legal Annotation System</h3>
+
+<p>Every network or data storage operation requires a <code>@legal</code> annotation proving you have a legal basis:</p>
+
+<pre><code><span class="kw">@legal</span>(
+    basis: <span class="str">.public_data</span>,           <span class="comment">// GDPR Art.6(1)(f) — legal basis</span>
+    purpose: <span class="str">"competitive research"</span>, <span class="comment">// what you're using it for</span>
+    personal_data: <span class="str">false</span>,           <span class="comment">// no PII collected</span>
+    jurisdiction: [<span class="str">.us</span>, <span class="str">.eu</span>],      <span class="comment">// where users are</span>
+    retain_for: <span class="str">30.days</span>,            <span class="comment">// don't keep it forever</span>
+    robots_txt: <span class="str">.respect</span>,            <span class="comment">// honor robots.txt</span>
+    rate_limit: <span class="str">2.per_second</span>         <span class="comment">// don't hammer servers</span>
+)
+<span class="kw">fn</span> fetch_prices(urls: []String) <span class="kw">-></span> <span class="type-kw">Result&lt;[]Price&gt;</span> {
+    <span class="comment">// Implementation here</span>
+}</code></pre>
+
+<h3>Legal Basis Values</h3>
+
+<table>
+<tr>
+<th>Basis</th>
+<th>Use Case</th>
+</tr>
+<tr>
+<td><code>.public_data</code></td>
+<td>Publicly available data (e.g., price lists, published articles)</td>
+</tr>
+<tr>
+<td><code>.consent</code></td>
+<td>User explicitly agreed (need consent_ref)</td>
+</tr>
+<tr>
+<td><code>.legitimate_interest</code></td>
+<td>Your business interest outweighs user privacy (need lia_completed: true)</td>
+</tr>
+<tr>
+<td><code>.research</code></td>
+<td>Academic, journalistic, or public interest research</td>
+</tr>
+<tr>
+<td><code>.contract</code></td>
+<td>Necessary to fulfill a contract with the user</td>
+</tr>
+<tr>
+<td><code>.vital_interests</code></td>
+<td>Emergency situations (rare)</td>
+</tr>
+</table>
+
+<div class="card success">
+<h4>Automatic compliance audits</h4>
+<p>When you compile, Tallow generates audit logs for every <code>@legal</code>-annotated function. These are court-ready proofs of compliance.</p>
+</div>
+
+<div class="divider"></div>
+
+<!-- SECTION 10: ENCRYPTION -->
+<h2 id="crypto">10. Encryption and Cryptography</h2>
+
+<h3>Post-Quantum Encryption (Default)</h3>
+
+<pre><code><span class="kw">let</span> data = <span class="str">"sensitive information"</span>
+
+<span class="comment">// Encrypt with ML-KEM-768 (post-quantum standard)</span>
+<span class="kw">let</span> keypair = KeyPair.generate()
+<span class="kw">let</span> sealed = data.encrypt(key: keypair.public)
+
+<span class="comment">// Decrypt</span>
+<span class="kw">let</span> plain = sealed.decrypt(key: keypair.private)?
+<span class="kw">print</span>(plain)</code></pre>
+
+<h3>Hashing (Data Integrity)</h3>
+
+<pre><code><span class="comment">// BLAKE3 — fastest hash function, default for data integrity</span>
+<span class="kw">let</span> file_hash = read_file(<span class="str">"myfile.dat"</span>)?
+    .hash()
+
+<span class="kw">print</span>(file_hash)  <span class="comment">// 64-character hex string</span></code></pre>
+
+<h3>Password Hashing (Argon2id)</h3>
+
+<pre><code><span class="kw">let</span> password = <span class="str">"user-password"</span> <span class="kw">as</span> Password
+
+<span class="comment">// Hash with Argon2id (memory-hard, secure)</span>
+<span class="kw">let</span> hash = password.hash()
+
+<span class="comment">// Verify during login</span>
+<span class="kw">let</span> user_provided = <span class="str">"entered-password"</span> <span class="kw">as</span> Password
+<span class="kw">let</span> matches = user_provided.verify(hash)
+<span class="kw">if</span> matches {
+    <span class="kw">print</span>(<span class="str">"login successful"</span>)
+}</code></pre>
+
+<h3>Available Algorithms</h3>
+
+<table>
+<tr>
+<th>Purpose</th>
+<th>Default</th>
+<th>Alternatives</th>
+</tr>
+<tr>
+<td>Key Exchange</td>
+<td>ML-KEM-768</td>
+<td>X25519 (classical)</td>
+</tr>
+<tr>
+<td>Signing</td>
+<td>ML-DSA</td>
+<td>Ed25519 (classical)</td>
+</tr>
+<tr>
+<td>Data Integrity</td>
+<td>BLAKE3</td>
+<td>SHA3, SHA256</td>
+</tr>
+<tr>
+<td>Password Hashing</td>
+<td>Argon2id</td>
+<td>Bcrypt, Scrypt</td>
+</tr>
+<tr>
+<td>Encryption</td>
+<td>ML-KEM (PQC)</td>
+<td>AES-256-GCM, ChaCha20-Poly1305</td>
+</tr>
+</table>
+
+<p>All cryptographic keys are automatically zero-wiped from memory when they go out of scope.</p>
+
+<div class="divider"></div>
+
+<!-- SECTION 11: BUILDING AND RUNNING -->
+<h2 id="cli">11. Building and Running</h2>
+
+<h3>Development Workflow</h3>
+
+<div class="step">
+<span class="step-num">1</span>
+<strong>Write your code</strong> in a <code>.tl</code> file
+</div>
+
+<div class="step">
+<span class="step-num">2</span>
+<strong>Test immediately</strong> with <code>tallow run</code>
+</div>
+
+<div class="step">
+<span class="step-num">3</span>
+<strong>Check for errors</strong> with <code>tallow check</code> (type-check only, no compilation)
+</div>
+
+<div class="step">
+<span class="step-num">4</span>
+<strong>Format code</strong> with <code>tallow fmt</code> (opinionated style)
+</div>
+
+<div class="step">
+<span class="step-num">5</span>
+<strong>Build for release</strong> with <code>tallow build --release</code>
+</div>
+
+<h3>Build Targets</h3>
+
+<pre><code><span class="comment">// Linux 64-bit (default)</span>
+<span class="cmd">tallow build</span> --target x86_64-linux
+
+<span class="comment">// Windows 64-bit</span>
+<span class="cmd">tallow build</span> --target x86_64-windows
+
+<span class="comment">// macOS ARM64 (Apple Silicon)</span>
+<span class="cmd">tallow build</span> --target aarch64-macos
+
+<span class="comment">// WebAssembly</span>
+<span class="cmd">tallow build</span> --target wasm
+
+<span class="comment">// Release build (optimized, stripped)</span>
+<span class="cmd">tallow build</span> --release</code></pre>
+
+<h3>Project Structure</h3>
+
+<pre><code>my-project/
+├── tallow.toml              <span class="comment">// Project manifest</span>
+├── src/
+│   └── main.tl            <span class="comment">// Entry point</span>
+├── examples/
+│   └── demo.tl
+├── tests/
+│   └── main_test.tl
+└── tallow.lock              <span class="comment">// Locked dependencies</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 12: CLI REFERENCE -->
+<h2 id="commands">12. CLI Commands Reference</h2>
+
+<h3>Project Management</h3>
+
+<div class="cmd-ref">
+<span class="cmd">tallow new</span> <span class="desc">Create a new project</span><br>
+<code>tallow new my-project</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow init</span> <span class="desc">Initialize Tallow in current directory</span><br>
+<code>tallow init</code>
+</div>
+
+<h3>Building & Running</h3>
+
+<div class="cmd-ref">
+<span class="cmd">tallow run</span> <span class="desc">Build and execute (development)</span><br>
+<code>tallow run myfile.tl</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow build</span> <span class="desc">Compile to executable</span><br>
+<code>tallow build --release</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow check</span> <span class="desc">Type-check without compiling</span><br>
+<code>tallow check</code>
+</div>
+
+<h3>Code Quality</h3>
+
+<div class="cmd-ref">
+<span class="cmd">tallow fmt</span> <span class="desc">Format code (opinionated)</span><br>
+<code>tallow fmt src/</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow lint</span> <span class="desc">Static analysis and warnings</span><br>
+<code>tallow lint</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow test</span> <span class="desc">Run all tests</span><br>
+<code>tallow test --filter "http"</code>
+</div>
+
+<h3>Compliance & Audit</h3>
+
+<div class="cmd-ref">
+<span class="cmd">tallow audit</span> <span class="desc">Generate compliance audit report</span><br>
+<code>tallow audit --jurisdiction eu</code>
+</div>
+
+<h3>Dependencies</h3>
+
+<div class="cmd-ref">
+<span class="cmd">tallow add</span> <span class="desc">Add a dependency</span><br>
+<code>tallow add tallow-html@0.3</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow remove</span> <span class="desc">Remove a dependency</span><br>
+<code>tallow remove tallow-html</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow update</span> <span class="desc">Update all dependencies</span><br>
+<code>tallow update</code>
+</div>
+
+<h3>Documentation</h3>
+
+<div class="cmd-ref">
+<span class="cmd">tallow doc</span> <span class="desc">Generate documentation from comments</span><br>
+<code>tallow doc</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow help</span> <span class="desc">Show help for any command</span><br>
+<code>tallow help build</code>
+</div>
+
+<h3>Tools</h3>
+
+<div class="cmd-ref">
+<span class="cmd">tallow repl</span> <span class="desc">Interactive read-eval-print loop</span><br>
+<code>tallow repl</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow lsp</span> <span class="desc">Start LSP server for editor integration</span><br>
+<code>tallow lsp</code>
+</div>
+
+<div class="cmd-ref">
+<span class="cmd">tallow version</span> <span class="desc">Show compiler version</span><br>
+<code>tallow version</code>
+</div>
+
+<div class="divider"></div>
+
+<!-- SECTION 13: NEXT STEPS -->
+<h2>Next Steps</h2>
+
+<div class="card highlight">
+<h4>You now know Tallow</h4>
+<p>You can write real programs. Try these challenges:</p>
+<ul>
+<li>Build a web scraper with browser automation</li>
+<li>Create a file transfer tool with encryption</li>
+<li>Write a REST API server</li>
+<li>Build an autonomous agent with <code>@agent_task</code></li>
+</ul>
+</div>
+
+<h3>Learn More</h3>
+
+<ul>
+<li><strong>Full Language Spec:</strong> Read <code>CLAUDE.md</code> in the repo for complete syntax and architecture</li>
+<li><strong>Transfer & Browser Guide:</strong> See <code>tallow-transfer-browser-guide.html</code> for advanced features</li>
+<li><strong>Example Programs:</strong> Explore <code>examples/</code> folder for real-world code</li>
+<li><strong>Standard Library:</strong> View <code>stdlib/</code> for all available modules</li>
+<li><strong>Community:</strong> Join GitHub discussions at tallow-lang/tallow</li>
+</ul>
+
+<h3>Key Resources</h3>
+
+<table>
+<tr>
+<th>Resource</th>
+<th>Purpose</th>
+</tr>
+<tr>
+<td><code>CLAUDE.md</code></td>
+<td>Complete language specification (types, syntax, features)</td>
+</tr>
+<tr>
+<td><code>tallow-transfer-browser-guide.html</code></td>
+<td>Deep dive into file transfer, browser, and cryptography</td>
+</tr>
+<tr>
+<td><code>examples/*.tl</code></td>
+<td>Real working programs demonstrating language features</td>
+</tr>
+<tr>
+<td><code>stdlib/</code></td>
+<td>API stubs for all standard library modules</td>
+</tr>
+<tr>
+<td>tallow-lang.org</td>
+<td>Official website with tutorials and documentation</td>
+</tr>
+</table>
+
+<div class="divider"></div>
+
+<!-- FOOTER -->
+<div style="text-align: center; padding: 40px 0; border-top: 2px solid #1e293b; color: #64748b; margin-top: 60px;">
+<p><strong>Tallow v0.4.0</strong> — Privacy-first systems language</p>
+<p>Illegal operations don't compile. Legal ones are fast by default.</p>
+<p style="font-size: 0.85em; margin-top: 20px;">March 2026 — Compiled for PDF printing. Print with Ctrl+P to preserve styling.</p>
+</div>
+
+</div>
+</body>
+</html>

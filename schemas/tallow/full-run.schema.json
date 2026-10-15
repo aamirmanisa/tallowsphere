@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/full-run.schema.json",
+  "title": "Tallow Full Run Artifact",
+  "description": "Canonical schema for <pipeline>_full.json artifacts produced by Tallow parallel scraper runs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "captured_at",
+    "target_urls",
+    "headers",
+    "l1_concurrency",
+    "l2_concurrency",
+    "l3_concurrency",
+    "rows"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Schema version for this artifact shape."
+    },
+    "captured_at": {
+      "type": "string",
+      "description": "Capture time. Legacy format uses epoch milliseconds encoded as a string.",
+      "anyOf": [
+        {
+          "pattern": "^[0-9]{10,16}$"
+        },
+        {
+          "format": "date-time"
+        }
+      ]
+    },
+    "target_urls": {
+      "type": "array",
+      "description": "Input URLs probed by this run.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/url"
+      }
+    },
+    "headers": {
+      "$ref": "#/$defs/headers"
+    },
+    "l1_concurrency": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "l2_concurrency": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "l3_concurrency": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rows": {
+      "type": "array",
+      "description": "Flattened response rows across retry waves.",
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    }
+  },
+  "$defs": {
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://",
+      "minLength": 10
+    },
+    "headers": {
+      "type": "object",
+      "description": "Request headers used for all probes in this run.",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "bitFlag": {
+      "description": "Compatibility flag: current writers emit '0'/'1'; future writers may emit booleans.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "0",
+            "1"
+          ]
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wave",
+        "url",
+        "status",
+        "body",
+        "body_len",
+        "is_json",
+        "is_graphql",
+        "auth_blocked",
+        "rate_limited",
+        "retryable",
+        "error_kind"
+      ],
+      "properties": {
+        "wave": {
+          "type": "string",
+          "pattern": "^L[1-9][0-9]*$",
+          "description": "Retry wave label (L1, L2, L3, ...)."
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 599,
+          "description": "HTTP status code, or 0 for transport failures."
+        },
+        "body": {
+          "type": "string"
+        },
+        "body_len": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "is_json": {
+          "$ref": "#/$defs/bitFlag"
+        },
+        "is_graphql": {
+          "$ref": "#/$defs/bitFlag"
+        },
+        "auth_blocked": {
+          "$ref": "#/$defs/bitFlag"
+        },
+        "rate_limited": {
+          "$ref": "#/$defs/bitFlag"
+        },
+        "retryable": {
+          "$ref": "#/$defs/bitFlag"
+        },
+        "error_kind": {
+          "type": "string",
+          "enum": [
+            "none",
+            "transport",
+            "server",
+            "rate_limited",
+            "auth",
+            "other"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,149 @@
+From a6569bfe2b52c9405aaaa669d721f600551e497f Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:59:47 +0000
+Subject: [PATCH 11/27] docs: record the executed state of the scraper plan
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+P0.T2 closed (two defects, the second self-inflicted) · P5 done · P1 T1/T3/T4 done
+with the spec's four deviations closed · P6.T2 decided by measurement · P7 written.
+The remainder is stated per item with what each still needs, rather than left as a
+gap to rediscover.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 125 ++++++++++++++++++
+ 1 file changed, 125 insertions(+)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index 4b7f4c7..01cd7b1 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -382,3 +382,128 @@ Per `docs/agents/issue-tracker.md`: spec at `.scratch/tallow-scraper-execution/s
+ - `git log` shows one narrow commit per task.
+ - `docs/extraction-engine/TALLOW-SCRAPER-AUDIT-2026-10-14.md` Part E is re-issued as **all closed / closed-with-non-claims / rejected-with-reason** — no item left silently unaddressed.
+ - The two human gates are answered in writing, and their answers are recorded in the decision docs.
++
++---
++
++## Progress 2026-10-15 (executed after the phase list above)
++
++### P0.T2 — ✅ CLOSED, and it took TWO defects, not one
++
++Committing `rng.rs` was necessary and **not sufficient**. With it committed, a clean checkout still
++failed, with exactly one distinct error:
++
++```
++error[E0425]: cannot find function `hash_bytes` in module `crate::stdlib::provenance`
++  --> src/runtime/fs_ffi.rs:230:65
++```
++
++Cause: `8e5bdaac` (this session) committed `src/runtime/fs_ffi.rs` — which calls
++`provenance::hash_bytes` — while excluding `src/stdlib/provenance.rs`, the file defining it, as
++"unattributed". It was not unattributed: `fs_ffi.rs:222-224` names it in its own doc comment. Fixed
++by committing the callee. **Verified: `git worktree add /tmp/clean-v3 HEAD && cargo check` →
++`CLEAN_CHECKOUT_RC=0`** at `73abec10`.
++
++Lesson (now in `tallow-development/references/commit-and-edit-hazards.md`): the dirty tree masks this
++class entirely — only a clean-checkout build catches it, and one distinct error text can appear once
++per compiled target, so a 25-line error list may be a single defect.
++
++### P5 — ✅ DONE (HAR import)
++
++The blocker was structural, not cosmetic: **every HAR struct in `network.rs` derived `Serialize`
++only**, so the shapes the recorder emits could not be parsed. They now derive `Deserialize`, with
++defaults for what real captures omit (`timings.ssl`, `pages`, sizes) and aliases for the two
++spellings our own `rename_all` gets wrong (`serverIPAddress`, `redirectURL`).
++
++`src/browser/har_import.rs`: refuses rather than half-succeeds (parse error / version ≠ 1.2 / no
++entries), and redaction is not bypassable — imported URLs, header values and body text go through
++`browser::privacy::scan_and_redact`, the same scanner a live capture obeys.
++**Verified:** `cargo check --lib --bins` RC=0 · `browser::har_import` **7 passed/0** ·
++`browser::network` **63 passed/0** (the new derives do not disturb the recorder).
++
++### P1 — 🔄 PARTIAL: T1/T2/T4 landed; T3/T5/T6 open
++
++The tier was Ollama-only, so the engine actually chosen for it could not be called at all.
++Landed: explicit `Engine` (default `Ollama`, unknown names refused), `with_engine` with the same
++zone-predicate guard in the constructor (an engine is not a new egress path), credential from
++`TALLOW_LLM_API_KEY` read at call time and never stored, `EngineMisconfigured` as a distinct
++refusal, and `run_evidence::record("llm_engine", …)` so "which tier ran" is a fact about the run.
++**Verified:** `cargo check` RC=0 · `engine_tests` **5 passed/0** · `browser::llm_extract`'s existing
++**35 passed/0**.
++**UNVERIFIED, stated:** the live call needs a key, so the wire path is plausible, not demonstrated.
++Still open from P1: **T3** (name the egress plane in the docs), **T5** (the plan's own compliance
++gate on the transfer), **T6** (cost/latency budget).
++
++### P6.T2 — premise corrected (see the block in that section)
++
++### P7 — ✅ T1/T2/T3 written; one step unproven
++
++`docs/decisions/REA-2026-10-14.md` and `docs/extraction-engine/REA-CLI-RUNBOOK.md` are committed;
++the decision re-affirms Tallow-native with REA external-only, on the operator's delegation of the
++call to this session's recommendation. **T3 holds:** no Tallow source file was modified for REA.
++**Open:** T2's Tor-plane proof (`IsTor:true` via Camoufox-over-Tor) — it needs a browser session,
++so it is not a docs-only step and is not claimed.
++
++### Commits from this session (all local, none pushed)
++
++`c09363a4` CLI verbs · `75ff637a` provenance/run_evidence · `aac4e785` JA4H · `e923b3e4` crypto ·
++`c64fd997` docs · `73abec10` provenance callee · plus P5 and P1 (this block).
++
++### P1 — ✅ T1/T3/T4 DONE (the spec's four deviations closed)
++
++Built first as engine selection + key refusal; then brought to the spec, whose steps 2–4 differ
++materially:
++- **`resolve_engine_config` refuses when no base URL is set — that refusal IS the honest default.**
++  The tier no longer defaults ON pointing at a local service, which is what made a run report
++  "attempted, failed" when the truth was "not attempted". `TALLOW_LLM_EXTRACT=1` still forces it on.
++  `SmartExtractor::default()` follows it, and `llm_reason` carries why.
++- **Backend-aware probe** (step 3): `{base}/v1/models`, a bounded GET that cannot itself burn a
++  completion or half an extraction.
++- **`tier_state()`** reports `{enabled, engine, engine_url, model, credential_present, reachable,
++  reason}` and `try_llm_fallback` records it as `llm_tier` **before deciding**; a tier that is not
++  enabled returns without sending and records the reason via P4's mechanism. This closes the phase's
++  own stated defect: "enabled" and "working" are no longer the same claim.
++- **Defaults to `deepseek/deepseek-flash`**; `TALLOW_LLM_MODEL`/`TALLOW_LLM_ENGINE` override; an
++  unknown engine is refused, not defaulted.
++- **T3**: data-flow stated in the call's doc comment (vendor receives the page sample + prompt; the
++  box IP does not leave the box; no `TALLOW_ALLOW_DIRECT`-style bypass exists).
++
++**Verified:** `cargo check --lib --bins` RC=0 · `engine_tests` **10 passed/0** · `smart_extract`
++**16 passed/0** · `llm_extract` **40 passed/0** (35 before this work). Commit `3ba8fe7f`.
++**UNVERIFIED, stated:** the live call — needs a credential and a reachable engine, so the wire path
++is plausible, not demonstrated.
++
++### P6.T2 — ✅ DONE, and the decision was made by measurement
++
++Declared `real-ml = []`. My earlier recommendation ("test whether it compiles, it might break") was
++written before reading the branch: `embeddings.rs` does **not** attempt a candle loader — with the
++feature enabled `EmbeddingEngine::new` returns a documented `MlError` ("real-ml is not shipped")
++rather than silently falling back to the mock. Declaring it therefore cannot quietly substitute a
++non-semantic engine for a semantic one.
++**Verified:** default check RC=0 with `unexpected_cfgs` mentions **2 → 0**; `cargo check --features
++real-ml` **RC=0** (the branch had never been compiled); `browser::ml` **17 passed/0**. Commit
++`29f9976d`.
++Also corrected in that commit: `stdlib/browser.tl`'s `// native:` comment was accurate as that file's
++idiom but silent about the AOT backend having no lowering; it now says which backend runs the method.
++
++### Still open after this pass
++
++- **P1.T2 (vault custody)** — the key resolves from `TALLOW_LLM_API_KEY` today, read-only and never
++  argv; the spec also wants the `src/vault/**` custody path.
++- **P1.T5 (compliance gate)** — the tier sends third-party page content to a third-party vendor and
++  is not yet gated on the plan's `compliance` block. Needs the policy decision threaded from the
++  plan through `crawl_pipeline` → `smart_extract`; a helper without that caller would be the
++  uncalled-helper anti-pattern this plan already criticises.
++- **P1.T6 (cost/latency budget)** — per-run cap + the measurement. Measurement needs a live engine,
++  so it is measured-or-blocked; a cap can be built without one.
++- **P2.T1** — deferred deliberately, with the reason recorded: the interpreter path is correct
++  (default RC=0; `--require-native` refuses loudly), so this is a backend gap, not a correctness
++  defect. Binding it needs a native that builds `%struct.StructuredData`, including the runtime
++  representation of `[]String` and `Map`, on the interp/codegen byte-parity surface. What landed
++  instead is the precise claim in `stdlib/browser.tl`.
++- **P7.T2's Tor plane proof** — needs a browser session; not a docs-only step.
++
++### Commit list for this work (all local, none pushed)
++
++`c09363a4` CLI verbs · `75ff637a` provenance/run_evidence · `aac4e785` JA4H · `e923b3e4` crypto ·
++`c64fd997` docs · `73abec10` provenance callee · `11923c2a` HAR import · `429eb6d2` engine selection ·
++`29f9976d` real-ml · `3ba8fe7f` tier config/probe/state.

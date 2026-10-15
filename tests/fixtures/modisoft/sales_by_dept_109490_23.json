@@ -1,0 +1,243 @@
+{
+ "store_id": 23,
+ "client_code": 109490,
+ "group_by": "department",
+ "anchor_date": "2026-09-04",
+ "period_start": "2026-08-01",
+ "period_end": "2026-08-31",
+ "currency": "USD",
+ "total_sales": 223613.66,
+ "total_gross_profit": 101116.58,
+ "overall_gp_percent": 45.2,
+ "ranked_by": "sales",
+ "limit": 100,
+ "count": 25,
+ "items": [
+  {
+   "rank": 1,
+   "department": "Package Beverages",
+   "sales": 47813.22,
+   "gross_profit": 24059.51,
+   "gp_percent": 50.3,
+   "units": 13335.0,
+   "sales_pct_of_total": 21.4
+  },
+  {
+   "rank": 2,
+   "department": "Other Tobacco",
+   "sales": 44146.5,
+   "gross_profit": 18956.98,
+   "gp_percent": 42.9,
+   "units": 4903.0,
+   "sales_pct_of_total": 19.7
+  },
+  {
+   "rank": 3,
+   "department": "Beer",
+   "sales": 38218.0,
+   "gross_profit": 12478.58,
+   "gp_percent": 32.7,
+   "units": 5061.0,
+   "sales_pct_of_total": 17.1
+  },
+  {
+   "rank": 4,
+   "department": "Lottery",
+   "sales": 21261.0,
+   "gross_profit": 21261.0,
+   "gp_percent": 100.0,
+   "units": 2316.0,
+   "sales_pct_of_total": 9.5
+  },
+  {
+   "rank": 5,
+   "department": "Cigarettes",
+   "sales": 19152.63,
+   "gross_profit": 1678.85,
+   "gp_percent": 8.8,
+   "units": 1779.0,
+   "sales_pct_of_total": 8.6
+  },
+  {
+   "rank": 6,
+   "department": "Wine",
+   "sales": 11940.64,
+   "gross_profit": 5076.55,
+   "gp_percent": 42.5,
+   "units": 938.0,
+   "sales_pct_of_total": 5.3
+  },
+  {
+   "rank": 7,
+   "department": "Salty Snacks",
+   "sales": 7974.76,
+   "gross_profit": 2868.8,
+   "gp_percent": 36.0,
+   "units": 2662.0,
+   "sales_pct_of_total": 3.6
+  },
+  {
+   "rank": 8,
+   "department": "Candy",
+   "sales": 6806.61,
+   "gross_profit": 3370.37,
+   "gp_percent": 49.5,
+   "units": 2063.0,
+   "sales_pct_of_total": 3.0
+  },
+  {
+   "rank": 9,
+   "department": "Alternative Snacks",
+   "sales": 4865.24,
+   "gross_profit": 2204.57,
+   "gp_percent": 45.3,
+   "units": 1286.0,
+   "sales_pct_of_total": 2.2
+  },
+  {
+   "rank": 10,
+   "department": "Edible Grocery",
+   "sales": 4269.51,
+   "gross_profit": 3627.79,
+   "gp_percent": 85.0,
+   "units": 1374.0,
+   "sales_pct_of_total": 1.9
+  },
+  {
+   "rank": 11,
+   "department": "Cold Dispensed Drink",
+   "sales": 3647.98,
+   "gross_profit": -1268.55,
+   "gp_percent": -34.8,
+   "units": 1855.0,
+   "sales_pct_of_total": 1.6
+  },
+  {
+   "rank": 12,
+   "department": "Packaged Ice Cream",
+   "sales": 3030.39,
+   "gross_profit": 1270.02,
+   "gp_percent": 41.9,
+   "units": 611.0,
+   "sales_pct_of_total": 1.4
+  },
+  {
+   "rank": 13,
+   "department": "Health  Beauty Care",
+   "sales": 2447.63,
+   "gross_profit": 1261.07,
+   "gp_percent": 51.5,
+   "units": 467.0,
+   "sales_pct_of_total": 1.1
+  },
+  {
+   "rank": 14,
+   "department": "Packaged Sweet Snack",
+   "sales": 1833.21,
+   "gross_profit": 836.15,
+   "gp_percent": 45.6,
+   "units": 629.0,
+   "sales_pct_of_total": 0.8
+  },
+  {
+   "rank": 15,
+   "department": "General Merchandise",
+   "sales": 1709.6,
+   "gross_profit": 737.61,
+   "gp_percent": 43.1,
+   "units": 388.0,
+   "sales_pct_of_total": 0.8
+  },
+  {
+   "rank": 16,
+   "department": "Automotive Products",
+   "sales": 1523.13,
+   "gross_profit": 752.26,
+   "gp_percent": 49.4,
+   "units": 215.0,
+   "sales_pct_of_total": 0.7
+  },
+  {
+   "rank": 17,
+   "department": "Hot Dispensed Drink",
+   "sales": 809.82,
+   "gross_profit": 809.82,
+   "gp_percent": 100.0,
+   "units": 358.0,
+   "sales_pct_of_total": 0.4
+  },
+  {
+   "rank": 18,
+   "department": "Other Dairy  Deli",
+   "sales": 513.29,
+   "gross_profit": 203.7,
+   "gp_percent": 39.7,
+   "units": 111.0,
+   "sales_pct_of_total": 0.2
+  },
+  {
+   "rank": 19,
+   "department": "Commissary   Other",
+   "sales": 450.73,
+   "gross_profit": 194.71,
+   "gp_percent": 43.2,
+   "units": 107.0,
+   "sales_pct_of_total": 0.2
+  },
+  {
+   "rank": 20,
+   "department": "Non-Edible Grocery",
+   "sales": 414.79,
+   "gross_profit": 177.61,
+   "gp_percent": 42.8,
+   "units": 51.0,
+   "sales_pct_of_total": 0.2
+  },
+  {
+   "rank": 21,
+   "department": "Frozen Dispense Drnk",
+   "sales": 274.87,
+   "gross_profit": 274.87,
+   "gp_percent": 100.0,
+   "units": 92.0,
+   "sales_pct_of_total": 0.1
+  },
+  {
+   "rank": 22,
+   "department": "Food Prepared OnSite",
+   "sales": 234.13,
+   "gross_profit": 181.63,
+   "gp_percent": 77.6,
+   "units": 55.0,
+   "sales_pct_of_total": 0.1
+  },
+  {
+   "rank": 23,
+   "department": "Fluid Milk Products",
+   "sales": 226.24,
+   "gross_profit": 81.37,
+   "gp_percent": 36.0,
+   "units": 56.0,
+   "sales_pct_of_total": 0.1
+  },
+  {
+   "rank": 24,
+   "department": "Packaged Bread",
+   "sales": 30.03,
+   "gross_profit": 10.15,
+   "gp_percent": 33.8,
+   "units": 7.0,
+   "sales_pct_of_total": 0.0
+  },
+  {
+   "rank": 25,
+   "department": "Publications",
+   "sales": 19.71,
+   "gross_profit": 11.16,
+   "gp_percent": 56.6,
+   "units": 9.0,
+   "sales_pct_of_total": 0.0
+  }
+ ],
+ "generated_at": "2026-09-04T20:31:28.783001Z"
+}

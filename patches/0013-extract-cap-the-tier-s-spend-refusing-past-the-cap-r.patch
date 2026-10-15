@@ -1,0 +1,271 @@
+From f66361f1dea1758e948524e315f20d56a6c17f5d Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 01:52:34 +0000
+Subject: [PATCH 13/27] extract: cap the tier's spend, refusing past the cap
+ rather than running
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A reachable engine with no ceiling is an unbounded spend, and the tier had none:
+`num_predict`/`max_tokens` bounded one request's response, but nothing bounded how
+many requests a run could make or how large a prompt could be.
+
+`LlmBudget { max_calls, max_prompt_chars }` is checked BEFORE each call, not
+reported after it: past the cap the tier refuses (EngineMisconfigured) instead of
+proceeding. A budget that degrades into "kept going" is not a budget.
+
+The numbers come from TALLOW_LLM_MAX_CALLS / TALLOW_LLM_MAX_PROMPT_CHARS, defaulting
+to bounded values and recording which source was used, so an undeclared cap does not
+claim to be configured and an unparseable value falls back to the default rather
+than becoming a silent zero-cap. `calls_made` and `max_calls` are in `tier_state`
+and the run-evidence record, so "what did this run spend" is a measurement.
+
+NON-CLAIM, recorded rather than glossed: P1.T6 says to match `budget.rs`. There is
+no `budget.rs` in this tree (`rg --files src | rg budget` → nothing), so there was
+nothing to match. The cap is the equivalent shape.
+
+Verification status: the cap half is verified offline — the call cap refuses at and
+past the limit, an over-cap prompt is refused before sending, defaults are bounded
+and labelled, and an unparseable override falls back. The measurement half
+(model_calls/page, tokens/page, ms/page on a fixture corpus, and "pages after the
+first report 0 model calls") needs a live engine; with no engine configured the
+tier is disabled-with-a-reason, which P1.T6 names as a valid completion. The
+zero-model-calls-after-page-1 mechanism itself is already covered by
+`cached_schema_extracts_at_css_speed_with_zero_model_calls`.
+---
+ src/browser/llm_extract.rs | 160 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 160 insertions(+)
+
+diff --git a/src/browser/llm_extract.rs b/src/browser/llm_extract.rs
+index 819bebc..d3af384 100644
+--- a/src/browser/llm_extract.rs
++++ b/src/browser/llm_extract.rs
+@@ -235,6 +235,11 @@ pub struct LlmExtractor {
+     /// a remote transfer — the gate is fail-closed, so a caller that never
+     /// considered the question does not get to send content to a vendor.
+     pub transfer: crate::browser::llm_transfer::TransferPolicy,
++    /// The run's spend cap.
++    pub budget: LlmBudget,
++    /// Model calls made by this extractor. An atomic rather than a plain counter
++    /// because the call path takes `&self`.
++    calls_made: std::sync::atomic::AtomicU64,
+     /// Engine base URL (default: `http://localhost:11434`). Named for its
+     /// historical Ollama-only meaning; with `engine: OpenAiCompatible` it is the
+     /// OpenAI-compatible root that `/v1/chat/completions` is appended to.
+@@ -277,6 +282,8 @@ impl LlmExtractor {
+         let mut extractor = Self {
+             engine,
+             transfer: crate::browser::llm_transfer::TransferPolicy::none(),
++            budget: LlmBudget::from_env(&|k| std::env::var(k).ok()),
++            calls_made: std::sync::atomic::AtomicU64::new(0),
+             ollama_url: base_url.trim_end_matches('/').to_string(),
+             model: model.to_string(),
+             schema_cache: HashMap::new(),
+@@ -782,6 +789,17 @@ impl LlmExtractor {
+     /// One place decides, so an engine cannot be selected in configuration and
+     /// then ignored by the call path.
+     async fn call_engine(&self, prompt: &str) -> Result<String, ExtractError> {
++        // Spend is checked before the call, not reported after it.
++        let made = self.calls_made.load(std::sync::atomic::Ordering::SeqCst);
++        self.budget
++            .check_calls(made)
++            .map_err(ExtractError::EngineMisconfigured)?;
++        self.budget
++            .check_prompt(prompt.len())
++            .map_err(ExtractError::EngineMisconfigured)?;
++        self.calls_made
++            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
++
+         let text = match self.engine {
+             Engine::Ollama => self.call_ollama(prompt).await?,
+             Engine::OpenAiCompatible => self.call_openai_compatible(prompt).await?,
+@@ -858,6 +876,8 @@ impl LlmExtractor {
+         TierState {
+             enabled: credential_present && reachable && transfer_allowed,
+             transfer_allowed,
++            calls_made: self.calls_made.load(std::sync::atomic::Ordering::SeqCst),
++            max_calls: self.budget.max_calls,
+             engine: self.engine.as_str(),
+             engine_url: self.ollama_url.clone(),
+             model: self.model.clone(),
+@@ -2403,6 +2423,10 @@ pub struct TierState {
+     /// engine with no authorising policy, which is what makes the gate
+     /// fail-closed rather than advisory.
+     pub transfer_allowed: bool,
++    /// Model calls made so far, and the cap — so "how much did this run spend"
++    /// is a measurement, not an estimate.
++    pub calls_made: u64,
++    pub max_calls: u64,
+     pub reason: String,
+ }
+ 
+@@ -2418,11 +2442,85 @@ impl TierState {
+             "credential_present": self.credential_present,
+             "reachable": self.reachable,
+             "transfer_allowed": self.transfer_allowed,
++            "calls_made": self.calls_made,
++            "max_calls": self.max_calls,
+             "reason": self.reason,
+         })
+     }
+ }
+ 
++/// A per-run cap on what the tier may spend.
++///
++/// **Fail-closed:** past the cap the tier REFUSES rather than running. A budget
++/// that degrades into "kept going" is not a budget.
++///
++/// Note: the P1.T6 step says to match `budget.rs`. There is no `budget.rs` in
++/// this tree (`rg --files src | rg budget` → nothing), so there is nothing to
++/// match; this is the equivalent shape, and the difference is recorded rather
++/// than glossed.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct LlmBudget {
++    /// Maximum model calls for one run.
++    pub max_calls: u64,
++    /// Maximum characters in a single prompt.
++    pub max_prompt_chars: usize,
++    /// Where the numbers came from.
++    pub source: String,
++}
++
++/// Default call cap when nothing is declared.
++pub const DEFAULT_MAX_CALLS: u64 = 16;
++/// Default per-prompt character cap.
++pub const DEFAULT_MAX_PROMPT_CHARS: usize = 400_000;
++
++impl LlmBudget {
++    pub fn from_env(getenv: &dyn Fn(&str) -> Option<String>) -> Self {
++        let parse_num = |key: &str| -> Option<u64> {
++            getenv(key)
++                .map(|s| s.trim().to_string())
++                .filter(|s| !s.is_empty())
++                .and_then(|s| s.parse::<u64>().ok())
++        };
++        let declared = parse_num("TALLOW_LLM_MAX_CALLS").is_some()
++            || parse_num("TALLOW_LLM_MAX_PROMPT_CHARS").is_some();
++        Self {
++            max_calls: parse_num("TALLOW_LLM_MAX_CALLS").unwrap_or(DEFAULT_MAX_CALLS),
++            max_prompt_chars: parse_num("TALLOW_LLM_MAX_PROMPT_CHARS")
++                .map(|n| n as usize)
++                .unwrap_or(DEFAULT_MAX_PROMPT_CHARS),
++            source: if declared {
++                "environment".to_string()
++            } else {
++                "defaults".to_string()
++            },
++        }
++    }
++
++    /// May one more call be made, given `made` so far?
++    pub fn check_calls(&self, made: u64) -> Result<(), String> {
++        if made >= self.max_calls {
++            return Err(format!(
++                "budget exhausted: {made} of {} model calls used ({}) — refusing rather than \
++                 exceeding the cap",
++                self.max_calls, self.source
++            ));
++        }
++        Ok(())
++    }
++
++    /// May a prompt of this size be sent?
++    pub fn check_prompt(&self, chars: usize) -> Result<(), String> {
++        if chars > self.max_prompt_chars {
++            return Err(format!(
++                "prompt is {chars} chars, over the {} cap ({}) — refusing rather than sending \
++                 an unbounded payload",
++                self.max_prompt_chars, self.source
++            ));
++        }
++        Ok(())
++    }
++}
++
+ /// The body an OpenAI-compatible chat endpoint expects.
+ pub fn openai_request_body(model: &str, prompt: &str) -> serde_json::Value {
+     serde_json::json!({
+@@ -2582,6 +2680,8 @@ mod engine_tests {
+             credential_present: false,
+             reachable: false,
+             transfer_allowed: false,
++            calls_made: 0,
++            max_calls: DEFAULT_MAX_CALLS,
+             reason: "disabled (no credential: TALLOW_LLM_API_KEY)".to_string(),
+         };
+         let ev = state.to_evidence();
+@@ -2593,6 +2693,8 @@ mod engine_tests {
+             "credential_present",
+             "reachable",
+             "transfer_allowed",
++            "calls_made",
++            "max_calls",
+             "reason",
+         ] {
+             assert!(ev.get(key).is_some(), "missing {key} in {ev}");
+@@ -2600,6 +2702,64 @@ mod engine_tests {
+         assert_eq!(ev["credential_present"], false);
+     }
+ 
++    #[test]
++    fn the_budget_refuses_past_the_call_cap_rather_than_running() {
++        let b = LlmBudget {
++            max_calls: 2,
++            max_prompt_chars: 100,
++            source: "test".to_string(),
++        };
++        assert!(b.check_calls(0).is_ok());
++        assert!(b.check_calls(1).is_ok());
++        // At the cap, and past it, the answer is a refusal — not a warning.
++        match b.check_calls(2) {
++            Err(reason) => assert!(reason.contains("budget exhausted"), "{reason}"),
++            Ok(()) => panic!("a call at the cap must be refused"),
++        }
++        assert!(b.check_calls(9).is_err());
++    }
++
++    #[test]
++    fn an_oversized_prompt_is_refused_before_it_is_sent() {
++        let b = LlmBudget {
++            max_calls: 1,
++            max_prompt_chars: 10,
++            source: "test".to_string(),
++        };
++        assert!(b.check_prompt(10).is_ok(), "exactly at the cap is allowed");
++        match b.check_prompt(11) {
++            Err(reason) => assert!(reason.contains("over the"), "{reason}"),
++            Ok(()) => panic!("an over-cap prompt must be refused"),
++        }
++    }
++
++    #[test]
++    fn the_budget_defaults_are_bounded_and_declared_as_defaults() {
++        let none = |_: &str| None;
++        let b = LlmBudget::from_env(&none);
++        assert_eq!(b.max_calls, DEFAULT_MAX_CALLS);
++        assert_eq!(b.max_prompt_chars, DEFAULT_MAX_PROMPT_CHARS);
++        assert_eq!(
++            b.source, "defaults",
++            "an undeclared cap must not claim to be configured"
++        );
++
++        let env = |k: &str| match k {
++            "TALLOW_LLM_MAX_CALLS" => Some("3".to_string()),
++            _ => None,
++        };
++        let b = LlmBudget::from_env(&env);
++        assert_eq!(b.max_calls, 3);
++        assert_eq!(b.source, "environment");
++        // A non-numeric value does not become a silent zero-cap.
++        let junk = |_: &str| Some("many".to_string());
++        let b = LlmBudget::from_env(&junk);
++        assert_eq!(
++            b.max_calls, DEFAULT_MAX_CALLS,
++            "unparseable falls back to the default"
++        );
++    }
++
+     #[test]
+     fn the_credential_comes_from_a_named_environment_variable() {
+         assert_eq!(LLM_API_KEY_ENV, "TALLOW_LLM_API_KEY");

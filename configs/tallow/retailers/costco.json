@@ -1,0 +1,40 @@
+{
+  "name": "costco",
+  "base_url": "https://www.costco.com",
+  "deals_page_url": "https://www.costco.com/warehouse-savings.html",
+  "clearance_page_url": "https://www.costco.com/clearance.html",
+  "product_selector": "div.product-tile",
+  "price_selector": "span[automation-id='productPrice']",
+  "title_selector": "span[automation-id='productDescription']",
+  "image_selector": "img.product-img",
+  "was_price_selector": "span[automation-id='productWasPrice']",
+  "stock_selector": "span:contains('Add to Cart'), button:contains('Add')",
+  "sku_pattern": "\\.(\\d+)\\.html",
+  "api_endpoints": {
+    "warehouse_inventory_api": "https://www.costco.com/AjaxGetWarehouseInventory?warehouseNumber={warehouse_id}&itemNumber={sku}",
+    "price_api": "https://www.costco.com/AjaxGetProductPrice?itemNumber={sku}",
+    "search_api": "https://www.costco.com/CatalogSearch?keyword={query}"
+  },
+  "affiliate": {
+    "network": "Impact Radius",
+    "network_id": "costco",
+    "program_url": "https://www.costco.com/affiliate-program.html",
+    "commission_rate": "1-2% (membership-specific)",
+    "cookie_duration_days": 1,
+    "product_api_available": false
+  },
+  "rate_limit_ms": 3000,
+  "requires_browser": true,
+  "notes": "Aggressive bot protection (Akamai, 403 on curl). WebSphere Commerce backend. Ajax endpoints exist but may require session/auth cookies. Clearance items identified by .97 price ending. Warehouse savings require membership to view prices. Product page uses automation-id attributes. SKU extracted from .{sku}.html pattern in URLs. Live-probed OK 2026-10-02T16:23:22Z (https://www.costco.com/warehouse-savings.html); selectors still need rendered-page verification.",
+  "product_url_pattern": "https://www.costco.com/.product.{sku}.html",
+  "store_url_pattern": "https://www.costco.com/warehouse-savings.html?store={warehouse_id}",
+  "pagination_pattern": "?currentPage={page}&pageSize={size}",
+  "page_size": 24,
+  "price_ending_hints": {
+    "clearance": ".97",
+    "manager_special": ".00 or .88",
+    "manufacturer_deal": ".99"
+  },
+  "probe_status": 200,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

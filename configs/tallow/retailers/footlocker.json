@@ -1,0 +1,19 @@
+{
+  "name": "footlocker",
+  "display_name": "Footlocker",
+  "base_url": "https://www.footlocker.com",
+  "deals_page_url": "https://www.footlocker.com/clearance",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 4,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (4 deals). Needs manual selector verification. Live-probed 2026-10-02T16:23:22Z: 404 via plain fetch \u2014 path dead or unresolved redirect; manual URL review; 2026-10-02 wave1: deals path corrected https://www.footlocker.com/sale -> https://www.footlocker.com/clearance (browser-verified; prior 404)",
+  "probe_status": "browser-verified",
+  "probe_date": "2026-10-02T19:55:57Z"
+}

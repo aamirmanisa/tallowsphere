@@ -1,0 +1,19 @@
+{
+  "name": "kohls",
+  "display_name": "Kohls",
+  "base_url": "https://www.kohls.com",
+  "deals_page_url": "https://www.kohls.com/sale-event/clearance.jsp",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 36,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (36 deals). Needs manual selector verification. Live-probed 2026-10-02T16:23:22Z: plain fetch walled (403; browser-required site) \u2014 path not disproven; verify via browser lane.",
+  "probe_status": 403,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

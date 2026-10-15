@@ -1,0 +1,11 @@
+{
+  "_comment": "OWNED-STORES REGISTRY (tallow.modisoft_insights). Copy to ~/.config/tallow/owned_stores.json (or point TALLOW_OWNED_STORES at it) and replace every entry with stores YOU own or operate. The connector REFUSES every credentialed call (login/fetch/logout) for a (client_code, store_id) that is NOT listed here — no registry entry means no login, no fetch. Entries below are schema samples only.",
+  "stores": [
+    {
+      "client_code": 109490,
+      "store_id": 23,
+      "display_name": "PLACEHOLDER - replace with your own store",
+      "owner_note": "Schema sample only. Remove before use; list only stores you own."
+    }
+  ]
+}

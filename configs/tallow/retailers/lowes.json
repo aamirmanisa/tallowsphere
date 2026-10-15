@@ -1,0 +1,37 @@
+{
+  "name": "lowes",
+  "base_url": "https://www.lowes.com",
+  "deals_page_url": "https://www.lowes.com/deals",
+  "clearance_page_url": "https://www.lowes.com/l/clearance",
+  "product_selector": "div[data-qa='prd-actual']",
+  "price_selector": "span[data-qa='prd-prc-act']",
+  "title_selector": "a[data-qa='prd-ttl-lnk']",
+  "image_selector": "img[data-qa='prd-img']",
+  "was_price_selector": "span[data-qa='prd-prc-was']",
+  "stock_selector": "span:contains('Available'), span:contains('In Stock')",
+  "sku_pattern": "/pd/(\\d+)",
+  "api_endpoints": {
+    "search_api": "https://www.lowes.com/api/search?query={query}",
+    "product_api": "https://www.lowes.com/api/product/{sku}",
+    "price_api": "https://www.lowes.com/api/price/{sku}",
+    "inventory_api": "https://www.lowes.com/api/inventory/{sku}/near/{zip}",
+    "store_api": "https://www.lowes.com/api/store/{store_id}"
+  },
+  "affiliate": {
+    "network": "Impact Radius",
+    "network_id": "lowes",
+    "program_url": "https://www.lowes.com/l/affiliate-program.html",
+    "commission_rate": "1-3% (varies by category)",
+    "cookie_duration_days": 1,
+    "product_api_available": false
+  },
+  "rate_limit_ms": 3000,
+  "requires_browser": true,
+  "notes": "Heavy bot protection (Akamai). Curl returns 403 Access Denied. Product cards use data-qa attributes. SKU extracted from /pd/{sku} URL path. Internal API at /api/ endpoints may require store context or auth tokens. Site uses Next.js rendering. Live-probed 2026-10-02T16:23:22Z: plain fetch walled (403; browser-required site) \u2014 path not disproven; verify via browser lane.",
+  "product_url_pattern": "https://www.lowes.com/pd/{slug}/{sku}",
+  "store_url_pattern": "https://www.lowes.com/store/{city}-{state}/{store_id}",
+  "pagination_pattern": "?offset={offset}",
+  "page_size": 24,
+  "probe_status": 403,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "shopbop",
+  "display_name": "Shopbop",
+  "base_url": "https://www.shopbop.com",
+  "deals_page_url": "https://www.shopbop.com/sale/br/v=1/13594.htm",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 3,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (3 deals). Needs manual selector verification. Auto-corrected 2026-10-02T16:23:22Z: https://www.shopbop.com/sale -> https://www.shopbop.com/sale/br/v=1/13594.htm (old path returned 404); candidate verified 2xx via Tor; selectors still need rendered-page verification.",
+  "probe_status": 200,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

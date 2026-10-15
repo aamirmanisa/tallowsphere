@@ -1,0 +1,108 @@
+{
+  "targets": [
+    "https://app.apollo.io/graphql",
+    "https://app.apollo.io/api/graphql",
+    "https://api.apollo.io/graphql",
+    "https://www.apollo.io/",
+    "https://www.apollo.io/robots.txt"
+  ],
+  "headers": {
+    "Accept": "application/json, text/plain, */*",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://app.apollo.io/"
+  },
+  "retry": {
+    "max_attempts": 3,
+    "wave_concurrency": [
+      200,
+      80,
+      30
+    ],
+    "retry_on_status": [
+      408,
+      429,
+      500,
+      502,
+      503,
+      504
+    ],
+    "retry_on_transport_errors": true,
+    "backoff_ms": [
+      250,
+      1000
+    ]
+  },
+  "per_domain": {
+    "app.apollo.io": {
+      "headers": {
+        "Origin": "https://app.apollo.io"
+      },
+      "retry": {
+        "wave_concurrency": [
+          120,
+          40,
+          20
+        ]
+      }
+    },
+    "api.apollo.io": {
+      "retry": {
+        "wave_concurrency": [
+          100,
+          40,
+          20
+        ]
+      }
+    }
+  },
+  "policy": {
+    "allowlist": {
+      "domains": [
+        "apollo.io",
+        "*.apollo.io"
+      ],
+      "url_patterns": [
+        "https://*.apollo.io/*"
+      ]
+    },
+    "denylist": {
+      "url_patterns": [
+        "https://*.apollo.io/admin/*",
+        "https://*.apollo.io/private/*"
+      ]
+    },
+    "robots": {
+      "mode": "advisory"
+    },
+    "rate_limits": {
+      "per_domain": {
+        "app.apollo.io": {
+          "requests_per_minute": 120,
+          "burst": 20,
+          "concurrent": 20,
+          "cooldown_ms": 250
+        },
+        "api.apollo.io": {
+          "requests_per_minute": 100,
+          "burst": 20,
+          "concurrent": 16,
+          "cooldown_ms": 250
+        },
+        "www.apollo.io": {
+          "requests_per_minute": 60,
+          "burst": 10,
+          "concurrent": 8,
+          "cooldown_ms": 500
+        }
+      },
+      "per_ip_pool": {
+        "default": {
+          "requests_per_minute": 500,
+          "burst": 80,
+          "concurrent": 50,
+          "cooldown_ms": 100
+        }
+      }
+    }
+  }
+}

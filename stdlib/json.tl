@@ -1,0 +1,88 @@
+// tallow.json — JSON parse/serialize
+//
+// Type-safe JSON handling with privacy-aware serialization.
+// Secret types cannot be serialized to JSON.
+
+/// JSON value (dynamic)
+enum JsonValue {
+    Null,
+    Bool(value: bool),
+    Number(value: f64),
+    Str(value: String),
+    Array(items: []JsonValue),
+    Object(fields: Map<String, JsonValue>),
+}
+
+/// Parse JSON string into typed value
+fn parse<T>(input: String) -> Result<T> {
+    // native: deserializes JSON into type T
+}
+
+/// Parse JSON string into dynamic JsonValue
+fn parse_value(input: String) -> Result<JsonValue> {
+    // native: parses JSON into JsonValue tree
+}
+
+/// Serialize value to JSON string
+fn to_json<T>(value: T) -> Result<String> {
+    // native: serializes T to JSON string
+    // COMPILE ERROR if T contains secret types
+}
+
+/// Serialize value to pretty-printed JSON
+fn to_json_pretty<T>(value: T) -> Result<String> {
+    // native: serializes with indentation
+}
+
+impl JsonValue {
+    /// Get value at key (for objects)
+    fn get(self, key: String) -> JsonValue? {
+        // returns value at key or nil
+    }
+
+    /// Get value at index (for arrays)
+    fn at(self, index: usize) -> JsonValue? {
+        // returns value at index or nil
+    }
+
+    /// Convert to String
+    fn as_string(self) -> String? {
+        match self {
+            Str(v) -> v
+            _      -> nil
+        }
+    }
+
+    /// Convert to f64
+    fn as_number(self) -> f64? {
+        match self {
+            Number(v) -> v
+            _         -> nil
+        }
+    }
+
+    /// Convert to bool
+    fn as_bool(self) -> bool? {
+        match self {
+            Bool(v) -> v
+            _       -> nil
+        }
+    }
+
+    /// Check if null
+    fn is_null(self) -> bool {
+        match self {
+            Null -> true
+            _    -> false
+        }
+    }
+
+    /// Get array length
+    fn len(self) -> usize {
+        match self {
+            Array(items)  -> items.len
+            Object(fields) -> fields.len
+            _              -> 0
+        }
+    }
+}

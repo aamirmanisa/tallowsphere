@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#fafaf9">
+<title>Tallow</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600&display=swap');
+
+/*
+  TALLOW — Luxury Search Engine
+
+  Jony Ive, fully.
+
+  White space is the luxury.
+  The product disappears. Only the content remains.
+  No dark mode. No gradients. No effects.
+  Paper. Ink. One line of color.
+
+  "The best design is the least design." — Dieter Rams
+  "True simplicity is derived from so much more than just the absence of clutter." — Jony Ive
+*/
+
+:root {
+  --paper: #FBFBFA;
+  --ink: #1D1D1F;
+  --ink-2: #6E6E73;
+  --ink-3: #AEAEB2;
+  --ink-4: #D2D2D7;
+  --surface: #FFFFFF;
+  --divider: #E8E8ED;
+  --focus: #0071E3;
+  --green: #34C759;
+  --orange: #FF9500;
+  --red: #FF3B30;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --mono: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { font-size: 16px; }
+
+body {
+  font-family: var(--font);
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection { background: rgba(0,113,227,0.12); }
+
+/* ════════════════════════════════════════
+   THE LANDING
+
+   Nothing.
+   A word. A field. Silence.
+
+   The user looks at it and understands
+   everything instantly. That is the design.
+   ════════════════════════════════════════ */
+
+.landing {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.mark {
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+  margin-bottom: 52px;
+  user-select: none;
+}
+
+.field-wrap {
+  width: 580px;
+  max-width: calc(100vw - 48px);
+}
+
+.field {
+  width: 100%;
+  height: 52px;
+  padding: 0 20px;
+  font-size: 17px;
+  font-weight: 400;
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 14px;
+  outline: none;
+  transition: border-color 250ms cubic-bezier(.4,0,.2,1),
+              box-shadow 250ms cubic-bezier(.4,0,.2,1);
+  letter-spacing: -0.01em;
+}
+
+.field::placeholder {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.field:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 4px rgba(0,113,227,0.08);
+}
+
+.field-sub {
+  text-align: center;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink-3);
+  letter-spacing: -0.003em;
+}
+
+.field-sub span {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin: 0 1px;
+  color: var(--ink-3);
+}
+
+/* Minimal footer */
+.landing-foot {
+  position: fixed;
+  bottom: 20px;
+  font-size: 12px;
+  color: var(--ink-4);
+  letter-spacing: 0.01em;
+}
+
+/* ════════════════════════════════════════
+   RESULTS
+
+   Search bar rises to the top.
+   Results appear as a clean list.
+   No cards. No boxes. No chrome.
+   Just information, breathing in space.
+   ════════════════════════════════════════ */
+
+.results-page {
+  min-height: 100vh;
+  margin-top: 64px;
+  border-top: 1px solid var(--divider);
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(251,251,250,0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 max(24px, calc((100vw - 800px) / 2));
+  gap: 20px;
+}
+
+.bar-mark {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.bar-field {
+  flex: 1;
+  max-width: 480px;
+  height: 36px;
+  padding: 0 14px;
+  font-size: 15px;
+  font-family: var(--font);
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 250ms;
+  letter-spacing: -0.01em;
+}
+
+.bar-field:focus { border-color: var(--focus); }
+.bar-field::placeholder { color: var(--ink-3); }
+
+.bar-right {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.bar-btn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font);
+  color: var(--ink-2);
+  background: none;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 200ms;
+  letter-spacing: -0.003em;
+}
+
+.bar-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+
+.bar-btn-fill {
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+}
+
+.bar-btn-fill:hover { background: #333; }
+
+/* Results container */
+.results {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 28px 24px;
+}
+
+.results-info {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-bottom: 28px;
+  letter-spacing: -0.003em;
+}
+
+.results-info b { color: var(--ink-2); font-weight: 500; }
+
+/* ── SINGLE RESULT ── */
+/*
+  No card. No border. No background.
+  Just typographic hierarchy and white space.
+  The divider is a single pixel at 4% opacity.
+  Ive: "white space is structure."
+*/
+
+.r {
+  padding: 24px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+
+.r:last-child { border-bottom: none; }
+
+.r-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.r-store {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.r-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.r-title {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.r-snippet {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--ink-2);
+  letter-spacing: -0.003em;
+}
+
+.r-snippet strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.r-bottom {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.r-price {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.r-price-unit {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.r-best { color: var(--green); }
+.r-mid { color: var(--ink); }
+.r-high { color: var(--red); }
+
+.r-tags {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pill {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 5px;
+  letter-spacing: 0.01em;
+}
+
+.pill-green { background: rgba(52,199,89,0.10); color: #1B9E45; }
+.pill-gray { background: rgba(0,0,0,0.04); color: var(--ink-2); }
+.pill-orange { background: rgba(255,149,0,0.10); color: #C67A00; }
+.pill-blue { background: rgba(0,113,227,0.08); color: var(--focus); }
+
+.r-lock {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-4);
+  font-family: var(--mono);
+}
+
+.r-lock svg { width: 12px; height: 12px; }
+
+/* ════════════════════════════════════════
+   URL ANALYSIS
+
+   When a URL is entered instead of a query.
+   A quiet card appears. Information, not decoration.
+   ════════════════════════════════════════ */
+
+.analysis-section {
+  margin-top: 48px;
+  padding-top: 36px;
+  border-top: 1px solid var(--divider);
+}
+
+.analysis-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 16px;
+}
+
+.analysis {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.a-head {
+  padding: 24px 28px;
+  border-bottom: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.a-domain {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.a-domain-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+}
+
+.a-status {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--green);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.a-status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.a-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.a-cell {
+  padding: 20px 28px;
+  border-right: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+
+.a-cell:nth-child(3n) { border-right: none; }
+.a-cell:nth-last-child(-n+3) { border-bottom: none; }
+
+.a-cell-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.a-cell-value {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Difficulty */
+.diff {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.diff-dot {
+  width: 12px; height: 5px;
+  border-radius: 2.5px;
+  background: var(--divider);
+}
+
+.diff-dot.on { background: var(--orange); }
+.diff-dot.on.low { background: var(--green); }
+.diff-dot.on.extreme { background: var(--red); }
+
+/* Crypto pipeline — quiet, horizontal */
+.a-crypto {
+  padding: 20px 28px;
+  border-top: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.a-crypto-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+
+.a-crypto-flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+}
+
+.a-crypto-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--mono);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.a-crypto-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+}
+
+.a-crypto-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--divider);
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+
+.a-foot {
+  padding: 20px 28px;
+  border-top: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.a-rec {
+  font-size: 14px;
+  color: var(--ink-2);
+  letter-spacing: -0.003em;
+}
+
+.a-rec strong { color: var(--ink); font-weight: 500; }
+
+.a-start {
+  height: 36px;
+  padding: 0 20px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: var(--font);
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 200ms;
+  letter-spacing: -0.01em;
+}
+
+.a-start:hover { background: #333; }
+
+/* ════════════════════════════════════════
+   RESPONSIVE
+   ════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  .field-wrap { width: 100%; }
+  .field { height: 48px; font-size: 16px; border-radius: 12px; }
+  .results { padding: 20px 16px; }
+  .r-title { font-size: 17px; }
+  .r-snippet { font-size: 14px; }
+  .r-price { font-size: 19px; }
+  .a-grid { grid-template-columns: 1fr; }
+  .a-cell { border-right: none !important; }
+  .a-crypto-flow { flex-wrap: wrap; gap: 4px; }
+  .a-crypto-sep { display: none; }
+  .bar { padding: 0 16px; }
+  .bar-mark { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<!-- ════════════════════════════════════════
+     THE LANDING
+
+     Nothing but a word and a field.
+     The entire screen is negative space.
+     Ive: "That's it?"
+     ════════════════════════════════════════ -->
+
+<section class="landing">
+  <div class="mark">tallow</div>
+
+  <div class="field-wrap">
+    <input class="field" type="text" placeholder="Search, or enter a URL to analyze" autofocus />
+    <p class="field-sub">Press <span>/</span> to search &nbsp;&middot;&nbsp; <span>Cmd</span> <span>K</span> for commands</p>
+  </div>
+
+  <div class="landing-foot">Encrypted &middot; Undetectable &middot; Adaptive</div>
+<!-- claim label: "undetectable" tagline is illustrative mockup copy — no configuration guarantees evasion (claims register R-B1: raises cost, no guarantee). -->
+</section>
+
+<!-- ════════════════════════════════════════
+     THE RESULTS
+
+     Bar at top. Clean list below.
+     No cards. No boxes.
+     Typography and space do all the work.
+     ════════════════════════════════════════ -->
+
+<section class="results-page">
+  <header class="bar">
+    <a class="bar-mark" href="#">tallow</a>
+    <input class="bar-field" type="text" value="organic chicken breast" />
+    <div class="bar-right">
+      <button class="bar-btn">Filter</button>
+      <button class="bar-btn">Export</button>
+      <button class="bar-btn-fill">New</button>
+    </div>
+  </header>
+
+  <div class="results">
+    <p class="results-info"><b>2,847</b> results across <b>8 stores</b> &middot; 38 ms &middot; encrypted</p>
+
+    <!-- Costco — best price -->
+    <div class="r">
+      <div class="r-head">
+        <span class="r-store"><span class="r-dot" style="background:#E31837"></span> Costco</span>
+      </div>
+      <div class="r-title">Kirkland Signature Organic Chicken Breast</div>
+      <div class="r-snippet">Boneless skinless, USDA organic, no antibiotics. Air chilled. <strong>6.5 lb</strong> value pack. Warehouse item #43279.</div>
+      <div class="r-bottom">
+        <span class="r-price r-best">$4.49 <span class="r-price-unit">/lb</span></span>
+        <div class="r-tags">
+          <span class="pill pill-green">Best price</span>
+          <span class="pill pill-gray">Organic</span>
+          <span class="pill pill-orange">Cloudflare</span>
+        </div>
+        <span class="r-lock">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-layer
+        </span>
+      </div>
+    </div>
+
+    <!-- Aldi -->
+    <div class="r">
+      <div class="r-head">
+        <span class="r-store"><span class="r-dot" style="background:#00568E"></span> Aldi</span>
+      </div>
+      <div class="r-title">Simply Nature Organic Chicken Breast</div>
+      <div class="r-snippet">Boneless skinless. No added solutions. <strong>1.25 lb</strong> package. Raised without antibiotics.</div>
+      <div class="r-bottom">
+        <span class="r-price r-best">$4.79 <span class="r-price-unit">/lb</span></span>
+        <div class="r-tags">
+          <span class="pill pill-gray">Organic</span>
+          <span class="pill pill-gray">SNAP</span>
+        </div>
+        <span class="r-lock">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-layer
+        </span>
+      </div>
+    </div>
+
+    <!-- H-E-B -->
+    <div class="r">
+      <div class="r-head">
+        <span class="r-store"><span class="r-dot" style="background:#E31837"></span> H-E-B</span>
+      </div>
+      <div class="r-title">H-E-B Natural Organic Chicken Breast</div>
+      <div class="r-snippet">Air chilled, hand trimmed. <strong>1.5 lb</strong> average. No hormones, no antibiotics ever. Texas raised.</div>
+      <div class="r-bottom">
+        <span class="r-price r-mid">$4.99 <span class="r-price-unit">/lb</span></span>
+        <div class="r-tags">
+          <span class="pill pill-gray">Organic</span>
+          <span class="pill pill-gray">SNAP</span>
+          <span class="pill pill-blue">Direct API</span>
+        </div>
+        <span class="r-lock">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-layer
+        </span>
+      </div>
+    </div>
+
+    <!-- Walmart -->
+    <div class="r">
+      <div class="r-head">
+        <span class="r-store"><span class="r-dot" style="background:#0071CE"></span> Walmart</span>
+      </div>
+      <div class="r-title">Great Value Organic Chicken Breast</div>
+      <div class="r-snippet">Boneless skinless. Hand-trimmed, no added solutions. <strong>1.25 lb</strong> tray. Available for pickup and delivery.</div>
+      <div class="r-bottom">
+        <span class="r-price r-mid">$5.47 <span class="r-price-unit">/lb</span></span>
+        <div class="r-tags">
+          <span class="pill pill-gray">SNAP</span>
+          <span class="pill pill-orange">PerimeterX</span>
+        </div>
+        <span class="r-lock">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-layer
+        </span>
+      </div>
+    </div>
+
+    <!-- Kroger -->
+    <div class="r">
+      <div class="r-head">
+        <span class="r-store"><span class="r-dot" style="background:#003B73"></span> Kroger</span>
+      </div>
+      <div class="r-title">Simple Truth Organic Chicken Breast Fillets</div>
+      <div class="r-snippet">Free from 101+ artificial preservatives and ingredients. <strong>1.0 lb</strong> package. Simple Truth guarantee.</div>
+      <div class="r-bottom">
+        <span class="r-price r-mid">$5.99 <span class="r-price-unit">/lb</span></span>
+        <div class="r-tags">
+          <span class="pill pill-gray">Organic</span>
+          <span class="pill pill-orange">Akamai</span>
+        </div>
+        <span class="r-lock">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-layer
+        </span>
+      </div>
+    </div>
+
+    <!-- Target -->
+    <div class="r">
+      <div class="r-head">
+        <span class="r-store"><span class="r-dot" style="background:#CC0000"></span> Target</span>
+      </div>
+      <div class="r-title">Good & Gather Organic Chicken Breast</div>
+      <div class="r-snippet">All natural, USDA organic. No antibiotics ever. <strong>1.0 lb</strong> package. Same-day delivery available.</div>
+      <div class="r-bottom">
+        <span class="r-price r-high">$6.29 <span class="r-price-unit">/lb</span></span>
+        <div class="r-tags">
+          <span class="pill pill-gray">SNAP</span>
+          <span class="pill pill-blue">No anti-bot</span>
+        </div>
+        <span class="r-lock">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-layer
+        </span>
+      </div>
+    </div>
+
+    <!-- Amazon / Whole Foods -->
+    <div class="r">
+      <div class="r-head">
+        <span class="r-store"><span class="r-dot" style="background:#FF9900"></span> Amazon Fresh</span>
+      </div>
+      <div class="r-title">365 by Whole Foods Organic Chicken Breast</div>
+      <div class="r-snippet">Whole Foods Market quality standards. Air chilled, no added hormones. <strong>1.0 lb</strong>. Prime delivery eligible.</div>
+      <div class="r-bottom">
+        <span class="r-price r-high">$7.49 <span class="r-price-unit">/lb</span></span>
+        <div class="r-tags">
+          <span class="pill pill-orange">DataDome</span>
+          <span class="pill pill-gray">Prime</span>
+        </div>
+        <span class="r-lock">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-layer
+        </span>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════
+         URL ANALYSIS
+         ════════════════════════════════════════ -->
+
+    <div class="analysis-section">
+      <div class="analysis-label">Site Analysis</div>
+
+      <div class="analysis">
+        <div class="a-head">
+          <div class="a-domain">
+            <span class="a-domain-dot" style="background:#0071CE"></span>
+            walmart.com
+          </div>
+          <div class="a-status">
+            <span class="a-status-dot"></span>
+            Analyzed
+          </div>
+        </div>
+
+        <div class="a-grid">
+          <div class="a-cell">
+            <div class="a-cell-label">Protection</div>
+            <div class="a-cell-value" style="color:var(--orange)">PerimeterX</div>
+          </div>
+          <div class="a-cell">
+            <div class="a-cell-label">Difficulty</div>
+            <div class="diff">
+              <div class="diff-dot on"></div>
+              <div class="diff-dot on"></div>
+              <div class="diff-dot on"></div>
+              <div class="diff-dot on"></div>
+              <div class="diff-dot"></div>
+            </div>
+          </div>
+          <div class="a-cell">
+            <div class="a-cell-label">Confidence</div>
+            <div class="a-cell-value">94.7%</div>
+          </div>
+          <div class="a-cell">
+            <div class="a-cell-label">TLS Profile</div>
+            <div class="a-cell-value">Chrome 136</div>
+          </div>
+          <div class="a-cell">
+            <div class="a-cell-label">Rate Limit</div>
+            <div class="a-cell-value">~2 req/s</div>
+          </div>
+          <div class="a-cell">
+            <div class="a-cell-label">Cookie</div>
+            <div class="a-cell-value">_px3 &middot; 15m</div>
+          </div>
+        </div>
+
+        <div class="a-crypto">
+          <span class="a-crypto-label">Pipeline</span>
+          <div class="a-crypto-flow">
+            <div class="a-crypto-node"><span class="a-crypto-dot" style="background:#5AC8FA"></span> BLAKE3</div>
+            <div class="a-crypto-sep"></div>
+            <div class="a-crypto-node"><span class="a-crypto-dot" style="background:#AF52DE"></span> Argon2id</div>
+            <div class="a-crypto-sep"></div>
+            <div class="a-crypto-node"><span class="a-crypto-dot" style="background:#FF9500"></span> AES-256</div>
+            <div class="a-crypto-sep"></div>
+            <div class="a-crypto-node"><span class="a-crypto-dot" style="background:#FF3B30"></span> XChaCha20</div>
+            <div class="a-crypto-sep"></div>
+            <div class="a-crypto-node"><span class="a-crypto-dot" style="background:#34C759"></span> ML-KEM</div>
+          </div>
+        </div>
+
+        <div class="a-foot">
+          <span class="a-rec">Use <strong>full browser</strong> with <strong>residential proxy</strong> and <strong>cookie farm</strong></span>
+          <button class="a-start">Start</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</body>
+</html>

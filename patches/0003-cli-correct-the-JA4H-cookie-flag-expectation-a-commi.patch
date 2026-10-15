@@ -1,0 +1,34 @@
+From 020afd2949b2ac626ffc21ac0caf81bbb8177a04 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:21:23 +0000
+Subject: [PATCH 03/27] cli: correct the JA4H cookie-flag expectation (a
+ committed red test)
+
+The test passed a Cookie header yet expected marker `n`. The spec says `c` when
+a Cookie header is sent, the sibling test expects `nn` for cookie: None, and every
+hash in the string already matched. The expectation was the defective half, so it
+is fixed rather than "fixed back": cli:: goes 97 passed/2 failed -> 99/0.
+---
+ src/cli/fingerprint_audit_cmd.rs | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/cli/fingerprint_audit_cmd.rs b/src/cli/fingerprint_audit_cmd.rs
+index 89ec265..4c10957 100644
+--- a/src/cli/fingerprint_audit_cmd.rs
++++ b/src/cli/fingerprint_audit_cmd.rs
+@@ -1712,7 +1712,14 @@ mod tests {
+         // sorted: a=1=x · b=2 · raw → names "a,b,raw"; pairs "a=1=x,b=2,raw"
+         let names = hash12("a,b,raw");
+         let pairs = hash12("a=1=x,b=2,raw");
+-        assert_eq!(got, format!("ge11nn01enus_{}_", hash12("Host")) + &format!("{names}_{pairs}"));
++        // Marker 5 is the COOKIE flag: `c` when a Cookie header is sent, `n`
++        // otherwise (spec above, and `--cookie` renders it at :657-661). A
++        // cookie IS passed here (third argument), so the marker is `c`. This
++        // expectation previously read `nn`, which contradicted both the input
++        // and the sibling `test_ja4h_method_version_language_mapping` (which
++        // correctly expects `nn` for `cookie: None`). Only that marker was
++        // wrong: every hash below already matched what the code produced.
++        assert_eq!(got, format!("ge11cn01enus_{}_", hash12("Host")) + &format!("{names}_{pairs}"));
+     }
+ 
+     #[test]

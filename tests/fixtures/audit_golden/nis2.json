@@ -1,0 +1,53 @@
+{
+  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "nis2_report": {
+    "art21_compliance": [
+      {
+        "description": "All algorithms comply with BSI TR-02102",
+        "measure": "Crypto policy (BSI TR-02102)",
+        "status": "PASS"
+      },
+      {
+        "description": "No lock file found for dependency tracking",
+        "measure": "Supply chain security",
+        "status": "FAIL"
+      },
+      {
+        "description": "@legal annotations present for access control traceability",
+        "measure": "Access control",
+        "status": "PASS"
+      },
+      {
+        "description": "No DORA incident logging found \u2014 add DoraCitIncident or dora_log_incident calls",
+        "measure": "Incident response",
+        "status": "FAIL"
+      }
+    ],
+    "article": "Art.21 \u2014 Cybersecurity risk-management measures",
+    "crypto_inventory": {
+      "acceptable": 0,
+      "algorithms": [],
+      "deprecated": 0,
+      "forbidden": 0,
+      "recommended": 0,
+      "total": 0
+    },
+    "directive": "NIS2 (EU 2022/2555)",
+    "errors": 0,
+    "file": "tests/fixtures/legal_valid.tl",
+    "recommendations": [],
+    "timestamp": "<ts>",
+    "vulnerabilities": [],
+    "vulnerability_feed": {
+      "error": "no advisory feed configured: set TALLOW_ADVISORY_FILE to a local JSON advisory feed file (schema tallow.advisory.feed.v1) \u2014 audit vulnerability verdicts cannot be derived without it",
+      "offline_fallback_warning": "",
+      "path": "",
+      "records": 0,
+      "schema_version": "tallow.advisory.feed.v1",
+      "source": "local_json_file",
+      "state": "unavailable"
+    },
+    "warnings": 0
+  },
+  "schema": "tallow.audit.nis2.v1"
+}

@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tallow Search Engine — Spatial</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root{
+    --bg:#F5F5F7;
+    --glass:rgba(255,255,255,0.72);
+    --glass-hover:rgba(255,255,255,0.82);
+    --border:rgba(0,0,0,0.06);
+    --shadow:0 8px 32px rgba(0,0,0,0.06);
+    --shadow-hover:0 12px 40px rgba(0,0,0,0.10);
+    --radius:20px;
+    --blue:#0071E3;
+    --green:#34C759;
+    --orange:#FF9500;
+    --red:#FF3B30;
+    --text:#1D1D1F;
+    --text2:#86868B;
+    --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+
+  html{scroll-behavior:smooth}
+
+  body{
+    font-family:var(--font);
+    background:var(--bg);
+    color:var(--text);
+    line-height:1.5;
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* SVG noise grain overlay */
+  body::before{
+    content:'';
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:9999;
+    opacity:0.022;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat:repeat;
+    background-size:128px 128px;
+  }
+
+  /* Glass panel mixin via class */
+  .glass{
+    background:var(--glass);
+    backdrop-filter:blur(20px) saturate(180%);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+  }
+
+  .glass-card{
+    background:var(--glass);
+    backdrop-filter:blur(20px) saturate(180%);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    transition:transform 0.35s cubic-bezier(.22,1,.36,1),box-shadow 0.35s cubic-bezier(.22,1,.36,1);
+  }
+  .glass-card:hover{
+    transform:translateY(-4px);
+    box-shadow:var(--shadow-hover);
+  }
+
+  /* ── NAV ── */
+  nav{
+    position:fixed;top:0;left:0;right:0;z-index:100;
+    padding:14px 40px;
+    display:flex;align-items:center;justify-content:space-between;
+    background:rgba(245,245,247,0.72);
+    backdrop-filter:blur(20px) saturate(180%);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);
+    border-bottom:1px solid var(--border);
+  }
+  nav .logo{font-size:20px;font-weight:700;letter-spacing:-0.4px;color:var(--text)}
+  nav .logo span{color:var(--blue);font-weight:300}
+  nav ul{list-style:none;display:flex;gap:28px}
+  nav ul a{text-decoration:none;color:var(--text2);font-size:14px;font-weight:500;transition:color .2s}
+  nav ul a:hover{color:var(--text)}
+  nav .cta{
+    background:var(--blue);color:#fff;
+    padding:8px 20px;border-radius:980px;
+    font-size:14px;font-weight:500;border:none;cursor:pointer;
+    transition:background .2s;
+  }
+  nav .cta:hover{background:#005BBB}
+
+  @media(max-width:768px){
+    nav ul{display:none}
+    nav{padding:14px 20px}
+  }
+
+  /* ── SECTIONS ── */
+  section{padding:120px 40px 80px;max-width:1200px;margin:0 auto}
+  @media(max-width:768px){section{padding:100px 16px 60px}}
+
+  /* ── HERO / LANDING ── */
+  #hero{
+    min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding-top:80px;
+  }
+  #hero h1{
+    font-size:clamp(40px,6vw,72px);font-weight:700;letter-spacing:-1.5px;
+    line-height:1.08;margin-bottom:12px;
+    background:linear-gradient(135deg,var(--text) 0%,var(--text2) 100%);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  #hero .subtitle{
+    font-size:clamp(18px,2.2vw,24px);color:var(--text2);font-weight:400;
+    max-width:560px;margin:0 auto 48px;letter-spacing:-0.2px;
+  }
+
+  /* Floating search panel */
+  .search-panel{
+    width:100%;max-width:680px;padding:8px;
+    position:relative;
+    transition:transform 0.15s ease-out;
+  }
+  .search-inner{
+    display:flex;align-items:center;gap:12px;
+    background:rgba(255,255,255,0.9);
+    border:1px solid rgba(0,0,0,0.08);
+    border-radius:16px;
+    padding:6px 8px 6px 20px;
+    transition:border-color .2s,box-shadow .2s;
+  }
+  .search-inner:focus-within{
+    border-color:var(--blue);
+    box-shadow:0 0 0 4px rgba(0,113,227,0.12);
+  }
+  .search-icon{width:20px;height:20px;color:var(--text2);flex-shrink:0}
+  .search-inner input{
+    flex:1;height:52px;border:none;outline:none;
+    font-size:17px;font-family:var(--font);color:var(--text);
+    background:transparent;
+  }
+  .search-inner input::placeholder{color:#C7C7CC}
+  .search-btn{
+    height:40px;padding:0 24px;border-radius:12px;
+    background:var(--blue);color:#fff;border:none;
+    font-size:15px;font-weight:600;cursor:pointer;
+    font-family:var(--font);transition:background .2s;
+    flex-shrink:0;
+  }
+  .search-btn:hover{background:#005BBB}
+
+  .hero-hints{
+    display:flex;gap:8px;margin-top:20px;flex-wrap:wrap;justify-content:center;
+  }
+  .hero-hints span{
+    font-size:13px;color:var(--text2);
+    padding:6px 14px;border-radius:980px;
+    background:rgba(0,0,0,0.03);cursor:pointer;
+    transition:background .2s;
+  }
+  .hero-hints span:hover{background:rgba(0,0,0,0.06)}
+
+  /* ── RESULTS ── */
+  #results{display:none}
+  #results.active{display:block}
+
+  .results-header{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:28px;flex-wrap:wrap;gap:12px;
+  }
+  .results-header h2{font-size:28px;font-weight:600;letter-spacing:-0.5px}
+  .results-meta{font-size:14px;color:var(--text2)}
+  .results-meta b{color:var(--green);font-weight:600}
+
+  .result-card{
+    padding:24px;margin-bottom:16px;cursor:pointer;
+    display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;
+  }
+  .result-card .title{
+    font-size:17px;font-weight:600;color:var(--blue);
+    text-decoration:none;margin-bottom:4px;display:block;
+  }
+  .result-card .url{font-size:13px;color:var(--green);margin-bottom:6px}
+  .result-card .snippet{font-size:15px;color:var(--text2);line-height:1.55}
+  .result-card .tags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .result-card .tag{
+    font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;
+    padding:4px 10px;border-radius:6px;
+  }
+  .tag-legal{background:rgba(52,199,89,0.12);color:var(--green)}
+  .tag-pqc{background:rgba(0,113,227,0.10);color:var(--blue)}
+  .tag-speed{background:rgba(255,149,0,0.12);color:var(--orange)}
+
+  .result-card .card-right{
+    display:flex;flex-direction:column;align-items:flex-end;gap:4px;
+    min-width:90px;
+  }
+  .result-card .latency{font-size:24px;font-weight:700;color:var(--text);letter-spacing:-0.5px}
+  .result-card .latency-unit{font-size:12px;color:var(--text2)}
+
+  @media(max-width:600px){
+    .result-card{grid-template-columns:1fr}
+    .result-card .card-right{flex-direction:row;align-items:center;gap:12px}
+  }
+
+  /* ── ANALYSIS ── */
+  #analysis{display:none}
+  #analysis.active{display:block}
+
+  .analysis-header{margin-bottom:32px}
+  .analysis-header h2{font-size:32px;font-weight:700;letter-spacing:-0.8px;margin-bottom:4px}
+  .analysis-header p{font-size:16px;color:var(--text2)}
+
+  .metrics-grid{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px;
+  }
+  @media(max-width:768px){.metrics-grid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:480px){.metrics-grid{grid-template-columns:1fr}}
+
+  .metric-card{padding:24px;text-align:center}
+  .metric-card .num{font-size:36px;font-weight:700;letter-spacing:-1px;margin-bottom:2px}
+  .metric-card .label{font-size:13px;color:var(--text2);font-weight:500}
+  .metric-card .bar{
+    height:4px;border-radius:2px;background:rgba(0,0,0,0.06);
+    margin-top:14px;overflow:hidden;
+  }
+  .metric-card .bar-fill{height:100%;border-radius:2px;transition:width 1s cubic-bezier(.22,1,.36,1)}
+
+  /* Tech stack grid */
+  .tech-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:32px;
+  }
+  @media(max-width:768px){.tech-grid{grid-template-columns:1fr}}
+  .tech-item{padding:20px;display:flex;align-items:center;gap:14px}
+  .tech-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  .tech-item .tech-name{font-size:14px;font-weight:600}
+  .tech-item .tech-detail{font-size:13px;color:var(--text2)}
+
+  /* Security panel */
+  .security-panel{padding:32px;margin-bottom:32px}
+  .security-panel h3{font-size:20px;font-weight:600;margin-bottom:20px}
+  .security-checks{display:flex;flex-direction:column;gap:12px}
+  .sec-row{display:flex;align-items:center;gap:12px}
+  .sec-icon{
+    width:28px;height:28px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    font-size:14px;flex-shrink:0;
+  }
+  .sec-icon.pass{background:rgba(52,199,89,0.14);color:var(--green)}
+  .sec-icon.warn{background:rgba(255,149,0,0.14);color:var(--orange)}
+  .sec-label{font-size:15px;font-weight:500;flex:1}
+  .sec-value{font-size:13px;color:var(--text2);text-align:right}
+
+  /* ── CRYPTO PIPELINE ── */
+  .pipeline-section{margin-bottom:40px}
+  .pipeline-section h3{font-size:20px;font-weight:600;margin-bottom:24px;text-align:center}
+
+  .pipeline{
+    display:flex;align-items:center;justify-content:center;gap:0;
+    flex-wrap:wrap;padding:20px 0;
+  }
+  .pipeline-step{
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+    position:relative;z-index:1;
+  }
+  .pipeline-circle{
+    width:64px;height:64px;border-radius:50%;
+    background:var(--glass);
+    backdrop-filter:blur(20px) saturate(180%);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid var(--border);
+    box-shadow:var(--shadow);
+    display:flex;align-items:center;justify-content:center;
+    font-size:22px;
+    transition:transform .3s,box-shadow .3s;
+  }
+  .pipeline-step:hover .pipeline-circle{
+    transform:scale(1.12);box-shadow:var(--shadow-hover);
+  }
+  .pipeline-label{font-size:12px;font-weight:600;color:var(--text2);text-align:center;max-width:80px}
+  .pipeline-line{
+    width:48px;height:2px;background:rgba(0,0,0,0.08);flex-shrink:0;
+    margin:0 -4px;align-self:center;margin-bottom:20px;
+  }
+  @media(max-width:600px){
+    .pipeline{gap:4px}
+    .pipeline-line{width:20px}
+    .pipeline-circle{width:52px;height:52px;font-size:18px}
+  }
+
+  /* ── CAPABILITIES ── */
+  #capabilities{text-align:center}
+  #capabilities h2{
+    font-size:clamp(32px,4vw,48px);font-weight:700;letter-spacing:-1px;
+    margin-bottom:8px;
+  }
+  #capabilities .cap-sub{
+    font-size:18px;color:var(--text2);margin-bottom:48px;max-width:520px;margin-inline:auto;
+  }
+
+  .cap-grid{
+    display:grid;grid-template-columns:repeat(2,1fr);gap:20px;
+    max-width:800px;margin:0 auto 48px;text-align:left;
+  }
+  @media(max-width:600px){.cap-grid{grid-template-columns:1fr}}
+
+  .cap-card{padding:32px}
+  .cap-card .cap-num{
+    font-size:48px;font-weight:800;letter-spacing:-2px;line-height:1;
+    margin-bottom:6px;
+  }
+  .cap-card .cap-label{font-size:15px;font-weight:600;margin-bottom:4px}
+  .cap-card .cap-desc{font-size:14px;color:var(--text2);line-height:1.5}
+
+  /* ── FOOTER ── */
+  footer{
+    text-align:center;padding:40px;
+    font-size:13px;color:var(--text2);
+    border-top:1px solid var(--border);
+    margin-top:40px;
+  }
+  footer a{color:var(--blue);text-decoration:none}
+
+  /* ── TRANSITIONS ── */
+  .fade-in{opacity:0;transform:translateY(20px);transition:opacity .7s,transform .7s}
+  .fade-in.visible{opacity:1;transform:translateY(0)}
+
+  /* status indicator */
+  .status-dot{
+    display:inline-block;width:8px;height:8px;border-radius:50%;
+    margin-right:6px;vertical-align:middle;
+  }
+  .status-dot.live{background:var(--green);box-shadow:0 0 6px rgba(52,199,89,0.5)}
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">tallow<span>search</span></div>
+  <ul>
+    <li><a href="#hero">Search</a></li>
+    <li><a href="#capabilities">Capabilities</a></li>
+    <li><a href="https://github.com" target="_blank">Docs</a></li>
+  </ul>
+  <button class="cta" onclick="runSearch()">Launch Scraper</button>
+</nav>
+
+<!-- HERO / LANDING -->
+<section id="hero">
+  <h1 class="fade-in">Search everything.<br>Expose nothing.</h1>
+  <p class="subtitle fade-in">Privacy-first scraping with post-quantum encryption, legal compliance, and unlimited IP rotation. Built with Tallow.</p>
+
+  <div class="search-panel glass fade-in" id="searchPanel">
+    <div class="search-inner">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="searchInput" placeholder="Enter a domain or search query..." autocomplete="off">
+      <button class="search-btn" onclick="runSearch()">Search</button>
+    </div>
+  </div>
+
+  <div class="hero-hints fade-in">
+    <span onclick="fillSearch('amazon.com pricing API')">amazon.com</span>
+    <span onclick="fillSearch('competitor product feeds')">product feeds</span>
+    <span onclick="fillSearch('public SEC filings')">SEC filings</span>
+    <span onclick="fillSearch('real estate listings MLS')">MLS data</span>
+  </div>
+</section>
+
+<!-- RESULTS -->
+<section id="results">
+  <div class="results-header fade-in">
+    <h2 id="resultsTitle">Results for "amazon.com pricing API"</h2>
+    <div class="results-meta"><span class="status-dot live"></span> <b>12 sources</b> scraped in <b>340ms</b> via 8 IPs</div>
+  </div>
+
+  <div class="result-card glass-card fade-in">
+    <div>
+      <a class="title" href="#">Amazon Product Advertising API v5</a>
+      <div class="url">https://webservices.amazon.com/paapi5/documentation</div>
+      <div class="snippet">Official product data API. Returns pricing, availability, and product metadata. Rate limited to 1 req/sec for new associates. TLS 1.3 required.</div>
+      <div class="tags">
+        <span class="tag tag-legal">GDPR Safe</span>
+        <span class="tag tag-pqc">PQC Encrypted</span>
+      </div>
+    </div>
+    <div class="card-right">
+      <div class="latency">42<span class="latency-unit">ms</span></div>
+    </div>
+  </div>
+
+  <div class="result-card glass-card fade-in">
+    <div>
+      <a class="title" href="#">Keepa — Amazon Price Tracker</a>
+      <div class="url">https://keepa.com/api</div>
+      <div class="snippet">Historical pricing data for 900M+ products across 13 Amazon marketplaces. REST API with JSON responses. Public pricing data, no personal data collected.</div>
+      <div class="tags">
+        <span class="tag tag-legal">Public Data</span>
+        <span class="tag tag-speed">48ms</span>
+      </div>
+    </div>
+    <div class="card-right">
+      <div class="latency">48<span class="latency-unit">ms</span></div>
+    </div>
+  </div>
+
+  <div class="result-card glass-card fade-in">
+    <div>
+      <a class="title" href="#">CamelCamelCamel Price History</a>
+      <div class="url">https://camelcamelcamel.com</div>
+      <div class="snippet">Free Amazon price history charts. Provides buy/sell signals based on historical data. Publicly accessible without authentication.</div>
+      <div class="tags">
+        <span class="tag tag-legal">Public Data</span>
+        <span class="tag tag-pqc">PQC Encrypted</span>
+      </div>
+    </div>
+    <div class="card-right">
+      <div class="latency">67<span class="latency-unit">ms</span></div>
+    </div>
+  </div>
+
+  <div class="result-card glass-card fade-in">
+    <div>
+      <a class="title" href="#">Rainforest API — Structured Product Data</a>
+      <div class="url">https://www.rainforestapi.com/docs</div>
+      <div class="snippet">Real-time Amazon product, pricing, and review data. Returns structured JSON. Rate limits enforced server-side. robots.txt compliant.</div>
+      <div class="tags">
+        <span class="tag tag-legal">Rate Limited</span>
+        <span class="tag tag-speed">120ms</span>
+      </div>
+    </div>
+    <div class="card-right">
+      <div class="latency">120<span class="latency-unit">ms</span></div>
+    </div>
+  </div>
+
+  <div class="result-card glass-card fade-in" onclick="showAnalysis()">
+    <div>
+      <a class="title" href="#">Amazon.com — Direct Product Pages</a>
+      <div class="url">https://amazon.com/dp/*</div>
+      <div class="snippet">Direct page scraping with Tallow stealth engine. Anti-bot bypassed via 20-vector fingerprint. IP rotation across 10K residential proxies. Click to see full site analysis.</div>
+      <div class="tags">
+        <span class="tag tag-legal">Legal Basis: Public</span>
+        <span class="tag tag-pqc">ML-KEM-768</span>
+        <span class="tag tag-speed">Stealth</span>
+      </div>
+    </div>
+    <div class="card-right">
+      <div class="latency">89<span class="latency-unit">ms</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- SITE ANALYSIS -->
+<section id="analysis">
+  <div class="analysis-header fade-in">
+    <h2>Site Analysis</h2>
+    <p>amazon.com &mdash; deep infrastructure scan completed</p>
+  </div>
+
+  <div class="metrics-grid">
+    <div class="metric-card glass-card fade-in">
+      <div class="num" style="color:var(--green)">A+</div>
+      <div class="label">Scrapeability Score</div>
+      <div class="bar"><div class="bar-fill" style="width:94%;background:var(--green)"></div></div>
+    </div>
+    <div class="metric-card glass-card fade-in">
+      <div class="num">1.2M</div>
+      <div class="label">Pages Indexed</div>
+      <div class="bar"><div class="bar-fill" style="width:78%;background:var(--blue)"></div></div>
+    </div>
+    <div class="metric-card glass-card fade-in">
+      <div class="num">89<span style="font-size:18px;color:var(--text2)">ms</span></div>
+      <div class="label">Avg Response</div>
+      <div class="bar"><div class="bar-fill" style="width:88%;background:var(--orange)"></div></div>
+    </div>
+    <div class="metric-card glass-card fade-in">
+      <div class="num" style="color:var(--green)">0</div>
+      <div class="label">Legal Violations</div>
+      <div class="bar"><div class="bar-fill" style="width:100%;background:var(--green)"></div></div>
+    </div>
+  </div>
+
+  <!-- Crypto Pipeline -->
+  <div class="pipeline-section glass fade-in" style="padding:32px">
+    <h3>Post-Quantum Crypto Pipeline</h3>
+    <div class="pipeline">
+      <div class="pipeline-step">
+        <div class="pipeline-circle">&#x1F310;</div>
+        <div class="pipeline-label">Request Origin</div>
+      </div>
+      <div class="pipeline-line"></div>
+      <div class="pipeline-step">
+        <div class="pipeline-circle">&#x1F512;</div>
+        <div class="pipeline-label">TLS 1.3 Hybrid</div>
+      </div>
+      <div class="pipeline-line"></div>
+      <div class="pipeline-step">
+        <div class="pipeline-circle">&#x1F9EC;</div>
+        <div class="pipeline-label">ML-KEM-768</div>
+      </div>
+      <div class="pipeline-line"></div>
+      <div class="pipeline-step">
+        <div class="pipeline-circle">&#x1F6E1;</div>
+        <div class="pipeline-label">IP Rotation</div>
+      </div>
+      <div class="pipeline-line"></div>
+      <div class="pipeline-step">
+        <div class="pipeline-circle">&#x2705;</div>
+        <div class="pipeline-label">Encrypted Store</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tech Stack -->
+  <div class="tech-grid">
+    <div class="tech-item glass-card fade-in">
+      <div class="tech-dot" style="background:var(--green)"></div>
+      <div>
+        <div class="tech-name">TLS 1.3</div>
+        <div class="tech-detail">X25519 + ML-KEM hybrid handshake</div>
+      </div>
+    </div>
+    <div class="tech-item glass-card fade-in">
+      <div class="tech-dot" style="background:var(--blue)"></div>
+      <div>
+        <div class="tech-name">HTTP/2</div>
+        <div class="tech-detail">Multiplexed streams, HPACK</div>
+      </div>
+    </div>
+    <div class="tech-item glass-card fade-in">
+      <div class="tech-dot" style="background:var(--orange)"></div>
+      <div>
+        <div class="tech-name">Cloudflare WAF</div>
+        <div class="tech-detail">Detected &mdash; bypassed via fingerprint</div>
+      </div>
+    </div>
+    <div class="tech-item glass-card fade-in">
+      <div class="tech-dot" style="background:var(--green)"></div>
+      <div>
+        <div class="tech-name">robots.txt</div>
+        <div class="tech-detail">Respected &mdash; 142 rules parsed</div>
+      </div>
+    </div>
+    <div class="tech-item glass-card fade-in">
+      <div class="tech-dot" style="background:var(--blue)"></div>
+      <div>
+        <div class="tech-name">Rate Limit</div>
+        <div class="tech-detail">2 req/sec &mdash; compliant</div>
+      </div>
+    </div>
+    <div class="tech-item glass-card fade-in">
+      <div class="tech-dot" style="background:var(--green)"></div>
+      <div>
+        <div class="tech-name">Data Class</div>
+        <div class="tech-detail">Public &mdash; no personal data</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Security Panel -->
+  <div class="security-panel glass fade-in">
+    <h3>Legal &amp; Security Audit</h3>
+    <div class="security-checks">
+      <div class="sec-row">
+        <div class="sec-icon pass">&#10003;</div>
+        <div class="sec-label">GDPR Article 6 &mdash; Lawful Basis</div>
+        <div class="sec-value">public_data (hiQ v. LinkedIn)</div>
+      </div>
+      <div class="sec-row">
+        <div class="sec-icon pass">&#10003;</div>
+        <div class="sec-label">CCPA Compliance</div>
+        <div class="sec-value">No personal data collected</div>
+      </div>
+      <div class="sec-row">
+        <div class="sec-icon pass">&#10003;</div>
+        <div class="sec-label">robots.txt Adherence</div>
+        <div class="sec-value">All rules respected</div>
+      </div>
+      <div class="sec-row">
+        <div class="sec-icon pass">&#10003;</div>
+        <div class="sec-label">Post-Quantum Encryption</div>
+        <div class="sec-value">ML-KEM-768 active</div>
+      </div>
+      <div class="sec-row">
+        <div class="sec-icon pass">&#10003;</div>
+        <div class="sec-label">Data Retention</div>
+        <div class="sec-value">Auto-purge in 7 days</div>
+      </div>
+      <div class="sec-row">
+        <div class="sec-icon warn">!</div>
+        <div class="sec-label">Rate Limiting</div>
+        <div class="sec-value">Approaching threshold (1.8/2 req/s)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CAPABILITIES -->
+<section id="capabilities">
+  <h2 class="fade-in">Built different.</h2>
+  <p class="cap-sub fade-in">Every number enforced at compile time. Not aspirational. Architectural.</p>
+
+  <div class="cap-grid">
+<!-- claim label: capability cards below (10M+/DPDK, 1ms-class startup + 80x Python, 2035 quantum-ready) are mockup copy — DPDK stub; no process-level startup measurement; PQC defaults are per-layer (R-K3/R-P3/R-P5/R-C3). -->
+    <div class="cap-card glass-card fade-in">
+      <div class="cap-num" style="color:var(--blue)">10M+</div>
+      <div class="cap-label">Concurrent Connections</div>
+      <div class="cap-desc">IPPool with DPDK kernel bypass. From 10K epoll to 10M+ with zero code changes.</div>
+    </div>
+    <div class="cap-card glass-card fade-in">
+      <div class="cap-num" style="color:var(--green)">&lt;1ms</div>
+      <div class="cap-label">Script Startup</div>
+      <div class="cap-desc">Native binary, no interpreter. 80x faster than Python cold start.</div>
+    </div>
+    <div class="cap-card glass-card fade-in">
+      <div class="cap-num" style="color:var(--orange)">0</div>
+      <div class="cap-label">Runtime Privacy Leaks</div>
+      <div class="cap-desc">Private and secret types tracked through the entire type system. Leaks fail at compile time.</div>
+    </div>
+    <div class="cap-card glass-card fade-in">
+      <div class="cap-num" style="color:var(--text)">2035</div>
+      <div class="cap-label">Quantum Ready</div>
+      <div class="cap-desc">ML-KEM-768 default encryption. Your code is NIST PQC compliant on day one.</div>
+    </div>
+  </div>
+
+  <div style="max-width:680px;margin:0 auto">
+    <div class="glass fade-in" style="padding:32px;text-align:left">
+      <div style="font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Tallow Code</div>
+      <pre style="font-family:'SF Mono','JetBrains Mono','Fira Code',monospace;font-size:14px;line-height:1.7;color:var(--text);overflow-x:auto"><code><span style="color:var(--text2)">@legal</span>(basis: .public_data, purpose: <span style="color:var(--green)">"price monitoring"</span>)
+<span style="color:#AF52DE">fn</span> <span style="color:var(--blue)">scrape</span>(domains: []Domain) -> Result&lt;[]Price&gt; {
+    <span style="color:#AF52DE">let</span> pool = IPPool { size: 10_000, rotation: .per_request }
+
+    pool.map(domains, concurrency: 50) { d ->
+        fetch(<span style="color:var(--green)">"https://{d}/products"</span>, timeout: 5.seconds)?
+    }
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Tallow &mdash; privacy-first systems language &mdash; <a href="#">tallow-lang.org</a></p>
+  <p style="margin-top:6px">Mockup v4 Spatial &middot; visionOS Design Language</p>
+</footer>
+
+<script>
+// Parallax on search panel
+const panel = document.getElementById('searchPanel');
+document.addEventListener('mousemove', e => {
+  if (!panel) return;
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 2;
+  const dx = (e.clientX - cx) / cx;
+  const dy = (e.clientY - cy) / cy;
+  panel.style.transform = `translate(${dx * 6}px, ${dy * 4}px) rotateX(${-dy * 1.5}deg) rotateY(${dx * 1.5}deg)`;
+});
+
+// Intersection Observer for fade-in
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); } });
+}, { threshold: 0.1 });
+document.querySelectorAll('.fade-in').forEach(el => obs.observe(el));
+
+// Search
+function fillSearch(q) {
+  document.getElementById('searchInput').value = q;
+}
+
+function runSearch() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) { fillSearch('amazon.com pricing API'); }
+  const title = document.getElementById('resultsTitle');
+  if (title) title.textContent = 'Results for "' + (q || 'amazon.com pricing API') + '"';
+
+  document.getElementById('hero').style.minHeight = 'auto';
+  document.getElementById('results').classList.add('active');
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+
+  // Re-observe new visible elements
+  document.querySelectorAll('.fade-in:not(.visible)').forEach(el => obs.observe(el));
+}
+
+function showAnalysis() {
+  document.getElementById('analysis').classList.add('active');
+  document.getElementById('analysis').scrollIntoView({ behavior: 'smooth' });
+  document.querySelectorAll('.fade-in:not(.visible)').forEach(el => obs.observe(el));
+}
+</script>
+</body>
+</html>

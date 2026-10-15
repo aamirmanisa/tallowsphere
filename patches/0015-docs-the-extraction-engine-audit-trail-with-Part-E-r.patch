@@ -1,0 +1,1067 @@
+From 23ba5f346168a19093625749f9e114e8ed3b00c1 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 02:06:02 +0000
+Subject: [PATCH 15/27] docs: the extraction-engine audit trail, with Part E
+ re-issued
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Part E was a ranked opportunity list; the plan's Definition of Done requires it
+re-issued as all-closed / closed-with-non-claims / rejected-with-reason. Every one
+of its seven items now carries a verdict and the commit that supports it, and the
+three gaps the audit did NOT name — the ungoverned third-party transfer, the
+missing spend ceiling, and an undeclared `real-ml` — are added with theirs.
+
+Two of the seven verdicts correct this audit rather than confirm it:
+  * item 2's cost estimate ("Rust modules already exist; only bindings missing")
+    was wrong for `structured_data_extract` — no codegen lowering exists, and the
+    registered struct layout is only part of what a binding needs;
+  * item 7 was one defect short: closing the clean-checkout build revealed a
+    second, introduced by a commit made while executing this plan.
+
+Also committed: the four audit inputs this document cites (CHECKLIST,
+EXTRACTION-ENGINE-SPEC, REA-INTEGRATION-ASSESSMENT, RECONCILIATION-2026-10-12),
+which were untracked. No file's content changed except the audit's Part E and its
+non-claims section.
+---
+ docs/extraction-engine/CHECKLIST.md           | 251 ++++++++++++++++++
+ .../EXTRACTION-ENGINE-SPEC.md                 | 237 +++++++++++++++++
+ .../REA-INTEGRATION-ASSESSMENT.md             | 148 +++++++++++
+ .../RECONCILIATION-2026-10-12.md              | 111 ++++++++
+ .../TALLOW-SCRAPER-AUDIT-2026-10-14.md        | 251 ++++++++++++++++++
+ 5 files changed, 998 insertions(+)
+ create mode 100644 docs/extraction-engine/CHECKLIST.md
+ create mode 100644 docs/extraction-engine/EXTRACTION-ENGINE-SPEC.md
+ create mode 100644 docs/extraction-engine/REA-INTEGRATION-ASSESSMENT.md
+ create mode 100644 docs/extraction-engine/RECONCILIATION-2026-10-12.md
+ create mode 100644 docs/extraction-engine/TALLOW-SCRAPER-AUDIT-2026-10-14.md
+
+diff --git a/docs/extraction-engine/CHECKLIST.md b/docs/extraction-engine/CHECKLIST.md
+new file mode 100644
+index 0000000..fd8a34c
+--- /dev/null
++++ b/docs/extraction-engine/CHECKLIST.md
+@@ -0,0 +1,251 @@
++# TALLOW EXTRACTION — CONSOLIDATED CHECKLIST
++
++**Status:** tracked, living. This is the single checklist; it supersedes the chat-only version.
++**Date:** 2026-10-12 · **Scope:** `/home/user/Nixe` extraction/collection work.
++**Source docs it consolidates:** `RECONCILIATION-2026-10-12.md`, `EXTRACTION-ENGINE-SPEC.md` (index only), `REA-INTEGRATION-ASSESSMENT.md`, `docs/mega/tallow-1000x-upgrade-2026/scraping-crawling.md` (partly stale — see §A), `docs/mega/phase5-extraction-rows-10agent/`.
++
++---
++
++## §A. Status change — the source audit is partly stale
++
++Re-verified against the live tree on 2026-10-12. **Three headline claims of `scraping-crawling.md` are no longer true:**
++
++| Audit claim | Fresh evidence | Verdict |
++|---|---|---|
++| `TALLOW_DELTA_CRAWL` "set but never read in `src/`" | 9 reader sites: `crawl_queue.rs:122,127,358,675`; `crawl_pipeline.rs:321,357,383,1161,1234`. Set at `scheduler.rs:929`. | REFUTED |
++| `plan_incremental_crawl` / `is_unchanged_after_fetch` / `DeltaNeed` have "zero production callers" | `crawl_pipeline.rs:516` calls `is_unchanged_after_fetch`; `:465` uses `unchanged_count()`/`re_crawl`; `:1263` wires `.with_delta(...)`; `:385` resolves `self.delta \|\| delta_crawl_enabled()`. | REFUTED |
++| `llm_extract` "not registered in `mod.rs`" | `mod.rs:49` `pub mod llm_extract;`; `:223` re-export; invoked `smart_extract.rs:221` (`with_config`), `:235` (`heal_schema`). | REFUTED |
++| `CrawlResult.unchanged` has "no caller" | Set `crawl_pipeline.rs:484`; consumed in-pipeline `:465`. Terminal skip unconfirmed. | PARTLY REFUTED |
++
++Also already done: `@legal` annotations with a `legal_bases` report; CLI `pia`, `sast`, `compliance`, `audit`.
++
++**Rule for future audits:** component-verdict sections aged well; "unwired" claims did not. **Wiring state must be re-checked at use time, never inherited.**
++
++---
++
++## §B. The work — each item verified fresh this turn
++
++- [ ] **B1. Bind the 4 missing FFI natives.** `tallow_crawler_from_sitemap`, `tallow_crawler_from_links`, `tallow_page_cache_create`, `tallow_structured_data_extract` — **0 hits each in `src/`**; declared `// native` at `stdlib/browser.tl:305-312, 325-327, 354-356`. Rust modules exist (`browser/sitemap.rs`, `browser/structured_data.rs`); only bindings missing.
++  *Accept:* each resolves `--require-native`; no silent interpreter fallback.
++- [ ] **B2. Turn the crawl content-cache on by default.** `crawl_pipeline.rs:28` — still off by default.
++  *Accept:* re-crawl of an unchanged fixture emits 304s and zero re-extractions.
++- [ ] **B3. Replace the blocking rate limiter.** `crawl_pipeline.rs:295` `std::thread::sleep(wait)` in the fetch path.
++  *Accept:* async per-host limiter; throughput reported **at constant per-host request rate**.
++- [ ] **B4. Confirm the terminal delta skip.** Pipeline consumes `unchanged` internally (`:465`, `:484`); terminal consumer unconfirmed.
++  *Accept:* evidence either way, then close or file.
++- [ ] **B5. Verify then flip 4 feature flags.** `parquet-storage`, `s3-storage`, `redis-backend`, `real-ml` (`ml::*` mock-only). **Audit-sourced — re-verify first.**
++- [ ] **B6. Extraction CLI surface.** Fresh `tallow --help` has **no** `extract`, `plan`, `schema`, `scrape`. Spec §10 wholly unimplemented.
++- [ ] **B7. Phase 5 remaining.** Generic `tallow.extraction_schema.v1` extraction (currently hardcoded product-listing), parser-registry/request-plan integration, selector-chain wiring. **June-sourced — re-verify.**
++- [ ] **B8. Language-level types (only genuinely new domain).** `Sourced<T>` field provenance as a type; capability-typed egress; compile-time selector + schema validation; tristate `Field<T>` promotion. §1.8 `@legal` **already exists** — drop it.
++  *Cost driver:* touches `interp.rs` (2.2 MB) + `codegen.rs` (1.25 MB), both byte-identical under the parity harness.
++- [ ] **B9. Measure every item the same way — three numbers, never one:** baseline, after, and **constraint held** (per-host rate / model calls per page / rows emitted). A speedup that moves the constraint is a policy violation.
++
++---
++
++## §C. Decisions only the operator can make
++
++- [ ] **C1.** The 5 GB `Tallow/` duplicate checkout (git `master`, 60,431 files, own `target/` 3 G, `website/`, `apps/`, `crates/`) — live or dead?
++- [x] **C2. REA — DECIDED: not integrating.** Operator chose "skip REA entirely — build only the Tallow-native Rust extraction stack" (2026-10-12). Verified same day: **nothing from REA is present on the box** — no `rea-agents` (npm global or npx cache), no MCP registration, no repo references outside `REA-INTEGRATION-ASSESSMENT.md`. And **no RE engine is installed**: `ghidra`, `hopper`, `ida`, `jadx`, `wabt`, `binwalk`, `pwntools`, `radare2`, `rizin` all absent; only stock `objdump` (used by `src/codegen.rs` to verify its own hardening) and `gdb`. No Python RE libs (`pwn`, `capstone`, `lief`, `angr`, `pefile`). Reopen only if a target requires binary/JS *static analysis* — then `npx rea-agents setup` locally (MIT) plus a native-analysis engine.
++- [ ] **C3.** Build B8, or leave the language untouched?
++- [ ] **C4.** Doc sprawl: 4 pre-existing specs + 3 docs in `docs/extraction-engine/`. This file is the consolidation; retire the index?
++
++---
++
++## §D. Housekeeping (verified)
++
++- [ ] **D1.** Reclaim **~22 G** (`target/` 19 G + `Tallow/target/` 3 G). Root at **76%, 36 G free**.
++- [ ] **D2.** `artifacts/` 7.5 G across **328** run dirs — retention pass.
++- [ ] **D3.** Correct `scraping-crawling.md` §3/§4 so the next agent doesn't inherit its stale claims.
++
++---
++
++## §E. Module classification — the evasion family, correctly sorted
++
++### E0. Governing rule (the box's own policy, not an outside imposition)
++
++`docs/opsec/security-privacy-audit-2026-09-12.md:95`:
++> **Out of scope by design (policy):** detection-evasion escalation beyond the doctrine · CAPTCHA-solver services · any network-level scan without an owner-authorized scope · any "undetectable" claim.
++
++`:7` operating guardrails: read-only · public-data-only · robots.txt + `crawl-delay` honoured · **stop-on-block, no escalation** · network scanning only inside owner-authorized scope · no "undetected" claims.
++`:90` (R3): "concealment is not a legal strategy — compliance and authorization are."
++
++`docs/opsec/stealth-scanning-statement-of-intent.md:10,38`: postures for **authorized** read-only public-data collection; GET-only; no authentication surfaces; no credentials; no writes to targets; stop-on-block.
++
++### E1. The test
++
++> **Is the target a system that has decided to refuse you, and is the goal to overrule that decision?**
++
++The excluded family exists to defeat **stop-on-block** — the one control the doctrine names as absolute. Attribution resistance for authorized work (Tor, pacing, leak closure) is in-doctrine. Overruling a refusal is not.
++
++### E2. Classification
++
++| Module | What its own doc comment says | Tier |
++|---|---|---|
++| `stealth.rs` | "design-target JS-vector spoofing", correlated fingerprint properties | **T1 EXCLUDED** |
++| `stealth_v2.rs` | "comprehensive anti-detection evasion scripts" vs Google/Cloudflare/PerimeterX | **T1** |
++| `stealth_v3.rs` | "advanced anti-detection evasions for DataDome, FingerprintJS, CreepJS" | **T1** |
++| `advanced_stealth.rs` | malleable traffic profiles, connection warming | **T1** |
++| `network_stealth.rs` | TCP/IP fingerprint correlation | **T1** |
++| `tor_stealth.rs` | Tor-aware browser fingerprint matching | **T1** against a refusing target; in-doctrine for attribution resistance **only while stop-on-block holds** |
++| `fingerprint_coherence.rs` | coherence validation to defeat cross-referencing anti-bot systems | **T1** |
++| `fingerprint_validator.rs` | cross-vector consistency to defeat anti-bot ML | **T1** |
++| `http2_fingerprint.rs` | HTTP/2 SETTINGS control vs Akamai/CDN bot detection | **T1** |
++| `cookie_farm.rs` | generates anti-bot cookies (`_abck`, `cf_clearance`) via real Chrome | **T1** |
++| `behavior.rs` | "human behavior simulation for anti-bot bypass" | **T1** |
++| `wordfence_bypass.rs` | "Wordfence JS challenge bypass" | **T1** |
++| `antibot.rs` | "unified anti-bot bypass orchestrator" | **T1** |
++| `vendor_detect.rs` | identifies which anti-bot system a site uses (in service of the above) | **T1** |
++| `traffic_morph.rs` | makes request patterns "statistically indistinguishable from real" users | **T1** |
++| `slider_captcha.rs` | trajectories that "pass behavioral analysis" | **T1** |
++| `captcha.rs` | **split:** detection + manual solve mode | detection/manual gate = **T3** |
++| `captcha.rs` | **split:** "external solver integration" | solver = **T1** — named in the policy as out of scope |
++| `dpi_bypass.rs` | Geneva / XTLS-Vision protocol obfuscation | **T2 DUAL-USE** — censorship circumvention is a *different* question from scraping. Excluded from this workstream; reclassifiable if the purpose stated is getting your own traffic through a censoring network. |
++| `proxy_intelligence.rs` | ASN classification, diversity enforcement, pool scoring | **T2** — privacy/geo-testing = fine; using egress diversity to get past a refusal = escalation |
++| `residential.rs` | commercial rotating-proxy gateways (IPRoyal, Oxylabs, Bright Data) | **T2** — same test |
++| `ipv6_pool.rs` | IPv6 pool + mobile proxy rotation | **T2** — same test |
++| `free_proxies.rs` | fetches SOCKS5 lists from GitHub, validates | **T2** — same test; plus a standing supply-chain hygiene concern (third-party list ingestion) |
++| `cadence.rs` | "never sleep a constant" — jittered pacing | **T3** — pacing is L1 of the doctrine; jittered politeness is good practice |
++| `runtime_fingerprint_audit.rs` | "what the page *actually sees*" — self-diagnostic | **T3** |
++| `cli/fingerprint_audit_cmd.rs` | `tallow fingerprint-audit` (JA4/JA4H/JA4T, coherence, cohort-k; exit 0/2/64) | **T3** |
++| `substitution.rs` | **"Product substitution engine: canonical product → alternatives"** (out of stock, cheaper, generic, dietary swap) | **T3 — MISLISTED EARLIER; belongs in normal product work** |
++
++### E3. Corrections to my earlier list (my errors)
++
++1. **`substitution.rs` is not evasion at all** — it's a product-alternatives graph. I wrongly swept it in.
++2. **`runtime_fingerprint_audit.rs` is a self-diagnostic**, not an evasion vector. Wrongly swept in.
++3. **I flattened different categories:** `dpi_bypass.rs` (censorship circumvention) and `cadence.rs` (politeness pacing) are not anti-bot evasion. `traffic_morph.rs` genuinely is.
++4. **`captcha.rs` is mixed** and must be split: detection + manual solve are in-doctrine; the solver integration is explicitly out of scope by policy.
++
++### E4. Offensive stdlib surface outside `src/browser/` — §E scope extension
++
++§E above was scoped to `src/browser/` only. Sweeping `src/stdlib/` the same way found one more member of the excluded class:
++
++| Module | What its own doc comment says | Tier |
++|---|---|---|
++| `stdlib/jwt.tl` + `src/stdlib/jwt.rs` (21.6 KB) | **"JSON Web Token analysis, forgery, and attack"** — `JWT.forge`, `attack_none` (alg:none), `attack_weak_secrets` (wordlist brute force against HMAC secrets), `attack_kid_injection`, `attack_alg_confusion` | **T1 EXCLUDED** — this is an **authentication-defeat toolkit**: it mints valid-looking tokens and recovers signing secrets in order to impersonate a user. Defeating an auth control is the same category as defeating an anti-bot control. |
++
++**Checked and NOT offensive** (recorded so it isn't re-flagged):
++
++- `mitm` hits (13 files) are **defensive** — `tallow-crypto/pake/sas.rs:233` describes SAS as *detecting* a MITM ("two endpoints that did two independent PAKE legs (the MITM case) end up with…"), and `tallow-net/transport/tls_config.rs:389` notes that E2E ciphertext survives a TLS-layer MITM. The stack is designed to **resist** MITM, not perform it.
++- `transfer_decrypt_payload` (`stdlib/transfer_net.rs:3422`, with a roundtrip test at `:6240`) decrypts **Tallow's own** end-to-end transfer payloads.
++- `deobfuscate_string` (`stdlib/crypto.rs:8153`) is **keyed** — `deobfuscate_string(hex_data, key)` requires the key as an argument, so it only works where the key is already held. Not a bypass.
++
++---
++
++## §F. Standing exclusions
++
++- **T1 modules above** — no writing, extending, testing, or speccing. Inventory only. Files remain untouched; this is a scope rule, not a deletion.
++- **No "1000x across all specifications" claims.** Baseline-zero for the 12 absent REA capabilities (`0 → 1`, not a ratio); physically bounded metrics (a 200 ms RTT cannot become 0.2 ms); "hardware requirements" has no unit.
++- **No re-derivation from the four prior specs** without re-checking wiring state (§A).
++
++---
++
++## §G. What this checklist does NOT contain — the repo's own canonical queues
++
++Verified 2026-10-12. This file is the complete list for the **extraction workstream as scoped by one conversation**. It is **not** the repo's work queue. The repo maintains six canonical artifacts (its own sync rule, quoted in §G.6) and this checklist had been reconciled against none of them.
++
++### G.1 Blocker register — `docs/mega/tallow-1000x-blocker-register.md` (34.8K)
++
++**20 blockers, BLK-001 … BLK-020**, each with a P0/P1/P2 priority, evidence, and a posture. Four are live, and all four read **"local gate complete / production deferred"**:
++
++| Blocker | Pri | Scope | Posture | What remains |
++|---|---|---|---|---|
++| **BLK-008** | P1 | Manifests / schemas | Phase 4 Local Planner Complete / Production Deferred | live execution, vault auth, live browser fallback, production artifact capture, production compliance |
++| **BLK-009** | P1 | Extraction | Phase 5 Local/Mock Complete / Production Deferred | production/live extractor wiring, external dataset governance, browser fallback + live DOM extraction, vault/auth, production compliance. **This is the home of §B1/B2/B3/B7.** |
++| **BLK-010** | P1 | Stdlib/runtime drift | Scraper-Critical Parity Complete / Broad Docs Drift Guarded | scraper-critical gate is `open_gaps=0`; the `modules=43 aligned=20 open_gaps=13` figure is the **deferred broad** class, not live work |
++| **BLK-015** | P1 | Compliance | Phase 9 Local/No-Secret Gate Complete / Production Deferred | real vault/secret integration, approved live policy execution, production runner enforcement, destructive retention purge, legal/compliance approval |
++
++### G.2 The phase program is DRAINED
++
++`.hermes/phase-autopilot.yaml`: ~20 phases, **every one `status: accepted`**. `.hermes/project-memory.md`: *"as of this checkpoint there are no remaining `status: pending` phases."*
++
++> Correction: my earlier note that Phase 5 was "the next pending phase" came from a June doc and is **wrong** today.
++
++### G.3 Claims ledger — the measurement backlog
++
++`docs/claims-ledger.yaml`: 889 lines, **65 tracked claims** (`R-P1…`, `R-C1…`, `R-T1…`), many marked unverified / target-only with anchors and lanes. Recorded examples: "no io_uring network path", "StubDpdkBackend only", "no SIMD tokenizer in tree", "AES-NI value unmeasured", "arena target-only", unmeasured startup/perf rows conflicting with `tests/perf_binary_startup.rs:3`.
++
++> **This institutionalises B9.** Contribute measurements here rather than inventing a parallel method.
++
++### G.4 Scraper task list §18 — open items
++
++- [ ] **TSK-1801** Build launcher script and commit it.
++- [ ] **TSK-1803** Add GraphQL POST payload support from manifest.
++- [ ] **TSK-1804** Add run metadata and schema-stable `full.json`.
++- (Done: TSK-1802, TSK-1805, TSK-1806.)
++
++### G.5 Standing directive that GATES part of §B
++
++`.hermes/project-memory.md`: *"**Do not jump directly into low-level io_uring/SIMD/distributed work until runtime, contracts, and benchmarks are stable.**"*
++
++Consequences:
++
++- B1 / B2 / B3 / B4 / B7 — local-scope engineering inside BLK-009/BLK-008. **Legitimate to do now.**
++- **B5 (flag flips) + every perf item from the spec's §8 are GATED** behind BLK-013 (benchmark protocol) / BLK-014 (benchmark truth). Do not start them.
++- Everything the register calls "production/live" — live execution, vault auth, live browser fallback, external dataset governance, production compliance — is **human-gated by policy** (BLK-008/009/015).
++
++### G.6 The repo's own sync rule (verbatim direction)
++
++> "Keep all future broad Nixe/Tallow work synchronized with this project memory file plus the blocker register, execution log, capability matrix, system map, and `.hermes/phase-autopilot.yaml`."
++
++Six canonical artifacts. This checklist is none of them; it should be treated as a derived view, and any item here that contradicts one of them loses.
++
++**Status of §G:** pointer + verified live subset. A full import of all 20 blockers and all 65 claims has **not** been done.
++
++---
++
++## §H. Portable from REA — verified gaps, ranked
++
++REA is MIT. What follows is **concepts and interface shapes**, not the analysis engines. Each item was checked against the tree this session, and each carries a plain-language description so this file reads standalone.
++
++- [ ] **H1. Evidence records that carry stated limitations** — *highest value, lowest cost*
++  - **Plain:** every recorded value would also state what it *couldn't* establish.
++  - **REA:** attaches evidence **and** explicit unknowns/limitations to every finding.
++  - **Tallow today:** `src/browser/provenance.rs` + `src/stdlib/provenance.{tl,rs}` carry source, timestamp, extraction method, validator chain and confidence breakdown — **no limitations field**. `provenance.rs:94`'s `extraction_method: "unknown"` is a sentinel, not the same thing.
++  - **Add:** `limitations: [String]` (or a typed `Unknown`) on the provenance record, emitted at every extraction site.
++  - **Effort:** small (one schema field + emit sites). **Verdict: do it** — this is what makes provenance defensible rather than decorative. Pairs with §B8.
++
++- [ ] **H2. Execution-free archive/package inventory** — *best fit to Tallow's actual product*
++  - **Plain:** list and digest what is inside a foreign archive, without running anything.
++  - **REA:** ZIP/APK/IPA/ASAR inventories, digests, plists, Apple bundle anatomy — static, no engine, no execution.
++  - **Tallow today:** it *transfers* files and has BLAKE3 `hash`, `pack`/`unpack` (TWD), `sign`/`verify` with SLSA provenance and `fixity-sweep` — but **cannot inventory a foreign archive**. `zip::ZipArchive::new` appears exactly once, at `src/browser/download.rs:803`. Verified: no `inspect`/archive-contents command in `tallow --help`.
++  - **Add:** `tallow inspect <archive>` — entry list, sizes, per-entry digests, format anatomy, bundled manifest/plist decode.
++  - **Effort:** moderate. **Verdict: do it** — strongest feature fit; you would run it *before* sending or accepting an unknown archive.
++
++- [ ] **H3. PTY-backed process capture** — *verified missing ability*
++  - **Plain:** let recipes run **interactive** tools and capture the session faithfully. Today the keyboard input is blanked and only text output is collected, so anything that prompts, asks a password, draws a full-screen UI, or formats output for a terminal misbehaves or hangs.
++  - **REA:** native PTY capture — terminal output, interactions, exit, filesystem observations, run-to-run comparison.
++  - **Tallow today:** **provably no PTY.** No `portable_pty`, `openpty`, `forkpty` or `pty::` anywhere in `src/` or `crates/`; no pty dependency in any manifest. `crates/tallow-jobs/src/exec.rs:107-109` pins `stdin(Stdio::null())` with piped stdout/stderr.
++  - **Add:** PTY-backed recipe execution, plus a run-comparison view.
++  - **Effort:** moderate, self-contained in `tallow-jobs` — no language/parity exposure. **Verdict:** do it when recipes need interactive tools.
++
++- [ ] **H4. HAR / saved-capture ingestion** — *missing ability*
++  - **Plain:** read a browser network capture and turn it into a re-runnable extraction plan instead of a dead file. A HAR is the standard JSON record of every request and response a browser made; DevTools exports it.
++  - **REA:** reads HAR and mitmproxy captures → requests, responses, exposed payloads, source locations.
++  - **Tallow today:** `browser/fallback.rs:44` has `pub har: bool` as an **artifact-policy flag** (default `false`), and `stdlib/browser.rs:18` lists HAR capture as an explicit **non-claim**. No ingestion path exists.
++  - **Add:** HAR import → replay into the request-plan/extraction path and the fixture harness.
++  - **Effort:** small-to-moderate. **Verdict:** medium — do it if captures are already being taken.
++
++- [ ] **H5. Provider registry for extraction backends** — *tidiness, no new capability*
++  - **Plain:** Tallow currently picks how to read a page from a fixed list of four methods tried in order — structured data, microdata, OpenGraph, then plain CSS — each with a confidence score, all hardcoded. A registry makes that list pluggable, so a method is added by configuration instead of by editing the chain.
++  - **REA:** pluggable analysis providers plus a generated tool catalog.
++  - **Tallow today:** `src/browser/smart_extract.rs:167-384` is a hardcoded cascade (JSON-LD 0.95 → microdata 0.85 → OpenGraph 0.75 → CSS 0.55). The *generated catalog* half **already exists** — `scripts/generate_stdlib_surface_manifest.py`.
++  - **Add:** a registry so a new backend (table extractor, LLM tier) registers rather than patching the cascade.
++  - **Effort:** small-to-moderate. **Verdict:** defer unless adding a backend.
++
++- [x] **H6. Dataset/artifact version-diff reporting — NO ACTION.** Compares two versions of the same thing (two releases, two snapshots) and reports what changed; REA does this for app binaries. Tallow already has `browser/schema_drift.rs`, `browser/ab_detector.rs`, `delta-sync` and `fixity-sweep` covering it. **Fold into H2; do not build separately** — the weakest of the six.
++
++### Already present — do NOT port these
++
++| REA feature | Tallow equivalent |
++|---|---|
++| Generated tool catalog | `scripts/generate_stdlib_surface_manifest.py` (reports `modules=43 aligned=20 open_gaps=13`) |
++| Documented exit-status discipline | `fingerprint-audit` (0/2/64), `fixity-sweep` (0/2) |
++| Snapshots / replay | Phase 7 accepted — local artifact/replay/metrics proof |
++| Website observation | Tallow is **deeper** (`cdp.rs` 62K, `page.rs` 142K, `network.rs` 94K, `trace.rs`, `visual.rs`, `recording.rs`) |
++
++### Not portable at all — the engines
++
++Hopper, Ghidra, IDA/Hex-Rays, JEB, JADX, pwntools, WABT, Binwalk/Unblob, apktool, adb. This *is* REA's value, and none of it moves. IDA and JEB are licence-gated commercial tools REA explicitly grants no rights to.
++
++**Necessity call:** **H1** and **H2** are the two worth doing — H1 smallest/highest value, H2 the strongest fit for a file-transfer tool. **H3** and **H4** are real missing abilities; do them if recipes need interactivity or captures are already being taken. **H5** is tidiness. **H6** is already covered (no action).
+diff --git a/docs/extraction-engine/EXTRACTION-ENGINE-SPEC.md b/docs/extraction-engine/EXTRACTION-ENGINE-SPEC.md
+new file mode 100644
+index 0000000..6f5ac45
+--- /dev/null
++++ b/docs/extraction-engine/EXTRACTION-ENGINE-SPEC.md
+@@ -0,0 +1,237 @@
++# TALLOW EXTRACTION ENGINE — Feature & Specification Catalog
++
++> **SUPERSEDED 2026-10-12 — read `RECONCILIATION-2026-10-12.md` first.**
++> A folder-wide audit found this catalog overlaps four pre-existing scraper specs
++> (`docs/tallow-scraper-full-task-list.md`, both `docs/plans/*tallow*1000x*`,
++> `docs/mega/tallow-1000x-upgrade-2026/scraping-crawling.md`) and that most items
++> are already implemented across `src/browser/**` (136 files) and `src/stdlib/**`.
++> Keep this file only as a categorized feature index; the reconciliation holds verdicts.
++
++**Status:** SUPERSEDED AS A SPEC — retained as a feature index. Nothing here is wired.
++**Superseding artifact:** `docs/mega/MEGA-CHECKLIST.md` (phase-by-phase, 57 tracked items). The verdicts that used to live in `RECONCILIATION-2026-10-12.md` now live there too; this file is indexed only, and `docs/mega/MEGA-CHECKLIST.md` §11 governs all T1 exclusions.
++**Date:** 2026-10-12
++**Scope:** Extraction / collection capabilities buildable *into the Tallow language* (compiler, runtime, stdlib, CLI, plan format).
++**Baseline it extends:** `docs/MEGA_SCRAPER_ENGINE_RESEARCH.md` (arsenal inventory), `docs/TALLOW-CAPABILITIES.md` §4/§9, `examples/request-plan.v1.json`, `schemas/tallow/examples/*.extraction.schema.json`.
++
++## Non-claims
++
++- No item below has been implemented or benchmarked. Where a number appears (e.g. "10–50x"), it is a **target to measure**, not a measured result.
++- Existing engine facts in this document were read from the repo at the paths named. Anything I assert about current behaviour cites a file.
++- No item here circumvents authentication, access control, anti-bot protections, or encryption. See **§12 Excluded**.
++
++## What already exists (do not rebuild)
++
++| Capability | Where |
++|---|---|
++| HTML parse + CSS select, interpreter and native | `src/stdlib/html.rs` (26.2K), `src/runtime/html_ffi.rs` (22.5K) |
++| `Extract.schema` / `.pattern` / `.jsonld` / `.all` | `stdlib/extract.tl`, `src/stdlib/extract.rs` (15.9K) |
++| Egress contract: Tor default, `TALLOW_PROXY`, `TALLOW_ALLOW_DIRECT`, hard refusal, per-host delay | `src/runtime/egress_http.rs` (40.4K) |
++| Fetch + batch | `src/runtime/fetch.rs` (41.7K), `http.batch` in `src/codegen.rs` |
++| CDP browser automation | `src/browser/**` (113 files), `src/runtime/browser.rs` (85.7K) |
++| Declarative request plans + compliance block + artifact policy | `examples/request-plan.v1.json`, `scripts/run_tallow_request_plan.py` |
++| Local-first compliance reporting | `src/compliance/{clocks,incident,znism}.rs` |
++| Jobs: priority queue, retries, dead-letter, budget, halt switch, Ed25519 receipts | `crates/tallow-jobs/{queue,scheduler,recipe,exec,budget,state}.rs` |
++| Credential vault (TOTP, PQC, custody, personas) | `src/vault/**` (20 files) |
++| io_uring runtime, DNS guard, IP pool, gzip | `src/runtime/{io_uring_runtime,dns_guard,ippool_ffi,gzip_ffi}.rs` |
++| Entity resolution | `src/stdlib/entity.rs` (61.1K), `stdlib/entity.tl` |
++
++---
++
++## 1. Language & Type System
++
++The core of "build it into the language": extraction constructs the compiler can check.
++
++- **1.1 `ExtractionSchema` as a first-class type.** `schema Product = "schemas/product.extraction.schema.json"` — a schema reference resolves at compile time to a struct with typed fields, so extraction results are typed, not `Map`.
++  - *Lands in:* parser + `src/codegen.rs` + `src/interp.rs`. *Acceptance:* wrong field name is a compile error in both engines. *Parity:* struct layout identical interpreter/native.
++- **1.2 Schema → `.tl` codegen.** `tallow schema gen product.schema.json > product.tl` emits struct + validator + provenance wrapper. One source of truth for schema and code.
++- **1.3 Compile-time selector validation.** CSS selector string literals are parsed by the compiler; an unknown pseudo-class or malformed selector is a compile error, not a silent zero-match run.
++- **1.4 Tristate field model.** Formalize the existing NULL-vs-`""` distinction in `html_ffi.rs` as a language type: `Field<T> = Present(T) | Empty | Absent`. Extraction code cannot collapse "the page had no such element" into "the value is empty".
++- **1.5 `Sourced<T>` — field-level provenance as a type.** `Sourced<Product>` carries, per field: value, origin URL, byte range in the source document, sha256 of the retrieved body, fetch timestamp, extractor id, plan hash, confidence. Threaded through the dataflow so provenance cannot be dropped by accident. **This is the primary differentiator in the catalog.**
++- **1.6 Capability-typed egress.** `fetch(url, egress: Egress)` where the `Direct` variant requires an explicit capability token. Code without the token does not compile for direct egress — mirroring the runtime refusal already in `egress_http.rs`. *Acceptance:* a plan that would egress direct without an allowance fails to build.
++- **1.7 Effect annotations.** `@egress`, `@reads`, `@writes` on functions, statically checked so a "pure" extraction function cannot open a socket. Enables whole-plan audit before execution.
++- **1.8 `@source` / `@legal` annotations.** A function or recipe binds to a source-registry entry (§7.2); binding is validated at compile time and stamped into run receipts.
++- **1.9 PII classification propagation.** `Pii<T>` / `Secret<T>` markers propagate through dataflow; the compiler refuses to write a `Pii<T>` to an unredacted sink. (Extends the privacy-type claim in the mega doc into something checkable.)
++- **1.10 Lazy/streaming sequences.** `Sequence<Row>` for extraction over corpora larger than memory; `map`/`filter`/`take` are lazy, terminal ops are explicit.
++- **1.11 Deterministic iteration order guarantee.** Ordered maps/selects everywhere, documented, so identical input yields byte-identical output. Required for §6.3 replay and for parity.
++- **1.12 Typed scalars for extracted data.** Decimal (exists: `stdlib/decimal.tl`), Currency, Unit, GeoPoint, Date — parsed from messy source text with a recorded raw vs normalized pair.
++- **1.13 Selector-chain fallback.** `select(["h1.title", "h1", "[itemprop=name]"])` — first match wins, and **which** selector matched is recorded in provenance. Legitimate robustness for sources you own or are authorized for; makes schema drift visible instead of silent.
++- **1.14 Record-boundary extraction.** `block(selector).records(schema)` — repeat a sub-schema over each matched element (drives `extraction_rows`).
++- **1.15 Error type for extraction.** `ExtractError = NoMatch | InvalidValue | SchemaMismatch | PolicyRefused | EgressRefused` — distinct, so quarantine reason codes (§5.11) are derived from types rather than strings.
++
++## 2. Fetch / HTTP Layer
++
++- **2.1 HTTP/2 multiplexing + connection pooling.** Current hot path is `ureq` (HTTP/1.1) per `egress_http.rs` deps. Target: negotiated H2 with a bounded stream count per connection.
++- **2.2 DNS cache.** `hickory-resolver` with a bounded LRU; removes DNS latency from the hot path. Complements existing `dns_guard.rs`.
++- **2.3 Conditional GET.** `If-None-Match` / `If-Modified-Since`; a 304 reuses the cached body and is recorded as such (not as a fresh fetch).
++- **2.4 Content-addressed response cache as a language primitive.** `Cache.if_fresh(url, max_age)` returns the stored body + its sha256, so a re-run is reproducible offline.
++- **2.5 Per-host token bucket.** Extends the existing per-host minimum delay (`TALLOW_FETCH_DELAY_MS`, default 250 ms) to a configurable rate *and* burst, still per host so a wide crawl is not serialized globally.
++- **2.6 Adaptive backoff honouring `Retry-After`.** On 429/503, respect the header verbatim; otherwise jittered exponential backoff. Never retry in a way that increases load on a host already refusing.
++- **2.7 Retry policy as declarative data.** Attempts, backoff class, retryable statuses, idempotency key — per plan, with the policy hash in the receipt.
++- **2.8 Robots.txt: fetch, cache, enforce (RFC 9309).** Honours the `robots_mode: "strict"` field that already exists in the plan format.
++- **2.9 Sitemap / RSS / Atom discovery** as a frontier source (`sitemap.xml`, `robots.txt` Sitemap lines, feed autodiscovery).
++- **2.10 Streaming bodies.** Bodies piped rather than buffered, so a 50 MB response goes straight into a streaming parser.
++- **2.11 io_uring I/O path.** Promote `src/runtime/io_uring_runtime.rs` from an available runtime to the extraction hot path where the kernel supports it.
++- **2.12 `http.batch` formalized.** Existing codegen builtin gets per-URL `Result`, bounded concurrency, and per-host fairness.
++- **2.13 Cookie jar as a first-class type.** Extends `stdlib/cookie_jar.tl` / `src/stdlib/cookie_jar.rs` with per-origin isolation and expiry, used for *your own* authenticated sessions.
++- **2.14 Negotiated content encoding.** gzip (exists), brotli, zstd, with the chosen encoding in provenance.
++- **2.15 Honest identification.** A configurable User-Agent + contact URL for sources you operate, with the value recorded per request. (No UA spoofing — see §12.)
++- **2.16 Request budget pre-flight.** Refuse before egress if the plan's projected request count exceeds the source's declared cap (§7.2).
++
++## 3. Parsing & Extraction
++
++- **3.1 Streaming selector path (`lol_html`).** A second, streaming parse mode for select-and-emit workloads that never builds a DOM. Target: order-of-magnitude over the `scraper` DOM path for large documents.
++- **3.2 DOM path retained** for anything needing structure, ancestry, or mutation (`html_ffi.rs` stays the reference implementation).
++- **3.3 Schema library expansion.** Beyond product/article/profile/serp/job: company, real-estate-listing, government-record, financial-filing, event, recipe, job-posting, review, contact-info.
++- **3.4 Schema versioning + migration.** Every schema carries a version; rows record it; a migration is a declared function, and old rows can be re-normalized.
++- **3.5 Structured-data coverage: JSON-LD (exists) + microdata + RDFa + OpenGraph + Twitter cards + `<meta>` heuristics**, merged with precedence rules and conflict reporting.
++- **3.6 Table extraction.** `doc.tables()` → typed rows with header inference and colspan/rowspan handling. High value for registries, filings, financials.
++- **3.7 Pagination as a plan primitive.** next-link/Cursor/offset strategies with cycle detection, max-pages, and per-page provenance.
++- **3.8 Value normalizers.** Dates across formats, numbers with locale separators, currency symbols, phone, address, unit conversion — each records `raw` and `normalized`.
++- **3.9 Main-content detection.** Deterministic boilerplate removal (text-density + link-ratio scoring) so extracted text is article body, not nav.
++- **3.10 Entity extraction + dedupe.** Wires the existing `entity` module into extraction: person/org/location/identifier resolution, plus near-duplicate detection for records appearing on multiple pages.
++- **3.11 Extraction quarantine.** Rows failing validation go to a quarantine sink with a typed reason (`ExtractError`), matching the `extraction_quarantined` counter already in the execution report. Operator-reviewable.
++- **3.12 Selector drift detection.** Track per-selector yield across runs; a material drop produces a drift warning *before* the dataset silently empties.
++- **3.13 LLM-assisted extraction as an opt-in fallback.** When a typed field is `Absent`, an explicitly enabled local-model pass attempts it; the value is marked lower-confidence, carries the model id and prompt hash in provenance, and never overwrites a schema-derived value.
++- **3.14 PDF / document extraction.** Text-layer extraction for PDFs and office documents, with page-number provenance per field, so filings and scanned registries are in scope.
++- **3.15 Extraction from APIs, not just HTML.** JSON/GraphQL response shapes declare a schema the same way (`examples/request_plan_post_graphql/` is the seed).
++- **3.16 Character-encoding correctness.** Explicit encoding resolution with the detected encoding recorded, so mojibake is a caught error, not a stored value.
++
++## 4. Dynamic Content / Browser
++
++- **4.1 Deterministic render mode.** Fixed viewport, locale, timezone, and clock; animations disabled; results identical across runs. Justified by reproducibility, not by evasion.
++- **4.2 Wait strategies.** Beyond `WaitUntil`: selector-present, DOM-stable, network-quiet, and explicit timeout — each recorded in the run report.
++- **4.3 Browser fallback policy.** Formalize `browser_fallback.mode` (`never` | `on_empty` | `always`) with cost accounting: how many URLs fell back, and what it cost in wall-clock.
++- **4.4 Artifact policy matrix.** Extend the existing `artifact_policy` fields (`capture_body`, `response_snippet_bytes`, `screenshots`, `har`, `dom`) with redaction rules applied *before* storage.
++- **4.5 Manual gate / human escalation.** When a page requires login, consent, or a challenge, the run **pauses and routes to the operator**. This is the engine's answer to an access control: a human completes it. Seeds exist in `examples/browser_fallback_manual_gate/` and `stdlib/escalation.tl`.
++- **4.6 Session/profile isolation per source.** Independent browser profiles per zone (`src/browser/zone.rs`), so credentials and cookies never cross sources.
++- **4.7 Firefox path parity.** `src/browser/juggler.rs` means plans are not Chrome-only; spec the same feature set across both engines.
++- **4.8 Browser pool management.** Bounded tabs, recycling, memory ceiling enforcement, and clean teardown of orphaned Chrome processes — with the box's known 4 GiB worker cap in mind.
++- **4.9 Authenticated-session support via the vault.** Log in as the operator to sources where the operator holds an account, using `src/vault/**` (TOTP, credential custody), with the credential never entering a `.tl` literal.
++- **4.10 Screenshot/DOM capture on policy.** Only where `artifact_policy` permits, with the policy snapshot stored alongside the artifact.
++- **4.11 Interaction primitives already present.** Click, type, scroll, `Page.throttle_network()` — documented as first-class plan steps rather than ad-hoc scripts.
++
++## 5. Scheduling, Jobs, Distribution
++
++- **5.1 Extraction jobs on `tallow-jobs`.** `.tl` recipes drive extraction runs; priority queue + bounded retries + dead-letter are inherited, not rebuilt.
++- **5.2 Budget caps per day and per recipe.** Requests, bytes, wall-clock, estimated spend — enforced by `budget.rs` **before** dispatch.
++- **5.3 Kill switch.** The existing halt file refuses every dispatch fleet-wide, immediately. Extraction inherits it.
++- **5.4 Fail-closed policy parsing.** Unparseable budget, ledger, or source-registry entry ⇒ refuse. Never "run anyway".
++- **5.5 Signed run receipts.** Ed25519 receipt per run with plan hash, source ids, counts, and outcome; refusals stay out of the signed ledger.
++- **5.6 Checkpoint / resume.** Frontier persistence and exactly-once row emission so a killed run resumes without duplicating rows.
++- **5.7 Distributed extraction.** `src/browser/distributed/**` exists as a seed: coordinator + workers, idempotent shards, work stealing, and a supervisor that can drain a worker.
++- **5.8 Scheduled and change-triggered runs.** Interval schedules plus re-run-on-change (from §6.5 diff), delivered through the existing cron/scheduler path.
++- **5.9 Concurrency control per host.** Global worker count is capped by policy, but *per-host* concurrency is what prevents accidental hammering.
++- **5.10 Resource ceilings.** Worker memory/CPU limits with the box's cgroup reality encoded (heavy browser fleets must be launched through the scoped runner, not inside the 4 GiB worker limit).
++
++## 6. Storage, Provenance, Evidence
++
++- **6.1 Provenance-bearing rows.** Every row persists `Sourced<T>` data: field values plus byte range, body sha256, fetch time, extractor id, schema version, plan hash, confidence.
++- **6.2 Content-addressed artifact store.** Bodies and captures stored by hash, deduped, with `retention_days` (already in the plan format) enforced by a reaper.
++- **6.3 Replay.** `tallow plan replay <run-id>` re-derives rows from stored bytes + the recorded plan and must produce byte-identical output. Reproducibility is the acceptance test.
++- **6.4 Manifest per dataset.** Plan + schema versions + engine version + source registry revision — recorded with the data so any row can be audited back to its exact conditions.
++- **6.5 Dataset diff engine.** Version-to-version change reports: fields added/removed/changed, records appearing/disappearing, with counts. Ports the diff model from binary tooling to sources.
++- **6.6 Lineage query.** source → request → response → row → field, queryable, so "where did this number come from" is a query not an investigation.
++- **6.7 Export formats.** JSONL (exists), CSV, SQLite, Parquet, and direct DB writes via `db_ffi` (COPY-style batch inserts).
++- **6.8 PII-driven redaction and retention.** Field PII tags (§1.9) drive both redaction on export and retention on delete.
++- **6.9 Deletion receipts.** A retention expiry or operator deletion produces a signed receipt naming the hashes removed.
++
++## 7. Compliance, Policy, Safety
++
++The defensible differentiator against commercial scraping vendors. Most of the primitives already exist.
++
++- **7.1 Compliance block is mandatory.** Every request carries `source_authority`, `purpose`, `legal_basis`, `pii_policy`, `retention_days`, `robots_mode`, `requires_approval` (format already in `examples/request-plan.v1.json`). A request without one is refused at plan load, not at fetch time.
++- **7.2 Source registry.** Authorized sources declared with basis, contact, licence terms, rate caps, and robots policy. **Unknown source ⇒ refuse**, the same fail-closed shape as `budget.rs`.
++- **7.3 Egress contract extension.** `egress_http.rs` already enforces Tor-default, explicit direct opt-in, and hard refusal on unparseable proxy. Extend the existing source-level guard tests to cover every new fetch path so no bare client can reappear.
++- **7.4 Approval gate.** `requires_approval: true` holds the plan at a human gate before first egress; the approval is a signed receipt naming the approver.
++- **7.5 Terms/robots evidence capture.** Snapshot the source's robots.txt and terms at fetch time and store the hash, so the basis for a run is provable after the fact.
++- **7.6 Compliance report generation.** Reuse `src/compliance/{clocks,incident,znism}.rs`: local-only, nothing transmitted, operator approves submission, and any claim with no machine check behind it reports `unsupported`.
++- **7.7 Audit trail export.** Who/what/when/why for every request, exported as an evidence pack with digests for external signing.
++- **7.8 Status boundary enforced in output.** Plans declare a `status_boundary` (already present); generated reports must carry it, so a fixture-scale result can never be presented as a production claim.
++- **7.9 Refusal telemetry.** Policy refusals are first-class events with reasons, surfaced in run reports.
++- **7.10 Manual gate is the only escalation.** No code path may attempt to satisfy an access control; it pauses for a human (§4.5).
++
++## 8. Performance
++
++Targets, not measurements. Benchmarks must exist before any of these are cited as achieved.
++
++- **8.1 Global allocator.** mimalloc or jemalloc.
++- **8.2 Streaming HTML parse.** `lol_html` for select work.
++- **8.3 SIMD JSON.** `simd-json` for large API payloads.
++- **8.4 SIMD byte search.** `memchr` for simple pattern hits instead of regex.
++- **8.5 Bloom-filter URL dedupe.** Bounded-memory frontier for very large crawls.
++- **8.6 DNS caching** (§2.2).
++- **8.7 Zero-copy parsing.** Borrow from the source buffer where lifetimes allow.
++- **8.8 Buffer pooling.** Reuse read buffers in the hot path.
++- **8.9 Batch DB writes.** COPY-style inserts.
++- **8.10 Kernel-level I/O.** io_uring, `SO_REUSEPORT`, IRQ affinity for self-hosted collectors.
++- **8.11 Per-host rather than global rate limiting** (exists; keep it).
++- **8.12 Benchmark suite.** `benches/` gains extraction benchmarks: pages/sec streaming vs DOM, rows/sec end-to-end, provenance-write overhead, replay throughput.
++- **8.13 Published ceiling table from measurement.** Replace the asserted §5 throughput tables in the mega doc with measured numbers, or mark them explicitly unverified.
++
++## 9. Observability & QA
++
++- **9.1 Run report extension.** The existing execution report gains latency percentiles, per-host stats, per-selector yield, fallback counts, and quarantine breakdown.
++- **9.2 Metrics endpoint.** Prometheus-format counters/histograms at the box's standard pattern (relay-style loopback port), for requests, bytes, refusals, quarantine, drift.
++- **9.3 Fixture-server test harness.** Extend `examples/fixtures/mock_server.py` into a fixture library: pagination, malformed HTML, encoding traps, challenge page, consent wall, login wall.
++- **9.4 Golden-row tests.** Schema conformance tests with expected rows committed, so extraction regressions are caught as diffs.
++- **9.5 Interpreter/native parity tests for extraction.** Every extraction feature must produce byte-identical results in both engines — the repo's existing hard constraint applied to this surface.
++- **9.6 Fuzzing.** `fuzz/` gains the streaming parser, the schema validator, and the selector compiler.
++- **9.7 Chaos tests.** Kill mid-run, truncated bodies, timeouts, 429 storms — assert no duplicate rows and no lost receipts.
++- **9.8 Concurrency/load tests** run under the memory ceilings that real workers have.
++
++## 10. CLI & Developer Experience
++
++- **10.1 `tallow extract`** — run a plan or a one-off extraction.
++- **10.2 `tallow plan new|validate|lint|dry-run`** — `dry-run` prints exactly what would be fetched without egressing.
++- **10.3 `tallow schema gen|check|diff`** — schema→type codegen and schema validation.
++- **10.4 `tallow plan replay <run-id>`** — offline reproduction (§6.3).
++- **10.5 `tallow dataset diff <a> <b>`** — §6.5 from the CLI.
++- **10.6 `tallow provenance <row-id>`** — print the full lineage for one row.
++- **10.7 Plan templates.** Listing→detail, sitemap→rows, paginated API, filing index→documents.
++- **10.8 Error messages that name the fix.** A refused plan says which policy field failed and which registry entry is missing.
++- **10.9 Example expansion.** Every feature gets a `examples/` entry in the existing `request_plan_*` / `extraction_schema_html` style, with a README and a stated non-claims boundary.
++
++## 11. Source Adapters (authorized / open)
++
++- **11.1 Sitemap and feed crawling** (§2.9).
++- **11.2 JSON and GraphQL plans** (seed: `examples/request_plan_post_graphql/`, `stdlib/graphql.tl`).
++- **11.3 Bulk open-data ingestion.** CSV/TSV, XML, NDJSON, shapefiles-as-attributes.
++- **11.4 Open-data adapters consolidated under the plan format** so they are auditable like anything else: `stdlib/{fred,edgar,filings,geocode}.tl` currently make direct calls.
++- **11.5 Institutional document extraction.** PDF/filing text-layer extraction (§3.14) for the filings path.
++- **11.6 Registry-style public records** where the operator holds an account or the source offers a documented API — via vault-backed sessions (§4.9).
++
++## 12. Excluded — not in scope, not to be specced
++
++Requested or implied by `MEGA_SCRAPER_ENGINE_RESEARCH.md` §3 and §4, and deliberately absent above:
++
++- TLS/H2 fingerprint impersonation (BoringSSL/`wreq` swap for the purpose of appearing as a specific browser).
++- Per-anti-bot-vendor cookie farming (Akamai, Cloudflare, PerimeterX, DataDome, Kasada).
++- DPI bypass / traffic morphing (Geneva techniques) — §3.5, §3.13.
++- Browser stealth vectors, `document.hasFocus()` spoofing, `Function.prototype.toString` cloaking — Gaps 2, 3.
++- Timing-distribution shaping to mimic humans (Gaussian→Weibull) — Gap 4.
++- IP rotation to defeat rate limits or bans — Gap 5.
++- Behavior simulation / "behavioral signals" — Gap 7.
++- Timezone-to-IP consistency shaping — Gap 8.
++- Decrypting data streams whose keys the operator does not hold.
++- Any test suite whose target is "various protections".
++
++The compliant substitutes inside this catalog: **§7.2** (source registry / fail-closed), **§2.8** (robots enforcement), **§2.5–2.7** (rate limits and honest backoff), **§4.5 / §7.10** (manual gate for anything that requires a human), **§11** (sources with a real basis).
++
++## 13. Suggested sequencing
++
++Waves are independently shippable and each ends with tests + a report, per the repo's existing discipline.
++
++1. **Wave A — foundations.** §1.1, 1.2, 1.3, 1.4, 1.15 (typed schema extraction), §3.11 (quarantine), §7.1, 7.2 (policy mandatory + registry), §9.3–9.5 (fixtures, golden rows, parity). Smallest set that makes extraction typed and policed.
++2. **Wave B — provenance.** §1.5 (`Sourced<T>`), §6.1–6.4 (provenance rows, artifact store, replay, manifest), §10.6. The differentiator; do it before scale.
++3. **Wave C — fetch layer.** §2.1–2.8, §2.10–2.14, §1.6/1.7 (capability egress + effects), §8.1–8.4.
++4. **Wave D — extraction depth.** §3.1–3.10, 3.12–3.16, §1.10–1.14, §10.1–10.5.
++5. **Wave E — scale and ops.** §5.1–5.10, §8.5–8.13, §9.1–9.2, 9.6–9.8.
++6. **Wave F — browser breadth.** §4.1–4.11, §11.1–11.6.
++
++## 14. Open risks
++
++- **Parity cost.** §1.5, §1.6, §3.1 and §8.2 each touch both engines; the dual-engine byte-identical constraint is the dominant cost in this catalog, not the parsing work.
++- **`Sourced<T>` ergonomics.** Per-field provenance can make ordinary code verbose; the design must be usable by default, not opt-in ceremony.
++- **Provenance storage growth.** Byte-range + hash per field multiplies row size; needs a measured budget (§8.12) before rollout.
++- **LLM fallback drift.** §3.13 must never become the primary path, or provenance quality silently degrades.
++- **Unmeasured claims.** The mega doc's throughput and moat tables are assertions. Per the box's own rule (probe-verified claims only), they should be measured or withdrawn.
+diff --git a/docs/extraction-engine/REA-INTEGRATION-ASSESSMENT.md b/docs/extraction-engine/REA-INTEGRATION-ASSESSMENT.md
+new file mode 100644
+index 0000000..aaf6130
+--- /dev/null
++++ b/docs/extraction-engine/REA-INTEGRATION-ASSESSMENT.md
+@@ -0,0 +1,148 @@
++# REA → TALLOW — Integration Assessment & Implementation Plan
++
++**Date:** 2026-10-12
++**Question asked:** extract REA's features, integrate natively into Tallow, hit 1000x across all specifications.
++**Answer, in one line:** REA's feature set does not overlap Tallow's except in CDP browser observation, where Tallow is already deeper — so there is nothing to integrate, and the 1000x target as written is not a measurable claim.
++
++Source used for REA: `github.com/morluto/rea` README (MIT), `rea.tools`. Tallow facts are cited to file path.
++
++---
++
++## 1. REA's actual capability surface
++
++REA exposes **17 target types** plus a workflow/evidence layer. Verified from the README capability matrix:
++
++| # | REA target | What it returns | External engine it wraps |
++|---|---|---|---|
++| 1 | Native binaries | pseudocode, assembly, strings, symbols, calls, refs | Hopper / Ghidra / IDA |
++| 2 | Offline ELF layout | sections, segments, symbols, relocations, mitigation candidates | pwntools |
++| 3 | Go binaries | compiler version, modules, replacements, build settings | built-in (no Go needed) |
++| 4 | WASM artifact | validation, sections, import/export WAT, decoded WAT | WABT |
++| 5 | EVM bytecode | dispatch selectors, byte offsets, inferred args, mutability | local carrier |
++| 6 | Recorded Linux crashes | per-thread registers/signals, mapping candidates | pwntools, GDB/pwndbg |
++| 7 | JavaScript / Electron | modules, imports, source maps, routes, IPC, native add-ons | none (static) |
++| 8 | Websites | page structure, scripts, network observations, screenshots | Chrome-family |
++| 9 | Saved network captures | requests/responses, payloads, source locations | HAR, mitmdump |
++| 10 | .NET assemblies | metadata, CIL instructions, native deps, build comparison | none (static) |
++| 11 | Android APKs | manifest, classes, decompiled methods, refs | JADX + JDK |
++| 12 | Android devices | devices, packages, processes, logs, dumps, transfers | adb |
++| 13 | JEB projects | unit pseudo-code, artifact digests | JEB (commercial) |
++| 14 | Android resources | decoded manifest, string tables, locales | Apktool |
++| 15 | Firmware | regions, extraction, handoff to native analysis | Binwalk / Unblob |
++| 16 | Packages/resources | file inventories, digests, plists, Apple bundle anatomy | none |
++| 17 | Process behavior | terminal output, interactions, exit, FS observations, run diffs | native PTY |
++
++**Cross-cutting layer:** provider-neutral graph, evidence records carrying explicit *limitations*, snapshots, version diffing, MCP + CLI dual surface, three-step workflow (decompile → understand → recreate).
++
++## 2. Feature extraction — REA vs Tallow, feature by feature
++
++| REA capability | Tallow status | Evidence |
++|---|---|---|
++| 1. Native binary decompilation | **ABSENT** | No decompiler integration. `ghidra` 0 hits; `hopper` hits are the Grasshopper cipher (`stdlib/crypto.rs:7758`) and the `AmazonShopper` stealth profile. |
++| 2. ELF layout / relocations | **ABSENT** | No ELF parser. |
++| 3. Go binary inspection | **ABSENT** | — |
++| 4. WASM inspection | **ABSENT** | — |
++| 5. EVM bytecode | **ABSENT** | `evm` 0 files. |
++| 6. Crash/register analysis | **ABSENT** | `pdb` 1 file (incidental). |
++| 7. JS / Electron static analysis | **ABSENT** (adjacent) | Closest: `stdlib/sitescan.rs:902-936` *detects* `sourcemap` URLs on pages. No module/import/IPC graph, no source-map reconstruction, no V8 Inspector use (`inspector` 0 files). |
++| 8. Website structure / scripts / network / screenshots | **PRESENT — deeper than REA** | `browser/cdp.rs` 62K (CDP JSON-RPC, session multiplexing), `browser/page.rs` 142K, `browser/network.rs` 94K, `browser/visual.rs` 28K (screenshots, pixel diff, baselines), `browser/trace.rs` 28K (ZIP trace + HTML viewer + network events), `browser/recording.rs` 28K (4K screencast), `browser/markdown.rs` 26K, `browser/snapshot_sampler.rs` 12K. |
++| 9. Saved network captures (HAR) | **PARTIAL** | `artifact_policy.har` exists in the request-plan format and `network.rs` captures traffic; no HAR *import* or mitmproxy capture path. |
++| 10. .NET / CIL analysis | **ABSENT** | `cil` 15 files, all incidental; no PE/CIL metadata reader. |
++| 11. Android APK analysis | **ABSENT** | `apk` hits are MIME magic bytes (`stdlib/mime.rs`, `stdlib/transfer.rs`). No JADX path. |
++| 12. Android device (adb) | **ABSENT** | `adb` 43 files, all substring hits. |
++| 13. JEB projects | **ABSENT** | — |
++| 14. Android resources | **ABSENT** | — |
++| 15. Firmware | **ABSENT** | `binwalk` 0, `jadx` 0. |
++| 16. Package/archive inventory | **PARTIAL** | `stdlib/transfer.rs:2115-2169` detects `macho`/`macho64`/`macho_fat` magic for MIME classification — file *typing*, not inventory/digest/bundle anatomy. |
++| 17. Process behaviour capture | **PARTIAL** | `browser/process.rs` (89K) manages browser processes; `crates/tallow-jobs/exec.rs` runs scripts via `Command`/`Stdio` — **no PTY**, so interactive capture is absent. |
++| Evidence records with limitations | **PRESENT, different domain** | `browser/provenance.rs` (price provenance: source, timestamp, extraction method, validator chain, confidence breakdown); `stdlib/provenance.{tl,rs}`; Phase 5 per-field row provenance. |
++| Version diffing | **PARTIAL** | `browser/ab_detector.rs` (structural variants), `browser/schema_drift.rs` (selector drift). No general artifact-vs-artifact diff. |
++| Provider-neutral graph | **ABSENT** | — |
++| Three-step workflow + MCP surface | **ABSENT as MCP** | Tallow is a CLI/language; the MCP surface in this workspace is a separate project (`RegionalDevelopmentMCP`). |
++
++**Net:** of 17 REA target types, **12 are absent** and 5 are absent-or-partial. Of those 12, **11 are static analysis of compiled artifacts**. Tallow has no binary analysis at all.
++
++## 3. Why "1000x across all specifications" cannot be asserted
++
++Three independent reasons. Each is a reason to refuse the claim, not to work around it.
++
++1. **Baseline-zero.** A 1000x improvement is a ratio against a baseline. For the 12 absent capabilities the Tallow baseline is *zero* — there is no ratio, there is `0 → 1`. A multiplier cannot be computed for a feature that does not exist.
++2. **Physically bounded metrics.** A single multiplier cannot apply to latency, throughput, memory, and cost simultaneously because they trade off. Concretely: latency is bounded below by network RTT and TLS handshake cost. A 200 ms round trip cannot become 0.2 ms by writing better code. The same applies to target-server response time and disk throughput. Any "1000x across all metrics" claim is falsified by physics, not by effort.
++3. **"Hardware requirements" is not a performance metric.** Specs, limits, and capacity are not points on a speed axis. A change cannot be "1000x" on a requirement; it can only reduce a requirement by a factor. The claim as written has no unit.
++
++Also note the standing rule already on this box: **probe-verified claims only**. Asserting an unmeasured 1000x would violate it.
++
++**What is legitimately measurable, and where large multipliers are real:**
++
++| Lever | Why the magnitude is real | Honest ceiling |
++|---|---|---|
++| Skip unchanged pages (delta crawl) | Re-crawl of an unchanged corpus collapses from `N × (fetch + parse)` to `N × conditional GET`. Amortized cost per page approaches the 304 cost only. | Bounded by the conditional-GET round trip. >100x on unchanged corpora is plausible; 1000x is plausible only for very heavy pages. |
++| Schema-first extraction | One schema generation per domain+page-type, then CSS-speed extraction for the other N pages. Removes per-page parsing cost. | Bounded by extraction, not fetching. Large for LLM-per-page baselines; 0x for the already-regex path. |
++| HTTP-first before browser | Browser only for JS shells. | ~100x class, already claimed in-tree (`browser/html_parser.rs:5`). |
++
++**Where a 1000x is also blocked by Tallow's own policy — a real tension worth naming:** the egress contract forces Tor by default, enforces a per-host minimum delay (`TALLOW_FETCH_DELAY_MS`, default 250 ms; `runtime/egress_http.rs`), and the crawl pipeline rate-limits per host. Those caps bound fetch throughput *by design*. You cannot honour a per-host politeness limit and get 1000x download throughput at the same time. The magnitude has to come from **not re-fetching** and **not re-parsing** — not from fetching harder.
++
++## 4. Necessity call on native REA integration
++
++**Recommendation: do not integrate REA.**
++
++- REA is an **orchestration layer over external engines** — Hopper, Ghidra, IDA, JADX, pwntools, WABT, Binwalk, apktool, adb. Its own README describes it as an MCP layer that calls those tools. "Native integration avoiding external dependencies" therefore means reimplementing a decompiler, a disassembler, a JADX-equivalent, and a firmware unblobber. That is a research programme, not an engineering sprint, and it discards the only part of REA that is hard to build.
++- Two of those engines (**IDA/Hex-Rays, JEB**) are commercial and licence-gated. REA explicitly grants no licence. They cannot be "natively integrated" at any cost.
++- **Domain overlap is near zero.** Tallow is a language toolchain + secure transfer + extraction stack. REA analyses compiled artifacts. Nothing in Tallow's product path consumes a decompiler.
++- If a specific need arises (e.g. understanding an Electron app you own), REA is MIT and runs locally: `npx rea-agents setup`. That is the entire integration cost — no wrapper, no fork, no data leaves the box.
++
++**The one thing genuinely worth adopting from REA is a convention, not code:** its discipline of attaching **explicit limitations** to every evidence record, and its three-step `investigate → understand → recreate` framing. Tallow's `browser/provenance.rs` already carries confidence breakdowns; extending it to carry stated *unknowns* is a small, worthwhile change.
++
++## 5. Implementation plan — the work that actually yields a large multiplier
++
++All three items are wiring over code that already exists. Evidence from `docs/mega/tallow-1000x-upgrade-2026/scraping-crawling.md`.
++
++### W1 — Activate schema-first extraction
++
++- **Change:** register `llm_extract` in `src/browser/mod.rs`; today it is reachable only as a private `#[path]` submodule of `smart_extract.rs:22-28`. Flip `enable_llm_fallback` (`:127`, currently `false`) or expose a global config.
++- **Then:** route bulk pages through `LlmExtractor::auto_extract` (`llm_extract.rs:288-418`) so schema generation happens once per domain+page-type and later pages run at CSS speed with zero model cost (`:224-225`, `:275-277`).
++- **Acceptance:** per-page extraction cost measured on a fixture corpus, before vs after, reported as ms/page and model calls/page. Model calls/page must be 0 for pages after the first of each domain+page-type.
++- **Tests:** existing Phase 5 golden rows must still pass unchanged; add a schema-gen-once assertion and a self-heal assertion (`heal_schema` `:459-482`).
++
++### W2 — Wire delta / no-op crawl end to end
++
++Three confirmed disconnections (`[A] §3`):
++1. `TALLOW_DELTA_CRAWL` is **set** by the scheduler (`scheduler.rs:845-847`) and **read nowhere in `src/`** — no interpreter consumer.
++2. `plan_incremental_crawl` (`scheduler.rs:397-408`), `DeltaNeed` (`:301-340`), `is_unchanged_after_fetch` (`:429-441`) have **zero production callers** — tests only (`:1697`, `:1725`).
++3. `CrawlResult.unchanged` is **set** (`adaptive_crawler.rs:153,185`; `crawl_pipeline.rs:310-311`) but **no caller skips re-extraction** on it.
++
++- **Change:** (a) make the interpreter honour `TALLOW_DELTA_CRAWL`; (b) call `plan_incremental_crawl` against the `CrawlQueue` HTTP cache in the crawl loop; (c) consume `unchanged`/304 to skip fetch *and* extraction. Turn `HttpCacheMiddleware` on by default (`crawl_pipeline.rs:28-29`).
++- **Acceptance:** re-crawl of an unchanged N-page fixture — zero extraction invocations, N conditional GETs, measured wall-clock improvement. Every row must still be present in output (skip ≠ drop).
++- **Tests:** chaos — kill mid-run, truncated body, 304 storm; assert no duplicate rows and no lost receipts.
++
++### W3 — Parallelize the fetch loop, within the politeness contract
++
++- **Change:** `CrawlPipeline::fetch` is sequential; replace the blocking `thread::sleep` rate limiter (`crawl_pipeline.rs:229-231`) with the existing async per-host limiter; raise `SchedulerDaemon::max_concurrent` (`scheduler.rs:618`, currently 4 subprocesses) and surface the distributed `JobQueue` backends (SQLite real, Redis feature-gated, cross-worker dedup `job_queue.rs:272-290`) instead of spawning a subprocess per URL.
++- **Acceptance:** pages/sec measured against the same local fixture, with per-host request rate reported alongside so the speedup cannot be achieved by violating the limit.
++- **Honest ceiling:** this item is bounded by policy, not CPU. Report it as a throughput multiplier *at constant per-host request rate*.
++
++### R1 — Close the four declared-but-unbound natives
++
++`crawler_from_sitemap`, `crawler_from_links` (`stdlib/browser.tl:305-312`), `page_cache_create` (`:325-327`), `structured_data_extract` (`:354-356`) are declared `// native` with **no Rust FFI symbol** (`[A] §1`). The Rust-side modules exist (`browser/sitemap.rs`, `browser/structured_data.rs`) — only the bindings are missing.
++
++### R2 — Phase 5 declared-remaining
++
++Generic extraction from arbitrary `tallow.extraction_schema.v1` (currently a hardcoded product-listing path); parser-registry / request-plan integration; selector-chain and drift wiring beyond the mock path. Source: `docs/mega/phase5-extraction-rows-10agent/agent-01-current-state.md`.
++
++### R3 — Feature flags
++
++`parquet-storage`, `s3-storage`, `redis-backend`, `real-ml` are documented as real code, off by default; `ml::*` is currently MOCK-ONLY (`[A] §1`).
++
++### Sequencing
++
++W2 first (largest honest multiplier, all primitives present), then W1, then R1/R2 (contract completeness), then W3 (bounded by policy), then R3.
++
++## 6. Verification methodology (replaces "confirm 1000x")
++
++For each item, report three numbers — never one:
++
++1. **Baseline** measured on the same fixture corpus on the same machine, with the command recorded.
++2. **After**, same corpus, same command.
++3. **Constraint held** — the policy metric that must not regress: per-host request rate, model calls per page, or rows emitted. A speedup that moves the constraint is a policy violation, not an optimisation.
++
++A claim of "1000x" is accepted only for a named metric on a named corpus with all three numbers, and only where §3 does not rule the magnitude out physically.
+diff --git a/docs/extraction-engine/RECONCILIATION-2026-10-12.md b/docs/extraction-engine/RECONCILIATION-2026-10-12.md
+new file mode 100644
+index 0000000..5883fab
+--- /dev/null
++++ b/docs/extraction-engine/RECONCILIATION-2026-10-12.md
+@@ -0,0 +1,111 @@
++# EXTRACTION ENGINE — RECONCILIATION & FOLDER AUDIT
++
++**Date:** 2026-10-12
++**Trigger:** folder-wide audit of `/home/user/Nixe` (41 GB, one repo + 30 adjacent trees).
++**Purpose:** reconcile today's `EXTRACTION-ENGINE-SPEC.md` against what already exists, and reduce 123 proposed features to the actually-remaining work.
++
++## 0. Headline
++
++A catalog of 123 "new" extraction features was written today before checking the folder. **Most of them already exist and are real.**
++
++The repo already contains:
++- **136 files in `src/browser/`** (3.9 MB) plus **114 stdlib Rust modules** and **86 `.tl` modules**.
++- **A better audit than the one written today:** `docs/mega/tallow-1000x-upgrade-2026/scraping-crawling.md` — same subject, with file-and-line citations and an explicit REAL / FEATURE-GATED / STUB / MOCK-ONLY verdict per component.
++- **Four pre-existing extraction specs:** `docs/tallow-scraper-full-task-list.md` (18 sections), `docs/plans/2026-08-04-tallow-scraper-1000x-upgrade.md`, `docs/plans/2026-05-31-tallow-1000x-scraper-upgrade.md` (12 phases), `docs/mega/tallow-1000x-upgrade-2026/scraping-crawling.md`.
++- **A completed, QA-passed phase:** `docs/mega/phase5-extraction-rows-10agent/` — Phase 5 schema-defined extraction rows, verdict "Accepted for the scoped Phase 5 completion boundary: local/mock schema-defined extraction rows only", independent QA PASS 2026-06-13T03:33:43Z, with explicit non-claims.
++
++**Therefore:** `EXTRACTION-ENGINE-SPEC.md` is retained only as a feature index. This file holds the verdicts. Do not re-derive any of items 1–11 below without reading the four specs above first.
++
++## 0.1 CORRECTION — the source audit is partly stale (same-day re-verification)
++
++`docs/mega/tallow-1000x-upgrade-2026/scraping-crawling.md` was re-verified against the live working tree. **Three of its headline claims are no longer true**, so §2 blockers 1–3 below are largely already done:
++
++| Audit claim | Fresh evidence | Verdict |
++|---|---|---|
++| `TALLOW_DELTA_CRAWL` "set but never read anywhere in `src/`" | 9 reader sites: `crawl_queue.rs:122,127` (`delta_crawl_enabled()`), `:358`, `:675`; `crawl_pipeline.rs:321,357,383,1161,1234`. Set at `scheduler.rs:929`. | **REFUTED** |
++| `plan_incremental_crawl` / `is_unchanged_after_fetch` / `DeltaNeed` have "zero production callers" | `crawl_pipeline.rs:516` calls `is_unchanged_after_fetch`; `:465` uses `plan.unchanged_count()` / `re_crawl`; `:1263` wires `.with_delta(...)`; `:385` resolves `self.delta \|\| delta_crawl_enabled()`. | **REFUTED** |
++| `llm_extract` "not registered in `mod.rs` — reachable only via a private `#[path]` submodule" | `mod.rs:49` `pub mod llm_extract;`, `:223` re-export; invoked at `smart_extract.rs:221` (`LlmExtractor::with_config`) and `:235` (`heal_schema`). | **REFUTED** |
++| `CrawlResult.unchanged` has "no caller" | `crawl_pipeline.rs:484` sets `ctx.unchanged`, consumed within the pipeline at `:465`; terminal-skip still unconfirmed. | **PARTLY REFUTED** |
++
++Also: spec §1.8 (`@legal` / `@source` annotations) **already exists** — `@legal(basis:, purpose:, personal_data:, retain_for:)` with a `legal_bases` report, plus `tallow pia` (Privacy Impact Assessment) and `tallow sast` (taint analysis) commands.
++
++**Lesson for future audits:** the audit's §1 component verdicts held; its §3/§4 "unwired" claims did not. Wiring state must be re-checked at use time, not inherited.
++
++### Verified remaining (fresh, this audit)
++
++1. **4 FFI symbols missing** — `tallow_crawler_from_sitemap`, `tallow_crawler_from_links`, `tallow_page_cache_create`, `tallow_structured_data_extract`: **0 hits each** in `src/`. The `.tl` natives at `stdlib/browser.tl:305-312, 325-327, 354-356` have no Rust binding.
++2. **Content-cache middleware off by default** — `crawl_pipeline.rs:28` ("when disabled (the default)").
++3. **Blocking rate limiter in the fetch path** — `crawl_pipeline.rs:295` `std::thread::sleep(wait)`.
++4. **No extraction CLI surface** — fresh `tallow --help`: no `extract`, `plan`, `schema`, or `scrape` command. Present instead: `compliance`, `audit`, `pia`, `sast`, `sbom`, `sign`/`verify`, `browser`, `canary`, `fingerprint-audit`, `veil`, `never-check`, `fixity-sweep`, `phone`, `rmdb`, `pin`, `verify-ledger`.
++5. **Audit-sourced, not re-verified:** the four feature flags (`parquet-storage`, `s3-storage`, `redis-backend`, `real-ml`) and the Phase 5 remaining list.
++
++## 1. Verdict table by domain
++
++Verdicts below cite the prior audit where it already ruled; `[A]` = `docs/mega/tallow-1000x-upgrade-2026/scraping-crawling.md`.
++
++| Domain | Verdict | Evidence |
++|---|---|---|
++| 1. Language & type system | **MOSTLY MISSING** — the only genuinely new domain | No `Sourced<T>`, capability-typed egress, effect annotations, or compile-time selector/schema validation in the compiler. Partial runtime analogues do exist (below). |
++| 2. Fetch / HTTP | **MOSTLY REAL** | Conditional GET REAL-but-opt-in `[A] crawl_pipeline.rs:252-314` · content-addressed cache REAL `[A] crawl_queue.rs:227-296` · robots REAL `browser/robots.rs` · sitemap REAL `browser/sitemap.rs` · retry REAL `browser/retry.rs`, `retry_intelligence.rs` (71K) · `http.batch` REAL `src/codegen.rs` · rate limit REAL but **blocking `thread::sleep`** `[A] crawl_pipeline.rs:229-231` |
++| 3. Parsing & extraction | **MOSTLY REAL** | JSON-LD/microdata/OpenGraph REAL `[A] structured_data.rs:49-432` · 4-tier cascade w/ per-field confidence REAL `[A] smart_extract.rs:167-384` · main-content REAL `[A] ai_extract.rs:57-175` · quarantine REAL (Phase 5) · drift/self-heal REAL `schema_drift.rs`, `self_heal.rs` (28K) · PDF/OCR REAL `ocr.rs`, `pdf.rs` · entity REAL `entity.rs` (61K) · **LLM extraction REAL but DORMANT** `[A] llm_extract.rs:186-482`, absent from `mod.rs`, gated off |
++| 4. Dynamic content / browser | **REAL** | Fallback policy `fallback.rs` · waits `page.rs` · manual gate `escalation.rs` + `examples/browser_fallback_manual_gate/` · zones `zone.rs` (31K) · pool `pool.rs` (92K) · Firefox `juggler.rs` · vault auth `browser/auth.rs`, `auth_strategy.rs` · capture `visual.rs`, `recording.rs` |
++| 5. Scheduling / jobs / distribution | **MOSTLY REAL, one blocker** | SchedulerDaemon REAL w/ cron + overlap prevention `[A] scheduler.rs:605-765` · JobQueue REAL + SQLite backend REAL + Redis FEATURE-GATED `[A] job_queue.rs:226-1140` · DLQ REAL `dlq.rs` · budget/halt/fail-closed REAL `crates/tallow-jobs/budget.rs` · **delta planning REAL but UNWIRED** `[A] scheduler.rs:301-441` · distributed/ = early (5.7–11.1K per file) |
++| 6. Storage / provenance | **PARTIAL** | Provenance REAL `browser/provenance.rs`, `stdlib/provenance.tl` · row schema + validator REAL (Phase 5) · idempotent upsert REAL `[A] storage.rs:61-302` · Parquet/S3 FEATURE-GATED `[A] storage.rs:12-321` · dataset diff / replay / lineage-query: **not found** |
++| 7. Compliance / policy / safety | **REAL** | `browser/compliance.rs`, `browser/robots.rs`, `browser/privacy.rs`, `browser/provenance.rs` · plan `compliance` block + `schemas/compliance-gate-report.schema.json` · `stdlib/sourcegrade.{tl,rs}` (source grading) · `src/compliance/{clocks,incident,znism}.rs` · egress contract REAL `runtime/egress_http.rs` · approval gate = plan field only |
++| 8. Performance | **NOT APPLIED** | No mimalloc/jemalloc, no `lol_html`, no `simd-json`, no bloom dedupe, no DNS cache. `http_parser.rs` claims ~100x vs browser `[A] html_parser.rs:5`. `benches/` = `reliability_bench.rs` + `run_benchmarks.sh` only |
++| 9. Observability / QA | **MOSTLY REAL** | `otel.{tl,rs}`, `browser/observability.rs` (19K), `browser/trace.rs` (28K) · 192 test files · fixtures `examples/fixtures/mock_server.py`, `tools/fixtures` · `fuzz/` 5 files · gaps: drift/quarantine reporting, chaos tests |
++| 10. CLI / DX | **PARTIAL — unverified** | 81 CLI commands documented (`docs/TALLOW-CAPABILITIES.md` §2). `tallow extract` / `tallow plan *` / `tallow schema *` presence not verified |
++| 11. Source adapters | **REAL** | `stdlib/{fred,edgar,filings,geocode,yahoo,spotify,ocr,pdf,csv}.{tl,rs}`, `graphql.{tl,rs}`, `examples/request_plan_post_graphql/` |
++
++## 2. The actually-remaining work
++
++Everything here is either (a) named as a blocker by the prior audit with primitives already built, or (b) a flag flip, or (c) the one genuinely new domain.
++
++### Blockers (glue, not new logic)
++
++1. **Wire schema-first extraction.** Register `llm_extract` in `src/browser/mod.rs`; make the schema-first path default-on so one schema generation per domain+page-type is followed by CSS-speed extraction. `[A] §2 Gap`, `llm_extract.rs:288-418`.
++2. **Wire delta / no-op crawl end-to-end.** Three disconnected seams confirmed: `TALLOW_DELTA_CRAWL` is **set** by the scheduler (`scheduler.rs:845-847`) but **never read anywhere in `src/`**; `plan_incremental_crawl` / `is_unchanged_after_fetch` / `DeltaNeed` have **zero production callers**; `CrawlResult.unchanged` is set but **no consumer skips re-extraction**. `[A] §3`.
++3. **Parallelize the fetch loop.** `CrawlPipeline::fetch` is sequential and `SchedulerDaemon` caps at `max_concurrent=4` subprocesses (`scheduler.rs:618`); the distributed `JobQueue` backends already exist with cross-worker dedup but are unsurfaced. Also replace the blocking `thread::sleep` rate limiter. `[A] §4 items 3, 6`.
++
++### Flag activations
++
++4. `parquet-storage`, `s3-storage`, `redis-backend`, `real-ml` — all documented as real code, off by default (`[A] §1`). `ml::*` is currently MOCK-ONLY.
++5. Enable `HttpCacheMiddleware` by default (`with_content_cache`; doc `crawl_pipeline.rs:28-29`).
++
++### Real impl gaps (no FFI symbol behind declared natives)
++
++6. `crawler_from_sitemap`, `crawler_from_links`, `page_cache_create`, `structured_data_extract` (.tl) are declared `// native` with **no Rust FFI symbol** `[A] §1`. The Rust-side modules exist — the bindings do not.
++
++### Phase 5 declared-remaining
++
++7. Generic schema-driven extraction from arbitrary `tallow.extraction_schema.v1` (currently a hardcoded product-listing path).
++8. Parser registry / request-plan integration.
++9. Selector-chain / drift primitive wiring beyond the mock path.
++
++### The one genuinely new domain
++
++10. **Language-level extraction types** (`EXTRACTION-ENGINE-SPEC.md` §1): `Sourced<T>` field-level provenance as a type, capability-typed egress, `@egress`/`@reads`/`@writes` effect annotations, compile-time selector and schema validation, tristate `Field<T>` promotion from the existing NULL-vs-`""` runtime behaviour (`runtime/html_ffi.rs`). Nothing in the folder implements these at the compiler level. Cost driver: each touches both `interp.rs` (2.2 MB) and `codegen.rs` (1.25 MB), which must stay byte-identical.
++
++## 3. Out of scope — not to be extended
++
++Present in `src/browser/` but **not** part of this work, per the standing refusal: `stealth.rs`, `stealth_v2.rs`, `stealth_v3.rs`, `advanced_stealth.rs`, `network_stealth.rs`, `tor_stealth.rs`, `fingerprint_coherence.rs`, `fingerprint_validator.rs`, `runtime_fingerprint_audit.rs`, `http2_fingerprint.rs`, `dpi_bypass.rs`, `traffic_morph.rs`, `cookie_farm.rs`, `behavior.rs`, `cadence.rs`, `wordfence_bypass.rs`, `proxy_intelligence.rs`, `residential.rs`, `free_proxies.rs`, `ipv6_pool.rs`, `antibot.rs`, `vendor_detect.rs`, `captcha.rs`, `slider_captcha.rs`, `substitution.rs`. Existence noted for inventory completeness only. The compliant path for anything that requires a human remains the manual gate (`escalation.rs`, `examples/browser_fallback_manual_gate/`).
++
++## 4. Folder inventory (the "entire Nixe/Tallow folder")
++
++**Total: 41 GB.** Largest trees:
++
++- `target/` 19 G — build artifacts (reclaim candidate)
++- `artifacts/` 7.5 G — **328 run/receipt dirs**, newest: `egress-diversity`, `gama-api-extract-2026-10-12`, `client-a-deep-2026-10-11`, `credential-rotation-2026-10-10`
++- `Tallow/` 5.0 G — **a separate git checkout on `master`**, 60,431 files (`target/` 3 G, `website/` 484 M, `apps/` 321 M, `deploy/`, `audit/`, `crates/`, `docs/`). Duplicate working tree, not the active one.
++- `hermes-agent/` 2.4 G · `vendor/` 869 M · `nixreader/` 630 M · `tallow-search/` 402 M · `apps/` 354 M (`tallow-copy`, `tallowsync`) · `luma/` 261 M · `omnix/` 155 M · `firecrawl-self-hosted/` 137 M · `AamiFinancial/` 105 M · `docs/` 103 M (`reports/` 69 M, `research/` 8.8 M, `mega/` 4.7 M, 418 md files)
++
++Code surface:
++
++- `src/` 22 M / **513 `.rs` files** — `interp.rs` 2.2 M, `codegen.rs` 1.25 M, `main.rs` 823 K, `parser.rs` 201 K, `typeck.rs` 165 K, `src/browser/` 136 files, `src/stdlib/` 114 files
++- `crates/` **13 crates** — `tallow-crypto` 9.0 M, `tallow-daemon` 1.1 M, `tallow-net` 1.3 M, `tallow-protocol` 1.5 M, `tallow-reader` 1.5 M, `tallow-svid` 452 K, `tallow-jobs` 132 K, `tallow-admission`, `tallow-advisory`, `tallow-copy-engine`, `tallow-locator`, `tallow-registry`
++- `stdlib/` **86 `.tl`** · `examples/` 129 files · `tests/` 192 files · `scripts/` 293 files · `schemas/tallow/` 14 contracts · `configs/tallow/` 5 · `fuzz/` 5 · `benches/` 8
++- Adjacent trees: `RegionalDevelopmentMCP/` (77 M, `core/` incl. the **empty** `source_policy/`), `Texasmcp/` 78 M, `AamiFinancial/`, `Nabeel/Commodity`, `kroger_*` (~20 M of seeds/JSON), `data/` 52 M, `research/` (incl. `mega-undetected-2026-09-15/` — not reused), `luma/`, `omnix/`, `self-host/`, `supply-chain/`, `heretic/`, `intel_state/`, `dist/`, `logs/`
++
++## 5. Stub census (fresh, this audit)
++
++`todo!()` — **0 files**. `unimplemented!()` — **0 files**. `NotImplemented` — **0**. Zero `src/browser/*.rs` file is under 25 non-comment lines. `stub` appears in 15 files, `mock` in 13. **The 136-file browser tree is genuinely implemented; there is no lazy-stub problem.** The failures are wiring, feature flags, and missing FFI symbols — not missing logic.
+diff --git a/docs/extraction-engine/TALLOW-SCRAPER-AUDIT-2026-10-14.md b/docs/extraction-engine/TALLOW-SCRAPER-AUDIT-2026-10-14.md
+new file mode 100644
+index 0000000..b3e565a
+--- /dev/null
++++ b/docs/extraction-engine/TALLOW-SCRAPER-AUDIT-2026-10-14.md
+@@ -0,0 +1,251 @@
++# TALLOW SCRAPER — COMPREHENSIVE AUDIT & REA FEATURE-INTEGRATION FEASIBILITY
++
++**Date:** 2026-10-14 · **Tree:** `/home/user/Nixe` @ branch `v1`, HEAD `384daa3b` (2026-10-14), 4312 dirty entries
++**Method:** every claim below is re-verified against the live tree this session (`rg`, `wc`, the built
++`target/debug/tallow`, the running services). Inherited claims are marked **[inherited]** and were NOT
++trusted. The prior audit warned of exactly this (`RECONCILIATION-2026-10-12.md` §0.1: "wiring state must
++be re-checked at use time, not inherited") — five of its open items have since closed, and one new defect
++was found.
++
++**Prior art read first (not re-derived):** `docs/extraction-engine/REA-INTEGRATION-ASSESSMENT.md`,
++`RECONCILIATION-2026-10-12.md`, `EXTRACTION-ENGINE-SPEC.md` (superseded index),
++`docs/mega/MEGA-CHECKLIST.md`, `artifacts/modisoft-rea-2026-10-12/REPORT.md`.
++
++**Assumption labeled:** the request's "Tallow scraper" = the four collection surfaces in this tree
++(Rust `stdlib`/`browser`/`runtime`, the `tallow-reader` daemon, the `nixreader` reader, the
++`scrape-isolated` sandbox). "The previously listed features" = the REA capability/tool list from the
++2026-10-14 REA load (6.5.0) message.
++
++---
++
++## PART A — INVENTORY: what the scraper is today
++
++### A1. Code surface (measured)
++
++| Surface | Files | Lines | Role |
++|---|---:|---:|---|
++| `src/browser/**` | 136 | 100,234 | CDP/browser engine: pool, stealth, cookies, proxy, robots, retry, capture, crawl |
++| `src/stdlib/**` | 114 `.rs` (+86 `.tl`) | 98,742 | Site modules, entity, extract, ocr/pdf, source adapters |
++| `src/runtime/**` | 27 | 11,375 | FFI layer: fetch, egress_http, browser, html, db, dns_guard, ippool, crawler, page_cache |
++| `crates/tallow-reader/src` | 9 | 1,578 | Warm-pool extraction daemon (HTTP) |
++| `nixreader/**` | 66 | 24,921 | Camoufox reader + `reader_service.py` + leak/egress drills |
++| `target/debug/tallow` | 1 | 673 MB | Built 2026-10-14 21:00 UTC |
++
++Stub census **[inherited, not re-run]**: 0 `todo!()`, 0 `unimplemented!()`. The browser tree is
++implemented; the failures in this system are **wiring, flags, and bindings**, not missing logic.
++
++### A2. The four collection surfaces (each a separate egress plane)
++
++1. **Rust `fetch`/stdlib plane.** Fail-closed to Tor by contract: `src/runtime/fetch.rs`
++   (`egress_proxy_url()`, `TOR_SOCKS_URL = socks5h://127.0.0.1:9050`, `TALLOW_ALLOW_DIRECT` as the
++   *only* opt-out, `TALLOW_TOR_STREAM_ID` for per-run circuit identity); all HTTP goes through
++   `src/runtime/egress_http.rs` (one agent per resolved proxy URL). A source-guard test fails the build
++   if a stdlib file regains a bare `ureq::*` call.
++2. **Browser plane.** `src/browser/**` driven via `browser/cdp.rs`; `tallow browser` is a live CLI verb.
++3. **Reader daemon.** `tallow-reader-daemon` (active). Routes: `/health`, `POST /extract`, `/pool`,
++   `POST /shutdown` (`crates/tallow-reader/src/routes/mod.rs:34-40`).
++   `ExtractRequest { url, anon }`; `ExtractResult { url, title, content, length, source, member,
++   exit_ip, error, cookies }` (`src/engine.rs:16-45`) — `cookies` is a deliberate harvest hook for
++   replaying a session server-side (the DataDome `ct` case).
++4. **`scrape-isolated` sandbox.** Separate plane with its OWN in-container Tor. Ubuntu 24.04; apt set =
++   `tor, nftables, util-linux, curl, python3{,-requests,-socks,-yaml,-venv}` + GTK/NSS/ATK libs for
++   Camoufox; Python venv `/opt/venv` with `camoufox, requests, pyyaml, pysocks, beautifulsoup4`.
++   **No Node, no npm, no clang.** Gate order (entrypoint.sh) = DNS-leak gate → nft kill-switch + positive
++   control → private Tor → `IsTor:true` → allowlist negative control → uid drop.
++
++### A3. Data handling (where output actually goes)
++
++| Store | Path | Content |
++|---|---|---|
++| Sandbox results | `/var/lib/scrape-isolated/out/results.jsonl`, `camoufox.jsonl`, `.exit_ip` | Per-request records, exit IP attestations |
++| Reader cache | `nixreader/reader_cache.sqlite` (19.4 MB) | Reader-side cache/key store |
++| Run artifacts | `artifacts/**` (282 dirs) | Per-run evidence packs and receipts |
++| Signed receipts | `crates/tallow-jobs/src/scheduler.rs` — `ed25519_dalek::SigningKey` + `tallow_registry::receipt::Receipt`, one per attempt | Auditable dispatch trail |
++| Provenance | `src/browser/provenance.rs` (8.8 KB), `src/run_evidence.rs` (13.5 KB), `src/artifact_index.rs` (27 KB) | Confidence breakdown, run evidence, artifact index |
++| Compliance | `src/compliance/{clocks,incident,znism}.rs` + `compliance`/`pia`/`sast` CLI verbs | Local-only reports |
++
++`provenance.rs` is **domain-specific**: `ValidationStep`, `ProvenanceRecord { price_cents,
++canonical_product_id, store_id, extraction_method, extraction_confidence, final_confidence }`. It carries
++confidence but **no explicit unknowns/limitations field** (verified: `rg limitation src/browser/provenance.rs
++src/run_evidence.rs` → no hits).
++
++---
++
++## PART B — FRESH VERIFICATION of the 2026-10-12 audit
++
++The prior reconciliation listed 10 open items. Re-measured today:
++
++### B1. CLOSED since 2026-10-12 (the tree moved; do not re-plan these)
++
++| # | Prior claim | Live state | Evidence |
++|---|---|---|---|
++| 1 | `llm_extract` dormant / gated off | **Schema-first extraction is DEFAULT-ON** | `browser/smart_extract.rs:121-131`: `TALLOW_LLM_EXTRACT` unset ⇒ `llm_on = true`; `mod.rs:49` `pub mod llm_extract;`, `:223` re-export |
++| 2 | `TALLOW_DELTA_CRAWL` "set but never read" | **Wired both directions** | Readers `crawl_queue.rs:122,127,358,675` + `crawl_pipeline.rs:320,356,382,1176`; set by `scheduler.rs` |
++| 3 | Content cache off by default | **Default ON** | `crawl_pipeline.rs:1196` `enable_content_cache: true`; asserted by test at `:1350` |
++| 4 | Blocking `thread::sleep` in the fetch path | **Replaced by a token bucket that does not block** | `crawl_pipeline.rs:261-295` (interceptor consumes a token); test `rate_limit_middleware_does_not_block` `:1331` |
++| 5 | 4 declared natives with no FFI symbol | **2 of 4 now bound** | `src/runtime/crawler_ffi.rs:49` `tallow_crawler_from_links`; `src/runtime/page_cache_ffi.rs:47` `tallow_page_cache_create` |
++
++### B2. STILL OPEN (verified absent/unchanged this session)
++
++1. **2 FFI symbols unbound.** `tallow_crawler_from_sitemap`, `tallow_structured_data_extract` → **0 hits
++   in `src/`**. `.tl` natives exist (`stdlib/browser.tl:393,442`); Rust modules `browser/sitemap.rs` and
++   `browser/structured_data.rs` exist. Bindings only — no new logic.
++2. **No extraction CLI surface.** `target/debug/tallow extract|plan|schema|scrape` → `error: unrecognized
++   subcommand`. Present instead: `compliance, audit, sast, pia, browser, canary, tor, …`.
++3. **4 feature flags still opt-in** (`Cargo.toml:291,294,298`): `parquet-storage`, `s3-storage`,
++   `redis-backend`, `real-ml`.
++4. **`ml::*` still mock-dominated:** `ml/embeddings.rs` mock=22, `ml_matcher.rs` mock=2, `vector_store.rs`
++   mock=1 (vs 17/19/16 functions) — mock strings are pervasive in `embeddings.rs` specifically.
++5. **No limitations/unknowns field** in provenance or run evidence (Part A3).
++6. **No general dataset diff / replay / lineage query** **[inherited, not re-probed]**.
++
++### B3. NEW DEFECT found this audit — the headline multiplier is currently nominal
++
++`TALLOW_LLM_EXTRACT` now defaults **ON** and the documented lever is "one LLM schema generation per
++domain+page-type, then CSS-speed extraction". The engine behind it is Ollama at
++`http://localhost:11434` (`smart_extract.rs:113,127`). **Ollama is not installed and not running on this
++box** (`command -v ollama` → nothing; `systemctl is-active ollama` → `inactive`).
++
++Consequence, per the code's own documented behaviour: with Ollama unreachable the tier "degrades
++gracefully to `ExtractedProduct::failed()`". So the schema-first path is **on by default with no engine
++behind it** — it will look enabled in config and behave as a no-op that emits failed rows, spending a
++per-page connection attempt. Either install an engine or make the default honest (off unless the engine
++answers). An enabled-by-default feature with a missing dependency is worse than a disabled one: it
++silently converts "not attempted" into "attempted, failed".
++
++### B4. Build-blocking context (unchanged)
++
++Branch `v1` **does not compile from a clean checkout** since `e5fec4cd` (2026-10-13): `mod rng;` is
++tracked in `crates/tallow-crypto/src/lib.rs` but `crates/tallow-crypto/src/rng.rs` was never committed.
++Any integration work, CI, or fresh-worktree verification is gated on that one file landing.
++
++---
++
++## PART C — FEASIBILITY: the previously listed REA features → the Tallow scraper
++
++REA on this box is 6.5.0 (207 MCP tools, doctor 5/5). The list splits into three classes.
++
++### C1. Web/JS plane — where REA and Tallow overlap
++
++| REA feature | Tallow today | Verdict |
++|---|---|---|
++| Website structure / scripts / network / screenshots (`inspect-web-page`, `analyze-web-bundle`) | **Present and deeper**: `cdp.rs` 62 KB, `page.rs` 142 KB, `network.rs` 94 KB, `visual.rs` 28 KB (pixel diff + baselines), `trace.rs` 28 KB, `recording.rs` 28 KB | **Integrate: no.** Nothing to gain; Tallow already owns this surface |
++| Browser scenario capture (Playwright CDP) | Tallow drives CDP directly; sandbox has its own Camoufox engine | **Integrate: no.** Duplicative |
++| `analyze-javascript-application`, `export-web-scripts` (static JS/Electron) | **ABSENT.** Closest existing capability is sourcemap-URL *detection*: `src/stdlib/sitescan.rs` (12 hits, detect-only). No module/import graph, no sourcemap reconstruction, no V8 inspector | **The one genuinely adjacent lane.** See C3 |
++| HAR import / saved-capture readers | **PARTIAL**: `artifact_policy.har` in the plan format + `network.rs` captures traffic; **no HAR import** | **Integrable without refactoring** — pure Rust parse, no new runtime |
++| SQLite snapshot inspection | `runtime/db_ffi.rs` + `storage.rs` SQLite backend (REAL) | **Integrate: no.** Duplicative |
++| Screenshot compare | `visual.rs` (pixel diff, baselines) + `ab_detector.rs` | **Integrate: no.** Duplicative |
++| WebMCP discovery | Nothing that maps to a Tallow product path | **Skip** |
++
++### C2. Compiled-artifact lanes — out of domain, and two are licence-walled
++
++Native decompilation, offline ELF layout, Go binaries, WASM, EVM, crash/register analysis, .NET/CIL,
++APK, Android devices, JEB projects, Android resources, firmware, package anatomy. Tallow has **none of
++them and no consumer for them** (unchanged from the 2026-10-12 assessment: 12 of 17 target types absent).
++Reimplementing natively would mean writing a decompiler, a disassembler, a JADX-equivalent and a firmware
++unblobber; **IDA/Hex-Rays and JEB are commercial and licence-gated**, so they cannot be integrated at any
++effort level. The corresponding Tallow-side dependencies (`java`, `apktool`, `adb`, `tshark`,
++`sigrok-cli`, `wabt`, `wakaru`, `rizin`, `lldb`, `mitmproxy`) are absent from the box and, with two
++exceptions, from the sandbox image too. **Verdict: refuse / not applicable** — and for third-party
++binaries the ownership/consent gate applies independently of effort.
++The generic version of this class — reading an *artifact the operator supplies* — is already served by
++REA as an external CLI with no wrapper needed.
++
++### C3. The one integration worth debating (and its real cost)
++
++**Static JavaScript/Electron analysis into the extraction stack.** It is the only listed capability that
++(a) Tallow lacks, (b) is genuinely adjacent to collection work (the modisoft run at
++`artifacts/modisoft-rea-2026-10-12/` used exactly this), and (c) has a worked example on this box.
++
++Two shapes, and they are not equivalent:
++
++- **Wrapper (additive, reversible).** A new `src/stdlib/js_analyze.rs` + `src/runtime/js_analyze_ffi.rs`
++  that shells out to the `rea` CLI over stdio, driven from a `tallow-jobs` recipe. Touches no
++  parity-critical code. **But it adds a Node runtime dependency to Tallow's extraction stack**, which
++  contradicts the standing 2026-10-12 operator decision ("skip REA entirely — build only the
++  Tallow-native Rust extraction stack").
++- **In-sandbox (isolation-correct, more invasive).** Add `nodejs` + `rea-agents` to
++  `/opt/scrape-isolated/Dockerfile`, rebuild the image, add target hosts to
++  `targets.allowlist`, and invoke `rea` from the job layer. Cost: image rebuild + a second runtime in a
++  deliberately minimal image, against the precedent that even `clang` was left out to keep the image lean.
++  The `scrape.yaml` chokepoint (9050 → filter → Tor 9053, uid 10001 cannot egress) still holds, so the
++  *isolation* property survives; only image weight changes.
++
++**Verdict: technically feasible without refactoring; strategically already decided against.** Recommend
++keeping REA as an out-of-process CLI (its own MCP + CLI, invoked by the operator or Hermes) rather than
++baking it into the scraper — same capability, zero coupling, no Node in the extraction path.
++
++### C4. The adoptable convention (highest value / lowest cost on the whole list)
++
++REA attaches **explicit limitations/unknowns** to every evidence record and frames work as
++`investigate → understand → recreate`. Tallow's provenance carries confidence but cannot express
++"unknown", so absence is indistinguishable from failure. Extending `ProvenanceRecord` and
++`run_evidence.rs` with a typed `unknowns`/`limitations` field is a small, contained change that touches
++neither `interp.rs` nor `codegen.rs`. **Verdict: integrable now.**
++
++---
++
++## PART D — Conflicts, dependencies, architectural changes
++
++1. **Parity constraint dominates.** Any language-level addition must be byte-identical across
++   `interp.rs` (2.2 MB) and `codegen.rs` (1.25 MB). This is why C4 (a runtime/struct field) is cheap and
++   anything typed into the language is not.
++2. **Egress contract is closed.** Every new fetch path must go through `runtime/egress_http.rs`; a
++   source-guard test fails the build on a bare `ureq::*`. Any REA integration that fetches must inherit
++   this or it will not build.
++3. **Sandbox has no Node** (verified in the Dockerfile) and denies egress by default at the network layer.
++   Any in-sandbox integration needs an image change *and* allowlist entries.
++4. **Standing decision conflict.** `REA-INTEGRATION-ASSESSMENT.md` §4 recommends *not* integrating REA;
++   the checklist records the operator deciding "skip REA entirely" (2026-10-12, C2/D-2). Reversing that
++   needs an explicit decision, not a silent wrapper.
++5. **Out-of-scope inventory.** `src/browser/` contains ~25 modules (`stealth*`, `fingerprint*`,
++   `dpi_bypass`, `traffic_morph`, `cookie_farm`, `antibot`, `captcha`, `residential`, …) that
++   `RECONCILIATION-2026-10-12.md` §3 places out of scope. They are present for inventory completeness and
++   are not integration targets. `EXTRACTION-ENGINE-SPEC.md` §12 lists the same exclusions.
++6. **No CLI seam for extraction.** With no `tallow extract|plan|schema`, any new capability lands as a
++   stdlib module + FFI + a jobs recipe — or inside the sandbox job layer.
++7. **Clean-checkout build is broken** (missing `tallow-crypto/src/rng.rs`). Independent of this work, but
++   it blocks verifying any of it in a fresh worktree.
++
++---
++
++## PART E — Gaps vs opportunities (ranked by verified value ÷ cost)
++
++**RE-ISSUED 2026-10-15.** Every item below is now closed, closed-with-a-non-claim, or rejected with a
++reason. Where a verdict differs from this audit's own expectation, the difference is stated — two of
++them were the audit being wrong.
++
++| # | Opportunity | Verdict | Evidence |
++|---|---|---|---|
++| 1 | Give the schema-first tier an engine, or turn it off honestly (B3) | **CLOSED.** The engine is selectable and the tier is OFF unless configured — the refusal *is* the honest default | `429eb6d2`, `3ba8fe7f` |
++| 2 | Bind the 2 remaining FFI symbols | **REJECTED-WITH-REASON for `structured_data_extract`; the audit's cost estimate was wrong.** "Rust modules already exist; only bindings missing" is false: the interpreter reaches it via the stdlib facade, but codegen has **no lowering**, and the registered `%struct.StructuredData` layout is only part of what a binding needs — the native must construct memory including the runtime representation of `[]String` and `Map`. **No correctness defect exists** (interpreter fallback is correct; `--require-native` refuses loudly), so this is a backend gap. The claim that *was* imprecise — `stdlib/browser.tl`'s `// native:` comment, silent about which backend runs it — is corrected. | `29f9976d` |
++| 3 | Add the extraction CLI surface | **CLOSED**, verified end to end on both paths against the repo's own row validator, with no-egress proven (established sockets delta 0) | `c09363a4` |
++| 4 | Adopt typed `unknowns`/`limitations` (C4) | **CLOSED**, and the helper now has a real caller (the extract verb declares every field its selectors did not yield) | `75ff637a` |
++| 5 | HAR import (C1) | **CLOSED.** The blocker was structural, not cosmetic: every HAR struct derived `Serialize` only, so the recorder's own shapes could not be parsed | `11923c2a` |
++| 6 | Leave REA as an external CLI (C3) | **CLOSED** with the decision recorded and a runbook | `c64fd997` |
++| 7 | Close the clean-checkout build (B4) | **CLOSED — and it took TWO defects, not one.** The audit named one (a missing `rng.rs`). Committing it revealed a second: `8e5bdaac` had landed `src/runtime/fs_ffi.rs`, which calls `provenance::hash_bytes`, while excluding the file defining it. `CLEAN_CHECKOUT_RC=0` now, at `73abec10` | `e923b3e4`, `73abec10` |
++
++**Gaps this audit did not name, found while executing:**
++
++| # | Gap | Verdict |
++|---|---|---|
++| 8 | **The tier sends third-party page content to a third-party vendor with no policy check.** The request plan already governs that transfer through its per-request `compliance` block; the tier was the one path bypassing its own governance | **CLOSED**, fail-closed: with no policy a remote transfer is refused, and `transfer_allowed` is part of the tier's measured state (`30dfa52e`) |
++| 9 | **The tier had no spend ceiling** — `num_predict`/`max_tokens` bounded one response, nothing bounded how many requests a run could make | **CLOSED**: checked before each call, refusing past the cap; the measurement half completes as `disabled-with-a-reason` because it needs a live engine (`8923ea72`) |
++| 10 | **`real-ml` was referenced by `cfg` but never declared**, so that branch had never been compiled and every build emitted two warnings | **CLOSED**: declared; the branch compiles and returns an honest error rather than silently substituting a non-semantic engine (`29f9976d`) |
++
++## Non-claims
++
++- No benchmark was run; no throughput multiplier is asserted here.
++- `ml::*` mock-dominance and the dataset-diff/replay gaps are **[inherited]** and were not re-probed
++  beyond the mock census and the provenance check.
++- The two closed FFI symbols were confirmed to be real `pub extern "C"` definitions; their *runtime*
++  behaviour under codegen was not executed.
++- REA's own arm64 coverage caveats (Wakaru, tshark and sigrok lanes recorded x64-only) stand.
++- **The live model call is unverified.** Every engine-side test is offline (request shape, response
++  shape, credential refusal, budget, transfer policy); the wire path needs a credential and a
++  reachable engine, so it is plausible and not demonstrated.
++- **P2.T1 is deferred, not done** — see item 2. Its acceptance tests could not be constructed on this
++  box in any case (a network-bound arm cannot be asserted in a unit test locally).
++- **P7.T2's Tor-plane proof was not executed** — it needs a browser session, not a docs-only step.
++- Per-item status for the execution plan itself lives in
++  `docs/plans/2026-10-14-tallow-scraper-execution-plan.md` (Progress 2026-10-15).

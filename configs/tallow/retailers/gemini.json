@@ -1,0 +1,19 @@
+{
+  "name": "gemini",
+  "display_name": "Gemini",
+  "base_url": "https://www.gemini.com",
+  "deals_page_url": "https://www.gemini.com/sale",
+  "product_selector": "article",
+  "title_selector": "h2",
+  "price_selector": ".price",
+  "was_price_selector": ".was-price",
+  "image_selector": "img",
+  "stock_selector": "",
+  "browser_required": true,
+  "affiliate_program": "",
+  "deal_count": 1,
+  "source": "hiddenclearances_api",
+  "notes": "Auto-generated from Hidden Clearances API (1 deals). Needs manual selector verification. Live-probed 2026-10-02T16:23:22Z: 404 via plain fetch \u2014 path dead or unresolved redirect; manual URL review; 2026-10-02 wave3: NOT a deals site \u2014 Gemini crypto exchange; no deals/sale section. Registry correction: retirement candidate.",
+  "probe_status": "not-a-deals-site",
+  "probe_date": "2026-10-02T20:07:41Z"
+}

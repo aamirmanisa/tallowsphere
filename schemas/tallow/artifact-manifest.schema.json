@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/artifact-manifest.schema.json",
+  "title": "Tallow Run Artifact Manifest",
+  "description": "Per-run artifact manifest contract for Phase 2 artifact/replay/redaction/retention gates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_id",
+    "launch_id",
+    "run_id",
+    "generated_at_utc",
+    "files",
+    "redaction",
+    "retention",
+    "replay"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "tallow.artifact_manifest.v1"
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "launch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "target_manifest_ref": {
+      "type": "string"
+    },
+    "extraction_schema_ref": {
+      "type": "string"
+    },
+    "error_taxonomy_ref": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "request": {
+      "$ref": "#/$defs/request"
+    },
+    "response": {
+      "$ref": "#/$defs/response"
+    },
+    "redaction": {
+      "$ref": "#/$defs/redaction"
+    },
+    "retention": {
+      "$ref": "#/$defs/retention"
+    },
+    "replay": {
+      "$ref": "#/$defs/replay"
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "artifact_class",
+        "exists"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "artifact_class": {
+          "type": "string",
+          "enum": [
+            "manifest",
+            "raw_response",
+            "normalized_rows",
+            "metrics",
+            "logs",
+            "screenshot",
+            "har",
+            "quarantine",
+            "other"
+          ]
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "redaction_status": {
+          "type": "string",
+          "enum": [
+            "not_applicable",
+            "redacted",
+            "raw",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "headers_redacted": {
+          "type": "boolean"
+        },
+        "body_redacted": {
+          "type": "boolean"
+        },
+        "target_id": {
+          "type": "string"
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 599
+        },
+        "headers_redacted": {
+          "type": "boolean"
+        },
+        "body_capture": {
+          "type": "string",
+          "enum": [
+            "none",
+            "snippet",
+            "redacted",
+            "full"
+          ]
+        },
+        "error_kind": {
+          "type": "string"
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_required",
+            "passed",
+            "failed",
+            "unknown"
+          ]
+        },
+        "pii_policy": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retention_days"
+      ],
+      "properties": {
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "delete_after_utc": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "safe_to_replay"
+      ],
+      "properties": {
+        "safe_to_replay": {
+          "type": "boolean"
+        },
+        "replay_reason": {
+          "type": "string"
+        },
+        "requires_approval": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
