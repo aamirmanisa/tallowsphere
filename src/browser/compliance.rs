@@ -117,9 +117,9 @@ impl ComplianceManager {
         // come from a config file or DB; we seed with 0 for now.
         let defaults = [
             ("amazon",   true, true, true, "https://www.amazon.com/gp/help/customer/display.html?nodeId=508088"),
-            ("walmart",  true, true, true, "https://www.walmart.com/help/article/walmart-com-terms-of-use"),
-            ("target",   true, true, true, "https://www.target.com/c/terms-conditions"),
-            ("bestbuy",  true, true, true, "https://www.bestbuy.com/site/help-topics/conditions-of-use/pcmcat204400050067.c"),
+            ("walmart",  true, true, true, "https://www.shop-a.example/help/article/walmart-com-terms-of-use"),
+            ("target",   true, true, true, "https://www.shop-b.example/c/terms-conditions"),
+            ("bestbuy",  true, true, true, "https://www.shop-c.example/site/help-topics/conditions-of-use/pcmcat204400050067.c"),
             ("costco",   true, true, true, "https://www.costco.com/terms-and-conditions-of-use.html"),
             ("kroger",   true, true, true, "https://www.kroger.com/hc/help/policies-information/terms-and-conditions"),
         ];

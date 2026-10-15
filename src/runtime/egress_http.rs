@@ -7,7 +7,7 @@
 //! (see [`egress_refusal`]): this module never silently degrades to a direct
 //! connection. On top of that sits a baseline politeness delay.
 //!
-//! Before this module ~31 stdlib modules (`azure_phish`, `beehiiv`, `cxense`,
+//! Before this module ~31 stdlib modules (`beehiiv`, `cxense`,
 //! `cnam_dip`, `edgar`, `ghost`, `graphql`, `transfer`, `wordpress`, …) called
 //! bare `ureq::get` / `ureq::post` — ~51 sites with **no proxy at all** — so
 //! using them for collection egressed from the box IP while `fetch()`, `http.*`

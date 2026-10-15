@@ -638,7 +638,7 @@ impl<T> RingBuffer<T> {
 /// Cloud-fronting configuration.
 ///
 /// Routes requests through legitimate CDN domains so network monitors
-/// see traffic to "cdn.example.com" instead of "target.com".
+/// see traffic to "cdn.example.com" instead of "shop-b.example".
 #[derive(Debug, Clone)]
 pub struct CloudFrontConfig {
     /// The CDN domain to use as cover (e.g., "d1234.cloudfront.net")
@@ -1173,9 +1173,9 @@ mod tests {
 
     #[test]
     fn test_cloud_front_config() {
-        let cfg = CloudFrontConfig::new("d1234.cloudfront.net", "target.com");
+        let cfg = CloudFrontConfig::new("d1234.cloudfront.net", "shop-b.example");
         assert_eq!(cfg.sni, "d1234.cloudfront.net");
-        assert_eq!(cfg.target_domain, "target.com");
+        assert_eq!(cfg.target_domain, "shop-b.example");
     }
 
     #[test]

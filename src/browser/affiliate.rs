@@ -103,11 +103,11 @@ impl AffiliateManager {
 
         if host.contains("amazon.") || host.contains("amzn.to") {
             Some("amazon".to_string())
-        } else if host.contains("walmart.com") {
+        } else if host.contains("shop-a.example") {
             Some("walmart".to_string())
-        } else if host.contains("target.com") {
+        } else if host.contains("shop-b.example") {
             Some("target".to_string())
-        } else if host.contains("bestbuy.com") {
+        } else if host.contains("shop-c.example") {
             Some("bestbuy".to_string())
         } else if host.contains("rakuten.") {
             Some("rakuten".to_string())

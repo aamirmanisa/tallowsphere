@@ -1755,8 +1755,6 @@ impl<'a> TypeChecker<'a> {
                 | "sso"
                 | "escalation"
                 | "azure_app_proxy"
-                | "azure_sql"
-                | "azure_phish"
                 | "deals"
                 | "edgar"
                 | "filings"

@@ -305,15 +305,15 @@ mod tests {
         let html_a = r#"<div class="grid"><div class="product-card"><span class="price">$1</span></div></div>"#;
         let html_b = r#"<ul class="list"><li data-product><span data-price="2">$2</span></li></ul>"#;
 
-        let r1 = d.detect("walmart.com", html_a);
+        let r1 = d.detect("shop-a.example", html_a);
         assert!(r1.is_new_variant);
         assert_eq!(r1.all_variants_seen.len(), 1);
 
-        let r2 = d.detect("walmart.com", html_a);
+        let r2 = d.detect("shop-a.example", html_a);
         assert!(!r2.is_new_variant);
         assert!((r2.variant_stability - 1.0).abs() < 1e-9);
 
-        let r3 = d.detect("walmart.com", html_b);
+        let r3 = d.detect("shop-a.example", html_b);
         assert!(r3.is_new_variant);
         assert_eq!(r3.all_variants_seen.len(), 2);
         // variant_stability for B should be 1/3

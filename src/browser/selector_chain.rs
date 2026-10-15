@@ -328,9 +328,9 @@ mod tests {
         let mut chain = SelectorChain::new("price");
         chain.add(".a", SelectorType::Css, 0);
         chain.add(".b", SelectorType::Css, 1);
-        reg.register("heb.com", chain);
+        reg.register("shop-d.example", chain);
         for _ in 0..15 {
-            let chain = reg.get_mut("heb.com", "price").unwrap();
+            let chain = reg.get_mut("shop-d.example", "price").unwrap();
             let r = chain.try_extract(r#"<div class="b">x</div>"#);
             chain.record(&r);
         }

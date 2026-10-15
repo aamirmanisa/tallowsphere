@@ -597,30 +597,30 @@ mod tests {
 
     #[test]
     fn origin_matching_is_exact_and_refuses_suffix_tricks() {
-        let bound = "https://secure.cstorepro.com";
+        let bound = "https://secure.shop-e.example";
         assert!(origin_matches(
             bound,
-            "https://secure.cstorepro.com/EmagineNETCOSM/Login.aspx"
+            "https://secure.shop-e.example/EmagineNETCOSM/Login.aspx"
         ));
-        assert!(origin_matches(bound, "https://secure.cstorepro.com"));
+        assert!(origin_matches(bound, "https://secure.shop-e.example"));
         // A name-allowlist cannot judge this: the suffix must NOT pass.
         assert!(!origin_matches(
             bound,
-            "https://secure.cstorepro.com.evil.net"
+            "https://secure.shop-e.example.evil.net"
         ));
         assert!(!origin_matches(
             bound,
-            "https://evil.net/?x=secure.cstorepro.com"
+            "https://evil.net/?x=secure.shop-e.example"
         ));
         assert!(
-            !origin_matches(bound, "http://secure.cstorepro.com"),
+            !origin_matches(bound, "http://secure.shop-e.example"),
             "scheme downgrade"
         );
         assert!(
-            !origin_matches(bound, "https://cstorepro.com"),
+            !origin_matches(bound, "https://shop-e.example"),
             "parent domain"
         );
-        assert!(!origin_matches(bound, "https://secure.cstorepro.com:8443"));
+        assert!(!origin_matches(bound, "https://secure.shop-e.example:8443"));
     }
 
     #[test]
@@ -642,7 +642,7 @@ mod tests {
             Entry {
                 username: "trimart4005".into(),
                 password: "s3cr3t-value".into(),
-                origin: Some("https://secure.cstorepro.com".into()),
+                origin: Some("https://secure.shop-e.example".into()),
                 created_at: now_iso(),
             },
         );
@@ -655,7 +655,7 @@ mod tests {
         let e = back.get("cstorepro").expect("entry");
         assert_eq!(e.username, "trimart4005");
         assert_eq!(e.password, "s3cr3t-value");
-        assert_eq!(e.origin.as_deref(), Some("https://secure.cstorepro.com"));
+        assert_eq!(e.origin.as_deref(), Some("https://secure.shop-e.example"));
 
         // The unbound case must round-trip as JSON null, not vanish.
         let mut m2 = back;
@@ -700,7 +700,7 @@ mod tests {
             Entry {
                 username: "u".into(),
                 password: "p".into(),
-                origin: Some("https://secure.cstorepro.com".into()),
+                origin: Some("https://secure.shop-e.example".into()),
                 created_at: now_iso(),
             },
         );
@@ -711,7 +711,7 @@ mod tests {
             "check".into(),
             "cstorepro".into(),
             "--origin".into(),
-            "https://secure.cstorepro.com/EmagineNETCOSM/".into(),
+            "https://secure.shop-e.example/EmagineNETCOSM/".into(),
             "--path".into(),
             p.clone(),
         ]);
@@ -721,7 +721,7 @@ mod tests {
             "check".into(),
             "cstorepro".into(),
             "--origin".into(),
-            "https://secure.cstorepro.com.evil.net".into(),
+            "https://secure.shop-e.example.evil.net".into(),
             "--path".into(),
             p.clone(),
         ]);
@@ -740,7 +740,7 @@ mod tests {
             Entry {
                 username: "u".into(),
                 password: "DO-NOT-PRINT-ME".into(),
-                origin: Some("https://secure.cstorepro.com".into()),
+                origin: Some("https://secure.shop-e.example".into()),
                 created_at: now_iso(),
             },
         );

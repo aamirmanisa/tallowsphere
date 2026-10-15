@@ -1,7 +1,7 @@
 //! SEC1 honesty-sweep verification (wave2, 2026-09-05).
 //!
 //! Proves the four S1–S4 fixes end-to-end through the public stdlib surface.
-//! The unit tests added inside `src/stdlib/{gama_api,crypto,copy_engine,agent}.rs`
+//! The unit tests added inside `src/stdlib/{crypto,copy_engine,agent}.rs`
 //! carry the same assertions; this file exists so the fixes are executable even
 //! when unrelated in-flight unit-test code breaks the `cargo test --lib` binary.
 //!
@@ -26,81 +26,6 @@ fn step(name: &str, action: &str, args: Vec<Value>) -> Value {
     }
 }
 
-// ── S1: gama_api ───────────────────────────────────────────────────────
-
-#[test]
-fn s1_brute_login_off_by_default_and_capped_when_opted_in() {
-    // All environment reads/writes for this module are confined to this single
-    // test so parallel tests cannot race on the opt-in variable.
-    let env = "TALLOW_GAMA_PROBE_ALLOWED";
-    let preset = std::env::var(env).map(|v| v.trim() == "1").unwrap_or(false);
-    // Safety: single-threaded env mutation confined to this test (edition 2024
-    // marks set_var/remove_var unsafe).
-    if !preset {
-        // Default (no opt-in): refused before any I/O, naming the gate/env.
-        let r = stdlib::dispatch(
-            "gama_api",
-            "brute_login",
-            vec![Value::Int(100_000), Value::Int(100_001)],
-        );
-        let msg = match r {
-            Some(Err(m)) => m,
-            other => panic!("brute_login must refuse by default, got {other:?}"),
-        };
-        assert!(msg.contains(env), "err should name the opt-in env: {msg}");
-        assert!(msg.contains("disabled by default"), "err should say disabled: {msg}");
-    }
-
-    // With the opt-in granted, the mandatory per-run attempt cap still refuses
-    // a 101-attempt range BEFORE any network I/O.
-    unsafe { std::env::set_var(env, "1") };
-    let r = stdlib::dispatch(
-        "gama_api",
-        "brute_login",
-        vec![Value::Int(0), Value::Int(100)],
-    );
-    let msg = match r {
-        Some(Err(m)) => m,
-        other => panic!("wide range must hit the attempt cap, got {other:?}"),
-    };
-    assert!(msg.contains("cap"), "err should mention the rate-limit cap: {msg}");
-
-    if !preset {
-        unsafe { std::env::remove_var(env) };
-    }
-}
-
-#[test]
-fn s1_transport_errors_and_missing_args_surface_as_err() {
-    // Missing-arg errors are Err, not Ok("error...").
-    let r = stdlib::dispatch("gama_api", "login", vec![]);
-    assert!(matches!(r, Some(Err(_))), "login() missing arg must be Err, got {r:?}");
-    let r = stdlib::dispatch("gama_api", "get_main_menu", vec![]);
-    assert!(matches!(r, Some(Err(_))), "missing token must be Err, got {r:?}");
-    assert!(stdlib::dispatch("gama_api", "no_such_fn", vec![]).is_none());
-}
-
-#[test]
-fn s1_get_config_does_not_leak_vendor_headers() {
-    let v = stdlib::dispatch("gama_api", "get_config", vec![])
-        .expect("get_config should route")
-        .expect("get_config should succeed");
-
-    fn contains(value: &Value, needle: &str) -> bool {
-        match value {
-            Value::String(s) => s.contains(needle),
-            Value::Array(items) => items.iter().any(|i| contains(i, needle)),
-            Value::Map(entries) => entries
-                .iter()
-                .any(|(k, val)| contains(k, needle) || contains(val, needle)),
-            _ => false,
-        }
-    }
-    assert!(matches!(&v, Value::Map(_)), "expected an object map, got {v:?}");
-    assert!(!contains(&v, "werfjkachi"), "get_config leaks the vendor header value");
-    assert!(!contains(&v, "login_header"), "get_config leaks a login_header key");
-    assert!(!contains(&v, "data_header"), "get_config leaks a data_header key");
-}
 
 // ── S2: crypto Tpm.seal plaintext echo ─────────────────────────────────
 

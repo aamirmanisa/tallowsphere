@@ -3004,8 +3004,8 @@ mod tests {
             "example.com"
         );
         assert_eq!(
-            extract_domain("https://shop.target.com/product/123"),
-            "shop.target.com"
+            extract_domain("https://shop.shop-b.example/product/123"),
+            "shop.shop-b.example"
         );
     }
 

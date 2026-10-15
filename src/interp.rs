@@ -2596,7 +2596,6 @@ impl Interpreter {
                                 "time" => Ok(Value::String("__module_time__".to_string())),
                                 "env" => Ok(Value::String("__module_env__".to_string())),
                                 "fs" => Ok(Value::String("__module_fs__".to_string())),
-                                "gama_api" => Ok(Value::String("__module_gama_api__".to_string())),
                                 "regex" => Ok(Value::String("__module_regex__".to_string())),
                                 "html" => Ok(Value::String("__module_html__".to_string())),
                                 "extract" => Ok(Value::String("__module_extract__".to_string())),
@@ -2634,8 +2633,6 @@ impl Interpreter {
                                 "sso" => Ok(Value::String("__module_sso__".to_string())),
                                 "escalation" => Ok(Value::String("__module_escalation__".to_string())),
                                 "azure_app_proxy" => Ok(Value::String("__module_azure_app_proxy__".to_string())),
-                                "azure_sql" => Ok(Value::String("__module_azure_sql__".to_string())),
-                                "azure_phish" => Ok(Value::String("__module_azure_phish__".to_string())),
                                 // P1-fix (2026-09-16): single-file stdlib module
                                 // namespaces (class sentinels above are the
                                 // class-style surface; these are the lowercase

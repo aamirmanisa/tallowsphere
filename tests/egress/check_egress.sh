@@ -104,7 +104,6 @@ run_probe_raw() { # $1 = probe; $2 = extra run flags ("" or "--target wasm"); re
     timeout 300 "$TALLOW" run $flags "$probe" 2>&1
 }
 # Like run_probe, with up to 3 attempts (Tor circuit-build stalls are
-# transient client state — see the modisoft wave notes): an empty reading is
 # retried after a short cooldown, a real IP is returned immediately.
 run_probe_retry() { # same args as run_probe
   local v=""

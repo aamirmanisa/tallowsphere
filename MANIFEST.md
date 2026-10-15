@@ -250,3 +250,25 @@ The gate is a separate published deliverable, and its records live in its own re
 describe a line this repository does not publish. They are kept because they are truthful about the tree's
 history — the gate's code is in this tree at those revisions — and dropped if this repository should carry
 only its own releases.
+
+## Deliberate omissions — publication pass 2026-10-15
+
+This tree is filtered from the private development tree. Beyond the series mapping above, the
+publication pass removed or neutralised the following, and a reader comparing the two trees should
+expect them to be absent here:
+
+| omitted | why |
+|---|---|
+| Engagement and client material — `docs/reports/`, `docs/research/`, `docs/prompts/`, `docs/reference-assets/`, `docs/superpowers/`, and the client-specific examples | Real third parties: surveys, floorplans, onboarding screenshots, investigation prompts |
+| `docs/TALLOW_SCOPE_FILE_FOLDER_INDEX.txt`, `docs/ops/disk-reclaim-*` | Internal workspace map and box operations |
+| Credential-attack modules — `src/stdlib/{azure_phish,azure_sql,gama_api}.rs`, `src/bin/azure_bypass.rs`, their `.tl` declarations and registrations | Third-party credential material and account-guessing capability. They remain canonical in the private tree |
+| Client-named modules — `stdlib/{modisoft,modisoft_recon,modisoft_insights}.tl` | Named after a client engagement |
+| Real retailer domains in `src/browser/` profiles | Replaced with documentation domains; the per-site tuning is not published |
+
+Identifiers removed by substitution rather than omission, because the surrounding text is product
+documentation: the operator's server address and hostname, home paths, and a personal domain in
+patch provenance headers (now the project domain).
+
+Environment, not content: the browser system's per-retailer profiles survive as mechanism with
+neutral site data; the four vendored canonical crates are pinned by `crates/CANONICAL-SYNC.sha256`,
+which verifies clean and is gated in CI.

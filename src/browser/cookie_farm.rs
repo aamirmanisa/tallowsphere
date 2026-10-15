@@ -637,9 +637,9 @@ impl RetailerAntiBot {
     pub fn detect(domain: &str) -> Vec<CookieType> {
         match domain {
             d if d.contains("amazon.com") => vec![CookieType::Session], // Custom AWS WAF
-            d if d.contains("walmart.com") => vec![CookieType::Akamai, CookieType::PerimeterX],
-            d if d.contains("target.com") => vec![CookieType::Akamai],
-            d if d.contains("bestbuy.com") => vec![CookieType::Akamai, CookieType::Kasada],
+            d if d.contains("shop-a.example") => vec![CookieType::Akamai, CookieType::PerimeterX],
+            d if d.contains("shop-b.example") => vec![CookieType::Akamai],
+            d if d.contains("shop-c.example") => vec![CookieType::Akamai, CookieType::Kasada],
             d if d.contains("nike.com") => vec![CookieType::Akamai],
             d if d.contains("adidas.com") => vec![CookieType::Akamai, CookieType::DataDome],
             d if d.contains("footlocker.com") => vec![CookieType::Akamai, CookieType::PerimeterX],
@@ -659,16 +659,16 @@ impl RetailerAntiBot {
         let types = Self::detect(domain);
         types.contains(&CookieType::Kasada)
             || types.len() >= 2
-            || domain.contains("bestbuy.com")
+            || domain.contains("shop-c.example")
             || domain.contains("adidas.com")
     }
 
     /// Recommended approach for a domain.
     pub fn recommended_approach(domain: &str) -> &'static str {
         match domain {
-            d if d.contains("bestbuy.com") => "Use official API at developer.bestbuy.com (free, 5 req/sec)",
-            d if d.contains("walmart.com") => "Use Walmart Affiliate API (free, 20 req/sec)",
-            d if d.contains("target.com") => "Use Redsky API (semi-public, extract key from JS)",
+            d if d.contains("shop-c.example") => "Use official API at developer.shop-c.example (free, 5 req/sec)",
+            d if d.contains("shop-a.example") => "Use Walmart Affiliate API (free, 20 req/sec)",
+            d if d.contains("shop-b.example") => "Use Redsky API (semi-public, extract key from JS)",
             d if d.contains("amazon.com") => "Real Chrome + stealth + residential proxy",
             d if d.contains("fashionnova.com") => "Shopify /products.json endpoint (often open)",
             d if d.contains("asos.com") => "Real Chrome only (Kasada proof-of-work)",
@@ -690,7 +690,7 @@ mod tests {
         let cookie = AntiBotCookie {
             name: "_abck".into(),
             value: "test~0~valid".into(),
-            domain: ".walmart.com".into(),
+            domain: ".shop-a.example".into(),
             path: "/".into(),
             secure: true,
             http_only: true,
@@ -706,12 +706,12 @@ mod tests {
 
     #[test]
     fn cookie_jar_basics() {
-        let mut jar = DomainCookieJar::new("walmart.com", "Chrome/131");
+        let mut jar = DomainCookieJar::new("shop-a.example", "Chrome/131");
 
         jar.set_cookie(AntiBotCookie {
             name: "_abck".into(),
             value: "abc~0~def".into(),
-            domain: ".walmart.com".into(),
+            domain: ".shop-a.example".into(),
             path: "/".into(),
             secure: true,
             http_only: true,
@@ -725,7 +725,7 @@ mod tests {
             jar.set_cookie(AntiBotCookie {
                 name: (*name).into(),
                 value: "someval".into(),
-                domain: ".walmart.com".into(),
+                domain: ".shop-a.example".into(),
                 path: "/".into(),
                 secure: true,
                 http_only: true,
@@ -749,7 +749,7 @@ mod tests {
         let cookie = AntiBotCookie {
             name: "_abck".into(),
             value: "abc~0~def".into(),
-            domain: ".walmart.com".into(),
+            domain: ".shop-a.example".into(),
             path: "/".into(),
             secure: true,
             http_only: true,
@@ -812,7 +812,7 @@ mod tests {
     fn cookie_farm_basics() {
         let mut farm = CookieFarm::new("Chrome/131");
 
-        farm.jar("walmart.com");
+        farm.jar("shop-a.example");
         farm.jar("amazon.com");
 
         assert_eq!(farm.domains().len(), 2);
@@ -821,10 +821,10 @@ mod tests {
 
     #[test]
     fn retailer_detection() {
-        let types = RetailerAntiBot::detect("www.walmart.com");
+        let types = RetailerAntiBot::detect("www.shop-a.example");
         assert!(types.contains(&CookieType::Akamai));
 
-        assert!(RetailerAntiBot::is_high_security("www.bestbuy.com"));
+        assert!(RetailerAntiBot::is_high_security("www.shop-c.example"));
         assert!(!RetailerAntiBot::is_high_security("www.fashionnova.com"));
     }
 

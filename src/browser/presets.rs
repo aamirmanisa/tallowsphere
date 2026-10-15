@@ -686,7 +686,7 @@ fn builtin_presets() -> Vec<SitePreset> {
     vec![
         // ─── Grocery ──────────────────────────────────────────────────
         SitePreset {
-            domain: s("walmart.com"),
+            domain: s("shop-a.example"),
             display_name: s("Walmart"),
             brand_color: s("#0071CE"),
             default_level: ScrapeLevel::L2Standard,
@@ -816,7 +816,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("target.com"),
+            domain: s("shop-b.example"),
             display_name: s("Target"),
             brand_color: s("#CC0000"),
             default_level: ScrapeLevel::L2Standard,
@@ -1088,7 +1088,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("heb.com"),
+            domain: s("shop-d.example"),
             display_name: s("H-E-B"),
             brand_color: s("#E31837"),
             default_level: ScrapeLevel::L1Scout,
@@ -3023,7 +3023,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("bestbuy.com"),
+            domain: s("shop-c.example"),
             display_name: s("Best Buy"),
             brand_color: s("#0046BE"),
             default_level: ScrapeLevel::L2Standard,
@@ -4439,7 +4439,7 @@ mod tests {
     #[test]
     fn get_site_level_returns_data() {
         let mgr = PresetManager::new();
-        let data = mgr.get_site_level("walmart.com", ScrapeLevel::L3Deep);
+        let data = mgr.get_site_level("shop-a.example", ScrapeLevel::L3Deep);
         assert!(data.is_some());
         let d = data.unwrap();
         assert!(d.data_fields.contains(&"nutrition_facts".to_string()));
@@ -4481,10 +4481,10 @@ mod tests {
     fn grocery_sites_present() {
         let mgr = PresetManager::new();
         for domain in &[
-            "walmart.com",
-            "target.com",
+            "shop-a.example",
+            "shop-b.example",
             "kroger.com",
-            "heb.com",
+            "shop-d.example",
             "costco.com",
             "amazon.com",
         ] {

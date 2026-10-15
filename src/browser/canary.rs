@@ -156,10 +156,10 @@ impl CanaryRegistry {
     /// Seed 20 stable grocery SKUs × 12 Houston-area retailers = 240 canaries.
     pub fn seed_for_houston_grocery(&mut self) {
         let retailers = [
-            "heb.com",
+            "shop-d.example",
             "kroger.com",
-            "walmart.com",
-            "target.com",
+            "shop-a.example",
+            "shop-b.example",
             "aldi.us",
             "samsclub.com",
             "costco.com",
@@ -232,7 +232,7 @@ mod tests {
     fn baseline_rolls() {
         let mut reg = CanaryRegistry::new();
         reg.register_canary(CanaryProduct {
-            retailer: "heb.com".into(),
+            retailer: "shop-d.example".into(),
             sku: "eggs_12ct".into(),
             product_name: "eggs".into(),
             expected_url: "".into(),
@@ -240,9 +240,9 @@ mod tests {
             rolling_window_days: 7,
         });
         for p in [400, 410, 395, 405, 400] {
-            reg.update_baseline("heb.com", "eggs_12ct", p);
+            reg.update_baseline("shop-d.example", "eggs_12ct", p);
         }
-        let b = reg.baseline("heb.com", "eggs_12ct").unwrap();
+        let b = reg.baseline("shop-d.example", "eggs_12ct").unwrap();
         assert_eq!(b.sample_count, 5);
         assert!((b.rolling_mean_cents - 402).abs() <= 2);
     }
@@ -252,7 +252,7 @@ mod tests {
         let mut reg = CanaryRegistry::new();
         for sku in ["a", "b", "c", "d"] {
             reg.register_canary(CanaryProduct {
-                retailer: "heb.com".into(),
+                retailer: "shop-d.example".into(),
                 sku: sku.into(),
                 product_name: sku.into(),
                 expected_url: "".into(),
@@ -260,7 +260,7 @@ mod tests {
                 rolling_window_days: 7,
             });
             for _ in 0..5 {
-                reg.update_baseline("heb.com", sku, 1000);
+                reg.update_baseline("shop-d.example", sku, 1000);
             }
         }
         let mut obs = HashMap::new();
@@ -268,7 +268,7 @@ mod tests {
         obs.insert("b".to_string(), 1000);
         obs.insert("c".to_string(), 2000); // 100% drift
         obs.insert("d".to_string(), 2500); // 150% drift
-        let result = reg.check_batch("heb.com", &obs);
+        let result = reg.check_batch("shop-d.example", &obs);
         assert_eq!(result.canaries_checked, 4);
         assert_eq!(result.canaries_drifted.len(), 2);
         assert!(result.should_quarantine_batch);

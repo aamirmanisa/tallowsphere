@@ -256,9 +256,9 @@ impl DomainRateManager {
     fn rate_for_domain(&self, domain: &str) -> f64 {
         match domain {
             d if d.contains("amazon.com") => 0.33,       // 1 req per 3s
-            d if d.contains("walmart.com") => 0.5,       // 1 req per 2s
-            d if d.contains("target.com") => 0.5,        // 1 req per 2s
-            d if d.contains("bestbuy.com") => 0.33,      // 1 req per 3s
+            d if d.contains("shop-a.example") => 0.5,       // 1 req per 2s
+            d if d.contains("shop-b.example") => 0.5,        // 1 req per 2s
+            d if d.contains("shop-c.example") => 0.33,      // 1 req per 3s
             d if d.contains("nike.com") => 0.33,          // 1 req per 3s
             d if d.contains("adidas.com") => 0.25,        // 1 req per 4s (double layer)
             d if d.contains("ebay.com") => 0.5,           // 1 req per 2s

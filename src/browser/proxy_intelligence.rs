@@ -944,7 +944,7 @@ impl ProxyScore {
 /// Per-domain proxy selection strategy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainProxyStrategy {
-    /// Domain this strategy applies to (e.g. "walmart.com").
+    /// Domain this strategy applies to (e.g. "shop-a.example").
     pub domain: String,
     /// Required ASN type — only proxies from this type will be used.
     pub required_asn_type: Option<AsnType>,
@@ -1030,9 +1030,9 @@ impl DomainStrategyDatabase {
 
         // Walmart: Akamai Bot Manager — residential only, sticky session
         strategies.insert(
-            "walmart.com".into(),
+            "shop-a.example".into(),
             DomainProxyStrategy {
-                domain: "walmart.com".into(),
+                domain: "shop-a.example".into(),
                 required_asn_type: Some(AsnType::Residential),
                 min_trust_score: 80,
                 preferred_country: Some("US".into()),
@@ -1069,9 +1069,9 @@ impl DomainStrategyDatabase {
 
         // Target: permissive Redsky API
         strategies.insert(
-            "target.com".into(),
+            "shop-b.example".into(),
             DomainProxyStrategy {
-                domain: "target.com".into(),
+                domain: "shop-b.example".into(),
                 required_asn_type: None,
                 min_trust_score: 30,
                 preferred_country: Some("US".into()),
@@ -1102,9 +1102,9 @@ impl DomainStrategyDatabase {
 
         // HEB: Incapsula WAF
         strategies.insert(
-            "heb.com".into(),
+            "shop-d.example".into(),
             DomainProxyStrategy {
-                domain: "heb.com".into(),
+                domain: "shop-d.example".into(),
                 required_asn_type: Some(AsnType::Residential),
                 min_trust_score: 80,
                 preferred_country: Some("US".into()),
@@ -1866,12 +1866,12 @@ mod tests {
         let db = DomainStrategyDatabase::new();
         assert!(db.len() >= 5);
 
-        let walmart = db.get("walmart.com").expect("walmart strategy");
+        let walmart = db.get("shop-a.example").expect("walmart strategy");
         assert_eq!(walmart.required_asn_type, Some(AsnType::Residential));
         assert!(walmart.min_trust_score >= 80);
         assert!(walmart.sticky_session);
 
-        let target = db.get("target.com").expect("target strategy");
+        let target = db.get("shop-b.example").expect("target strategy");
         assert!(target.required_asn_type.is_none());
         assert!(target.min_trust_score < 50);
 
@@ -1918,12 +1918,12 @@ mod tests {
         intel.register_proxy_asn(0, 24940); // Hetzner
         intel.register_proxy_asn(1, 7922); // Comcast
 
-        // For walmart.com (residential required, Hetzner blocked) should pick res-1
-        let best = intel.select_best(&pool, "walmart.com");
+        // For shop-a.example (residential required, Hetzner blocked) should pick res-1
+        let best = intel.select_best(&pool, "shop-a.example");
         assert_eq!(best, Some(1), "should select residential proxy for walmart");
 
-        // For target.com (permissive) — both are candidates, but residential scores higher
-        let best = intel.select_best(&pool, "target.com");
+        // For shop-b.example (permissive) — both are candidates, but residential scores higher
+        let best = intel.select_best(&pool, "shop-b.example");
         assert_eq!(
             best,
             Some(1),

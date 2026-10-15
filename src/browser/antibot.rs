@@ -402,10 +402,10 @@ impl AntiBotOrchestrator {
                 notes: "Custom AWS WAF. Real Chrome + stealth + residential proxy.".into(),
             },
             RetailerConfig {
-                domain: "walmart.com".into(),
+                domain: "shop-a.example".into(),
                 antibot_types: vec![CookieType::Akamai, CookieType::PerimeterX],
                 use_api: true,
-                api_url: Some("https://developer.walmart.com/api-reference".into()),
+                api_url: Some("https://developer.shop-a.example/api-reference".into()),
                 api_key: None,
                 rate_limit: Some(0.5),
                 warmup: Some(RetailerWarmup::walmart()),
@@ -413,10 +413,10 @@ impl AntiBotOrchestrator {
                 notes: "Akamai Bot Manager Premier. Prefer Affiliate API.".into(),
             },
             RetailerConfig {
-                domain: "target.com".into(),
+                domain: "shop-b.example".into(),
                 antibot_types: vec![CookieType::Akamai],
                 use_api: true,
-                api_url: Some("https://redsky.target.com/redsky_aggregations/v1/web/pdp_client_v1".into()),
+                api_url: Some("https://redsky.shop-b.example/redsky_aggregations/v1/web/pdp_client_v1".into()),
                 api_key: None, // Extract from Target's JS bundle
                 rate_limit: Some(0.5),
                 warmup: Some(RetailerWarmup::target()),
@@ -424,15 +424,15 @@ impl AntiBotOrchestrator {
                 notes: "Redsky API is semi-public. Key in frontend JS.".into(),
             },
             RetailerConfig {
-                domain: "bestbuy.com".into(),
+                domain: "shop-c.example".into(),
                 antibot_types: vec![CookieType::Akamai, CookieType::Kasada],
                 use_api: true,
-                api_url: Some("https://api.bestbuy.com/v1/products".into()),
-                api_key: None, // Free registration at developer.bestbuy.com
+                api_url: Some("https://api.shop-c.example/v1/products".into()),
+                api_key: None, // Free registration at developer.shop-c.example
                 rate_limit: Some(5.0),
                 warmup: Some(RetailerWarmup::bestbuy()),
                 min_proxy_tier: ProxyTier::Direct, // API doesn't need proxy
-                notes: "FREE official API at developer.bestbuy.com. 5 req/sec.".into(),
+                notes: "FREE official API at developer.shop-c.example. 5 req/sec.".into(),
             },
             RetailerConfig {
                 domain: "nike.com".into(),
@@ -1703,11 +1703,11 @@ mod tests {
         let amazon = orch.get_retailer_config("www.amazon.com");
         assert!(amazon.is_some());
 
-        let walmart = orch.get_retailer_config("walmart.com");
+        let walmart = orch.get_retailer_config("shop-a.example");
         assert!(walmart.is_some());
         assert!(walmart.unwrap().use_api);
 
-        let bestbuy = orch.get_retailer_config("bestbuy.com");
+        let bestbuy = orch.get_retailer_config("shop-c.example");
         assert!(bestbuy.is_some());
         assert!(bestbuy.unwrap().use_api);
     }
@@ -1716,7 +1716,7 @@ mod tests {
     fn recommend_output() {
         let orch = AntiBotOrchestrator::new();
 
-        let rec = orch.recommend("bestbuy.com");
+        let rec = orch.recommend("shop-c.example");
         assert!(rec.contains("API"));
 
         let rec = orch.recommend("amazon.com");

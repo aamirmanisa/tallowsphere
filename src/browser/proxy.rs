@@ -1040,8 +1040,8 @@ mod tests {
             password: None,
         });
 
-        let first = pool.get_proxy("walmart.com").unwrap().url.clone();
-        let second = pool.get_proxy("walmart.com").unwrap().url.clone();
+        let first = pool.get_proxy("shop-a.example").unwrap().url.clone();
+        let second = pool.get_proxy("shop-a.example").unwrap().url.clone();
 
         // Sticky session: same proxy for same domain
         assert_eq!(first, second);

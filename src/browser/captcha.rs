@@ -975,11 +975,11 @@ mod tests {
             extra: None,
         };
 
-        let payload = build_create_task_payload(&config, &captcha, "https://target.com/login");
+        let payload = build_create_task_payload(&config, &captcha, "https://shop-b.example/login");
 
         assert_eq!(payload["clientKey"], "my-api-key");
         assert_eq!(payload["task"]["type"], "RecaptchaV2TaskProxyless");
-        assert_eq!(payload["task"]["websiteURL"], "https://target.com/login");
+        assert_eq!(payload["task"]["websiteURL"], "https://shop-b.example/login");
         assert_eq!(payload["task"]["websiteKey"], "6LcXxxxxxxxxxxxxxxx");
     }
 
@@ -1009,7 +1009,7 @@ mod tests {
             extra: None,
         };
 
-        let payload = build_create_task_payload(&config, &captcha, "https://target.com");
+        let payload = build_create_task_payload(&config, &captcha, "https://shop-b.example");
 
         assert_eq!(payload["task"]["type"], "TurnstileTaskProxyless");
         assert_eq!(payload["task"]["websiteKey"], "0x4AAAAAAA");

@@ -360,29 +360,29 @@ impl RetailerWarmup {
 
     pub fn walmart() -> WarmupSequence {
         WarmupSequence::domain_warmup(
-            "https://www.walmart.com",
+            "https://www.shop-a.example",
             &[
-                "https://www.walmart.com/shop/deals",
-                "https://www.walmart.com/browse/electronics",
+                "https://www.shop-a.example/shop/deals",
+                "https://www.shop-a.example/browse/electronics",
             ],
         )
     }
 
     pub fn target() -> WarmupSequence {
         WarmupSequence::domain_warmup(
-            "https://www.target.com",
+            "https://www.shop-b.example",
             &[
-                "https://www.target.com/c/top-deals/-/N-2bfiy",
-                "https://www.target.com/c/electronics/-/N-5xtg6",
+                "https://www.shop-b.example/c/top-deals/-/N-2bfiy",
+                "https://www.shop-b.example/c/electronics/-/N-5xtg6",
             ],
         )
     }
 
     pub fn bestbuy() -> WarmupSequence {
         WarmupSequence::domain_warmup(
-            "https://www.bestbuy.com",
+            "https://www.shop-c.example",
             &[
-                "https://www.bestbuy.com/site/top-deals/all-top-deals/pcmcat1563299784494.c",
+                "https://www.shop-c.example/site/top-deals/all-top-deals/pcmcat1563299784494.c",
             ],
         )
     }
@@ -681,6 +681,6 @@ mod tests {
         assert!(amazon.steps[0].url.contains("amazon.com"));
 
         let walmart = RetailerWarmup::walmart();
-        assert!(walmart.steps[0].url.contains("walmart.com"));
+        assert!(walmart.steps[0].url.contains("shop-a.example"));
     }
 }

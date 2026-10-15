@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn test_ech_config() {
-        let ech = EchConfig::cloudflare("target.com");
+        let ech = EchConfig::cloudflare("shop-b.example");
         assert_eq!(ech.public_name, "cloudflare-ech.com");
         assert!(!ech.is_ready()); // No config list yet
     }

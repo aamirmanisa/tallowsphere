@@ -25,7 +25,6 @@ pub mod filter;
 pub mod filings;
 pub mod forensics;
 pub mod fs;
-pub mod gama_api;
 pub mod html;
 pub mod http;
 pub mod io_backend;
@@ -64,8 +63,6 @@ pub mod legal;
 pub mod secrets;
 pub mod escalation;
 pub mod azure_app_proxy;
-pub mod azure_sql;
-pub mod azure_phish;
 // ── FIX12 stdlib triage: orphaned modules registered (2026-08-27) ──
 pub mod csv;
 pub mod curves;
@@ -156,7 +153,6 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         "filings" => filings::dispatch(function, args),
         "forensics" => forensics::dispatch(function, args),
         "fs" => fs::dispatch(function, args),
-        "gama_api" => gama_api::dispatch(function, args),
         "html" => html::dispatch(function, args),
         "http" => http::dispatch(function, args),
         "json" => json::dispatch(function, args),
@@ -226,8 +222,6 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         // normalizes to "secretstore"; lowercase "secrets" also accepted)
         "secrets" | "secretstore" => secrets::dispatch(function, args),
         "azure_app_proxy" => azure_app_proxy::dispatch(function, args),
-        "azure_sql" => azure_sql::dispatch(function, args),
-        "azure_phish" => azure_phish::dispatch(function, args),
         // ── FIX12 stdlib triage: orphaned modules registered (2026-08-27) ──
         "csv" => csv::dispatch(function, args),
         "curves" => curves::dispatch(function, args),
@@ -326,12 +320,12 @@ pub fn is_registered_module(module: &str) -> bool {
     matches!(module,
         // Core + original modules
         "algos" | "browser" | "compress" | "copy" | "crypto" | "deals" | "docs" | "edgar"
-        | "env" | "filter" | "filings" | "forensics" | "fs" | "gama_api" | "html" | "http"
+        | "env" | "filter" | "filings" | "forensics" | "fs" | "html" | "http"
         | "json" | "log" | "market" | "math" | "mesh" | "net" | "osint" | "process" | "rand"
         | "regex" | "time" | "transfer" | "transfer_net" | "url" | "sync" | "beehiiv"
         | "relay_room" | "relayroom"
         | "medium" | "cxense" | "substack" | "wordpress" | "ghost" | "oauth" | "jwt" | "sso"
-        | "escalation" | "legal" | "azure_app_proxy" | "azure_sql" | "azure_phish"
+        | "escalation" | "legal" | "azure_app_proxy"
         // FIX12 stdlib triage modules (2026-08-27)
         | "csv" | "curves" | "decimal" | "finance" | "fred" | "ohlcv" | "options" | "technical"
         | "orders" | "portfolio2" | "positions" | "sentiment" | "timeseries" | "yahoo"
