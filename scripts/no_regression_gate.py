@@ -40,6 +40,32 @@ RSS_MAX_INCREASE_PCT = 20.0
 METRICS = ("files_total", "files_ok", "success_rate", "unresolved",
            "check_ms_median", "check_ms_p95", "throughput_files_per_s", "peak_rss_mb")
 
+# Metrics whose value depends on the MACHINE rather than the code. Gating these across two
+# platforms is not a regression test — it is two unrelated measurements subtracted, and the
+# difference is reported as a regression. They are gated only when the environment identity
+# matches.
+ENV_DEPENDENT = ("check_ms_median", "throughput_files_per_s", "peak_rss_mb")
+
+
+def env_arch(doc: dict) -> str:
+    return str(doc.get("environment", {}).get("arch", "") or "").strip().lower()
+
+
+def same_platform(baseline: dict, current: dict) -> tuple[bool, str]:
+    """Are these two measurements comparable on timing at all?
+
+    An ABSENT arch is not a match. Treating unknown as equal is how a CI runner ends up
+    being compared against a laptop and the difference filed as a regression, so unknown
+    fails closed here: no arch, no timing comparison.
+    """
+    a, b = env_arch(baseline), env_arch(current)
+    if not a or not b:
+        return False, (f"environment arch missing (baseline={a or 'absent'}, "
+                       f"current={b or 'absent'})")
+    if a != b:
+        return False, f"different architectures (baseline={a}, current={b})"
+    return True, ""
+
 
 def load(path: str) -> dict:
     return json.loads(Path(path).read_text())
@@ -52,10 +78,17 @@ def _m(doc: dict) -> dict:
     return m
 
 
-def compare(baseline: dict, current: dict) -> list[str]:
-    """Return a list of regression findings (empty == pass)."""
+def compare(baseline: dict, current: dict, notes: list[str] | None = None) -> list[str]:
+    """Return a list of regression findings (empty == pass).
+
+    `notes` (optional) collects what was deliberately NOT compared and why, so a skipped
+    check is visible rather than indistinguishable from a passing one.
+    """
     b, c = _m(baseline), _m(current)
     fails: list[str] = []
+    timed_ok, why_not = same_platform(baseline, current)
+    if not timed_ok and notes is not None:
+        notes.append(f"environment-dependent metrics NOT compared: {why_not}")
 
     # Same inputs are a precondition: a corpus change is not a regression, it is
     # a different measurement.
@@ -78,6 +111,8 @@ def compare(baseline: dict, current: dict) -> list[str]:
     for key, pct, direction in (("check_ms_median", LATENCY_MAX_INCREASE_PCT, "up"),
                                 ("throughput_files_per_s", THROUGHPUT_MAX_DROP_PCT, "down"),
                                 ("peak_rss_mb", RSS_MAX_INCREASE_PCT, "up")):
+        if key in ENV_DEPENDENT and not timed_ok:
+            continue
         bv, cv = b.get(key), c.get(key)
         if bv is None or cv is None or bv == 0:
             continue
@@ -113,8 +148,10 @@ BASE = {"files_total": 58, "files_ok": 51, "success_rate": 0.8793, "unresolved":
         "peak_rss_mb": 23.3}
 
 
-def _doc(metrics: dict, corpus_sha: str = "deadbeef" * 8) -> dict:
-    return {"schema": "tallow-bench/1", "corpus": {"sha256": corpus_sha}, "metrics": metrics}
+def _doc(metrics: dict, corpus_sha: str = "deadbeef" * 8, arch: str = "aarch64") -> dict:
+    env = {"arch": arch} if arch else {}
+    return {"schema": "tallow-bench/1", "corpus": {"sha256": corpus_sha},
+            "environment": env, "metrics": metrics}
 
 
 def self_test() -> int:
@@ -142,11 +179,35 @@ def self_test() -> int:
         else:
             print(f"SELF-TEST FAIL: {name} was NOT detected"); rc = 1
 
-    # a wrong corpus must be caught
+    # A wrong corpus must be caught
     if not compare(base, _doc(dict(BASE), corpus_sha="cafebabe" * 8)):
         print("SELF-TEST FAIL: corpus sha mismatch was not detected"); rc = 1
     else:
         print("  detected corpus sha mismatch      -> not the same measurement")
+
+    # Timing must be compared on the same platform, and NOT across platforms. Both
+    # directions are asserted: skipping too much is as wrong as comparing too much.
+    slow = dict(BASE); slow["check_ms_median"] = BASE["check_ms_median"] * 1.30
+    if not compare(base, _doc(slow, arch="aarch64")):
+        print("SELF-TEST FAIL: same-platform timing regression was NOT detected"); rc = 1
+    else:
+        print("  same-platform timing regression (aarch64): detected (expected)")
+    if compare(base, _doc(slow, arch="x86_64")):
+        print("SELF-TEST FAIL: a cross-platform timing difference was filed as a regression")
+        rc = 1
+    else:
+        print("  cross-platform timing (x86_64 vs aarch64): NOT compared (expected)")
+    if compare(base, _doc(slow, arch="")):
+        print("SELF-TEST FAIL: an absent arch was treated as a comparable platform"); rc = 1
+    else:
+        print("  absent arch: timing NOT compared (expected)")
+    # ...and the skip must be REPORTED, not silent
+    notes: list[str] = []
+    compare(base, _doc(dict(BASE), arch="x86_64"), notes)
+    if not notes:
+        print("SELF-TEST FAIL: the skipped timing comparison was not reported"); rc = 1
+    else:
+        print(f"  skip is reported: {notes[0][:70]}")
 
     # a permitted sub-threshold drift must PASS (no false positive)
     sub = dict(BASE); sub["success_rate"] = BASE["success_rate"] - 0.005  # 0.5 pp
@@ -186,19 +247,23 @@ def main() -> int:
         print(f"no_regression_gate: cannot read --current: {e}", file=sys.stderr); return 2
 
     fails: list[str] = []
+    notes: list[str] = []
     if args.baseline:
-        fails += compare(load(args.baseline), current)
+        fails += compare(load(args.baseline), current, notes)
     if args.targets:
         fails += check_targets(load(args.targets), current)
     if not (args.baseline or args.targets):
         print("no_regression_gate: give --baseline and/or --targets", file=sys.stderr); return 2
 
     verdict = {"pass": not fails, "findings": fails,
+               "not_compared": notes,
                "current_metrics": current.get("metrics", {})}
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
         Path(args.report).write_text(json.dumps(verdict, indent=2) + "\n")
 
+    for n in notes:
+        print(f"  note: {n}")
     if fails:
         print("PERF GATE: FAIL")
         for f in fails:
