@@ -73,6 +73,10 @@ fn RelayRoom.leave(self)
 fn RelayRoom.status(self) -> RelayRoom
     // native: registry lookup
 
-// Deterministic room id (hex) for a code phrase — BLAKE3(code).
+// Room id (hex) for a code phrase, via the same compatibility rule every client
+// uses (`resolve_room_id`): the *shape* of the code selects the derivation, so
+// an 8-symbol passcode is an Argon2id derivation and legacy phrases are BLAKE3.
+// Refuses anything that is not the accepted 8-symbol mint rather than deriving a
+// room no other peer would join.
 fn RelayRoom.room_id(code: String) -> String
-    // native: derive_room_id hex
+    // native: resolve_room_id + is_supported_code
