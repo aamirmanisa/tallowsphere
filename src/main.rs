@@ -523,6 +523,11 @@ enum Command {
         /// Output file path (default: stdout)
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Emit the CBOM even when some sources cannot be parsed. The artifact then
+        /// carries cbom:complete=false and names every skipped source, so an
+        /// incomplete inventory cannot be read as a complete one.
+        #[arg(long)]
+        allow_partial: bool,
     },
     /// Sign a package archive with Ed25519 + SLSA provenance
     Sign {
@@ -2998,8 +3003,9 @@ fn real_main() -> anyhow::Result<()> {
         Command::Sbom {
             ref format,
             ref output,
+            ref allow_partial,
         } => {
-            return run_sbom(format, output.as_deref());
+            return run_sbom(format, output.as_deref(), *allow_partial);
         }
         Command::Sign {
             ref archive,
@@ -11061,9 +11067,16 @@ fn run_verify(archive_path: &std::path::Path, key_path: &std::path::Path) -> any
 
 // ── SBOM ─────────────────────────────────────────────────────────────────────
 
-fn run_sbom(format: &str, output: Option<&std::path::Path>) -> anyhow::Result<()> {
-    if format != "cyclonedx" {
-        anyhow::bail!("unsupported SBOM format: {format}. Only 'cyclonedx' is supported.");
+fn run_sbom(
+    format: &str,
+    output: Option<&std::path::Path>,
+    allow_partial: bool,
+) -> anyhow::Result<()> {
+    if !matches!(format, "cyclonedx" | "cbom") {
+        anyhow::bail!(
+            "unsupported SBOM format: {format}. Supported here: cyclonedx, cbom. \
+             (spdx/spdx3/cra generators exist in tallow::sbom but are not exposed by this verb.)"
+        );
     }
 
     let project_dir = std::env::current_dir()?;
@@ -11114,8 +11127,12 @@ fn run_sbom(format: &str, output: Option<&std::path::Path>) -> anyhow::Result<()
         }
     };
 
-    let bom = tallow::sbom::generate_sbom(&project_dir, &project_name, &project_version)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let bom = if format == "cbom" {
+        cbom_for_project(&project_dir, &project_name, &project_version, allow_partial)?
+    } else {
+        tallow::sbom::generate_sbom(&project_dir, &project_name, &project_version)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    };
 
     let json_str = serde_json::to_string_pretty(&bom)?;
 
@@ -11130,6 +11147,184 @@ fn run_sbom(format: &str, output: Option<&std::path::Path>) -> anyhow::Result<()
     }
 
     Ok(())
+}
+
+/// Every `.tl` source under `dir`, skipping build/VCS noise, sorted for a stable BOM.
+fn tallow_sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fn walk(d: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
+        if depth > 12 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(d) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if matches!(
+                    name.as_str(),
+                    "target" | ".git" | "node_modules" | "dist" | "vendor" | "artifacts"
+                ) {
+                    continue;
+                }
+                walk(&p, out, depth + 1);
+            } else if name.ends_with(".tl") {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, &mut out, 0);
+    out.sort();
+    out
+}
+
+/// A CycloneDX CBOM for the crypto used by this project's Tallow sources.
+///
+/// The generator (`sbom::generate_cbom`) and the scanner (`sbom::scan_crypto_usage`) already
+/// existed and were already tested; what was missing was the verb that emits one. Until now
+/// `tallow sbom --format cbom` refused with "Only 'cyclonedx' is supported", so the CBOM
+/// existed as a library function and a Python seed script, never as a command.
+///
+/// **Fail-closed on a source that cannot be parsed.** A CBOM that quietly skipped a file it
+/// could not read would UNDER-report the crypto in use, and an under-reporting inventory is
+/// worse than none: the artifact's only value is that it is complete. So an unparsable source
+/// refuses the whole run and names itself.
+///
+/// `allow_partial` is the deliberate escape hatch, and it is not a quiet one: the artifact
+/// gains `cbom:complete=false` plus `cbom:skipped_count` / `cbom:skipped_sources`, so the
+/// incompleteness is visible to whoever reads the file later, not only to whoever ran it.
+fn cbom_for_project(
+    project_dir: &std::path::Path,
+    project_name: &str,
+    project_version: &str,
+    allow_partial: bool,
+) -> anyhow::Result<serde_json::Value> {
+    let sources = tallow_sources(project_dir);
+    if sources.is_empty() {
+        eprintln!(
+            "note: no .tl sources under {} — the CBOM is empty, and an empty CBOM means \
+             'nothing was scanned', not 'no crypto is used'.",
+            project_dir.display()
+        );
+    }
+
+    let mut usages: Vec<tallow::sbom::CryptoUsage> = Vec::new();
+    // (relative path, why it was skipped), kept as a PAIR and never pre-joined: the reason
+    // is a ParseError Debug rendering, which contains commas, so a joined string cannot be
+    // split back apart.
+    let mut unparsable: Vec<(String, String)> = Vec::new();
+    for path in &sources {
+        let rel = path
+            .strip_prefix(project_dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+        let Ok(source) = std::fs::read_to_string(path) else {
+            unparsable.push((rel, "unreadable".to_string()));
+            continue;
+        };
+        let (tokens, _lex_errors) = tallow::lexer::tokenize(&source);
+        match tallow::parser::Parser::parse(tokens) {
+            Ok(program) => {
+                for mut cu in tallow::sbom::scan_crypto_usage(&program) {
+                    // qualify the scanner's own location with the file it came from, so a
+                    // multi-file project's inventory stays attributable
+                    cu.source = format!("{rel}:{}", cu.source);
+                    usages.push(cu);
+                }
+            }
+            Err(e) => unparsable.push((rel, format!("{e:?}"))),
+        }
+    }
+
+    let joined = || {
+        unparsable
+            .iter()
+            .map(|(rel, why)| format!("{rel}: {why}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+
+    if !unparsable.is_empty() && !allow_partial {
+        anyhow::bail!(
+            "cbom refused: {} source(s) could not be parsed, so the inventory would be \
+             incomplete — {}. Re-run with --allow-partial to emit it anyway; the artifact \
+             then records cbom:complete=false and names every skipped source.",
+            unparsable.len(),
+            joined()
+        );
+    }
+
+    usages.sort_by(|a, b| {
+        (&a.algorithm, &a.category, &a.source).cmp(&(&b.algorithm, &b.category, &b.source))
+    });
+    usages.dedup();
+
+    if unparsable.is_empty() {
+        eprintln!(
+            "cbom: {} algorithm usage(s) from {} .tl source(s)",
+            usages.len(),
+            sources.len()
+        );
+    } else {
+        eprintln!(
+            "cbom INCOMPLETE: {} algorithm usage(s) from {} of {} .tl source(s); \
+             {} source(s) could not be parsed and are NOT in this inventory:",
+            usages.len(),
+            sources.len() - unparsable.len(),
+            sources.len(),
+            unparsable.len()
+        );
+        for (rel, why) in &unparsable {
+            eprintln!("  skipped: {rel}: {why}");
+        }
+    }
+
+    let mut bom = tallow::sbom::generate_cbom(&usages, project_name, project_version);
+
+    // The incompleteness has to travel WITH the artifact. A CBOM is written to a file and
+    // read later by someone who never saw the stderr, so a quietly-short inventory would
+    // read as a complete one -- the exact failure this verb exists to prevent.
+    if !bom.get("metadata").map(|m| m.is_object()).unwrap_or(false) {
+        bom["metadata"] = serde_json::json!({});
+    }
+    if !bom["metadata"]
+        .get("properties")
+        .map(|p| p.is_array())
+        .unwrap_or(false)
+    {
+        bom["metadata"]["properties"] = serde_json::json!([]);
+    }
+    let props = bom["metadata"]["properties"]
+        .as_array_mut()
+        .expect("metadata.properties was just made an array");
+    props.push(serde_json::json!({
+        "name": "cbom:complete",
+        "value": if unparsable.is_empty() { "true" } else { "false" }
+    }));
+    if !unparsable.is_empty() {
+        props.push(serde_json::json!({
+            "name": "cbom:skipped_count",
+            "value": unparsable.len().to_string()
+        }));
+        // NEWLINE-delimited, not comma-joined. The first version joined on ",", and a
+        // ParseError's Debug rendering contains commas -- so a consumer splitting the value
+        // got 397 fragments instead of 60. A structured field that cannot be parsed back is
+        // not structured. Neither a path nor a Debug rendering can contain a newline, so
+        // these two round-trip exactly and pair by index.
+        props.push(serde_json::json!({
+            "name": "cbom:skipped_sources",
+            "value": unparsable.iter().map(|(rel, _)| rel.as_str()).collect::<Vec<_>>().join("\n")
+        }));
+        props.push(serde_json::json!({
+            "name": "cbom:skipped_reasons",
+            "value": unparsable.iter().map(|(_, why)| why.as_str()).collect::<Vec<_>>().join("\n")
+        }));
+    }
+
+    Ok(bom)
 }
 
 // ── REPL ──────────────────────────────────────────────────────────────────────
