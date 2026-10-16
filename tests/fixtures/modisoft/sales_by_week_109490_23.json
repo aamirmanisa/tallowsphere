@@ -1,0 +1,21 @@
+{
+ "store_id": 163,
+ "client_code": 134268,
+ "anchor_date": "2026-09-05",
+ "num_weeks": 1,
+ "currency": "USD",
+ "total_net_sales": 21982.85,
+ "weeks": [
+  {
+   "week_label": "W1",
+   "week_number": 1,
+   "week_start": "2026-08-31",
+   "week_end": "2026-09-06",
+   "net_sales": 21982.85,
+   "units": 2226.0,
+   "transaction_count": 1900,
+   "is_partial": true
+  }
+ ],
+ "generated_at": "2026-09-05T19:20:02.685335Z"
+}

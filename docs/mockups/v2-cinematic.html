@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tallow — Dark Cinematic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg:         #0A0A0C;
+  --surface:    #141418;
+  --surface-2:  #1A1A1F;
+  --border:     rgba(255,255,255,0.08);
+  --border-hover: rgba(255,255,255,0.14);
+  --text:       rgba(255,255,255,0.9);
+  --text-2:     rgba(255,255,255,0.5);
+  --text-3:     rgba(255,255,255,0.3);
+  --accent-1:   #667EEA;
+  --accent-2:   #764BA2;
+  --grad:       linear-gradient(135deg, #667EEA, #764BA2);
+  --mono:       'JetBrains Mono', monospace;
+  --sans:       'Inter', -apple-system, sans-serif;
+  --row-h:      40px;
+}
+
+html {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ═══════════════════════════════════════════
+   GRADIENT TEXT UTILITY
+   ═══════════════════════════════════════════ */
+.grad-text {
+  background: var(--grad);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ═══════════════════════════════════════════
+   FADE-IN ANIMATIONS
+   ═══════════════════════════════════════════ */
+.fade-in {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: fadeIn 0.6s ease forwards;
+}
+@keyframes fadeIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* staggered children */
+.stagger > * { opacity: 0; transform: translateY(8px); animation: fadeIn 0.6s ease forwards; }
+.stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger > *:nth-child(2) { animation-delay: 0.10s; }
+.stagger > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger > *:nth-child(4) { animation-delay: 0.20s; }
+.stagger > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger > *:nth-child(6) { animation-delay: 0.30s; }
+.stagger > *:nth-child(7) { animation-delay: 0.35s; }
+.stagger > *:nth-child(8) { animation-delay: 0.40s; }
+.stagger > *:nth-child(9) { animation-delay: 0.45s; }
+.stagger > *:nth-child(10){ animation-delay: 0.50s; }
+
+/* title sequence entrance */
+@keyframes titleReveal {
+  0%   { opacity: 0; transform: scale(0.96) translateY(12px); filter: blur(8px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+}
+.title-reveal {
+  animation: titleReveal 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* subtle float */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+
+/* glow pulse */
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.8; }
+}
+
+/* ═══════════════════════════════════════════
+   LAYOUT
+   ═══════════════════════════════════════════ */
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+section {
+  padding: 80px 0;
+}
+
+/* ═══════════════════════════════════════════
+   NAVIGATION
+   ═══════════════════════════════════════════ */
+nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(10,10,12,0.8);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--border);
+}
+nav .nav-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+nav .logo {
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+nav .nav-links {
+  display: flex;
+  gap: 28px;
+  list-style: none;
+}
+nav .nav-links a {
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 400;
+  transition: color 0.2s;
+}
+nav .nav-links a:hover { color: var(--text); }
+
+/* ═══════════════════════════════════════════
+   HERO SECTION
+   ═══════════════════════════════════════════ */
+#hero {
+  padding-top: 160px;
+  padding-bottom: 60px;
+  text-align: center;
+  position: relative;
+}
+
+/* atmospheric glow behind hero */
+#hero::before {
+  content: '';
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(102,126,234,0.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.hero-wordmark {
+  font-size: clamp(56px, 10vw, 88px);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin-bottom: 16px;
+}
+
+.hero-tagline {
+  font-size: 17px;
+  font-weight: 300;
+  color: var(--text-2);
+  letter-spacing: 0.02em;
+  margin-bottom: 48px;
+}
+
+/* ═══════════════════════════════════════════
+   SEARCH BOX
+   ═══════════════════════════════════════════ */
+.search-wrap {
+  position: relative;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.search-box {
+  width: 100%;
+  height: 48px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 48px 0 16px;
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+.search-box::placeholder {
+  color: var(--text-3);
+}
+.search-box:focus {
+  border-color: rgba(102,126,234,0.3);
+  box-shadow: 0 0 20px rgba(102,126,234,0.15), 0 0 60px rgba(102,126,234,0.05);
+}
+
+.search-icon {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.search-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-3);
+  font-weight: 300;
+}
+.search-hint kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface);
+}
+
+/* ═══════════════════════════════════════════
+   RESULTS LIST — LINEAR DENSE ROWS
+   ═══════════════════════════════════════════ */
+#results {
+  padding-top: 40px;
+}
+
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.results-header h2 {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.results-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.results-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  height: var(--row-h);
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+  cursor: pointer;
+}
+.result-row:last-child { border-bottom: none; }
+.result-row:hover { background: var(--surface-2); }
+
+.store-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 10px;
+}
+.dot-heb    { background: #E31837; }
+.dot-kroger { background: #2A5CAA; }
+.dot-target { background: #CC0000; }
+.dot-costco { background: #E31837; }
+.dot-walmart{ background: #0071CE; }
+.dot-aldi   { background: #00447C; }
+
+.result-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-store {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-left: 12px;
+  flex-shrink: 0;
+  width: 56px;
+}
+
+.result-price {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  flex-shrink: 0;
+  text-align: right;
+  width: 64px;
+}
+
+.result-unit {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  width: 48px;
+  text-align: right;
+}
+
+.result-savings {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #34D399;
+  flex-shrink: 0;
+  width: 52px;
+  text-align: right;
+}
+
+/* ═══════════════════════════════════════════
+   SITE ANALYSIS — GLOWING CARD
+   ═══════════════════════════════════════════ */
+#analysis {
+  padding-top: 60px;
+}
+
+.analysis-card {
+  position: relative;
+  border-radius: 12px;
+  padding: 1px; /* border via background */
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    rgba(102,126,234,0.3),
+    rgba(118,75,162,0.3),
+    rgba(102,126,234,0.1),
+    rgba(118,75,162,0.3),
+    rgba(102,126,234,0.3)
+  );
+}
+.analysis-inner {
+  background: var(--surface);
+  border-radius: 11px;
+  padding: 28px;
+}
+
+.analysis-url {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-2);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.analysis-url .protocol {
+  color: #34D399;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.analysis-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.analysis-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  font-weight: 500;
+}
+.analysis-value {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text);
+}
+.analysis-value.good { color: #34D399; }
+.analysis-value.warn { color: #FBBF24; }
+.analysis-value.bad  { color: #F87171; }
+
+.analysis-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 20px 0;
+  grid-column: 1 / -1;
+}
+
+.analysis-row {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ═══════════════════════════════════════════
+   CRYPTO PIPELINE — HORIZONTAL GLOW BAR
+   ═══════════════════════════════════════════ */
+#pipeline {
+  padding-top: 60px;
+}
+
+.pipeline-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+
+.pipeline-bar {
+  display: flex;
+  height: 40px;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+.pipeline-segment {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.85);
+  position: relative;
+  transition: flex 0.3s ease;
+}
+.pipeline-segment:hover {
+  flex: 1.4;
+}
+
+.pipe-fetch   { background: linear-gradient(135deg, #1e3a5f, #2a5298); }
+.pipe-parse   { background: linear-gradient(135deg, #2d1b69, #4a2d8a); }
+.pipe-encrypt { background: linear-gradient(135deg, #1b4332, #2d6a4f); }
+.pipe-sign    { background: linear-gradient(135deg, #5c2d0e, #8b4513); }
+.pipe-store   { background: linear-gradient(135deg, #4a1942, #6b2fa0); }
+
+/* glow overlay */
+.pipeline-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    rgba(42,82,152,0.2),
+    rgba(74,45,138,0.2),
+    rgba(45,106,79,0.2),
+    rgba(139,69,19,0.2),
+    rgba(107,47,160,0.2)
+  );
+  filter: blur(20px);
+  pointer-events: none;
+  animation: glowPulse 4s ease-in-out infinite;
+}
+
+.pipeline-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.pipeline-meta span {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ═══════════════════════════════════════════
+   CAPABILITIES — NUMBERS WITH GRADIENT TEXT
+   ═══════════════════════════════════════════ */
+#capabilities {
+  padding-top: 80px;
+}
+
+.cap-section-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 32px;
+}
+
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+}
+
+.cap-item {
+  text-align: center;
+}
+.cap-number {
+  font-family: var(--mono);
+  font-size: 36px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+.cap-label {
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 400;
+}
+.cap-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 300;
+  margin-top: 4px;
+}
+
+/* second row */
+.cap-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  margin-top: 40px;
+  padding-top: 40px;
+  border-top: 1px solid var(--border);
+}
+
+.cap-item-sm .cap-number {
+  font-size: 24px;
+}
+
+/* ═══════════════════════════════════════════
+   FEATURE PILLARS
+   ═══════════════════════════════════════════ */
+#features {
+  padding-top: 80px;
+}
+
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.feature-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--surface);
+  transition: background 0.15s;
+}
+.feature-row:hover {
+  background: var(--surface-2);
+}
+
+.feature-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.fi-privacy  { background: rgba(102,126,234,0.12); color: #667EEA; }
+.fi-legal    { background: rgba(52,211,153,0.12);  color: #34D399; }
+.fi-crypto   { background: rgba(118,75,162,0.12);  color: #A78BFA; }
+.fi-network  { background: rgba(251,191,36,0.12);  color: #FBBF24; }
+.fi-agent    { background: rgba(248,113,113,0.12); color: #F87171; }
+
+.feature-text {
+  flex: 1;
+}
+.feature-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.feature-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  font-weight: 300;
+}
+
+.feature-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════
+   CODE BLOCK
+   ═══════════════════════════════════════════ */
+.code-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-top: 32px;
+  overflow-x: auto;
+}
+.code-block pre {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.code-block .kw   { color: #C792EA; }
+.code-block .fn   { color: #82AAFF; }
+.code-block .str  { color: #C3E88D; }
+.code-block .num  { color: #F78C6C; }
+.code-block .ann  { color: #FFCB6B; }
+.code-block .cmt  { color: var(--text-3); font-style: italic; }
+.code-block .type { color: #89DDFF; }
+
+/* ═══════════════════════════════════════════
+   FOOTER
+   ═══════════════════════════════════════════ */
+footer {
+  padding: 60px 0 40px;
+  text-align: center;
+  border-top: 1px solid var(--border);
+  margin-top: 40px;
+}
+footer p {
+  font-size: 12px;
+  color: var(--text-3);
+  font-weight: 300;
+}
+footer .footer-logo {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+/* ═══════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════ */
+@media (max-width: 640px) {
+  .container { padding: 0 16px; }
+  section { padding: 60px 0; }
+
+  .hero-wordmark { font-size: 48px; }
+
+  .cap-grid { grid-template-columns: repeat(2, 1fr); gap: 24px; }
+  .cap-grid-2 { grid-template-columns: repeat(2, 1fr); }
+
+  .analysis-grid { grid-template-columns: 1fr; }
+
+  .result-unit,
+  .result-savings { display: none; }
+
+  nav .nav-links { gap: 16px; }
+  nav .nav-links a { font-size: 12px; }
+
+  #hero { padding-top: 120px; }
+}
+
+@media (max-width: 400px) {
+  .result-store { display: none; }
+  .cap-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<!-- ════════════════ NAVIGATION ════════════════ -->
+<nav>
+  <div class="nav-inner">
+    <div class="logo grad-text">tallow</div>
+    <ul class="nav-links">
+      <li><a href="#hero">Search</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#analysis">Analysis</a></li>
+      <li><a href="#capabilities">Engine</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ════════════════ HERO ════════════════ -->
+<section id="hero">
+  <div class="container">
+    <h1 class="hero-wordmark grad-text title-reveal">Tallow</h1>
+    <p class="hero-tagline fade-in" style="animation-delay: 0.3s">
+      Privacy-first search engine scraper. Post-quantum encrypted. Legally compliant.
+    </p>
+
+    <div class="search-wrap fade-in" style="animation-delay: 0.5s">
+      <input type="text" class="search-box" placeholder="Search products across stores..." value="organic chicken breast" id="searchInput">
+      <div class="search-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.2"/>
+          <line x1="10.5" y1="10.5" x2="15" y2="15" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p class="search-hint">Press <kbd>Enter</kbd> to scrape &middot; <kbd>Tab</kbd> for filters &middot; Results encrypted via ML-KEM-768</p>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ RESULTS ════════════════ -->
+<section id="results">
+  <div class="container">
+    <div class="results-header fade-in">
+      <h2>Price Comparison</h2>
+      <span class="results-count">8 results &middot; 6 stores &middot; 340ms</span>
+    </div>
+
+    <div class="results-list stagger">
+      <div class="result-row">
+        <span class="store-dot dot-aldi"></span>
+        <span class="result-name">Organic Chicken Breast, Boneless Skinless</span>
+        <span class="result-store">ALDI</span>
+        <span class="result-price">$5.29</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">best</span>
+      </div>
+      <div class="result-row">
+        <span class="store-dot dot-walmart"></span>
+        <span class="result-name">Great Value Organic Chicken Breast</span>
+        <span class="result-store">Walmart</span>
+        <span class="result-price">$5.97</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">-11%</span>
+      </div>
+      <div class="result-row">
+        <span class="store-dot dot-kroger"></span>
+        <span class="result-name">Simple Truth Organic Chicken Breast</span>
+        <span class="result-store">Kroger</span>
+        <span class="result-price">$6.49</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">-18%</span>
+      </div>
+      <div class="result-row">
+        <span class="store-dot dot-heb"></span>
+        <span class="result-name">H-E-B Organics Chicken Breast</span>
+        <span class="result-store">H-E-B</span>
+        <span class="result-price">$6.78</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">-22%</span>
+      </div>
+      <div class="result-row">
+        <span class="store-dot dot-costco"></span>
+        <span class="result-name">Kirkland Organic Chicken Breast 6.5 lb</span>
+        <span class="result-store">Costco</span>
+        <span class="result-price">$6.99</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">-24%</span>
+      </div>
+      <div class="result-row">
+        <span class="store-dot dot-target"></span>
+        <span class="result-name">Good & Gather Organic Chicken Breast</span>
+        <span class="result-store">Target</span>
+        <span class="result-price">$7.29</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">-27%</span>
+      </div>
+      <div class="result-row">
+        <span class="store-dot dot-kroger"></span>
+        <span class="result-name">Kroger Organic Thin-Sliced Chicken Breast</span>
+        <span class="result-store">Kroger</span>
+        <span class="result-price">$7.49</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">-29%</span>
+      </div>
+      <div class="result-row">
+        <span class="store-dot dot-heb"></span>
+        <span class="result-name">H-E-B Natural Chicken Breast Air Chilled</span>
+        <span class="result-store">H-E-B</span>
+        <span class="result-price">$8.12</span>
+        <span class="result-unit">/lb</span>
+        <span class="result-savings">-35%</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ SITE ANALYSIS ════════════════ -->
+<section id="analysis">
+  <div class="container">
+    <div class="results-header fade-in" style="margin-bottom: 16px">
+      <h2>Site Analysis</h2>
+      <span class="results-count">target: shop-d.example</span>
+    </div>
+
+    <div class="analysis-card fade-in" style="animation-delay: 0.15s">
+      <div class="analysis-inner">
+        <div class="analysis-url">
+          <span class="protocol">https://</span>www.shop-d.example/category/shop/meat-seafood/chicken
+        </div>
+
+        <div class="analysis-grid stagger">
+          <div class="analysis-item">
+            <span class="analysis-label">Anti-Bot</span>
+            <span class="analysis-value warn">Imperva Incapsula</span>
+          </div>
+          <div class="analysis-item">
+            <span class="analysis-label">WAF Status</span>
+            <span class="analysis-value good">Bypassed</span>
+          </div>
+          <div class="analysis-item">
+            <span class="analysis-label">TLS Fingerprint</span>
+            <span class="analysis-value">Chrome 124 / JA3</span>
+          </div>
+          <div class="analysis-item">
+            <span class="analysis-label">Response Time</span>
+            <span class="analysis-value good">142ms</span>
+          </div>
+
+          <div class="analysis-divider"></div>
+
+          <div class="analysis-item">
+            <span class="analysis-label">robots.txt</span>
+            <span class="analysis-value good">Respected</span>
+          </div>
+          <div class="analysis-item">
+            <span class="analysis-label">Rate Limit</span>
+            <span class="analysis-value">2 req/sec</span>
+          </div>
+          <div class="analysis-item">
+            <span class="analysis-label">Legal Basis</span>
+            <span class="analysis-value">.public_data</span>
+          </div>
+          <div class="analysis-item">
+            <span class="analysis-label">Jurisdiction</span>
+            <span class="analysis-value">.us</span>
+          </div>
+
+          <div class="analysis-divider"></div>
+
+          <div class="analysis-row">
+            <div class="analysis-item">
+              <span class="analysis-label">Products Found</span>
+              <span class="analysis-value" style="font-size: 20px;">44,218</span>
+            </div>
+            <div class="analysis-item" style="text-align: right;">
+              <span class="analysis-label">Extraction Rate</span>
+              <span class="analysis-value good">99.7%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ CRYPTO PIPELINE ════════════════ -->
+<section id="pipeline">
+  <div class="container">
+    <div class="pipeline-label fade-in">Encryption Pipeline</div>
+
+    <div class="pipeline-bar fade-in" style="animation-delay: 0.1s">
+      <div class="pipeline-segment pipe-fetch">fetch</div>
+      <div class="pipeline-segment pipe-parse">parse</div>
+      <div class="pipeline-segment pipe-encrypt">encrypt</div>
+      <div class="pipeline-segment pipe-sign">sign</div>
+      <div class="pipeline-segment pipe-store">store</div>
+    </div>
+
+    <div class="pipeline-meta fade-in" style="animation-delay: 0.2s">
+<!-- claim label: pipeline stack badges below (io_uring, SIMD tokenizer, PQC suites) are mockup copy — SIMD tokenizer is target-only; io_uring is optional/off-by-default (file I/O only); PQC defaults are per-layer (.tl/stdlib ML-KEM-768/ML-DSA-65; crate ships 1024/87) (R-P3/R-K3 class). -->
+      <span>TLS 1.3 + io_uring</span>
+      <span>SIMD tokenizer</span>
+      <span>ML-KEM-768</span>
+      <span>ML-DSA-65</span>
+      <span>AES-256-GCM</span>
+    </div>
+
+    <div class="code-block fade-in" style="animation-delay: 0.3s">
+<pre><span class="ann">@legal</span>(<span class="str">basis</span>: .public_data, <span class="str">purpose</span>: <span class="str">"price comparison"</span>)
+<span class="kw">fn</span> <span class="fn">scrape_prices</span>(urls: []<span class="type">URL</span>) -> <span class="type">Result</span>&lt;[]<span class="type">Price</span>&gt; {
+    <span class="kw">let</span> pool = <span class="type">IPPool</span> { size: <span class="num">10_000</span>, rotation: .per_request }
+
+    <span class="kw">let</span> pages = pool.<span class="fn">map</span>(urls, concurrency: <span class="num">50</span>) { url ->
+        <span class="fn">fetch</span>(url, timeout: <span class="num">5</span>.seconds)?
+    }?
+
+    pages.<span class="fn">filter</span>  { p -> p.status == <span class="num">200</span> }
+         .<span class="fn">map</span>     { p -> <span class="fn">parse_price</span>(p.body)? }
+         .<span class="fn">flatten</span>
+         .<span class="fn">encrypt</span>()  <span class="cmt">// ML-KEM-768 default</span>
+}</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ CAPABILITIES ════════════════ -->
+<section id="capabilities">
+  <div class="container">
+    <div class="cap-section-title fade-in">Engine Capabilities</div>
+
+    <div class="cap-grid stagger">
+<!-- claim label: scale/latency cards below (10M+, 50µs, DPDK) are mockup copy — DPDK stub; 10M+ target-only; µs-class fetch unmeasured (R-P1/R-P3/R-C3). -->
+      <div class="cap-item">
+        <div class="cap-number grad-text">10M+</div>
+        <div class="cap-label">Concurrent Connections</div>
+        <div class="cap-sub">DPDK kernel bypass</div>
+      </div>
+      <div class="cap-item">
+        <div class="cap-number grad-text">50&mu;s</div>
+        <div class="cap-label">HTTP Fetch Latency</div>
+        <div class="cap-sub">io_uring async I/O</div>
+      </div>
+      <div class="cap-item">
+        <div class="cap-number grad-text">0</div>
+        <div class="cap-label">Plaintext Leaks</div>
+        <div class="cap-sub">Compiler-enforced</div>
+      </div>
+    </div>
+
+    <div class="cap-grid-2 stagger">
+<!-- claim label: secondary stat cards below (<1ms cold start, 32B SIMD width) are mockup copy — startup unmeasured; SIMD tokenizer target-only; PQC defaults per-layer (R-P3/R-K3 class). -->
+      <div class="cap-item cap-item-sm">
+        <div class="cap-number grad-text">&lt;1ms</div>
+        <div class="cap-label">Cold Start</div>
+      </div>
+      <div class="cap-item cap-item-sm">
+        <div class="cap-number grad-text">32B</div>
+        <div class="cap-label">SIMD Width</div>
+      </div>
+      <div class="cap-item cap-item-sm">
+        <div class="cap-number grad-text">PQC</div>
+        <div class="cap-label">Crypto Default</div>
+      </div>
+      <div class="cap-item cap-item-sm">
+        <div class="cap-number grad-text">GDPR</div>
+        <div class="cap-label">Audit Built-in</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ FEATURES ════════════════ -->
+<section id="features">
+  <div class="container">
+    <div class="cap-section-title fade-in">Five Pillars</div>
+
+    <div class="feature-list stagger">
+      <div class="feature-row">
+        <div class="feature-icon fi-privacy">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1L2 4v4c0 3.3 2.6 6.4 6 7 3.4-.6 6-3.7 6-7V4L8 1z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="feature-text">
+          <div class="feature-title">Privacy by Default</div>
+          <div class="feature-desc">private and secret type qualifiers tracked through the entire compiler pipeline</div>
+        </div>
+        <span class="feature-tag">type system</span>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature-icon fi-legal">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="6" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M5 6V4a3 3 0 016 0v2" stroke="currentColor" stroke-width="1.2"/></svg>
+        </div>
+        <div class="feature-text">
+          <div class="feature-title">Legal Compliance</div>
+          <div class="feature-desc">@legal annotations validated at compile time, audit logs generated automatically</div>
+        </div>
+        <span class="feature-tag">@legal</span>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature-icon fi-crypto">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M8 4v4l3 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </div>
+        <div class="feature-text">
+          <div class="feature-title">Post-Quantum Crypto</div>
+          <div class="feature-desc">ML-KEM-768 key exchange, ML-DSA signatures, Argon2id hashing -- all default</div>
+        </div>
+        <span class="feature-tag">NIST PQC</span>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature-icon fi-network">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/><path d="M8 2a6 6 0 010 12M2 8h12" stroke="currentColor" stroke-width="1.2"/></svg>
+        </div>
+        <div class="feature-text">
+          <div class="feature-title">IPPool Networking</div>
+          <div class="feature-desc">10K to 10M+ connections, per-request IP rotation, DPDK kernel bypass</div>
+<!-- claim label: 10K→10M+ / DPDK feature row is mockup copy (target-only; DPDK stub) — claims register R-C1/R-C3. -->
+        </div>
+        <span class="feature-tag">io_uring</span>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature-icon fi-agent">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M6 8h4M8 6v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </div>
+        <div class="feature-text">
+          <div class="feature-title">Agent Task System</div>
+          <div class="feature-desc">Sandboxed autonomous functions with compile-time permission boundaries</div>
+        </div>
+        <span class="feature-tag">@agent_task</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ FOOTER ════════════════ -->
+<footer>
+  <div class="container">
+    <p class="footer-logo grad-text">tallow</p>
+    <p>Privacy-first systems language &middot; Post-quantum by default &middot; v0.1.0</p>
+  </div>
+</footer>
+
+<!-- ════════════════ INTERSECTION OBSERVER ════════════════ -->
+<script>
+// Trigger fade-in animations when elements scroll into view
+document.addEventListener('DOMContentLoaded', () => {
+  // Pause animations for elements not yet in viewport
+  const allAnimated = document.querySelectorAll('.fade-in, .stagger');
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.style.animationPlayState = 'running';
+        if (entry.target.classList.contains('stagger')) {
+          entry.target.querySelectorAll(':scope > *').forEach(child => {
+            child.style.animationPlayState = 'running';
+          });
+        }
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.1 });
+
+  allAnimated.forEach(el => {
+    // Only pause elements below the fold
+    const rect = el.getBoundingClientRect();
+    if (rect.top > window.innerHeight) {
+      el.style.animationPlayState = 'paused';
+      if (el.classList.contains('stagger')) {
+        el.querySelectorAll(':scope > *').forEach(child => {
+          child.style.animationPlayState = 'paused';
+        });
+      }
+    }
+    observer.observe(el);
+  });
+
+  // Search box focus on / key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && document.activeElement !== document.getElementById('searchInput')) {
+      e.preventDefault();
+      document.getElementById('searchInput').focus();
+    }
+  });
+});
+</script>
+
+</body>
+</html>

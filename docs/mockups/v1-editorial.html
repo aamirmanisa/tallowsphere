@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tallow - Privacy-First Search Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@200;300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --cream: #FEFDFB;
+  --ink: #0C0C0C;
+  --ink-80: rgba(12,12,12,0.8);
+  --ink-50: rgba(12,12,12,0.5);
+  --ink-30: rgba(12,12,12,0.3);
+  --ink-12: rgba(12,12,12,0.12);
+  --ink-04: rgba(12,12,12,0.04);
+  --warm-gray: #F5F3EF;
+  --serif: 'DM Serif Display', Georgia, serif;
+  --sans: 'Outfit', -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --heb-red: #E31837;
+  --kroger-blue: #0058A3;
+  --target-red: #CC0000;
+  --walmart-blue: #0071CE;
+  --costco-red: #E31837;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--sans);
+  font-weight: 300;
+  background: var(--cream);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* ── FADE-IN ANIMATIONS ── */
+.fade-in {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.fade-in.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.fade-in-delay-1 { transition-delay: 0.1s; }
+.fade-in-delay-2 { transition-delay: 0.2s; }
+.fade-in-delay-3 { transition-delay: 0.3s; }
+.fade-in-delay-4 { transition-delay: 0.4s; }
+.fade-in-delay-5 { transition-delay: 0.5s; }
+
+/* ── NAV ── */
+nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 48px;
+  background: rgba(254,253,251,0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 0.5px solid var(--ink-04);
+}
+
+.nav-logo {
+  font-family: var(--serif);
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.nav-links {
+  display: flex;
+  gap: 36px;
+  list-style: none;
+}
+.nav-links a {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-50);
+  text-decoration: none;
+  transition: color 0.3s;
+}
+.nav-links a:hover { color: var(--ink); }
+
+.nav-audit {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-30);
+  letter-spacing: 0.04em;
+}
+
+/* ── HERO ── */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 120px 48px 80px;
+  text-align: center;
+  position: relative;
+}
+
+.hero-overline {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--ink-30);
+  margin-bottom: 24px;
+}
+
+.hero-title {
+  font-family: var(--serif);
+  font-size: clamp(72px, 10vw, 180px);
+  line-height: 0.88;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  margin-bottom: 32px;
+}
+.hero-title em {
+  font-style: italic;
+  color: var(--ink-50);
+}
+
+.hero-subtitle {
+  font-family: var(--sans);
+  font-size: 18px;
+  font-weight: 300;
+  color: var(--ink-50);
+  max-width: 480px;
+  line-height: 1.6;
+  margin-bottom: 56px;
+}
+
+/* ── SEARCH BOX ── */
+.search-container {
+  width: 100%;
+  max-width: 620px;
+  position: relative;
+}
+
+.search-box {
+  width: 100%;
+  padding: 18px 56px 18px 24px;
+  font-family: var(--sans);
+  font-size: 16px;
+  font-weight: 300;
+  color: var(--ink);
+  background: transparent;
+  border: 0.5px solid var(--ink-12);
+  border-radius: 20px;
+  outline: none;
+  transition: border-color 0.4s;
+  letter-spacing: 0.01em;
+}
+.search-box::placeholder {
+  color: var(--ink-30);
+  font-weight: 300;
+}
+.search-box:focus {
+  border-color: var(--ink-30);
+}
+
+.search-icon {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  opacity: 0.25;
+}
+
+.search-hints {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.search-hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--ink-30);
+  padding: 6px 14px;
+  border: 0.5px solid var(--ink-04);
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+.search-hint:hover {
+  color: var(--ink-50);
+  border-color: var(--ink-12);
+}
+
+.hero-scroll-indicator {
+  position: absolute;
+  bottom: 40px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink-12);
+  animation: pulse-down 2s ease-in-out infinite;
+}
+@keyframes pulse-down {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 0.6; transform: translateY(4px); }
+}
+
+/* ── RESULTS SECTION ── */
+.results-section {
+  padding: 120px 48px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.section-label {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--ink-30);
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-family: var(--serif);
+  font-size: clamp(32px, 4vw, 56px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin-bottom: 12px;
+}
+
+.section-subtitle {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 300;
+  color: var(--ink-50);
+  margin-bottom: 64px;
+  max-width: 480px;
+}
+
+.results-meta {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  margin-bottom: 48px;
+  padding-bottom: 24px;
+  border-bottom: 0.5px solid var(--ink-04);
+}
+.results-meta-item {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 300;
+  color: var(--ink-30);
+}
+.results-meta-item strong {
+  font-weight: 500;
+  color: var(--ink-80);
+}
+
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1px;
+  background: var(--ink-04);
+  border: 0.5px solid var(--ink-04);
+  border-radius: 2px;
+}
+
+.result-card {
+  background: var(--cream);
+  padding: 36px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.4s;
+}
+.result-card:hover {
+  background: var(--warm-gray);
+}
+
+.result-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 3px;
+  border-radius: 2px;
+}
+.result-card[data-store="heb"]::before { background: var(--heb-red); }
+.result-card[data-store="kroger"]::before { background: var(--kroger-blue); }
+.result-card[data-store="target"]::before { background: var(--target-red); }
+.result-card[data-store="walmart"]::before { background: var(--walmart-blue); }
+.result-card[data-store="costco"]::before { background: var(--costco-red); }
+
+.result-store {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink-30);
+}
+
+.result-title {
+  font-family: var(--serif);
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.result-details {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.result-price {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.result-unit {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--ink-30);
+}
+
+.result-meta-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.result-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 300;
+  color: var(--ink-30);
+  padding: 3px 8px;
+  border: 0.5px solid var(--ink-04);
+  border-radius: 3px;
+}
+
+.result-nutrition {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+.nutrition-dot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-30);
+}
+.nutrition-dot::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.nutrition-dot.cal::before { background: #D4A574; }
+.nutrition-dot.protein::before { background: #7BA68C; }
+.nutrition-dot.fat::before { background: #C4897A; }
+.nutrition-dot.carb::before { background: #8B9DC3; }
+
+/* ── CINEMATIC DARK SECTION: URL ANALYSIS ── */
+.analysis-section {
+  background: var(--ink);
+  color: #FEFDFB;
+  padding: 160px 48px;
+  position: relative;
+  overflow: hidden;
+}
+
+.analysis-section::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(to bottom, var(--cream), var(--ink));
+}
+.analysis-section::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(to top, var(--cream), var(--ink));
+}
+
+.analysis-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+.analysis-section .section-label {
+  color: rgba(254,253,251,0.25);
+}
+.analysis-section .section-title {
+  color: #FEFDFB;
+  margin-bottom: 8px;
+}
+.analysis-section .section-subtitle {
+  color: rgba(254,253,251,0.4);
+  margin-bottom: 80px;
+}
+
+.analysis-url-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  border: 0.5px solid rgba(254,253,251,0.08);
+  border-radius: 12px;
+  margin-bottom: 64px;
+  background: rgba(254,253,251,0.02);
+}
+.analysis-url-protocol {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(254,253,251,0.2);
+}
+.analysis-url-domain {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 400;
+  color: rgba(254,253,251,0.7);
+}
+.analysis-url-path {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 300;
+  color: rgba(254,253,251,0.3);
+}
+.analysis-url-status {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #7BA68C;
+  letter-spacing: 0.05em;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 48px;
+}
+
+.analysis-block h3 {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(254,253,251,0.25);
+  margin-bottom: 24px;
+}
+
+.analysis-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 0.5px solid rgba(254,253,251,0.04);
+}
+.analysis-item-label {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 300;
+  color: rgba(254,253,251,0.5);
+}
+.analysis-item-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: rgba(254,253,251,0.8);
+}
+.analysis-item-value.green { color: #7BA68C; }
+.analysis-item-value.amber { color: #D4A574; }
+.analysis-item-value.red   { color: #C4897A; }
+
+/* Crypto pipeline dots */
+.crypto-pipeline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 32px;
+}
+.crypto-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: relative;
+}
+.crypto-dot.active { animation: crypto-pulse 2s ease-in-out infinite; }
+.crypto-dot:nth-child(2) { animation-delay: 0.2s; }
+.crypto-dot:nth-child(3) { animation-delay: 0.4s; }
+.crypto-dot:nth-child(4) { animation-delay: 0.6s; }
+.crypto-dot:nth-child(5) { animation-delay: 0.8s; }
+
+.crypto-dot.tls { background: #7BA68C; }
+.crypto-dot.pqc { background: #8B9DC3; }
+.crypto-dot.enc { background: #D4A574; }
+.crypto-dot.sig { background: #C4897A; }
+.crypto-dot.wipe { background: rgba(254,253,251,0.2); }
+
+@keyframes crypto-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.3); }
+}
+
+.crypto-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+}
+.crypto-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: rgba(254,253,251,0.3);
+}
+.crypto-legend-item .crypto-dot {
+  width: 5px;
+  height: 5px;
+  animation: none;
+}
+
+/* ── CAPABILITIES SECTION ── */
+.capabilities-section {
+  padding: 160px 48px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.capabilities-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--ink-04);
+  border: 0.5px solid var(--ink-04);
+  margin-top: 64px;
+}
+
+.capability-card {
+  background: var(--cream);
+  padding: 48px 36px;
+}
+
+.capability-number {
+  font-family: var(--serif);
+  font-size: 48px;
+  color: var(--ink-12);
+  line-height: 1;
+  margin-bottom: 20px;
+  letter-spacing: -0.03em;
+}
+
+.capability-title {
+  font-family: var(--serif);
+  font-size: 20px;
+  margin-bottom: 12px;
+  letter-spacing: -0.01em;
+}
+
+.capability-text {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 300;
+  color: var(--ink-50);
+  line-height: 1.7;
+}
+
+.capability-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--ink-30);
+  margin-top: 16px;
+  padding: 4px 10px;
+  border: 0.5px solid var(--ink-04);
+  border-radius: 3px;
+}
+
+/* ── CODE SPECIMEN ── */
+.code-section {
+  padding: 0 48px 160px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.code-specimen {
+  background: var(--warm-gray);
+  border: 0.5px solid var(--ink-04);
+  border-radius: 4px;
+  padding: 48px;
+  overflow-x: auto;
+}
+
+.code-specimen pre {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 300;
+  line-height: 1.8;
+  color: var(--ink-80);
+  white-space: pre;
+}
+.code-specimen .kw { color: var(--ink); font-weight: 500; }
+.code-specimen .str { color: #7B6A5A; }
+.code-specimen .num { color: #8B6A5A; }
+.code-specimen .ann { color: #6A7B8B; }
+.code-specimen .cmt { color: var(--ink-30); font-style: italic; }
+.code-specimen .type { color: #5A6B7B; }
+
+/* ── STAT FOOTER ── */
+.stat-footer {
+  padding: 120px 48px;
+  border-top: 0.5px solid var(--ink-04);
+}
+.stat-footer-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 48px;
+  text-align: center;
+}
+
+.stat-number {
+  font-family: var(--serif);
+  font-size: clamp(56px, 7vw, 112px);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  margin-bottom: 12px;
+}
+.stat-label {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink-30);
+}
+.stat-detail {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--ink-12);
+  margin-top: 8px;
+}
+
+/* ── FOOTER ── */
+footer {
+  padding: 48px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 0.5px solid var(--ink-04);
+}
+
+.footer-left {
+  font-family: var(--serif);
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.footer-center {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 300;
+  color: var(--ink-30);
+}
+
+.footer-right {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-12);
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 1024px) {
+  .analysis-grid { grid-template-columns: 1fr 1fr; gap: 36px; }
+  .capabilities-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 768px) {
+  nav { padding: 16px 24px; }
+  .nav-links { display: none; }
+  .hero { padding: 100px 24px 60px; min-height: 90vh; }
+  .hero-subtitle { font-size: 16px; }
+  .search-box { padding: 16px 48px 16px 20px; font-size: 15px; }
+  .results-section { padding: 80px 24px; }
+  .results-grid { grid-template-columns: 1fr; }
+  .analysis-section { padding: 120px 24px; }
+  .analysis-grid { grid-template-columns: 1fr; gap: 48px; }
+  .analysis-url-bar { flex-wrap: wrap; }
+  .analysis-url-status { margin-left: 0; }
+  .capabilities-section { padding: 100px 24px; }
+  .capabilities-grid { grid-template-columns: 1fr; }
+  .code-section { padding: 0 24px 100px; }
+  .code-specimen { padding: 24px; }
+  .code-specimen pre { font-size: 11px; }
+  .stat-footer { padding: 80px 24px; }
+  .stat-footer-inner { grid-template-columns: repeat(2, 1fr); gap: 48px; }
+  .stat-number { font-size: 56px; }
+  footer { flex-direction: column; gap: 16px; text-align: center; padding: 32px 24px; }
+  .results-meta { flex-wrap: wrap; gap: 16px; }
+  .section-title { font-size: 32px; }
+}
+
+@media (max-width: 480px) {
+  .hero-title { font-size: 56px; }
+  .search-hints { gap: 8px; }
+  .stat-footer-inner { grid-template-columns: 1fr 1fr; gap: 32px; }
+}
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<!-- ══════════════════ NAV ══════════════════ -->
+<nav>
+  <a href="#" class="nav-logo">Tallow</a>
+  <ul class="nav-links">
+    <li><a href="#results">Results</a></li>
+    <li><a href="#analysis">Analysis</a></li>
+    <li><a href="#capabilities">Capabilities</a></li>
+  </ul>
+  <span class="nav-audit">v0.1.0 &middot; audit: compliant</span>
+</nav>
+
+<!-- ══════════════════ HERO ══════════════════ -->
+<section class="hero">
+  <p class="hero-overline fade-in">Privacy-First Search Engine</p>
+  <h1 class="hero-title fade-in fade-in-delay-1">Tall<em>ow</em></h1>
+  <p class="hero-subtitle fade-in fade-in-delay-2">
+    Search every product, from every store, with post-quantum encryption
+    and compile-time legal compliance. Nothing is stored. Nothing is tracked.
+  </p>
+  <div class="search-container fade-in fade-in-delay-3">
+    <input type="text" class="search-box" placeholder="Search products across all stores..." value="organic chicken breast">
+    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+    </svg>
+    <div class="search-hints">
+      <span class="search-hint">avocado</span>
+      <span class="search-hint">grass-fed beef</span>
+      <span class="search-hint">almond milk</span>
+      <span class="search-hint">sourdough bread</span>
+    </div>
+  </div>
+  <span class="hero-scroll-indicator">Scroll</span>
+</section>
+
+<!-- ══════════════════ RESULTS ══════════════════ -->
+<section class="results-section" id="results">
+  <p class="section-label fade-in">Search Results</p>
+  <h2 class="section-title fade-in fade-in-delay-1">"Organic Chicken Breast"</h2>
+  <p class="section-subtitle fade-in fade-in-delay-2">
+    Aggregated from 5 retailers in real time. Prices verified, nutrition cross-referenced with USDA.
+  </p>
+
+  <div class="results-meta fade-in fade-in-delay-3">
+    <span class="results-meta-item"><strong>127</strong> results</span>
+    <span class="results-meta-item"><strong>5</strong> stores</span>
+    <span class="results-meta-item"><strong>340ms</strong> latency</span>
+    <span class="results-meta-item"><strong>ML-KEM-768</strong> encrypted</span>
+  </div>
+
+  <div class="results-grid">
+
+    <div class="result-card fade-in" data-store="heb">
+      <span class="result-store">H-E-B</span>
+      <h3 class="result-title">H-E-B Natural Boneless Skinless Chicken Breast</h3>
+      <div class="result-details">
+        <span class="result-price">$5.47</span>
+        <span class="result-unit">/ lb</span>
+      </div>
+      <div class="result-meta-row">
+        <span class="result-tag">organic</span>
+        <span class="result-tag">no antibiotics</span>
+        <span class="result-tag">in stock</span>
+      </div>
+      <div class="result-nutrition">
+        <span class="nutrition-dot cal">165 cal</span>
+        <span class="nutrition-dot protein">31g P</span>
+        <span class="nutrition-dot fat">3.6g F</span>
+        <span class="nutrition-dot carb">0g C</span>
+      </div>
+    </div>
+
+    <div class="result-card fade-in fade-in-delay-1" data-store="kroger">
+      <span class="result-store">Kroger</span>
+      <h3 class="result-title">Simple Truth Organic Chicken Breast Fillets</h3>
+      <div class="result-details">
+        <span class="result-price">$6.99</span>
+        <span class="result-unit">/ lb</span>
+      </div>
+      <div class="result-meta-row">
+        <span class="result-tag">USDA organic</span>
+        <span class="result-tag">free range</span>
+        <span class="result-tag">in stock</span>
+      </div>
+      <div class="result-nutrition">
+        <span class="nutrition-dot cal">160 cal</span>
+        <span class="nutrition-dot protein">30g P</span>
+        <span class="nutrition-dot fat">3.5g F</span>
+        <span class="nutrition-dot carb">0g C</span>
+      </div>
+    </div>
+
+    <div class="result-card fade-in fade-in-delay-2" data-store="target">
+      <span class="result-store">Target</span>
+      <h3 class="result-title">Good & Gather Organic Chicken Breast</h3>
+      <div class="result-details">
+        <span class="result-price">$7.29</span>
+        <span class="result-unit">/ lb</span>
+      </div>
+      <div class="result-meta-row">
+        <span class="result-tag">organic</span>
+        <span class="result-tag">air chilled</span>
+        <span class="result-tag">limited</span>
+      </div>
+      <div class="result-nutrition">
+        <span class="nutrition-dot cal">170 cal</span>
+        <span class="nutrition-dot protein">32g P</span>
+        <span class="nutrition-dot fat">4.0g F</span>
+        <span class="nutrition-dot carb">0g C</span>
+      </div>
+    </div>
+
+    <div class="result-card fade-in fade-in-delay-3" data-store="walmart">
+      <span class="result-store">Walmart</span>
+      <h3 class="result-title">Great Value Organic Boneless Chicken Breast</h3>
+      <div class="result-details">
+        <span class="result-price">$5.97</span>
+        <span class="result-unit">/ lb</span>
+      </div>
+      <div class="result-meta-row">
+        <span class="result-tag">organic</span>
+        <span class="result-tag">no hormones</span>
+        <span class="result-tag">in stock</span>
+      </div>
+      <div class="result-nutrition">
+        <span class="nutrition-dot cal">160 cal</span>
+        <span class="nutrition-dot protein">31g P</span>
+        <span class="nutrition-dot fat">3.0g F</span>
+        <span class="nutrition-dot carb">0g C</span>
+      </div>
+    </div>
+
+    <div class="result-card fade-in fade-in-delay-4" data-store="costco">
+      <span class="result-store">Costco</span>
+      <h3 class="result-title">Kirkland Signature Organic Chicken Breast, 6.5 lb</h3>
+      <div class="result-details">
+        <span class="result-price">$4.49</span>
+        <span class="result-unit">/ lb</span>
+      </div>
+      <div class="result-meta-row">
+        <span class="result-tag">bulk</span>
+        <span class="result-tag">USDA organic</span>
+        <span class="result-tag">members only</span>
+      </div>
+      <div class="result-nutrition">
+        <span class="nutrition-dot cal">165 cal</span>
+        <span class="nutrition-dot protein">31g P</span>
+        <span class="nutrition-dot fat">3.6g F</span>
+        <span class="nutrition-dot carb">0g C</span>
+      </div>
+    </div>
+
+    <div class="result-card fade-in fade-in-delay-5" data-store="heb">
+      <span class="result-store">H-E-B</span>
+      <h3 class="result-title">H-E-B Primo Picks Organic Free-Range Chicken</h3>
+      <div class="result-details">
+        <span class="result-price">$8.99</span>
+        <span class="result-unit">/ lb</span>
+      </div>
+      <div class="result-meta-row">
+        <span class="result-tag">primo picks</span>
+        <span class="result-tag">free range</span>
+        <span class="result-tag">premium</span>
+      </div>
+      <div class="result-nutrition">
+        <span class="nutrition-dot cal">155 cal</span>
+        <span class="nutrition-dot protein">32g P</span>
+        <span class="nutrition-dot fat">2.8g F</span>
+        <span class="nutrition-dot carb">0g C</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════════ URL ANALYSIS (CINEMATIC DARK) ══════════════════ -->
+<section class="analysis-section" id="analysis">
+  <div class="analysis-inner">
+    <p class="section-label fade-in">Site Analysis</p>
+    <h2 class="section-title fade-in fade-in-delay-1">Deep Inspection</h2>
+    <p class="section-subtitle fade-in fade-in-delay-2">
+      Every request is analyzed for legal compliance, encryption strength,
+      and privacy posture before data ever leaves the wire.
+    </p>
+
+    <div class="analysis-url-bar fade-in fade-in-delay-3">
+      <span class="analysis-url-protocol">https://</span>
+      <span class="analysis-url-domain">www.shop-d.example</span>
+      <span class="analysis-url-path">/product-detail/h-e-b-natural-chicken-breast/2438190</span>
+      <span class="analysis-url-status">200 OK &middot; 142ms</span>
+    </div>
+
+    <div class="analysis-grid">
+
+      <div class="analysis-block fade-in">
+        <h3>Legal Compliance</h3>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Legal Basis</span>
+          <span class="analysis-item-value green">.public_data</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Personal Data</span>
+          <span class="analysis-item-value green">None collected</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">robots.txt</span>
+          <span class="analysis-item-value green">Respected</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Rate Limit</span>
+          <span class="analysis-item-value">2 req/sec</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Jurisdiction</span>
+          <span class="analysis-item-value">US &middot; CCPA</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Retention</span>
+          <span class="analysis-item-value">7 days</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Audit Status</span>
+          <span class="analysis-item-value green">COMPLIANT</span>
+        </div>
+      </div>
+
+      <div class="analysis-block fade-in fade-in-delay-2">
+        <h3>Security Posture</h3>
+        <div class="analysis-item">
+          <span class="analysis-item-label">TLS Version</span>
+          <span class="analysis-item-value green">1.3</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Key Exchange</span>
+          <span class="analysis-item-value">X25519 + ML-KEM</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Certificate</span>
+          <span class="analysis-item-value green">Valid (387d)</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">HSTS</span>
+          <span class="analysis-item-value green">Enabled</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">WAF Detected</span>
+          <span class="analysis-item-value amber">Incapsula</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Fingerprint</span>
+          <span class="analysis-item-value green">Chrome 124</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Stealth Score</span>
+          <span class="analysis-item-value green">98 / 100</span>
+        </div>
+
+        <div class="crypto-pipeline">
+          <div class="crypto-dot tls active"></div>
+          <div class="crypto-dot pqc active"></div>
+          <div class="crypto-dot enc active"></div>
+          <div class="crypto-dot sig active"></div>
+          <div class="crypto-dot wipe active"></div>
+        </div>
+        <div class="crypto-legend">
+          <span class="crypto-legend-item"><span class="crypto-dot tls"></span>TLS</span>
+          <span class="crypto-legend-item"><span class="crypto-dot pqc"></span>PQC</span>
+          <span class="crypto-legend-item"><span class="crypto-dot enc"></span>AES</span>
+          <span class="crypto-legend-item"><span class="crypto-dot sig"></span>Sign</span>
+          <span class="crypto-legend-item"><span class="crypto-dot wipe"></span>Wipe</span>
+        </div>
+      </div>
+
+      <div class="analysis-block fade-in fade-in-delay-4">
+        <h3>Performance</h3>
+        <div class="analysis-item">
+          <span class="analysis-item-label">DNS Resolve</span>
+          <span class="analysis-item-value">12ms</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">TCP Connect</span>
+          <span class="analysis-item-value">18ms</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">TLS Handshake</span>
+          <span class="analysis-item-value">34ms</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">First Byte</span>
+          <span class="analysis-item-value green">78ms</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Transfer</span>
+          <span class="analysis-item-value">142ms</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">Body Size</span>
+          <span class="analysis-item-value">247 KB</span>
+        </div>
+        <div class="analysis-item">
+          <span class="analysis-item-label">IP Rotation</span>
+          <span class="analysis-item-value green">Active</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════ CAPABILITIES ══════════════════ -->
+<section class="capabilities-section" id="capabilities">
+  <p class="section-label fade-in">Capabilities</p>
+  <h2 class="section-title fade-in fade-in-delay-1">Built Different</h2>
+  <p class="section-subtitle fade-in fade-in-delay-2">
+    Every feature is a language primitive, not a bolted-on library.
+  </p>
+
+  <div class="capabilities-grid">
+    <div class="capability-card fade-in">
+      <div class="capability-number">01</div>
+      <h3 class="capability-title">Post-Quantum Encryption</h3>
+      <p class="capability-text">ML-KEM-768 by default. Every search query, every result, every byte of data is encrypted with algorithms that will survive quantum computers.</p>
+      <span class="capability-tag">NIST FIPS 203</span>
+    </div>
+    <div class="capability-card fade-in fade-in-delay-1">
+      <div class="capability-number">02</div>
+      <h3 class="capability-title">Compile-Time Legal</h3>
+      <p class="capability-text">The @legal annotation system rejects non-compliant code before it ever runs. GDPR, CCPA, PIPEDA -- enforced at the compiler level.</p>
+      <span class="capability-tag">@legal(basis: .public_data)</span>
+    </div>
+    <div class="capability-card fade-in fade-in-delay-2">
+      <div class="capability-number">03</div>
+      <h3 class="capability-title">Unlimited IP Scale</h3>
+      <p class="capability-text">IPPool is a first-class type. From 10K connections on epoll to 10M+ with DPDK kernel bypass. Per-request rotation built into the language.</p>
+<!-- claim label: "10K → 10M+ / DPDK kernel bypass" is mockup copy — DPDK backend is a stub; 10M+ scale is target-only (claims register R-P3/R-C3). -->
+      <span class="capability-tag">io_uring + DPDK</span>
+    </div>
+    <div class="capability-card fade-in fade-in-delay-3">
+      <div class="capability-number">04</div>
+      <h3 class="capability-title">Privacy Types</h3>
+      <p class="capability-text">Mark data as private or secret at the type level. The compiler tracks it through every function, preventing leaks, logging, and unencrypted transmission.</p>
+      <span class="capability-tag">type Email = private String</span>
+    </div>
+    <div class="capability-card fade-in fade-in-delay-4">
+      <div class="capability-number">05</div>
+      <h3 class="capability-title">Stealth Networking</h3>
+      <p class="capability-text">20 stealth vectors. Chrome-grade TLS fingerprints. Automatic WAF detection and bypass. Sites see a real browser, not a scraper.</p>
+      <span class="capability-tag">stealth score: 98/100</span>
+    </div>
+    <div class="capability-card fade-in fade-in-delay-5">
+      <div class="capability-number">06</div>
+      <h3 class="capability-title">Agent Task System</h3>
+      <p class="capability-text">Autonomous research agents with compiler-enforced permission boundaries. Agents cannot exceed their declared capabilities -- not at runtime, at compile time.</p>
+      <span class="capability-tag">@agent_task(can_write: false)</span>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════ CODE SPECIMEN ══════════════════ -->
+<section class="code-section">
+  <p class="section-label fade-in">Language</p>
+  <h2 class="section-title fade-in fade-in-delay-1" style="margin-bottom: 48px;">A Specimen</h2>
+
+  <div class="code-specimen fade-in fade-in-delay-2">
+    <pre><span class="ann">@legal</span>(
+    basis:         <span class="str">.public_data</span>,
+    jurisdiction:  [<span class="str">.us</span>],
+    personal_data: <span class="kw">false</span>,
+    purpose:       <span class="str">"competitive price monitoring"</span>,
+    retain_for:    <span class="num">7</span>.days,
+    robots_txt:    <span class="str">.respect</span>,
+    rate_limit:    <span class="num">2</span>.per_second
+)
+<span class="kw">fn</span> search_products(query: <span class="type">String</span>) -> <span class="type">Result</span>&lt;[]<span class="type">Product</span>&gt; {
+    <span class="kw">let</span> pool = <span class="type">IPPool</span> {
+        size:     <span class="num">10_000</span>,
+        rotation: .per_request
+    }
+
+    <span class="kw">let</span> stores = [<span class="str">"shop-d.example"</span>, <span class="str">"kroger.com"</span>, <span class="str">"shop-b.example"</span>]
+    <span class="kw">let</span> urls = stores.map { s -> <span class="str">"https://{s}/search?q={query}"</span> }
+
+    <span class="kw">let</span> pages = pool.map(urls, concurrency: <span class="num">50</span>) { url ->
+        fetch(url, timeout: <span class="num">5</span>.seconds)?
+    }?
+
+    pages
+        .filter  { p -> p.status == <span class="num">200</span> }
+        .map     { p -> parse_products(p.body)? }
+        .flatten
+        .sort_by { p -> p.price }
+}</pre>
+  </div>
+</section>
+
+<!-- ══════════════════ STAT FOOTER ══════════════════ -->
+<section class="stat-footer">
+  <div class="stat-footer-inner">
+    <div class="fade-in">
+      <div class="stat-number">125</div>
+      <div class="stat-label">Stores Indexed</div>
+      <div class="stat-detail">across 38 states</div>
+    </div>
+    <div class="fade-in fade-in-delay-1">
+      <div class="stat-number">28</div>
+      <div class="stat-label">Jurisdictions</div>
+      <div class="stat-detail">GDPR &middot; CCPA &middot; PIPEDA</div>
+    </div>
+    <div class="fade-in fade-in-delay-2">
+      <div class="stat-number">17</div>
+      <div class="stat-label">PQC Algorithms</div>
+      <div class="stat-detail">NIST approved</div>
+    </div>
+    <div class="fade-in fade-in-delay-3">
+      <div class="stat-number">209</div>
+      <div class="stat-label">ms Average</div>
+      <div class="stat-detail">end-to-end latency</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════ FOOTER ══════════════════ -->
+<footer>
+  <span class="footer-left">Tallow</span>
+  <span class="footer-center">Privacy-first systems language &middot; 2026</span>
+  <span class="footer-right">v0.1.0 &middot; ML-KEM-768 &middot; COMPLIANT</span>
+</footer>
+
+<!-- ══════════════════ SCROLL ANIMATIONS ══════════════════ -->
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, {
+    threshold: 0.1,
+    rootMargin: '0px 0px -40px 0px'
+  });
+
+  document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+  // Search hint click behavior
+  document.querySelectorAll('.search-hint').forEach(hint => {
+    hint.addEventListener('click', () => {
+      document.querySelector('.search-box').value = hint.textContent;
+    });
+  });
+});
+</script>
+
+</body>
+</html>

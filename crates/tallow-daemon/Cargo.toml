@@ -1,0 +1,45 @@
+[package]
+name = "tallow-daemon"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Tallow Copy daemon — background service with HTTP REST API for CLI and GUI clients"
+
+[[bin]]
+name = "tallow-daemon"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["macros"] }
+tower-http = { version = "0.5", features = ["trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.9"
+dirs = "5"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = "0.4"
+futures = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+clap = { version = "4", features = ["derive"] }
+notify = "8"
+notify-debouncer-full = "0.5"
+reqwest = { version = "0.12", features = ["blocking"] }
+base64 = "0.22"
+blake3 = "1"
+sha2 = "0.10"
+hmac = "0.12"
+landlock = "0.4"
+# Row #127 (batch-4 lane M): revocation check-at-use gate at the session
+# admission seam (`src/revocation_gate.rs`).
+tallow-svid = { path = "../tallow-svid" }
+
+[dev-dependencies]
+tempfile = "3"
+# Test-only: Ed25519 key material for revocation-gate fixtures (lane M #127).
+tallow-crypto = { path = "../tallow-crypto" }

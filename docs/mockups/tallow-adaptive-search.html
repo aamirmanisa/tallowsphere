@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tallow — Adaptive Search Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================
+   TALLOW ADAPTIVE SEARCH ENGINE
+
+   Colorful. Per-site adaptive. 5-layer crypto.
+   Each site = its own color universe.
+   Security is visible, not hidden.
+   ============================================ */
+
+:root {
+  --bg: #0C0C14;
+  --bg-2: #12121E;
+  --bg-3: #1A1A2E;
+  --bg-card: #16162A;
+  --text: #F0F0F8;
+  --text-2: #A8A8C0;
+  --text-3: #6B6B88;
+  --border: rgba(255,255,255,0.06);
+  --border-glow: rgba(255,255,255,0.1);
+
+  /* The Tallow Spectrum — each layer gets a color */
+  --crypto-1: #00D9FF; /* BLAKE3 — cyan */
+  --crypto-2: #7C3AED; /* Argon2id — violet */
+  --crypto-3: #F59E0B; /* AES-256-GCM — amber */
+  --crypto-4: #EF4444; /* XChaCha20 — red */
+  --crypto-5: #10B981; /* ML-KEM-768 — emerald */
+
+  /* Site brand colors */
+  --walmart: #0071CE;
+  --target: #CC0000;
+  --kroger: #003B73;
+  --heb: #E31837;
+  --costco: #E31837;
+  --amazon: #FF9900;
+  --google: #4285F4;
+  --zillow: #006AFF;
+  --bloomberg: #472A91;
+
+  /* Gradients */
+  --gradient-brand: linear-gradient(135deg, #00D9FF 0%, #7C3AED 50%, #EF4444 100%);
+  --gradient-warm: linear-gradient(135deg, #F59E0B 0%, #EF4444 50%, #EC4899 100%);
+  --gradient-cool: linear-gradient(135deg, #06B6D4 0%, #3B82F6 50%, #7C3AED 100%);
+  --gradient-secure: linear-gradient(135deg, #10B981 0%, #06B6D4 50%, #3B82F6 100%);
+  --gradient-mesh: radial-gradient(at 20% 80%, rgba(0,217,255,0.12) 0%, transparent 50%),
+                   radial-gradient(at 80% 20%, rgba(124,58,237,0.12) 0%, transparent 50%),
+                   radial-gradient(at 50% 50%, rgba(239,68,68,0.06) 0%, transparent 50%);
+
+  --font: 'Inter', -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+  --radius: 16px;
+  --radius-sm: 8px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ============ MESH GRADIENT BACKGROUND ============ */
+.mesh-bg {
+  position: fixed;
+  inset: 0;
+  background: var(--gradient-mesh);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============ LANDING ============ */
+.landing {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 5vw, 4rem);
+  position: relative;
+  z-index: 1;
+}
+
+.landing-inner {
+  width: 100%;
+  max-width: 680px;
+  text-align: center;
+}
+
+/* Logo with gradient */
+.logo {
+  margin-bottom: 48px;
+}
+
+.logo-text {
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.logo-sub {
+  font-size: 14px;
+  color: var(--text-3);
+  margin-top: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* ============ SEARCH BOX (The Heart) ============ */
+.search-wrap {
+  position: relative;
+}
+
+.search-input {
+  width: 100%;
+  height: 60px;
+  padding: 0 120px 0 24px;
+  font-size: 17px;
+  font-family: var(--font);
+  font-weight: 400;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-glow);
+  border-radius: var(--radius);
+  outline: none;
+  transition: all 300ms ease;
+  letter-spacing: -0.01em;
+}
+
+.search-input::placeholder { color: var(--text-3); }
+
+.search-input:focus {
+  border-color: var(--crypto-1);
+  box-shadow: 0 0 0 3px rgba(0,217,255,0.12), 0 8px 32px rgba(0,0,0,0.3);
+}
+
+.search-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-btn {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.search-btn-go {
+  background: var(--gradient-brand);
+  color: white;
+}
+
+.search-btn-go:hover { transform: scale(1.05); box-shadow: 0 4px 16px rgba(0,217,255,0.3); }
+
+.search-btn-settings {
+  background: var(--bg-3);
+  color: var(--text-3);
+}
+
+.search-btn-settings:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+
+/* ============ 5-LAYER CRYPTO INDICATOR ============ */
+.crypto-layers {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.crypto-layer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border: 1px solid;
+  transition: all 200ms;
+  cursor: default;
+}
+
+.crypto-layer:hover { transform: translateY(-2px); }
+
+.crypto-layer.l1 { color: var(--crypto-1); border-color: rgba(0,217,255,0.3); background: rgba(0,217,255,0.06); }
+.crypto-layer.l2 { color: var(--crypto-2); border-color: rgba(124,58,237,0.3); background: rgba(124,58,237,0.06); }
+.crypto-layer.l3 { color: var(--crypto-3); border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
+.crypto-layer.l4 { color: var(--crypto-4); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.06); }
+.crypto-layer.l5 { color: var(--crypto-5); border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
+
+.crypto-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  animation: cryptoPulse 2s ease-in-out infinite;
+}
+
+.l1 .crypto-dot { background: var(--crypto-1); animation-delay: 0s; }
+.l2 .crypto-dot { background: var(--crypto-2); animation-delay: 0.2s; }
+.l3 .crypto-dot { background: var(--crypto-3); animation-delay: 0.4s; }
+.l4 .crypto-dot { background: var(--crypto-4); animation-delay: 0.6s; }
+.l5 .crypto-dot { background: var(--crypto-5); animation-delay: 0.8s; }
+
+@keyframes cryptoPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px currentColor; }
+  50% { opacity: 0.4; box-shadow: 0 0 0px currentColor; }
+}
+
+/* ============ SITE CARDS (Adaptive per-site) ============ */
+.sites-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.site-card {
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 200ms ease;
+  text-align: center;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.site-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 12px 12px 0 0;
+}
+
+.site-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-glow);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+}
+
+.site-card.walmart::before { background: var(--walmart); }
+.site-card.target::before { background: var(--target); }
+.site-card.kroger::before { background: var(--kroger); }
+.site-card.amazon::before { background: var(--amazon); }
+.site-card.heb::before { background: var(--heb); }
+.site-card.zillow::before { background: var(--zillow); }
+.site-card.bloomberg::before { background: var(--bloomberg); }
+.site-card.google::before { background: var(--google); }
+
+.site-card:hover.walmart { border-color: rgba(0,113,206,0.4); box-shadow: 0 12px 40px rgba(0,113,206,0.15); }
+.site-card:hover.target { border-color: rgba(204,0,0,0.4); box-shadow: 0 12px 40px rgba(204,0,0,0.15); }
+.site-card:hover.kroger { border-color: rgba(0,59,115,0.4); box-shadow: 0 12px 40px rgba(0,59,115,0.15); }
+.site-card:hover.amazon { border-color: rgba(255,153,0,0.4); box-shadow: 0 12px 40px rgba(255,153,0,0.15); }
+.site-card:hover.heb { border-color: rgba(227,24,55,0.4); box-shadow: 0 12px 40px rgba(227,24,55,0.15); }
+.site-card:hover.zillow { border-color: rgba(0,106,255,0.4); box-shadow: 0 12px 40px rgba(0,106,255,0.15); }
+.site-card:hover.bloomberg { border-color: rgba(71,42,145,0.4); box-shadow: 0 12px 40px rgba(71,42,145,0.15); }
+.site-card:hover.google { border-color: rgba(66,133,244,0.4); box-shadow: 0 12px 40px rgba(66,133,244,0.15); }
+
+.site-name {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.site-meta {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  margin-top: 2px;
+}
+
+/* ============ SHIELD ICON (security status) ============ */
+.shield {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 500;
+}
+
+.shield-icon {
+  width: 14px; height: 14px;
+}
+
+/* ============ RESULTS PAGE ============ */
+.results-page {
+  position: relative;
+  z-index: 1;
+  margin-top: 80px;
+}
+
+/* Header with gradient underline */
+.r-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(12,12,20,0.9);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--border);
+  padding: 10px clamp(1rem, 5vw, 3rem);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.r-logo {
+  font-size: 18px;
+  font-weight: 800;
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.r-search {
+  flex: 1;
+  max-width: 560px;
+  height: 40px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--border-glow);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 200ms;
+}
+
+.r-search:focus { border-color: var(--crypto-1); }
+
+.r-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.r-btn {
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glow);
+  background: var(--bg-card);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 150ms;
+  font-family: var(--font);
+}
+
+.r-btn:hover { border-color: var(--text-3); color: var(--text); }
+
+.r-btn-accent {
+  background: var(--gradient-brand);
+  color: white;
+  border: none;
+  font-weight: 600;
+}
+
+.r-btn-accent:hover { opacity: 0.9; transform: scale(1.02); }
+
+/* ============ CRYPTO PIPELINE BANNER ============ */
+.pipeline-banner {
+  padding: 12px clamp(1rem, 5vw, 3rem);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  overflow-x: auto;
+}
+
+.pipeline-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.pipeline-num {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+}
+
+.pipeline-arrow {
+  color: var(--text-3);
+  font-size: 14px;
+  margin: 0 4px;
+}
+
+.pipeline-status {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  animation: cryptoPulse 1.5s ease-in-out infinite;
+}
+
+/* ============ RESULTS BODY ============ */
+.r-body {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px clamp(1rem, 5vw, 3rem);
+}
+
+.r-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.r-meta-left {
+  font-size: 13px;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+
+.r-meta-left strong { color: var(--text-2); font-weight: 500; }
+
+.r-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ============ RESULT CARDS (Colorful per-store) ============ */
+.result {
+  padding: 20px;
+  margin-bottom: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: all 200ms ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.result::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+
+.result:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  border-color: var(--border-glow);
+}
+
+.result.store-heb::before { background: var(--heb); }
+.result.store-walmart::before { background: var(--walmart); }
+.result.store-kroger::before { background: var(--kroger); }
+.result.store-target::before { background: var(--target); }
+.result.store-costco::before { background: var(--costco); }
+.result.store-amazon::before { background: var(--amazon); }
+
+.result-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.result-info { flex: 1; }
+
+.result-url {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.result-favicon {
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.result-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin-bottom: 6px;
+}
+
+.result-snippet {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.result-snippet mark {
+  background: rgba(0,217,255,0.15);
+  color: var(--crypto-1);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.result-price {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.result-price-value {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.result-price-unit {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+
+.price-best { color: var(--crypto-5); }
+.price-mid { color: var(--crypto-3); }
+.price-high { color: var(--crypto-4); }
+
+/* Result tags */
+.result-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.rtag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--mono);
+  letter-spacing: 0.02em;
+}
+
+.rtag-green { background: rgba(16,185,129,0.12); color: var(--crypto-5); }
+.rtag-amber { background: rgba(245,158,11,0.12); color: var(--crypto-3); }
+.rtag-red { background: rgba(239,68,68,0.12); color: var(--crypto-4); }
+.rtag-cyan { background: rgba(0,217,255,0.12); color: var(--crypto-1); }
+.rtag-purple { background: rgba(124,58,237,0.12); color: var(--crypto-2); }
+.rtag-gray { background: rgba(255,255,255,0.04); color: var(--text-3); }
+
+/* Encrypted badge */
+.encrypted-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--mono);
+  background: linear-gradient(135deg, rgba(0,217,255,0.1) 0%, rgba(16,185,129,0.1) 100%);
+  color: var(--crypto-1);
+  border: 1px solid rgba(0,217,255,0.15);
+}
+
+.encrypted-badge svg { width: 10px; height: 10px; }
+
+/* ============ SITE ANALYSIS (URL Mode) ============ */
+.analysis {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.analysis-head {
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.analysis-domain {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.analysis-domain-color {
+  width: 10px; height: 10px;
+  border-radius: 3px;
+}
+
+.analysis-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.analysis-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  animation: cryptoPulse 1.5s ease-in-out infinite;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+}
+
+.analysis-cell {
+  padding: 16px 24px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.analysis-cell:nth-child(3n) { border-right: none; }
+.analysis-cell:nth-last-child(-n+3) { border-bottom: none; }
+
+.analysis-cell-label {
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.analysis-cell-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--mono);
+}
+
+/* Difficulty gradient bar */
+.difficulty-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.difficulty-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.difficulty-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 500ms ease;
+}
+
+.difficulty-easy .difficulty-bar-fill { width: 25%; background: var(--crypto-5); }
+.difficulty-medium .difficulty-bar-fill { width: 55%; background: var(--crypto-3); }
+.difficulty-hard .difficulty-bar-fill { width: 80%; background: var(--crypto-4); }
+.difficulty-extreme .difficulty-bar-fill { width: 100%; background: linear-gradient(90deg, var(--crypto-4), var(--crypto-2)); }
+
+.analysis-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0,217,255,0.02);
+}
+
+.analysis-rec {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.analysis-rec strong { color: var(--crypto-1); }
+
+/* ============ CRYPTO PIPELINE DETAIL ============ */
+.crypto-pipeline {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.crypto-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.crypto-title svg { width: 16px; height: 16px; }
+
+.crypto-flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.crypto-node {
+  flex: 1;
+  text-align: center;
+  position: relative;
+}
+
+.crypto-node-circle {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 8px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: white;
+  position: relative;
+}
+
+.crypto-node-circle::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid;
+  opacity: 0.3;
+  animation: cryptoRing 3s ease-in-out infinite;
+}
+
+@keyframes cryptoRing {
+  0%, 100% { transform: scale(1); opacity: 0.3; }
+  50% { transform: scale(1.15); opacity: 0.1; }
+}
+
+.crypto-node:nth-child(1) .crypto-node-circle { background: var(--crypto-1); }
+.crypto-node:nth-child(1) .crypto-node-circle::after { border-color: var(--crypto-1); animation-delay: 0s; }
+.crypto-node:nth-child(3) .crypto-node-circle { background: var(--crypto-2); }
+.crypto-node:nth-child(3) .crypto-node-circle::after { border-color: var(--crypto-2); animation-delay: 0.3s; }
+.crypto-node:nth-child(5) .crypto-node-circle { background: var(--crypto-3); }
+.crypto-node:nth-child(5) .crypto-node-circle::after { border-color: var(--crypto-3); animation-delay: 0.6s; }
+.crypto-node:nth-child(7) .crypto-node-circle { background: var(--crypto-4); }
+.crypto-node:nth-child(7) .crypto-node-circle::after { border-color: var(--crypto-4); animation-delay: 0.9s; }
+.crypto-node:nth-child(9) .crypto-node-circle { background: var(--crypto-5); }
+.crypto-node:nth-child(9) .crypto-node-circle::after { border-color: var(--crypto-5); animation-delay: 1.2s; }
+
+.crypto-node-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.crypto-node-desc {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+
+.crypto-connector {
+  width: 40px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--border-glow), transparent, var(--border-glow));
+  flex-shrink: 0;
+  position: relative;
+}
+
+.crypto-connector::after {
+  content: '';
+  position: absolute;
+  width: 6px; height: 6px;
+  right: -3px;
+  top: -2px;
+  border-right: 2px solid var(--text-3);
+  border-bottom: 2px solid var(--text-3);
+  transform: rotate(-45deg);
+}
+
+/* ============ FOOTER ============ */
+.footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  background: rgba(12,12,20,0.8);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+  z-index: 1;
+}
+
+.footer-dot {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--crypto-5);
+  animation: cryptoPulse 2s ease-in-out infinite;
+}
+
+@media (max-width: 768px) {
+  .sites-grid { grid-template-columns: repeat(2, 1fr); }
+  .crypto-layers { flex-wrap: wrap; justify-content: center; }
+  .analysis-grid { grid-template-columns: 1fr; }
+  .analysis-cell { border-right: none !important; }
+  .crypto-flow { flex-direction: column; gap: 8px; }
+  .crypto-connector { width: 2px; height: 20px; }
+}
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<div class="mesh-bg"></div>
+
+<!-- ============================================================
+     LANDING — Search Engine First Impression
+     Colorful gradient logo. One search box.
+     5-layer crypto indicators glowing underneath.
+     Per-site color cards for quick access.
+     ============================================================ -->
+
+<section class="landing">
+  <div class="landing-inner">
+    <div class="logo">
+      <div class="logo-text">tallow</div>
+      <div class="logo-sub">Adaptive Search Engine</div>
+    </div>
+
+    <div class="search-wrap">
+      <input class="search-input" type="text" placeholder="Search anything or paste a URL..." autofocus />
+      <div class="search-actions">
+        <button class="search-btn search-btn-settings" title="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        </button>
+        <button class="search-btn search-btn-go" title="Search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 5-Layer Crypto Indicator -->
+    <div class="crypto-layers">
+      <div class="crypto-layer l1"><span class="crypto-dot"></span> BLAKE3</div>
+      <div class="crypto-layer l2"><span class="crypto-dot"></span> Argon2id</div>
+      <div class="crypto-layer l3"><span class="crypto-dot"></span> AES-256</div>
+      <div class="crypto-layer l4"><span class="crypto-dot"></span> XChaCha20</div>
+      <div class="crypto-layer l5"><span class="crypto-dot"></span> ML-KEM</div>
+    </div>
+
+    <!-- Per-Site Quick Access -->
+    <div class="sites-grid">
+      <a class="site-card walmart">
+        <div class="site-name" style="color:var(--walmart)">Walmart</div>
+        <div class="site-meta">PerimeterX</div>
+      </a>
+      <a class="site-card target">
+        <div class="site-name" style="color:var(--target)">Target</div>
+        <div class="site-meta">No anti-bot</div>
+      </a>
+      <a class="site-card kroger">
+        <div class="site-name" style="color:var(--kroger)">Kroger</div>
+        <div class="site-meta">Akamai</div>
+      </a>
+      <a class="site-card amazon">
+        <div class="site-name" style="color:var(--amazon)">Amazon</div>
+        <div class="site-meta">DataDome</div>
+      </a>
+      <a class="site-card heb">
+        <div class="site-name" style="color:var(--heb)">H-E-B</div>
+        <div class="site-meta">Direct API</div>
+      </a>
+      <a class="site-card zillow">
+        <div class="site-name" style="color:var(--zillow)">Zillow</div>
+        <div class="site-meta">Cloudflare</div>
+      </a>
+      <a class="site-card bloomberg">
+        <div class="site-name" style="color:var(--bloomberg)">Bloomberg</div>
+        <div class="site-meta">Custom WAF</div>
+      </a>
+      <a class="site-card google">
+        <div class="site-name" style="color:var(--google)">Google</div>
+        <div class="site-meta">IP reputation</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="footer-dot"></span>
+    <span>125 modules</span>
+    <span>28 stealth vectors</span>
+    <span>5-layer encryption</span>
+    <span>17 vendors detected</span>
+    <span>209 ASNs</span>
+  </div>
+</section>
+
+<!-- ============================================================
+     RESULTS PAGE — Adaptive per-store colors
+     Crypto pipeline banner shows data protection flow.
+     Each result has store-branded left border.
+     Encrypted badges on every result.
+     ============================================================ -->
+
+<section class="results-page">
+  <header class="r-header">
+    <a class="r-logo" href="#">tallow</a>
+    <input class="r-search" type="text" value="organic chicken breast" />
+    <div class="r-actions">
+      <button class="r-btn">Filters</button>
+      <button class="r-btn">Export</button>
+      <button class="r-btn-accent">New Scrape</button>
+    </div>
+  </header>
+
+  <!-- Crypto Pipeline Banner -->
+  <div class="pipeline-banner">
+    <div class="pipeline-step">
+      <div class="pipeline-num" style="background:var(--crypto-1)">1</div>
+      <span style="color:var(--crypto-1)">BLAKE3 Hash</span>
+      <div class="pipeline-status" style="background:var(--crypto-1)"></div>
+    </div>
+    <span class="pipeline-arrow">&rarr;</span>
+    <div class="pipeline-step">
+      <div class="pipeline-num" style="background:var(--crypto-2)">2</div>
+      <span style="color:var(--crypto-2)">Argon2id KDF</span>
+      <div class="pipeline-status" style="background:var(--crypto-2)"></div>
+    </div>
+    <span class="pipeline-arrow">&rarr;</span>
+    <div class="pipeline-step">
+      <div class="pipeline-num" style="background:var(--crypto-3)">3</div>
+      <span style="color:var(--crypto-3)">AES-256-GCM</span>
+      <div class="pipeline-status" style="background:var(--crypto-3)"></div>
+    </div>
+    <span class="pipeline-arrow">&rarr;</span>
+    <div class="pipeline-step">
+      <div class="pipeline-num" style="background:var(--crypto-4)">4</div>
+      <span style="color:var(--crypto-4)">XChaCha20</span>
+      <div class="pipeline-status" style="background:var(--crypto-4)"></div>
+    </div>
+    <span class="pipeline-arrow">&rarr;</span>
+    <div class="pipeline-step">
+      <div class="pipeline-num" style="background:var(--crypto-5)">5</div>
+      <span style="color:var(--crypto-5)">ML-KEM-768</span>
+      <div class="pipeline-status" style="background:var(--crypto-5)"></div>
+    </div>
+    <span class="pipeline-arrow">&rarr;</span>
+    <div class="pipeline-step">
+      <span style="color:var(--text-3)">All data encrypted at rest</span>
+    </div>
+  </div>
+
+  <div class="r-body">
+    <div class="r-meta">
+      <div class="r-meta-left">
+        <strong>2,847</strong> results &middot; <strong>6 stores</strong> &middot; <strong>42ms</strong>
+      </div>
+      <div class="r-meta-right">
+        <span class="encrypted-badge">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          5-Layer Encrypted
+        </span>
+      </div>
+    </div>
+
+    <!-- H-E-B Result (Best Price) -->
+    <div class="result store-heb">
+      <div class="result-top">
+        <div class="result-info">
+          <div class="result-url">
+            <div class="result-favicon" style="background:var(--heb)"></div>
+            shop-d.example/product/natural-organic-chicken-breast
+          </div>
+          <div class="result-title">H-E-B Natural Organic Chicken Breast</div>
+          <div class="result-snippet">
+            Boneless skinless <mark>chicken breast</mark>, USDA <mark>organic</mark>, no antibiotics ever.
+            Air chilled. 1.5 lb average package.
+          </div>
+        </div>
+        <div class="result-price">
+          <div class="result-price-value price-best">$4.99</div>
+          <div class="result-price-unit">/lb</div>
+        </div>
+      </div>
+      <div class="result-footer">
+        <span class="rtag rtag-green">Best Price</span>
+        <span class="rtag rtag-green">SNAP</span>
+        <span class="rtag rtag-cyan">Organic</span>
+        <span class="rtag rtag-gray">Direct API</span>
+        <span class="encrypted-badge">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          Encrypted
+        </span>
+      </div>
+    </div>
+
+    <!-- Walmart Result -->
+    <div class="result store-walmart">
+      <div class="result-top">
+        <div class="result-info">
+          <div class="result-url">
+            <div class="result-favicon" style="background:var(--walmart)"></div>
+            shop-a.example/ip/organic-chicken-breast-boneless
+          </div>
+          <div class="result-title">Great Value Organic Boneless Skinless Chicken Breast</div>
+          <div class="result-snippet">
+            Fresh <mark>organic chicken breast</mark>, hand-trimmed, no added solutions.
+            Available for pickup and delivery. 1.25 lb tray.
+          </div>
+        </div>
+        <div class="result-price">
+          <div class="result-price-value price-mid">$5.47</div>
+          <div class="result-price-unit">/lb</div>
+        </div>
+      </div>
+      <div class="result-footer">
+        <span class="rtag rtag-amber">+$0.48</span>
+        <span class="rtag rtag-green">SNAP</span>
+        <span class="rtag rtag-purple">PerimeterX</span>
+        <span class="rtag rtag-cyan">Stealth: Max</span>
+        <span class="encrypted-badge">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          Encrypted
+        </span>
+      </div>
+    </div>
+
+    <!-- Kroger Result -->
+    <div class="result store-kroger">
+      <div class="result-top">
+        <div class="result-info">
+          <div class="result-url">
+            <div class="result-favicon" style="background:var(--kroger)"></div>
+            kroger.com/p/simple-truth-organic-chicken
+          </div>
+          <div class="result-title">Simple Truth Organic Chicken Breast Fillets</div>
+          <div class="result-snippet">
+            Simple Truth <mark>organic</mark> boneless skinless <mark>chicken breast</mark> fillets.
+            Free from 101+ artificial preservatives.
+          </div>
+        </div>
+        <div class="result-price">
+          <div class="result-price-value price-mid">$5.99</div>
+          <div class="result-price-unit">/lb</div>
+        </div>
+      </div>
+      <div class="result-footer">
+        <span class="rtag rtag-amber">+$1.00</span>
+        <span class="rtag rtag-green">SNAP</span>
+        <span class="rtag rtag-cyan">Akamai</span>
+        <span class="rtag rtag-cyan">Stealth: Full</span>
+        <span class="encrypted-badge">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          Encrypted
+        </span>
+      </div>
+    </div>
+
+    <!-- Target Result (Most Expensive) -->
+    <div class="result store-target">
+      <div class="result-top">
+        <div class="result-info">
+          <div class="result-url">
+            <div class="result-favicon" style="background:var(--target)"></div>
+            shop-b.example/p/good-gather-organic-chicken-breast
+          </div>
+          <div class="result-title">Good & Gather Organic Chicken Breast</div>
+          <div class="result-snippet">
+            All natural, <mark>organic</mark>, no antibiotics ever. Fresh <mark>chicken breast</mark>.
+            USDA Organic certified. Sold per pound.
+          </div>
+        </div>
+        <div class="result-price">
+          <div class="result-price-value price-high">$6.29</div>
+          <div class="result-price-unit">/lb</div>
+        </div>
+      </div>
+      <div class="result-footer">
+        <span class="rtag rtag-red">+$1.30</span>
+        <span class="rtag rtag-green">SNAP</span>
+        <span class="rtag rtag-green">No Anti-bot</span>
+        <span class="rtag rtag-gray">API Direct</span>
+        <span class="encrypted-badge">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          Encrypted
+        </span>
+      </div>
+    </div>
+
+    <!-- ============ URL ANALYSIS MODE ============ -->
+    <div style="margin-top:48px;padding-top:32px;border-top:1px solid var(--border)">
+      <p style="font-size:12px;color:var(--text-3);font-family:var(--mono);margin-bottom:16px;text-transform:uppercase;letter-spacing:0.04em">URL Analysis Mode &mdash; shop-a.example</p>
+
+      <div class="analysis">
+        <div class="analysis-head">
+          <div class="analysis-domain">
+            <div class="analysis-domain-color" style="background:var(--walmart)"></div>
+            shop-a.example
+          </div>
+          <div class="analysis-status" style="color:var(--crypto-5)">
+            <div class="analysis-status-dot" style="background:var(--crypto-5)"></div>
+            Analyzed in 1.2s
+          </div>
+        </div>
+        <div class="analysis-grid">
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">Anti-Bot Vendor</div>
+            <div class="analysis-cell-value" style="color:var(--crypto-2)">PerimeterX</div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">Difficulty</div>
+            <div class="difficulty-bar-wrap difficulty-hard">
+              <div class="difficulty-bar-track"><div class="difficulty-bar-fill"></div></div>
+              <span class="analysis-cell-value" style="color:var(--crypto-4)">Hard</span>
+            </div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">Confidence</div>
+            <div class="analysis-cell-value" style="color:var(--crypto-1)">94.7%</div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">TLS Required</div>
+            <div class="analysis-cell-value">Chrome 136</div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">Rate Limit</div>
+            <div class="analysis-cell-value">~2 req/s</div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">Cookie TTL</div>
+            <div class="analysis-cell-value">15 min <span style="color:var(--text-3)">(_px3)</span></div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">Image Prices</div>
+            <div class="analysis-cell-value" style="color:var(--crypto-5)">No</div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">H2 Fingerprint</div>
+            <div class="analysis-cell-value">Required</div>
+          </div>
+          <div class="analysis-cell">
+            <div class="analysis-cell-label">Encryption</div>
+            <div class="analysis-cell-value" style="color:var(--crypto-1)">5-Layer Active</div>
+          </div>
+        </div>
+        <div class="analysis-footer">
+          <div class="analysis-rec">Recommended: <strong>Full browser + residential proxy + cookie farm + Weibull timing</strong></div>
+          <button class="r-btn-accent" style="padding:8px 20px;border-radius:8px;border:none;cursor:pointer;font-size:13px">Start Scrape</button>
+        </div>
+      </div>
+
+      <!-- 5-Layer Crypto Pipeline Detail -->
+      <div class="crypto-pipeline">
+        <div class="crypto-title">
+          <svg viewBox="0 0 16 16" fill="var(--crypto-1)"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+          Cryptographic Protection Pipeline
+        </div>
+        <div class="crypto-flow">
+          <div class="crypto-node">
+            <div class="crypto-node-circle">1</div>
+            <div class="crypto-node-label">BLAKE3</div>
+            <div class="crypto-node-desc">Integrity Hash</div>
+          </div>
+          <div class="crypto-connector"></div>
+          <div class="crypto-node">
+            <div class="crypto-node-circle">2</div>
+            <div class="crypto-node-label">Argon2id</div>
+            <div class="crypto-node-desc">Key Derivation</div>
+          </div>
+          <div class="crypto-connector"></div>
+          <div class="crypto-node">
+            <div class="crypto-node-circle">3</div>
+            <div class="crypto-node-label">AES-256</div>
+            <div class="crypto-node-desc">GCM-SIV Encrypt</div>
+          </div>
+          <div class="crypto-connector"></div>
+          <div class="crypto-node">
+            <div class="crypto-node-circle">4</div>
+            <div class="crypto-node-label">XChaCha20</div>
+            <div class="crypto-node-desc">Poly1305 Layer</div>
+          </div>
+          <div class="crypto-connector"></div>
+          <div class="crypto-node">
+            <div class="crypto-node-circle">5</div>
+            <div class="crypto-node-label">ML-KEM</div>
+            <div class="crypto-node-desc">Post-Quantum</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

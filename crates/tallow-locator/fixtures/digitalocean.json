@@ -1,0 +1,12 @@
+{
+  "_note": "v1 fixture — realistic subset of GET /v2/sizes + /v2/regions (DigitalOcean API), recorded shape",
+  "sizes": [
+    { "slug": "s-1vcpu-2gb", "vcpus": 1, "memory": 2048, "disk": 50, "price_monthly": 6.0 },
+    { "slug": "s-2vcpu-4gb", "vcpus": 2, "memory": 4096, "disk": 80, "price_monthly": 12.0 }
+  ],
+  "regions": [
+    { "slug": "ams3", "name": "Amsterdam 3", "country": "NL" },
+    { "slug": "fra1", "name": "Frankfurt 1", "country": "DE" },
+    { "slug": "sfo3", "name": "San Francisco 3", "country": "US" }
+  ]
+}

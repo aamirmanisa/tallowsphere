@@ -1,0 +1,105 @@
+From d2cf4568b489d40f5164242f4792e16861d20a96 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 04:19:32 +0000
+Subject: [PATCH 24/27] =?UTF-8?q?docs:=20P2.T2=20done=20=E2=80=94=20the=20?=
+ =?UTF-8?q?native=20surface=20is=20fully=20bound=20=E2=80=94=20plus=20an?=
+ =?UTF-8?q?=20egress=20defect=20found=20doing=20it?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+T2 was scoped out when its premise was true (sibling unbound, no parity harness). Both
+conditions expired, so the re-scope is reversed with the reason recorded rather than the
+item quietly reappearing.
+
+The record states what the binding is and is not: the interpreter already fetched through
+the governed Tor-or-refuse path and codegen had no lowering at all, so this removes a silent
+fallback and adds no capability and no egress-policy change. It also records the flipped
+return shape, the by-name field reads, and the coercion defect fixed in both crawler arms.
+
+Scope is stated rather than implied: from_links gets the full pinned-reference parity
+because it plans offline; from_sitemap fetches, so its happy path cannot be exercised
+offline and is left UNVERIFIED rather than claimed.
+
+Separately, and outside this plan: `cargo test --lib runtime::` is red on a clean checkout
+because of a bare `ureq::get` at crates/tallow-locator/src/watchers.rs:356 — unproxied, so
+it would egress from the box IP, which the tree's own guard exists to prevent. The file is
+untouched by this work and last changed 2026-09-28. Recorded with the site and why the fix
+is not obviously local; not patched under a scraper task.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 62 +++++++++++++++++--
+ 1 file changed, 58 insertions(+), 4 deletions(-)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index ff05687..04fcfc9 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -262,10 +262,64 @@ was re-verified on its own.
+ bound, the parity and refusal coverage for **it** is now possible, and is tracked as P2.T3 below with the
+ both-natives wording corrected.
+ 
+-### P2.T2 — `tallow_crawler_from_sitemap`
+-**Files:** same pattern; facade exists at `src/stdlib/browser.rs:293`; `Crawler` fields at `stdlib/browser.tl:381`.
+-**Steps:** mirror P2.T1. Note `crawler_from_links` writes 4 ints through one out buffer — reuse that convention for consistency.
+-**Verify:** `cargo check` clean.
++### P2.T2 — `tallow_crawler_from_sitemap` — ✅ DONE (`f9fb8f27`)
++**Files:** `src/runtime/crawler_ffi.rs` (the FFI joined its `from_links` sibling in the same file —
++both crawler natives belong together) · `src/codegen.rs` (declare + dispatch + arm) ·
++`src/interp.rs` (see the coercion fix below) · `tests/crawler_parity.rs` + fixtures 19–21.
++
++**Re-scope reversed, because its premise expired.** T2 was scoped out when its sibling
++`crawler_from_links` was unbound (a lane was mid-edit) and no parity harness existed for the class.
++Both conditions became false: `from_links` is bound, and T1's work produced the harness. So T2 became
++a mirror with a bound template.
++
++**What it is, precisely:** the interpreter arm already fetched (`interp.rs:9798` → facade →
++`SitemapParser` over `runtime::egress_http`, Tor by default, refusing rather than falling back to the
++box IP); codegen had **no lowering at all**, so a compiled program silently fell back to the tree-walker
++and `--require-native` refused. Binding adds no capability and changes no egress policy — it removes the
++asymmetry, and the fetch stays governed by the same Tor-or-refuse path.
++
++**Return shape flips from T1's:** the runtime *produces* `seed_url` (the first parsed entry) and returns
++it; the echoed `sitemap_url`, the constant `strategy` and the four integers come back through out-params.
++Every field is read **by name**, so a reordered field refuses instead of shifting silently. The FFI
++delegates to `stdlib::browser::crawler_from_sitemap` — the same function the interpreter arm calls.
++
++**Plus a real defect, fixed:** both crawler arms used `v.as_string()`, so `Crawler.from_links(42)` planned
++a crawler for the seed `"42"` and `Crawler.from_sitemap(42)` would have attempted discovery on it. Same
++class as `StructuredData.extract(42)`, same fix: match `Value::String`, refuse otherwise, and share the
++wording with the compiled arm so both engines name the same cause.
++
++**Verify:** `cargo check --lib --bins` RC=0 · `cargo test --test crawler_parity` **3 passed / 0** ·
++`cargo test --test structured_data_parity` **2 passed / 0** · `runtime::crawler_ffi` **5/0** ·
++`runtime::structured_data_ffi` **7/0** · codegen **621/0**.
++
++**Scope, stated:** `from_links` plans offline, so it gets the full three-assertion treatment with a pinned
++reference. `from_sitemap` FETCHES, so its happy path **cannot be exercised offline** — a local fixture can
++never be fetched, which the facade's own doc records. What is deterministic offline is the refusal
++(rejected before any egress), and that is what is pinned. The happy path is unverified, not verified.
++
++**With T2 bound, the declared `// native` surface is fully bound** — a claim now checkable by grep.
++
++## Found while executing P2, outside this plan's scope
++
++**An unproxied HTTP call, and a guard that is red because of it.** `cargo test --lib runtime::` fails on a
++clean checkout of this HEAD, in a file this work never touched:
++
++```
++runtime::egress_http::tests::no_bare_ureq_calls_in_the_runtime_tree
++  unproxied runtime/interpreter HTTP calls found — route them through
++  crate::runtime::egress_http (they would egress from the box IP):
++  ["crates/tallow-locator/src/watchers.rs: ureq::get("]
++```
++
++- Site: `crates/tallow-locator/src/watchers.rs:356` — `let mut req = ureq::get(url);`.
++- Pre-existing: the file last changed **2026-09-28** (`99d8c946`), and it is absent from this work's
++  change set entirely.
++- Why it matters: the standing egress rule is that a request must never leave from the box IP when it
++  should be anonymous. A bare `ureq::get` does exactly that, and the tree's own guard exists to catch it.
++- Where the work is: the guard is the finding; the fix is not obviously local, because routing through
++  `runtime::egress_http` requires the locator crate to reach the runtime, which the dependency direction
++  may not allow. Which crate owns that call is a design question, not a one-liner — recorded rather than
++  patched under a scraper task.
+ 
+ ### P2.T3 — Parity coverage (the house acceptance for this class)
+ **Wording corrected 2026-10-15:** the original said "exercise both natives". Only one of the two is

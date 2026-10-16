@@ -1,0 +1,24 @@
+pub mod archive;
+pub mod cache;
+pub mod cli;
+pub mod enterprise;
+pub mod hosted_registry;
+pub mod interface_gen;
+pub mod legal_propagation;
+pub mod lockfile;
+pub mod manifest;
+pub mod registry;
+pub mod resolver;
+pub mod script_runner;
+pub mod semver_req;
+pub mod workspace;
+
+pub use manifest::{DependencySpec, LicensePolicy, Manifest, PolicyConfig, RegistryConfig, WorkspaceConfig, parse_manifest, parse_manifest_file};
+pub use semver_req::{VersionReq, parse_version_req};
+pub use resolver::{resolve_dependencies, PackageRegistry, InMemoryRegistry};
+pub use archive::{ArchiveMetadata, create_archive, extract_archive, archive_content_hash};
+pub use lockfile::{Lockfile, LockedPackage, generate_lockfile, parse_lockfile, serialize_lockfile, write_lockfile, read_lockfile, LOCKFILE_VERSION};
+pub use cache::{GlobalCache, LinkMode, CacheStats, PruneResult, CleanResult, IntegrityError};
+pub use registry::LocalRegistry;
+pub use hosted_registry::HostedRegistry;
+pub use workspace::{Workspace, load_workspace};

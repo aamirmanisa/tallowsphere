@@ -1,0 +1,569 @@
+From 1efb80b4ec31f3fbf1daeb98a7f52616e225f6ff Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 03:06:07 +0000
+Subject: [PATCH 19/27] codegen+runtime: bind StructuredData.extract natively
+ (P2.T1)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The last unbound schema-first native now has all three legs: the interpreter arm
+(already correct, interp.rs:9959), the FFI, and the codegen lowering — so the two
+engines read one HTML document the same way instead of one falling back.
+
+The FFI returns the serialized `open_graph` through the return slot and writes
+`json_ld` + `has_json_ld` through out-params. That is not a preference: it is the
+`tallow_crawler_from_links` split (the one computed string out the front, the rest
+out-param), which keeps refusal propagation on the path codegen already has —
+`emit_runtime_string_null_check`. No new IR failure machinery, so nothing new has to
+be trusted.
+
+Two measurements changed the plan's own specification:
+
+1. The planned `*mut *mut c_char` for json_ld could not work. A runtime array has
+   exactly one shape (`native_array`: `[count][slot...]` as a boxed `[i64]`), built
+   inside producers; there is no public constructor, so a raw C array could never
+   become a value `tallow_array_len`/`tallow_array_get` accept. The native builds it
+   with the same helper the other string-array producers use.
+
+2. `open_graph` could not be a Map. Codegen has no Map value at all — no `%struct.Map`,
+   no `map_alloc`, no `MapEntry`, no `tallow_map_*` symbol anywhere — and the layout's
+   `field_kinds["open_graph"] = "Map"` tag had no consumer. The field is therefore
+   declared `String` and carries `key<TAB>value` lines in document order. Changing that
+   tag removes no behaviour because nothing read it; it stops the layout claiming a
+   shape the backend cannot build. The divergence against the interpreter (which holds
+   a real Value::Map) is documented in the FFI header rather than discovered later.
+
+`has_json_ld` is stored by hand: it is the only struct field anywhere that is genuinely
+i1, and `emit_store_i64_field` would write eight bytes into one bit.
+
+Verified: cargo check --lib --bins RC=0; codegen suite 621 passed/0 failed;
+runtime::structured_data_ffi 7 passed/0 (real array shape, both refusals, document
+order, attribute-order independence, multiple JSON-LD blocks); then the CLI under
+--require-native — a flag whose documented contract is to refuse the interpreter
+fallback — which exited 0 and printed true/1/false/0 for a page with JSON-LD and one
+without, over a native link step visible on stderr. The same flag on the same binary
+exited 1 with "native build unavailable" when the probe was broken, which is the
+contrast showing the values came from the AOT path and not a silent fallback.
+
+That first probe attempt was instructive: its JSON-LD body contained braces, Tallow read
+them as string interpolation, the emitted IR referenced an undefined global, clang
+failed, and --require-native refused instead of quietly interpreting. The flag caught a
+real defect in the test before the test could report a false pass.
+
+Scope note on this diff: `codegen.rs` is deliberately NOT run through rustfmt here. The
+first version of this commit did, and rustfmt reformatted a file that was never
+format-clean, producing 55 hunks and 184 deletions around a four-site change — unrelated
+churn that would have buried the review. The formatting was reverted and the four edits
+re-applied against the baseline, so this diff is 4 hunks: the declare, the layout tag,
+the dispatch branch, and the arm. The native probe above ran against a binary built
+before that revert; rustfmt is token-preserving, so the code is identical, and both
+suites were re-run on the un-formatted file to confirm it.
+
+Known lint gap observed while proving this (not fixed here): the resolver warns
+"possibly undefined variable `StructuredData`" for a struct-static call that then
+compiles and runs correctly.
+---
+ src/codegen.rs                     |  91 +++++++-
+ src/runtime/html_ffi.rs            |   7 +-
+ src/runtime/mod.rs                 |   1 +
+ src/runtime/structured_data_ffi.rs | 337 +++++++++++++++++++++++++++++
+ 4 files changed, 434 insertions(+), 2 deletions(-)
+ create mode 100644 src/runtime/structured_data_ffi.rs
+
+diff --git a/src/codegen.rs b/src/codegen.rs
+index 86fd2e0..cfe4b6c 100644
+--- a/src/codegen.rs
++++ b/src/codegen.rs
+@@ -1335,6 +1335,7 @@ void tallow_async_runtime_shutdown(void) {
+         ir.push_str("declare double @tallow_fingerprint_similarity(ptr, ptr)\n");
+         ir.push_str("declare ptr @tallow_page_cache_create(ptr, i32, i64, i32, i64)\n");
+         ir.push_str("declare ptr @tallow_crawler_from_links(ptr, i32, i64, ptr, ptr, ptr)\n");
++        ir.push_str("declare ptr @tallow_structured_data_extract(ptr, ptr, ptr)\n");
+         ir.push_str("declare i32 @gettimeofday(ptr, ptr)\n");
+         ir.push_str("declare i32 @usleep(i32)\n");
+         ir.push('\n');
+@@ -1943,7 +1944,15 @@ void tallow_async_runtime_shutdown(void) {
+                 field_map.insert("has_json_ld".to_string(), (2usize, LLType::I1));
+                 let mut field_kinds = HashMap::new();
+                 field_kinds.insert("json_ld".to_string(), "StringArray".to_string());
+-                field_kinds.insert("open_graph".to_string(), "Map".to_string());
++                // `open_graph` is `Map<String,String>` in the declaration, and codegen
++                // has no Map value at all (no allocator, no entry layout, no `.len`
++                // routing — `%struct.Map`/`map_alloc`/`MapEntry` have zero occurrences
++                // here and no `tallow_map_*` exists in the runtime). The native hands
++                // back `key<TAB>value` lines and this field is declared `String`, which
++                // routes exactly like any other string. Recording "String" instead of
++                // "Map" changes no behaviour — the "Map" tag never had a consumer — it
++                // only stops the layout claiming a shape the backend cannot build.
++                field_kinds.insert("open_graph".to_string(), "String".to_string());
+                 StructLayout {
+                     fields: vec![
+                         "json_ld".to_string(),
+@@ -6612,6 +6621,9 @@ void tallow_async_runtime_shutdown(void) {
+             if recv == "Crawler" && method == "from_links" {
+                 return self.emit_crawler_from_links(args);
+             }
++            if recv == "StructuredData" && method == "extract" {
++                return self.emit_structured_data_extract(args);
++            }
+         }
+ 
+         // Stdlib module dispatch (math, env, time)
+@@ -18931,6 +18943,83 @@ impl<'a> CodeGen<'a> {
+         Ok(LLValue::new(struct_ptr, LLType::I8Ptr))
+     }
+ 
++    /// `StructuredData.extract(html: String) -> StructuredData`
++    ///
++    /// The runtime returns the serialized `open_graph` through the **return slot** and
++    /// writes `json_ld` and `has_json_ld` through out-params — the same split
++    /// `Crawler.from_links` uses, so the refusal path is the existing null check rather
++    /// than new IR failure machinery. This arm copies each value into the struct at its
++    /// layout index.
++    ///
++    /// `has_json_ld` is stored by hand because it is the one struct field anywhere that
++    /// is genuinely `i1`: `emit_store_i64_field` would write eight bytes into one bit
++    /// and silently corrupt the struct.
++    fn emit_structured_data_extract(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
++        if args.len() != 1 {
++            return Err(format!(
++                "StructuredData.extract takes 1 argument (html), got {}",
++                args.len()
++            ));
++        }
++        let Some(layout) = self.struct_layouts.get("StructuredData").cloned() else {
++            return Err("StructuredData.extract: struct layout missing".into());
++        };
++
++        let html = self.emit_expr(&args[0].value)?;
++        if !matches!(html.ty, LLType::I8Ptr) {
++            return Err(format!(
++                "StructuredData.extract: html must be a string, got {}",
++                html.ty.to_ir()
++            ));
++        }
++
++        let json_ld_slot = self.fresh_reg();
++        self.emit_line(&format!("{json_ld_slot} = alloca ptr"));
++        let has_slot = self.fresh_reg();
++        self.emit_line(&format!("{has_slot} = alloca i64, align 8"));
++
++        let graph_out = self.fresh_reg();
++        self.emit_line(&format!(
++            "{graph_out} = call ptr @tallow_structured_data_extract(ptr {}, ptr {json_ld_slot}, ptr {has_slot})",
++            html.reg
++        ));
++        let graph = self.emit_runtime_string_null_check(graph_out, "StructuredData.extract: ")?;
++
++        // sizeof via the emitted type, so the arm never hardcodes a byte count.
++        let size_ptr = self.fresh_reg();
++        self.emit_line(&format!(
++            "{size_ptr} = getelementptr inbounds {0}, ptr null, i32 1",
++            layout.llvm_name
++        ));
++        let size = self.fresh_reg();
++        self.emit_line(&format!("{size} = ptrtoint ptr {size_ptr} to i64"));
++        let struct_ptr = self.fresh_reg();
++        self.emit_line(&format!("{struct_ptr} = call ptr @malloc(i64 {size})"));
++
++        let json_ld = self.fresh_reg();
++        self.emit_line(&format!("{json_ld} = load ptr, ptr {json_ld_slot}"));
++        self.emit_store_ptr_field(&struct_ptr, &layout, "json_ld", &json_ld)?;
++        self.emit_store_ptr_field(&struct_ptr, &layout, "open_graph", &graph.reg)?;
++
++        let (has_idx, _) = layout
++            .field_map
++            .get("has_json_ld")
++            .cloned()
++            .ok_or_else(|| "StructuredData: no field `has_json_ld`".to_string())?;
++        let flag = self.fresh_reg();
++        self.emit_line(&format!("{flag} = load i64, ptr {has_slot}"));
++        let bit = self.fresh_reg();
++        self.emit_line(&format!("{bit} = trunc i64 {flag} to i1"));
++        let bit_slot = self.fresh_reg();
++        self.emit_line(&format!(
++            "{bit_slot} = getelementptr inbounds {}, ptr {struct_ptr}, i32 0, i32 {has_idx}",
++            layout.llvm_name
++        ));
++        self.emit_line(&format!("store i1 {bit}, ptr {bit_slot}"));
++
++        Ok(LLValue::new(struct_ptr, LLType::I8Ptr))
++    }
++
+     /// `Crawler.from_links(url, max_depth?) -> Crawler`
+     ///
+     /// `max_depth` is optional and its presence is compiled in as the flag the
+diff --git a/src/runtime/html_ffi.rs b/src/runtime/html_ffi.rs
+index 16f5627..c908b38 100644
+--- a/src/runtime/html_ffi.rs
++++ b/src/runtime/html_ffi.rs
+@@ -77,7 +77,12 @@ fn element_array<'a, I: Iterator<Item = scraper::ElementRef<'a>>>(it: I) -> *mut
+     native_array(items)
+ }
+ 
+-fn string_array(items: Vec<String>) -> *mut c_void {
++/// Build a native string array: `native_array` slots holding `string_to_cstr` values.
++///
++/// The one representation of a string array the runtime has, so it is `pub(crate)`
++/// rather than duplicated by each producer — a second copy of this idiom would be a
++/// second definition of the shape `tallow_array_get` reads.
++pub(crate) fn string_array(items: Vec<String>) -> *mut c_void {
+     let slots: Vec<i64> = items
+         .into_iter()
+         .map(|s| string_to_cstr(&s) as i64)
+diff --git a/src/runtime/mod.rs b/src/runtime/mod.rs
+index 18b73d8..54a3e9f 100644
+--- a/src/runtime/mod.rs
++++ b/src/runtime/mod.rs
+@@ -36,6 +36,7 @@ pub mod kernel_tune;
+ pub mod net_ffi;
+ pub mod regex_ffi;
+ pub mod sync_ffi;
++pub mod structured_data_ffi;
+ pub mod time_ffi;
+ pub mod transfer_ffi;
+ 
+diff --git a/src/runtime/structured_data_ffi.rs b/src/runtime/structured_data_ffi.rs
+new file mode 100644
+index 0000000..85b5ab8
+--- /dev/null
++++ b/src/runtime/structured_data_ffi.rs
+@@ -0,0 +1,337 @@
++//! Runtime FFI: `StructuredData.extract`.
++//!
++//! # Shape
++//!
++//! `StructuredData` is `{json_ld: []String, open_graph: Map<String,String>,
++//! has_json_ld: bool}` (`stdlib/browser.tl:434`). Codegen allocates
++//! `%struct.StructuredData` itself and takes `json_ld` and `has_json_ld` through
++//! out-params, while `open_graph` travels through the **return slot** — nothing is
++//! returned through a struct pointer. That split follows `tallow_crawler_from_links`
++//! exactly (it returns the one computed string field and writes the rest out-param),
++//! which keeps refusal propagation on the path codegen already has:
++//! `emit_runtime_string_null_check`.
++//!
++//! Returning a struct pointer from here would couple the LLVM struct layout to a
++//! hand-written Rust `#[repr(C)]`, which then breaks *silently* on any field
++//! reorder, width change or padding difference. Out-params keep layout owned by
++//! codegen — the same trade `tallow_page_cache_create`, `tallow_crawler_from_links`
++//! and `tallow_gzip_decompress(ptr, i64, ptr)` make.
++//!
++//! # The array is a real runtime array, not a raw `**c_char`
++//!
++//! `json_ld` is handed back as `*mut c_void`, the SAME shape every other string-array
++//! producer returns (`html_ffi::string_array` → `native_array`: `[count][slot…]` as a
++//! boxed `[i64]`), because that is what `tallow_array_len` / `tallow_array_get` read
++//! and what codegen's `.len` routing expects for a `StringArray` field.
++//!
++//! An earlier draft of this binding specified a bare `*mut *mut c_char` here. That
++//! would not have worked: the array object has exactly one constructor per producer
++//! (`native_array`) and no public constructor exists, so a raw C array could not be
++//! turned into a value the readers accept.
++//!
++//! # `open_graph` is serialized, and this is a stated divergence
++//!
++//! The interpreter returns a genuine `Value::Map` (`stdlib/browser.rs:73`, asserted at
++//! `:1430`). Codegen has **no Map value at all**: `%struct.Map`, `map_alloc` and
++//! `MapEntry` have zero occurrences in `codegen.rs`, no `tallow_map_*` symbol exists
++//! anywhere in the runtime, and the layout's `field_kinds["open_graph"] = "Map"` tag
++//! had no consumer. So the AOT field carries `key<TAB>value` lines, one per entry, in
++//! document order, and the layout declares it `String`.
++//!
++//! Consequence, stated rather than implied: `.len` on `open_graph` reads the
++//! serialized byte length in AOT and the entry count when interpreted. Reducing this
++//! divergence means giving codegen Map values (allocator, entry layout, `.len`/index
++//! routing) — a language feature, not part of this binding.
++//!
++//! # Contract
++//!
++//! A **non-null return** means both out-parameters were written; **null** means neither
++//! may be read and `tallow_last_error` is set. Nothing is written until every
++//! allocation has succeeded, so a partial write cannot be observed. A null
++//! out-parameter is a codegen bug and is refused rather than written through.
++//!
++//! The values come from `stdlib::browser::structured_data_extract`, the same function
++//! the interpreter's `StructuredData.extract` arm calls, so the two engines read one
++//! HTML document the same way — their only difference is the `open_graph` encoding
++//! described above.
++
++use std::os::raw::{c_char, c_void};
++
++use super::html_ffi::string_array;
++use super::{cstr_to_str, set_last_error, string_to_cstr};
++use crate::interp::Value;
++use crate::stdlib::browser::structured_data_extract;
++
++/// `structured_data_extract(html: String) -> StructuredData`.
++///
++/// Returns `open_graph` serialized (see the module header); writes `json_ld` (a native
++/// string array) and `has_json_ld` (1 or 0) through the two out-parameters.
++#[unsafe(no_mangle)]
++pub extern "C" fn tallow_structured_data_extract(
++    html: *const c_char,
++    out_json_ld: *mut *mut c_void,
++    out_has_json_ld: *mut i64,
++) -> *mut c_char {
++    if out_json_ld.is_null() || out_has_json_ld.is_null() {
++        set_last_error("StructuredData.extract: null out-parameter".to_string());
++        return std::ptr::null_mut();
++    }
++    let html = match unsafe { cstr_to_str(html) } {
++        Some(s) => s,
++        None => {
++            set_last_error("StructuredData.extract: expected an HTML string argument".to_string());
++            return std::ptr::null_mut();
++        }
++    };
++
++    let fields = match structured_data_extract(vec![Value::String(html.to_string())]) {
++        Ok(Value::Struct { fields, .. }) => fields,
++        Ok(other) => {
++            set_last_error(format!(
++                "StructuredData.extract: expected a Struct, got {}",
++                value_kind(&other)
++            ));
++            return std::ptr::null_mut();
++        }
++        Err(e) => {
++            set_last_error(format!("StructuredData.extract: {e}"));
++            return std::ptr::null_mut();
++        }
++    };
++
++    // Read the three fields BY NAME. The facade's own doc records a revision where
++    // one field was misnamed and `has_json_ld` was missing while its test still
++    // passed on the invented name — positional reads are how that survives.
++    let json_ld = match array_of_strings(&fields, "json_ld") {
++        Ok(v) => v,
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++    let open_graph = match serialize_map(&fields, "open_graph") {
++        Ok(v) => v,
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++    let has_json_ld = match bool_field(&fields, "has_json_ld") {
++        Ok(v) => v,
++        Err(e) => {
++            set_last_error(e);
++            return std::ptr::null_mut();
++        }
++    };
++
++    // Build every value BEFORE writing any of them: the contract says a partial
++    // write is unobservable, so the allocations cannot be interleaved with stores.
++    let array = string_array(json_ld);
++    let serialized = string_to_cstr(&open_graph);
++
++    unsafe {
++        *out_json_ld = array;
++        *out_has_json_ld = i64::from(has_json_ld);
++    }
++    serialized
++}
++
++/// The declared field, or a refusal naming the field that is missing.
++fn field<'a>(fields: &'a [(String, Value)], name: &str) -> Result<&'a Value, String> {
++    fields
++        .iter()
++        .find(|(k, _)| k == name)
++        .map(|(_, v)| v)
++        .ok_or_else(|| format!("StructuredData.extract: no field named {name:?}"))
++}
++
++fn array_of_strings(fields: &[(String, Value)], name: &str) -> Result<Vec<String>, String> {
++    match field(fields, name)? {
++        Value::Array(items) => items
++            .iter()
++            .map(|v| match v {
++                Value::String(s) => Ok(s.clone()),
++                other => Err(format!(
++                    "StructuredData.extract: {name} must hold strings, found {}",
++                    value_kind(other)
++                )),
++            })
++            .collect(),
++        other => Err(format!(
++            "StructuredData.extract: {name} must be an array, found {}",
++            value_kind(other)
++        )),
++    }
++}
++
++/// `key<TAB>value` lines in document order — see the module header for why this is a
++/// string and not a Map.
++fn serialize_map(fields: &[(String, Value)], name: &str) -> Result<String, String> {
++    match field(fields, name)? {
++        Value::Map(pairs) => {
++            let mut out = String::new();
++            for (k, v) in pairs {
++                let (k, v) = match (k, v) {
++                    (Value::String(k), Value::String(v)) => (k, v),
++                    (k, _) => {
++                        return Err(format!(
++                            "StructuredData.extract: {name} must hold string pairs, found {}",
++                            value_kind(k)
++                        ));
++                    }
++                };
++                out.push_str(k);
++                out.push('\t');
++                out.push_str(v);
++                out.push('\n');
++            }
++            Ok(out)
++        }
++        other => Err(format!(
++            "StructuredData.extract: {name} must be a Map, found {}",
++            value_kind(other)
++        )),
++    }
++}
++
++fn bool_field(fields: &[(String, Value)], name: &str) -> Result<bool, String> {
++    match field(fields, name)? {
++        Value::Bool(b) => Ok(*b),
++        other => Err(format!(
++            "StructuredData.extract: {name} must be a bool, found {}",
++            value_kind(other)
++        )),
++    }
++}
++
++/// Only for refusal messages — a mismatch must name what it actually got.
++fn value_kind(v: &Value) -> &'static str {
++    match v {
++        Value::Nil => "nil",
++        Value::Bool(_) => "a bool",
++        Value::Int(_) => "an int",
++        Value::Float(_) => "a float",
++        Value::String(_) => "a string",
++        Value::Array(_) => "an array",
++        Value::Map(_) => "a map",
++        Value::Struct { .. } => "a struct",
++        _ => "another value",
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// Read a native string array back the way generated code does: slot 0 is the
++    /// count, slots 1..=n are `*mut c_char` values.
++    fn read_array(arr: *mut c_void) -> Vec<String> {
++        assert!(!arr.is_null(), "array must not be null");
++        let slots = arr as *mut i64;
++        let n = unsafe { *slots } as usize;
++        (1..=n)
++            .map(|i| {
++                let p = unsafe { *slots.add(i) } as *const c_char;
++                unsafe { cstr_to_str(p) }
++                    .expect("slot holds a valid C string")
++                    .to_string()
++            })
++            .collect()
++    }
++
++    /// Returns `(json_ld, serialized open_graph, has_json_ld)`.
++    fn call(html: &str) -> (Vec<String>, String, i64) {
++        let c = std::ffi::CString::new(html).unwrap();
++        let mut arr: *mut c_void = std::ptr::null_mut();
++        let mut has: i64 = -1;
++        let og = tallow_structured_data_extract(c.as_ptr(), &mut arr, &mut has);
++        assert!(!og.is_null(), "expected success for {html:?}");
++        let serialized = unsafe { cstr_to_str(og) }
++            .expect("valid C string")
++            .to_string();
++        (read_array(arr), serialized, has)
++    }
++
++    #[test]
++    fn null_out_params_fail_closed() {
++        let c = std::ffi::CString::new("<html></html>").unwrap();
++        let mut arr: *mut c_void = std::ptr::null_mut();
++        // a codegen bug, refused rather than written through
++        let og = tallow_structured_data_extract(c.as_ptr(), &mut arr, std::ptr::null_mut());
++        assert!(og.is_null(), "a bad call site must refuse, not half-write");
++        assert!(arr.is_null(), "nothing may be written on refusal");
++    }
++
++    #[test]
++    fn a_null_html_argument_is_refused() {
++        let mut arr: *mut c_void = std::ptr::null_mut();
++        let mut has: i64 = 0;
++        let og = tallow_structured_data_extract(std::ptr::null(), &mut arr, &mut has);
++        assert!(og.is_null());
++        assert!(arr.is_null(), "nothing may be written on refusal");
++    }
++
++    #[test]
++    fn json_ld_travels_as_a_real_array_and_the_flag_says_so() {
++        let html = r#"<html><head>
++            <meta property="og:title" content="Hello">
++            <script type="application/ld+json">{"@type":"Product"}</script>
++            </head><body>hi</body></html>"#;
++        let (json_ld, open_graph, has) = call(html);
++        assert_eq!(has, 1, "a page with JSON-LD reports the flag as 1");
++        assert_eq!(json_ld.len(), 1, "one raw JSON-LD text block");
++        assert!(
++            json_ld[0].contains("Product"),
++            "the TEXT form is what a []String field holds, got {:?}",
++            json_ld[0]
++        );
++        assert!(
++            open_graph.contains("title\tHello"),
++            "serialized open_graph should carry title<TAB>Hello, got {open_graph:?}"
++        );
++    }
++
++    #[test]
++    fn a_page_without_json_ld_reports_the_flag_as_zero() {
++        let (json_ld, _, has) = call("<html><body>no structured data</body></html>");
++        assert_eq!(has, 0);
++        assert!(json_ld.is_empty(), "an empty array, not a null pointer");
++    }
++
++    #[test]
++    fn the_serialized_open_graph_keeps_document_order() {
++        let html = r#"<html><head>
++            <meta property="og:zeta" content="z">
++            <meta property="og:alpha" content="a">
++            </head></html>"#;
++        let (_, open_graph, _) = call(html);
++        let lines: Vec<&str> = open_graph.lines().collect();
++        assert_eq!(
++            lines,
++            vec!["zeta\tz", "alpha\ta"],
++            "document order, not sorted"
++        );
++    }
++
++    #[test]
++    fn an_open_graph_meta_in_either_attribute_order_is_captured() {
++        // The facade is deliberately order-independent; this binds the native to that
++        // property so a future rewrite cannot silently drop half of real pages.
++        let forward = call(r#"<meta property="og:title" content="Hello">"#).1;
++        let reversed = call(r#"<meta content="Hello" property="og:title">"#).1;
++        assert_eq!(forward, reversed);
++        assert_eq!(forward, "title\tHello\n");
++    }
++
++    #[test]
++    fn several_json_ld_blocks_all_travel_in_one_array() {
++        let html = r#"<html><head>
++            <script type="application/ld+json">{"a":1}</script>
++            <script type="application/ld+json">{"b":2}</script>
++            </head></html>"#;
++        let (json_ld, _, has) = call(html);
++        assert_eq!(json_ld.len(), 2, "one slot per block, in document order");
++        assert!(json_ld[0].contains("\"a\"") && json_ld[1].contains("\"b\""));
++        assert_eq!(has, 1);
++    }
++}

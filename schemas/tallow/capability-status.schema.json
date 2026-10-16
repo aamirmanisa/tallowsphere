@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/capability-status.schema.json",
+  "title": "Tallow Capability Status Record",
+  "description": "Schema for a single machine-readable Tallow 1000x capability status record derived from the capability matrix and blocker register.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "capability",
+    "category",
+    "status",
+    "confidence",
+    "evidence",
+    "verification",
+    "upgrade_need",
+    "blockers",
+    "owner_phase",
+    "last_verified"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Optional version marker for this record shape."
+    },
+    "id": {
+      "type": "string",
+      "description": "Stable capability record identifier, preferably a slug or CAP-numeric identifier.",
+      "pattern": "^(CAP-[0-9]{3,}|[a-z0-9]+(?:[._-][a-z0-9]+)*)$"
+    },
+    "capability": {
+      "type": "string",
+      "description": "Human-readable capability name from the matrix.",
+      "minLength": 1
+    },
+    "category": {
+      "type": "string",
+      "description": "Capability category, such as Compiler/runtime, Browser/CDP, Extraction, or Compliance/privacy.",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "description": "Normalized current capability status from the matrix status legend.",
+      "enum": [
+        "implemented",
+        "partial",
+        "stubbed",
+        "documented",
+        "missing",
+        "unknown"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "description": "Confidence in the current status classification.",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Concrete source, doc, test, command, artifact, or observed-runtime evidence. At least one item is required by the matrix evidence rule.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "verification": {
+      "$ref": "#/$defs/verification"
+    },
+    "upgrade_need": {
+      "type": "string",
+      "description": "Concise statement of the work needed before this capability can support a stronger production-readiness claim.",
+      "minLength": 1
+    },
+    "blockers": {
+      "type": "array",
+      "description": "Related blocker-register entries. Use an empty array when no specific blocker is linked.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^BLK-[0-9]{3}$"
+          },
+          {
+            "$ref": "#/$defs/blocker"
+          }
+        ]
+      },
+      "uniqueItems": true
+    },
+    "owner_phase": {
+      "type": "string",
+      "description": "Phase expected to own the next meaningful action, aligned with the blocker register when applicable.",
+      "pattern": "^(Phase [0-9]+(/[0-9]+)?|Cross-phase|Unassigned|TBD)$"
+    },
+    "last_verified": {
+      "type": "string",
+      "description": "Date when the status/evidence mapping was last reviewed.",
+      "format": "date"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional extra reviewer notes, caveats, or migration details."
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "path",
+        "description"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Kind of evidence supporting the capability status.",
+          "enum": [
+            "source",
+            "test",
+            "documentation",
+            "command",
+            "generated_output",
+            "observed_runtime",
+            "configuration",
+            "schema",
+            "artifact",
+            "blocker",
+            "unknown"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "Repository path, command, artifact path, URL, or other locator for the evidence.",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "description": "Short explanation of what this evidence proves or fails to prove.",
+          "minLength": 1
+        },
+        "lines": {
+          "type": "object",
+          "description": "Optional source line range for docs or code evidence.",
+          "additionalProperties": false,
+          "required": [
+            "start",
+            "end"
+          ],
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "observed_at": {
+          "type": "string",
+          "description": "Optional timestamp for observed runtime or generated-output evidence.",
+          "format": "date-time"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "summary"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Verification state for the evidence behind this capability record.",
+          "enum": [
+            "verified",
+            "partially_verified",
+            "not_verified",
+            "blocked",
+            "unknown"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "description": "Human-readable verification result or caveat.",
+          "minLength": 1
+        },
+        "commands": {
+          "type": "array",
+          "description": "Commands used or intended to verify this capability.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "artifacts": {
+          "type": "array",
+          "description": "Generated reports, logs, screenshots, bundles, or other verification artifacts.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "last_run": {
+          "type": "string",
+          "description": "Optional timestamp for the most recent verification command run.",
+          "format": "date-time"
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^BLK-[0-9]{3}$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ]
+        },
+        "area": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_phase": {
+          "type": "string",
+          "pattern": "^(Phase [0-9]+(/[0-9]+)?|Cross-phase|Unassigned|TBD)$"
+        },
+        "next_action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "mitigated",
+            "accepted",
+            "closed",
+            "unknown"
+          ]
+        }
+      }
+    }
+  }
+}

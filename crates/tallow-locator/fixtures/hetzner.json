@@ -1,0 +1,25 @@
+{
+  "_note": "v1 fixture — realistic subset of GET /v1/server_types + GET /v1/pricing (Hetzner Cloud), recorded shape",
+  "server_types": [
+    { "id": 101, "name": "cx22",  "cores": 2, "memory": 4, "disk": 40, "architecture": "x86" },
+    { "id": 102, "name": "cx32",  "cores": 4, "memory": 8, "disk": 80, "architecture": "x86" },
+    { "id": 103, "name": "cax11", "cores": 2, "memory": 4, "disk": 40, "architecture": "arm" }
+  ],
+  "pricing": {
+    "server_types": [
+      { "name": "cx22", "prices": [
+        { "location": "hel1", "price_monthly": { "net": "4.35", "currency": "EUR" } },
+        { "location": "nbg1", "price_monthly": { "net": "4.35", "currency": "EUR" } },
+        { "location": "ash",  "price_monthly": { "net": "4.99", "currency": "EUR" } }
+      ]},
+      { "name": "cx32", "prices": [
+        { "location": "hel1", "price_monthly": { "net": "7.59", "currency": "EUR" } },
+        { "location": "fsn1", "price_monthly": { "net": "7.59", "currency": "EUR" } }
+      ]},
+      { "name": "cax11", "prices": [
+        { "location": "hel1", "price_monthly": { "net": "3.79", "currency": "EUR" } },
+        { "location": "nbg1", "price_monthly": { "net": "3.79", "currency": "EUR" } }
+      ]}
+    ]
+  }
+}

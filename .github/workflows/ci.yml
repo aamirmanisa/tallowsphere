@@ -1,0 +1,254 @@
+name: CI
+
+# Carried from the development tree, scoped to what this repository can actually run.
+#
+# The development tree's ci.yml has 15 jobs. Twelve are carried, and three are not — each for a reason
+# that was MEASURED here rather than assumed, because a gate that cannot pass is worse than a gate
+# left behind (a permanently red check gets ignored). Their inputs are carried anyway, so adopting
+# any of them later is a one-line change:
+#
+#   vet            inputs carried (`supply-chain/{config,audits.toml,imports.lock}`) but the ledger
+#                  is empty — `audits.toml` is 35 bytes — so `cargo vet --locked` has nothing to
+#                  certify against. Unproven here; not wired.
+#   claims-ledger  inputs carried, and it RUNS: rc=1 with **23 hard findings** across 65 entries
+#                  (1 shipped, 43 partial, 21 target-only) plus 48 warnings. It is red upstream too
+#                  — the job accepts rc 0|2 and fails on rc=1 — so wiring it would import a failing
+#                  check. Worth fixing where the claims live, not by weakening the gate here.
+#   fmt            the tree is not cargo-fmt clean: `cargo fmt --all -- --check` reports 7,902
+#                  files and 121,519 diff lines (import-ordering style — `use std::sync::{Arc, mpsc}`
+#                  against `{mpsc, Arc}`), i.e. rustfmt has never been run across this workspace.
+#                  That is a repo-wide style decision, not a defect to fix in passing.
+#
+# `sbom-drift` and `cbom-drift` ARE carried, together with their inputs and their regenerated
+# artifacts. Carrying them surfaced a real upstream defect worth recording: **both gates failed on
+# drift when first run**, which means neither could pass anywhere — the committed artifacts were
+# stale relative to the source (the crypto inventory was short by ~99 occurrences; the SBOM was
+# short by 77 packages, including a dependency absent from the snapshot entirely). A gate that is
+# not wired into a runner is not a check; these two are now wired here and green:
+#
+#   cbom-drift   scripts/crypto-inventory.py --check scripts/crypto-inventory.json
+#                44 registered, 44 present, 2,124 occurrences, 0 unregistered candidates
+#   sbom-drift   scripts/sbom-gen.py --check scripts/sbom.snapshot.json   (721 packages)
+#
+# A stale figure still circulates in the development tree's ci.yml: "463 occurrences across 16
+# algorithms". The artifact says otherwise — 44 algorithms — and has for some time. The number is a
+# comment, not a measurement, and it is corrected here rather than inherited.
+#
+# The three platform `test-*` jobs are green at this revision: `cargo test -p tallow --lib` reports
+# 9,007 passed / 0 failed / 21 ignored at `bb31b3f`. They were red at `9d3b1f5` on eleven stale room-code
+# fixtures in `src/stdlib/transfer_net.rs` (8,996 / 11 / 21) that passed human-readable codes to a join
+# contract accepting the 8-symbol mint only. The fixtures now take their code from the runtime's own mint —
+# test-side only, inside `mod tests` — so the contract and the tests cannot drift apart again.
+#
+# `RUSTFLAGS: -D warnings` is deliberately NOT set at workflow level. This tree carries a
+# pre-existing warning baseline (159 in the lib test target alone, e.g. the Rust 2024
+# `unsafe_op_in_unsafe_fn` lint in src/runtime/{env,html}_ffi.rs); with `-D warnings` every cargo
+# job below would fail on warnings predating this repository, which measures nothing. The
+# development tree's own parity job neutralizes the same variable for the same reason. Making
+# warnings blocking is a separate work item, not a side effect of publishing.
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 8388608
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo check --locked --all-targets
+
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo test --locked --lib -- --test-threads=2
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo test --locked --lib -- --test-threads=2
+
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo test --locked --lib -- --test-threads=2
+
+  # Zero-trust conformance: negative boundary probes (browser-zone predicate refusals,
+  # non-loopback CDP connect refusals, the CDP relay's 8 MiB frame cap — loopback only, no network).
+  zero-trust-conformance:
+    name: Zero-trust conformance (negative boundary probes)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo test --locked --test zero_trust_conformance -- --test-threads=1
+
+  # Behavioral parity: interpreter vs native codegen, byte-for-byte stdout + exit code.
+  # Drives every tests/parity/parity_programs/*.tl through both paths and requires each to land in a
+  # named class: MATCH, REFUSED (a fixture marked `parity: expect-refusal` must be refused by BOTH
+  # legs), FALLBACK (marked `parity: expect-build-fallback`, the documented fail-loud case), DIVERGE
+  # (fails). An unclassified build failure is reported with its reason and is not counted as a pass.
+  parity:
+    name: Parity (interp vs native)
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Static preflight (runner syntax + fixtures)
+        run: |
+          set -euo pipefail
+          bash -n tests/parity/run_parity.sh
+          n=$(ls tests/parity/parity_programs/*.tl | wc -l)
+          echo "parity fixtures: $n"
+          test "$n" -ge 1
+      - name: Build debug tallow (--locked)
+        run: cargo build --locked --bin tallow
+      - name: Ensure clang present (native path links via clang)
+        run: command -v clang >/dev/null || { sudo apt-get update && sudo apt-get install -y clang; }
+      - name: Run parity runner (DIVERGE fails)
+        run: |
+          set -uo pipefail
+          rc=0
+          bash tests/parity/run_parity.sh > parity-report.txt 2>&1 || rc=$?
+          tail -n 12 parity-report.txt
+          grep -q '^RESULT: ' parity-report.txt || { echo "parity runner did not reach its RESULT line"; exit 1; }
+          echo "parity rc=$rc (rc 0 = no DIVERGE; rc 1 = divergence, failing)"
+          exit "$rc"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: parity-report
+          path: parity-report.txt
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo clippy --locked --all-targets -- -W clippy::all
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2 (SHA pin)
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  deny:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Blocking: deny.toml advisory verdicts are deny (vulnerability/unmaintained/yanked).
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check
+          arguments: --all-features
+
+  sbom:
+    name: Generate CycloneDX SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Generate SBOM
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --override-filename tallow.sbom.json
+          cargo cyclonedx --format json --override-filename tallow-crypto.sbom.json --manifest-path crates/tallow-crypto/Cargo.toml
+      - name: Upload SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: '*.sbom.json'
+
+  # ── SBOM drift gate (blocking) ─────────────────────────────────────────────
+  # Regenerates the committed package inventory from `cargo metadata --offline --locked` (no build;
+  # resolves from the committed Cargo.lock) and fails if it differs from the snapshot. Dependency
+  # drift must land together with an explicit snapshot update in the same change.
+  sbom-drift:
+    name: SBOM drift gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Regenerate SBOM and fail on drift
+        run: python3 scripts/sbom-gen.py --check scripts/sbom.snapshot.json
+
+  # ── CBOM drift gate (blocking) ─────────────────────────────────────────────
+  # Fully static, stdlib-only python3 — no toolchain, no build, no network. Fails when the committed
+  # crypto inventory does not byte-match regeneration, when a crypto-shaped token is not covered by
+  # the embedded agility registry, or when an active registered algorithm disappears from source.
+  # Update the artifact in the same change: python3 scripts/crypto-inventory.py --write scripts/crypto-inventory.json
+  cbom-drift:
+    name: CBOM drift gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Regenerate CBOM seed and fail on drift
+        run: python3 scripts/crypto-inventory.py --check scripts/crypto-inventory.json
+
+  # ── Canonical-pin gate (blocking) ──────────────────────────────────────────
+  # tallow-crypto, tallow-net, tallow-protocol and tallow-svid are canonical in THIS repository and
+  # vendored into sendtallow. Fully static — no build, no network: it hashes the crate sources and
+  # fails when a pinned file changed without the manifest being regenerated, which is how a
+  # one-sided edit silently diverges between the two repositories.
+  # Regenerate in the same change: scripts/gen-canonical-pins.sh
+  canonical-pins:
+    name: Canonical pin gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify vendored canonical crate pins
+        run: cd crates && sha256sum -c CANONICAL-SYNC.sha256

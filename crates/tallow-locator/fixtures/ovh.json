@@ -1,0 +1,8 @@
+{
+  "_note": "v1 fixture — OVH VPS offers, region-resolved subset (the live catalog uses the OVH cart API; follow-up)",
+  "plans": [
+    { "code": "vps-2-4-80", "vcpu": 2, "memory": 4096, "disk": 80, "price_monthly": 7.19, "region": "GRA", "city": "Gravelines",   "country": "FR" },
+    { "code": "vps-2-4-80", "vcpu": 2, "memory": 4096, "disk": 80, "price_monthly": 8.39, "region": "BHS", "city": "Beauharnois", "country": "CA" },
+    { "code": "vps-1-2-40", "vcpu": 1, "memory": 2048, "disk": 40, "price_monthly": 4.20, "region": "GRA", "city": "Gravelines",   "country": "FR" }
+  ]
+}

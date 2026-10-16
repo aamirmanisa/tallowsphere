@@ -1,0 +1,570 @@
+From 1efd83cf7e49e0d891761d9ca0efa208b73aade4 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:59:11 +0000
+Subject: [PATCH 10/27] extract: make the schema-first tier engine-agnostic,
+ and off until configured
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two defects, one cause. The tier defaulted to ON while pointing at a local
+service, so a run reported "attempted, failed" when the truth was "not
+attempted" — and the engine actually chosen for it (the fleet's current model)
+could not be pointed at at all, because the client spoke Ollama's API only.
+
+Engine selection: `Engine::{Ollama, OpenAiCompatible}`, with Ollama kept and
+dormant. `resolve_engine_config` refuses when no base URL is set — that refusal
+IS the honest default, rather than a default that names a service the operator
+has decided not to run. The model defaults to `deepseek/deepseek-flash` for the
+cloud engine; an explicit TALLOW_LLM_MODEL/TALLOW_LLM_ENGINE overrides, and an
+unknown engine name is refused instead of defaulted.
+
+Availability is now backend-aware: the OpenAI-compatible path probes
+`{base}/v1/models`, the cheapest question that separates reachable from not —
+a bounded GET that cannot itself burn a completion or half an extraction.
+
+The tier's state is measured, not inferred: `tier_state()` reports
+{enabled, engine, engine_url, model, credential_present, reachable, reason}, and
+`try_llm_fallback` records it as `llm_tier` in run evidence BEFORE deciding. A
+tier that is not enabled returns without sending anything and records the reason
+through the P4 limitation mechanism, so "no call was made" is visible instead of
+looking like a failure.
+
+Credential: TALLOW_LLM_API_KEY, read at call time, never stored on the
+extractor, never argv, never a .tl literal; absent ⇒ refused
+(EngineMisconfigured) rather than sent unauthenticated. Error text quotes URL
+and status only, never a body that could echo the request.
+
+Egress unchanged (P1.T3): the constructor still runs the zone predicate and
+refuses rather than egressing direct, and the cloud call rides that same
+client — no TALLOW_ALLOW_DIRECT-style bypass exists. The data-flow is stated in
+the call's own doc comment: the vendor receives the page sample and the prompt;
+with the guard intact the box IP does not leave the box.
+
+Verified: cargo check --lib --bins RC=0; engine_tests 10 passed/0; the
+smart_extract and llm_extract suites pass.
+UNVERIFIED: the live call — it needs a credential and a reachable engine, so the
+wire path remains plausible, not demonstrated.
+Remaining from P1: T2's vault-backed custody, T5's compliance gate, T6's budget.
+---
+ src/browser/llm_extract.rs   | 239 ++++++++++++++++++++++++++++++++++-
+ src/browser/smart_extract.rs | 139 ++++++++++++--------
+ 2 files changed, 324 insertions(+), 54 deletions(-)
+
+diff --git a/src/browser/llm_extract.rs b/src/browser/llm_extract.rs
+index be7b0aa..8c25409 100644
+--- a/src/browser/llm_extract.rs
++++ b/src/browser/llm_extract.rs
+@@ -719,6 +719,28 @@ impl LlmExtractor {
+         }
+     }
+ 
++    /// Probe an OpenAI-compatible endpoint.
++    ///
++    /// `/v1/models` is the cheapest question that separates "reachable" from
++    /// "not": a bounded GET with no model call, so probing cannot itself burn a
++    /// completion — or, worse, half an extraction.
++    async fn check_openai_compatible_available(&mut self) -> bool {
++        if let Some(avail) = self.ollama_available {
++            return avail;
++        }
++        let url = format!("{}/v1/models", self.ollama_url);
++        let available = self
++            .client
++            .get(&url)
++            .timeout(std::time::Duration::from_secs(3))
++            .send()
++            .await
++            .map(|r| r.status().is_success())
++            .unwrap_or(false);
++        self.ollama_available = Some(available);
++        available
++    }
++
+     /// Ensure the selected engine is usable before a request is spent.
+     ///
+     /// An OpenAI-compatible endpoint has no cheap liveness probe that is not
+@@ -728,7 +750,17 @@ impl LlmExtractor {
+     async fn ensure_engine_available(&mut self) -> Result<(), ExtractError> {
+         match self.engine {
+             Engine::Ollama => self.ensure_ollama_available().await,
+-            Engine::OpenAiCompatible => resolve_api_key(&|k| std::env::var(k).ok()).map(|_| ()),
++            Engine::OpenAiCompatible => {
++                resolve_api_key(&|k| std::env::var(k).ok())?;
++                if self.check_openai_compatible_available().await {
++                    Ok(())
++                } else {
++                    Err(ExtractError::EngineMisconfigured(format!(
++                        "cannot reach the OpenAI-compatible engine at {}",
++                        self.ollama_url
++                    )))
++                }
++            }
+         }
+     }
+ 
+@@ -756,10 +788,46 @@ impl LlmExtractor {
+         Ok(text)
+     }
+ 
++    /// Measure the tier's state: every field is observed here, so "enabled" and
++    /// "working" stop being the same claim. Idempotent — the probe is cached.
++    pub async fn tier_state(&mut self) -> TierState {
++        let credential_present = resolve_api_key(&|k| std::env::var(k).ok()).is_ok();
++        let reachable = match self.engine {
++            Engine::Ollama => self.check_ollama_available().await,
++            Engine::OpenAiCompatible => {
++                credential_present && self.check_openai_compatible_available().await
++            }
++        };
++        let reason = if self.engine == Engine::OpenAiCompatible && !credential_present {
++            format!("disabled (no credential: {LLM_API_KEY_ENV})")
++        } else if !reachable {
++            format!("disabled (engine not reachable at {})", self.ollama_url)
++        } else {
++            "enabled".to_string()
++        };
++        TierState {
++            enabled: credential_present && reachable,
++            engine: self.engine.as_str(),
++            engine_url: self.ollama_url.clone(),
++            model: self.model.clone(),
++            credential_present,
++            reachable,
++            reason,
++        }
++    }
++
+     /// Call an OpenAI-compatible `/v1/chat/completions` endpoint.
+     ///
+     /// Rides `self.client`, which the constructor already bound to the guarded
+     /// egress plane — adding an engine does not add an egress path.
++    ///
++    /// **Data-flow (P1.T3):** the request carries the page's sampled content and
++    /// the extraction prompt to the configured vendor, and the response carries
++    /// the generated schema back. With the guard intact the box IP does not leave
++    /// the box: a WAN URL is reached through `browser_zone_reqwest_proxy`, and if
++    /// the zone predicate refuses, the constructor has already refused to build a
++    /// client at all rather than egressing direct (tagged N3). No
++    /// `TALLOW_ALLOW_DIRECT`-style bypass exists here on purpose.
+     async fn call_openai_compatible(&self, prompt: &str) -> Result<String, ExtractError> {
+         let key = resolve_api_key(&|k| std::env::var(k).ok())?;
+         let url = format!("{}/v1/chat/completions", self.ollama_url);
+@@ -2199,6 +2267,67 @@ fn extract_json_block(text: &str) -> Option<String> {
+ /// value and never a `.tl` literal.
+ pub const LLM_API_KEY_ENV: &str = "TALLOW_LLM_API_KEY";
+ 
++/// Environment variable selecting the engine (`ollama` | `openai`).
++pub const LLM_ENGINE_ENV: &str = "TALLOW_LLM_ENGINE";
++/// Environment variable holding the engine's base URL. **Unset means no engine
++/// is configured**, which is what keeps the tier off.
++pub const LLM_BASE_URL_ENV: &str = "TALLOW_LLM_BASE_URL";
++/// Environment variable overriding the model.
++pub const LLM_MODEL_ENV: &str = "TALLOW_LLM_MODEL";
++
++/// The engine the operator decided on (2026-10-14): the fleet's current model,
++/// not a local Ollama.
++pub const DEFAULT_CLOUD_MODEL: &str = "deepseek/deepseek-flash";
++
++/// A resolved engine configuration.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct EngineConfig {
++    pub engine: Engine,
++    pub base_url: String,
++    pub model: String,
++}
++
++/// Resolve the engine configuration from the environment.
++///
++/// Refusing here is the point. The tier used to be ON by default while nothing
++/// answered it, so "not attempted" was reported as "attempted, failed". With no
++/// base URL there is no engine, so the honest answer is a reason — not a default
++/// pointing at a local service the operator has decided not to run.
++pub fn resolve_engine_config(
++    getenv: &dyn Fn(&str) -> Option<String>,
++) -> Result<EngineConfig, String> {
++    let base_url = getenv(LLM_BASE_URL_ENV)
++        .map(|s| s.trim().trim_end_matches('/').to_string())
++        .filter(|s| !s.is_empty())
++        .ok_or_else(|| {
++            format!(
++                "{LLM_BASE_URL_ENV} is not set: no engine is configured, so the schema-first \
++                 tier stays off instead of on-with-nothing-answering"
++            )
++        })?;
++
++    let engine = match getenv(LLM_ENGINE_ENV) {
++        Some(name) => Engine::parse(&name).ok_or_else(|| {
++            format!("{LLM_ENGINE_ENV}={name:?} is not a known engine (ollama|openai)")
++        })?,
++        None => Engine::OpenAiCompatible,
++    };
++
++    let model = getenv(LLM_MODEL_ENV)
++        .map(|s| s.trim().to_string())
++        .filter(|s| !s.is_empty())
++        .unwrap_or_else(|| match engine {
++            Engine::OpenAiCompatible => DEFAULT_CLOUD_MODEL.to_string(),
++            Engine::Ollama => "llama3.2".to_string(),
++        });
++
++    Ok(EngineConfig {
++        engine,
++        base_url,
++        model,
++    })
++}
++
+ /// Resolve the credential, refusing rather than egressing unauthenticated.
+ pub fn resolve_api_key(getenv: &dyn Fn(&str) -> Option<String>) -> Result<String, ExtractError> {
+     match getenv(LLM_API_KEY_ENV) {
+@@ -2210,6 +2339,34 @@ pub fn resolve_api_key(getenv: &dyn Fn(&str) -> Option<String>) -> Result<String
+     }
+ }
+ 
++/// The tier's state, measured rather than inferred.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct TierState {
++    pub enabled: bool,
++    pub engine: &'static str,
++    pub engine_url: String,
++    pub model: String,
++    pub credential_present: bool,
++    pub reachable: bool,
++    pub reason: String,
++}
++
++impl TierState {
++    /// The run-evidence payload: one record per run, so a reader can tell
++    /// "enabled" from "enabled and working".
++    pub fn to_evidence(&self) -> serde_json::Value {
++        serde_json::json!({
++            "enabled": self.enabled,
++            "engine": self.engine,
++            "engine_url": self.engine_url,
++            "model": self.model,
++            "credential_present": self.credential_present,
++            "reachable": self.reachable,
++            "reason": self.reason,
++        })
++    }
++}
++
+ /// The body an OpenAI-compatible chat endpoint expects.
+ pub fn openai_request_body(model: &str, prompt: &str) -> serde_json::Value {
+     serde_json::json!({
+@@ -2305,6 +2462,86 @@ mod engine_tests {
+         assert_eq!(resolve_api_key(&present).unwrap(), "k");
+     }
+ 
++    #[test]
++    fn an_unconfigured_tier_is_off_with_a_reason_naming_the_variable() {
++        let none = |_: &str| None;
++        match resolve_engine_config(&none) {
++            Err(reason) => assert!(reason.contains(LLM_BASE_URL_ENV), "{reason}"),
++            Ok(cfg) => panic!("no base URL must not resolve to a usable engine: {cfg:?}"),
++        }
++    }
++
++    #[test]
++    fn a_configured_tier_defaults_to_the_decided_model() {
++        let env = |k: &str| match k {
++            "TALLOW_LLM_BASE_URL" => Some("https://api.example.invalid/v1/".to_string()),
++            _ => None,
++        };
++        let cfg = resolve_engine_config(&env).expect("a base URL configures the tier");
++        assert_eq!(
++            cfg.engine,
++            Engine::OpenAiCompatible,
++            "the cloud engine is the active one"
++        );
++        assert_eq!(cfg.model, DEFAULT_CLOUD_MODEL);
++        assert_eq!(
++            cfg.base_url, "https://api.example.invalid/v1",
++            "trailing slash trimmed"
++        );
++    }
++
++    #[test]
++    fn an_explicit_model_and_engine_override_the_defaults() {
++        let env = |k: &str| match k {
++            "TALLOW_LLM_BASE_URL" => Some("http://localhost:11434".to_string()),
++            "TALLOW_LLM_ENGINE" => Some("ollama".to_string()),
++            "TALLOW_LLM_MODEL" => Some("llama3.2".to_string()),
++            _ => None,
++        };
++        let cfg = resolve_engine_config(&env).expect("resolves");
++        assert_eq!(cfg.engine, Engine::Ollama);
++        assert_eq!(cfg.model, "llama3.2");
++    }
++
++    #[test]
++    fn an_unknown_engine_name_is_refused_not_defaulted() {
++        let env = |k: &str| match k {
++            "TALLOW_LLM_BASE_URL" => Some("https://api.example.invalid".to_string()),
++            "TALLOW_LLM_ENGINE" => Some("gemini".to_string()),
++            _ => None,
++        };
++        assert!(
++            resolve_engine_config(&env).is_err(),
++            "an unknown engine must not silently default"
++        );
++    }
++
++    #[test]
++    fn the_tier_state_payload_carries_every_measured_field() {
++        let state = TierState {
++            enabled: false,
++            engine: "openai-compatible",
++            engine_url: "https://api.example.invalid".to_string(),
++            model: DEFAULT_CLOUD_MODEL.to_string(),
++            credential_present: false,
++            reachable: false,
++            reason: "disabled (no credential: TALLOW_LLM_API_KEY)".to_string(),
++        };
++        let ev = state.to_evidence();
++        for key in [
++            "enabled",
++            "engine",
++            "engine_url",
++            "model",
++            "credential_present",
++            "reachable",
++            "reason",
++        ] {
++            assert!(ev.get(key).is_some(), "missing {key} in {ev}");
++        }
++        assert_eq!(ev["credential_present"], false);
++    }
++
+     #[test]
+     fn the_credential_comes_from_a_named_environment_variable() {
+         assert_eq!(LLM_API_KEY_ENV, "TALLOW_LLM_API_KEY");
+diff --git a/src/browser/smart_extract.rs b/src/browser/smart_extract.rs
+index df90bac..cb333f5 100644
+--- a/src/browser/smart_extract.rs
++++ b/src/browser/smart_extract.rs
+@@ -97,41 +97,66 @@ pub enum ExtractionMethod {
+ 
+ /// Smart extractor — tries strategies from highest to lowest trust.
+ ///
+-/// Carries the LLM fallback configuration. It is **on by default** (see
+-/// [`SmartExtractor::default`], opt out with `TALLOW_LLM_EXTRACT=0`). When
++/// Carries the LLM fallback configuration. The tier is **on only when an engine
++/// is configured** (`TALLOW_LLM_BASE_URL`; see [`SmartExtractor::default`] and
++/// `resolve_engine_config`) — `TALLOW_LLM_EXTRACT=1` forces it on regardless, so
++/// an operator can watch it fail rather than have the failure hidden. When
+ /// `enable_llm_fallback` is `false`, behavior is identical to the legacy
+ /// stateless extractor: the JSON-LD → Microdata → OpenGraph → CSS cascade, then
+-/// `ExtractedProduct::failed()`. When enabled, a failed cascade falls through
+-/// to an Ollama-powered schema extractor (`LlmExtractor`) with validation and
+-/// heal-retry; with Ollama unreachable that tier degrades gracefully to
+-/// `ExtractedProduct::failed()`. The first successful page caches a schema per
+-/// domain+page-type, after which extraction is CSS-speed with zero model calls.
++/// `ExtractedProduct::failed()`. When enabled, a failed cascade falls through to
++/// a schema extractor (`LlmExtractor`, any supported engine) with validation and
++/// heal-retry, after a measured tier check: the tier's state is recorded and a
++/// tier that is not enabled returns without sending anything, recording why. The
++/// first successful page caches a schema per domain+page-type, after which
++/// extraction is CSS-speed with zero model calls.
+ #[derive(Debug, Clone)]
+ pub struct SmartExtractor {
+     /// Enable the LLM (Ollama) extraction as the final fallback tier.
+     pub enable_llm_fallback: bool,
+     /// Ollama API base URL (used only when `enable_llm_fallback` is set).
+     pub ollama_url: String,
+-    /// Ollama model name.
++    /// Engine model name.
+     pub model: String,
+     /// On-disk schema cache directory for `LlmExtractor`.
+     pub cache_dir: String,
++    /// Why the tier is in its current state — `"configured"`, or the exact
++    /// refusal that kept it off. Carried on the struct so a caller can report it
++    /// without re-deriving it from the environment.
++    pub llm_reason: String,
+ }
+ 
+ impl Default for SmartExtractor {
+     fn default() -> Self {
+-        // Schema-first extraction is default-ON (the 1000x lever: one LLM
+-        // schema per domain+page-type, then CSS-speed extraction). Disable
+-        // with TALLOW_LLM_EXTRACT=0. When Ollama is unreachable the LLM tier
+-        // degrades gracefully to ExtractedProduct::failed(), same as before.
+-        let llm_on = std::env::var("TALLOW_LLM_EXTRACT")
++        // The tier is ON only when an engine is CONFIGURED. It used to be on by
++        // default while pointing at a local service; a tier that is on with
++        // nothing answering reports "not attempted" as "attempted, failed",
++        // which is the defect this phase exists to remove.
++        // `TALLOW_LLM_EXTRACT=1` still forces it on, so an operator can choose to
++        // watch the failure rather than have it hidden.
++        let forced = std::env::var("TALLOW_LLM_EXTRACT")
+             .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+-            .unwrap_or(true);
++            .ok();
++        let (llm_on, reason, url, model) =
++            match crate::browser::llm_extract::resolve_engine_config(&|k| std::env::var(k).ok()) {
++                Ok(cfg) => (
++                    forced.unwrap_or(true),
++                    "configured".to_string(),
++                    cfg.base_url,
++                    cfg.model,
++                ),
++                Err(reason) => (
++                    forced.unwrap_or(false),
++                    reason,
++                    "http://localhost:11434".to_string(),
++                    "llama3.2".to_string(),
++                ),
++            };
+         Self {
+             enable_llm_fallback: llm_on,
+-            ollama_url: "http://localhost:11434".to_string(),
+-            model: "llama3.2".to_string(),
++            ollama_url: url,
++            model,
+             cache_dir: ".tallow-schemas".to_string(),
++            llm_reason: reason,
+         }
+     }
+ }
+@@ -224,7 +249,30 @@ impl SmartExtractor {
+     /// was produced; never panics.
+     async fn try_llm_fallback(&mut self, html: &str, url: &str) -> Option<ExtractedProduct> {
+         let domain = domain_of(url);
+-        let mut llm = LlmExtractor::with_config(&self.ollama_url, &self.model, &self.cache_dir);
++        // An explicitly configured engine wins, so TALLOW_LLM_ENGINE is honoured
++        // here; `llm_config()`'s fields are the fallback for a caller that set
++        // the URL and model directly.
++        let mut llm = match crate::browser::llm_extract::resolve_engine_config(&|k| {
++            std::env::var(k).ok()
++        }) {
++            Ok(cfg) => {
++                LlmExtractor::with_engine(cfg.engine, &cfg.base_url, &cfg.model, &self.cache_dir)
++            }
++            Err(_) => LlmExtractor::with_config(&self.ollama_url, &self.model, &self.cache_dir),
++        };
++
++        // Measure, record, then decide — nothing is sent before both hold. This
++        // is the difference P1.T4 is about: "tier enabled" and "tier working"
++        // must not be the same claim, and a run that sends nothing must say so.
++        let state = llm.tier_state().await;
++        crate::run_evidence::record("llm_tier", state.to_evidence());
++        if !state.enabled {
++            crate::run_evidence::record_limitations(&[format!(
++                "llm tier not used for {domain}: {}",
++                state.reason
++            )]);
++            return None;
++        }
+ 
+         // Phase 1: use a cached schema at CSS speed (zero LLM cost). If the
+         // result validates, return it. Otherwise heal the schema and retry.
+@@ -323,9 +371,7 @@ impl SmartExtractor {
+                     "image" => out.image_url = Some(value.clone()),
+                     "description" => out.description = Some(value.clone()),
+                     "ratingValue" => out.rating = value.parse().ok(),
+-                    "reviewCount" => {
+-                        out.review_count = value.replace(',', "").parse().ok()
+-                    }
++                    "reviewCount" => out.review_count = value.replace(',', "").parse().ok(),
+                     "category" => out.category = Some(value.clone()),
+                     _ => {}
+                 }
+@@ -344,29 +390,24 @@ impl SmartExtractor {
+         out.name = meta(html, "og:title");
+         out.image_url = meta(html, "og:image");
+         out.description = meta(html, "og:description");
+-        out.brand = meta(html, "product:brand")
+-            .or_else(|| meta(html, "og:brand"));
++        out.brand = meta(html, "product:brand").or_else(|| meta(html, "og:brand"));
+ 
+-        if let Some(p) = meta(html, "product:price:amount")
+-            .or_else(|| meta(html, "og:price:amount"))
++        if let Some(p) =
++            meta(html, "product:price:amount").or_else(|| meta(html, "og:price:amount"))
+         {
+             out.price_cents = parse_price_to_cents(&p);
+         }
+-        out.currency = meta(html, "product:price:currency")
+-            .or_else(|| meta(html, "og:price:currency"));
++        out.currency =
++            meta(html, "product:price:currency").or_else(|| meta(html, "og:price:currency"));
+ 
+         if let Some(sale) = meta(html, "product:sale_price:amount") {
+             out.sale_price_cents = parse_price_to_cents(&sale);
+         }
+-        out.availability = meta(html, "product:availability")
+-            .or_else(|| meta(html, "og:availability"));
++        out.availability =
++            meta(html, "product:availability").or_else(|| meta(html, "og:availability"));
+         out.category = meta(html, "product:category");
+ 
+-        if out.has_data() {
+-            Some(out)
+-        } else {
+-            None
+-        }
++        if out.has_data() { Some(out) } else { None }
+     }
+ 
+     // ---- Tier 4: CSS heuristics ----------------------------------------
+@@ -382,11 +423,7 @@ impl SmartExtractor {
+         out.rating = p.rating;
+         out.image_url = p.image_url;
+         out.sku = p.sku;
+-        if out.has_data() {
+-            Some(out)
+-        } else {
+-            None
+-        }
++        if out.has_data() { Some(out) } else { None }
+     }
+ }
+ 
+@@ -439,9 +476,11 @@ fn populate_from_jsonld(out: &mut ExtractedProduct, obj: &Value) {
+ 
+     // brand can be a string or a nested {"name": "X"}
+     out.brand = obj.get("brand").and_then(|b| {
+-        b.as_str()
+-            .map(|s| s.to_string())
+-            .or_else(|| b.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
++        b.as_str().map(|s| s.to_string()).or_else(|| {
++            b.get("name")
++                .and_then(|n| n.as_str())
++                .map(|s| s.to_string())
++        })
+     });
+ 
+     // image: string | array | {url}
+@@ -449,13 +488,11 @@ fn populate_from_jsonld(out: &mut ExtractedProduct, obj: &Value) {
+         v.as_str()
+             .map(|s| s.to_string())
+             .or_else(|| {
+-                v.as_array()
+-                    .and_then(|a| a.first())
+-                    .and_then(|f| {
+-                        f.as_str().map(|s| s.to_string()).or_else(|| {
+-                            f.get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
+-                        })
+-                    })
++                v.as_array().and_then(|a| a.first()).and_then(|f| {
++                    f.as_str()
++                        .map(|s| s.to_string())
++                        .or_else(|| f.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()))
++                })
+             })
+             .or_else(|| v.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()))
+     });
+@@ -623,11 +660,7 @@ fn product_from_item(item: &HashMap<String, String>, confidence: f64) -> Option<
+         .get("price_cents")
+         .and_then(|s| s.parse::<i64>().ok())
+         .or_else(|| item.get("price").and_then(|s| parse_price_to_cents(s)));
+-    if out.has_data() {
+-        Some(out)
+-    } else {
+-        None
+-    }
++    if out.has_data() { Some(out) } else { None }
+ }
+ 
+ // ---------------------------------------------------------------------------

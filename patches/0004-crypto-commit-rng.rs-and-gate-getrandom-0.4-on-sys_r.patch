@@ -1,0 +1,55 @@
+From 14eeccfd590b02ee46fd2edcc1e61d340d64464f Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:21:24 +0000
+Subject: [PATCH 04/27] crypto: commit rng.rs and gate getrandom 0.4 on sys_rng
+
+2b2f2055 added `mod rng;` but never committed rng.rs, so branch v1 did not build
+from a clean checkout (E0583). getrandom 0.4 gates sys_rng behind a feature, hence
+the manifest line. Workspace check RC=0 in 2m59s.
+
+NOTE: this crate serves the room-code/relay crypto path, which sits on the
+sendtallow boundary (plan cross-phase rule 9). Committed with that stated.
+---
+ crates/tallow-crypto/Cargo.toml |  2 +-
+ crates/tallow-crypto/src/rng.rs | 19 +++++++++++++++++++
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+ create mode 100644 crates/tallow-crypto/src/rng.rs
+
+diff --git a/crates/tallow-crypto/Cargo.toml b/crates/tallow-crypto/Cargo.toml
+index 3a911fb..347b747 100644
+--- a/crates/tallow-crypto/Cargo.toml
++++ b/crates/tallow-crypto/Cargo.toml
+@@ -61,7 +61,7 @@ rand_core = "0.6"
+ # curve25519-dalek 5), whose fallible `TryRng` needs getrandom 0.4 — while the
+ # plain `getrandom` name above stays pinned to 0.2 for this crate's older
+ # consumers. rng.rs's own header documents the `getrandom04` key.
+-getrandom04 = { package = "getrandom", version = "0.4" }
++getrandom04 = { package = "getrandom", version = "0.4", features = ["sys_rng"] }
+ 
+ # Serialization
+ serde = { version = "1", features = ["derive"] }
+diff --git a/crates/tallow-crypto/src/rng.rs b/crates/tallow-crypto/src/rng.rs
+new file mode 100644
+index 0000000..3180fa6
+--- /dev/null
++++ b/crates/tallow-crypto/src/rng.rs
+@@ -0,0 +1,19 @@
++//! OS randomness for the rand_core 0.10 generation.
++//!
++//! The dalek 3.0 / curve25519-dalek 5 APIs draw from `rand_core` 0.10, whose `CryptoRng` is built
++//! on the fallible `TryRng` trait. The crate's older consumers (argon2's salt generation via
++//! password-hash, `rand` 0.8) are still on the 0.6 generation, so the two coexist during the
++//! Phase-2 dependency wave — see items 2.2 and 2.3 in the crypto-upgrade tracker. Collapsing them
++//! is not possible until argon2 moves generations, which is why this is a helper rather than a
++//! blanket replacement of `rand_core::OsRng`.
++//!
++//! `UnwrapErr` is the documented bridge (curve25519-dalek 5's own `Scalar::random` doc example uses
++//! exactly `UnwrapErr(SysRng)`) and on wasm32-unknown-unknown `SysRng` resolves to the browser's
++//! CSPRNG through getrandom's `wasm_js` backend.
++
++/// The OS CSPRNG, for APIs that require the rand_core 0.10 generation.
++// The dependency is declared as `getrandom04` because this crate's 0.2 pin owns the plain
++// `getrandom` name; the Rust path follows the manifest key.
++pub(crate) fn csprng() -> impl getrandom04::rand_core::CryptoRng {
++    getrandom04::rand_core::UnwrapErr(getrandom04::SysRng)
++}

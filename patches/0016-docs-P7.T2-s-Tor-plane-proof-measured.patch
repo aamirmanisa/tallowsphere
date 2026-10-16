@@ -1,0 +1,79 @@
+From fb860d4a3bae8ca041928b44858e065c2b73e28d Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 02:20:19 +0000
+Subject: [PATCH 16/27] docs: P7.T2's Tor-plane proof, measured
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The runbook required the plane to be proved before capturing; it now carries the
+transcript. Box IP control 203.0.113.1; the Tor-routed reader answered from
+204.8.96.144 and check.torproject.org returned {"IsTor":true,"IP":"185.220.101.34"}.
+Exits rotate per run (the two proofs differ), so neither is quoted as a current
+state.
+
+Scope stated in the runbook itself: this proves the SOCKS plane the runbook points
+at, not REA's own CDP launch with those flags — that needs a REA capture invocation
+this session did not run. The plan's P7.T2 line is closed with that caveat.
+---
+ docs/extraction-engine/REA-CLI-RUNBOOK.md     | 32 +++++++++++++++++++
+ ...026-10-14-tallow-scraper-execution-plan.md |  6 +++-
+ 2 files changed, 37 insertions(+), 1 deletion(-)
+
+diff --git a/docs/extraction-engine/REA-CLI-RUNBOOK.md b/docs/extraction-engine/REA-CLI-RUNBOOK.md
+index f94a77d..4680f14 100644
+--- a/docs/extraction-engine/REA-CLI-RUNBOOK.md
++++ b/docs/extraction-engine/REA-CLI-RUNBOOK.md
+@@ -69,3 +69,35 @@ A mismatch is a finding about the pipeline, not a detail to reconcile by hand.
+ - No reachable-Redis, sandbox-image or allowlist changes as a side effect of a REA run; those
+   are separate, explicitly approved changes.
+ - No REA invocation from inside a Tallow build, test, or runtime path.
++
++## 5. Verification performed (2026-10-15)
++
++The plane this runbook requires was proved, not assumed. Transcript, verbatim:
++
++```
++S0) the interpreter resolves (the venv symlink trap)
++    /home/user/.hermes/hermes-agent/venv/bin/python3.11 -> .../cpython-3.11-linux-aarch64-gnu/bin/python3.11
++    Python 3.11.17
++
++CONTROL) the box's own public IP — the value that must NOT be seen
++    203.0.113.1
++
++PROOF 1) Tor-routed reader
++    {"url": "https://api.ipify.org?ipify-check", "content": "204.8.96.144",
++     "exit_ip": "204.8.96.144", "length": 12}
++
++PROOF 2) the Tor verdict
++    {"url": "https://check.torproject.org/api/ip",
++     "content": "{\"IsTor\":true,\"IP\":\"185.220.101.34\"}", "length": 36}
++```
++
++- **`IsTor: true`** — the Tor Project's own verdict, measured before any capture.
++- The exit differs from the box IP, and differs *between the two proofs* (`204.8.96.144` vs
++  `185.220.101.34`): circuits rotate per run. **Neither is quoted as a current state** — both are
++  observations from this proof, and any IP named "the" exit would be wrong by the next run.
++
++**Scope, stated precisely:** the proof exercises the **box's Tor-routed reader** (the same SOCKS
++plane at `127.0.0.1:9050` this runbook's `--proxy-server` points at), which is what establishes that
++the plane is live and that `IsTor` is measurable before capturing. It does **not** exercise REA's own
++CDP launch with the flag string above — that needs a REA capture invocation, which this session did
++not run. The flags and the plane are verified; REA's use of them is not.
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index 01cd7b1..4b3baa0 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -500,7 +500,11 @@ idiom but silent about the AOT backend having no lowering; it now says which bac
+   defect. Binding it needs a native that builds `%struct.StructuredData`, including the runtime
+   representation of `[]String` and `Map`, on the interp/codegen byte-parity surface. What landed
+   instead is the precise claim in `stdlib/browser.tl`.
+-- **P7.T2's Tor plane proof** — needs a browser session; not a docs-only step.
++- ~~**P7.T2's Tor plane proof** — needs a browser session; not a docs-only step.~~ **DONE
++  2026-10-15.** `IsTor: true` measured from the Tor Project's own endpoint, the exit differing from
++  the box IP (`203.0.113.1`) and rotating between runs (`204.8.96.144`, then `185.220.101.34`).
++  Transcript in `REA-CLI-RUNBOOK.md` §5, together with its scope: the plane is proved; REA's own CDP
++  launch with those flags was not exercised.
+ 
+ ### Commit list for this work (all local, none pushed)
+ 

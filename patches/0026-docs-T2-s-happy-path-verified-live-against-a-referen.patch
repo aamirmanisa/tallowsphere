@@ -1,0 +1,63 @@
+From 089c91490f3bffab859e011f75731697692c5bf3 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 04:29:32 +0000
+Subject: [PATCH 26/27] docs: T2's happy path verified live, against a
+ reference read outside Tallow
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The binding was already verified for refusals offline; its happy path was recorded as
+unverified because it fetches and no local fixture can be. It is verified now, and the
+method is the record's point: the reference was read independently through Tor before the
+run, so the result is evidence rather than two engines agreeing with each other.
+
+Both legs exited 0 (the native one under --require-native, so no fallback), produced
+byte-identical output, and the seed_url matched the independently-read first <loc> of a
+real 84-entry sitemap. The compiled path did that fetch itself, over the Tor plane proven
+beforehand.
+
+Two details kept because they cost time to learn: the CLI binary had to be rebuilt first,
+since cargo check and cargo test do not produce one and the pre-existing binary predated
+the arm — testing against it would have reported a bogus "native build unavailable"; and
+the live fixture stays out of the repo, because a suite that needs Tor up is a suite that
+fails for reasons unrelated to the code.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 23 +++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index dce251f..e4a73ec 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -297,9 +297,28 @@ wording with the compiled arm so both engines name the same cause.
+ `runtime::structured_data_ffi` **7/0** · codegen **621/0**.
+ 
+ **Scope, stated:** `from_links` plans offline, so it gets the full three-assertion treatment with a pinned
+-reference. `from_sitemap` FETCHES, so its happy path **cannot be exercised offline** — a local fixture can
++reference. `from_sitemap` FETCHES, so its happy path cannot be exercised offline — a local fixture can
+ never be fetched, which the facade's own doc records. What is deterministic offline is the refusal
+-(rejected before any egress), and that is what is pinned. The happy path is unverified, not verified.
++(rejected before any egress), and that is pinned in `tests/crawler_parity.rs`.
++
++**The happy path was then verified live, and later retired from the "unverified" list:**
++
++| Step | Observation |
++|---|---|
++| independent reference, read **outside Tallow** (`torcurl`, first `<loc>`) | `https://www.sitemaps.org/` |
++| interpreter leg (`--target x86_64-linux`) rc=0 | seed `https://www.sitemaps.org/` · strategy `sitemap` · maxpages `84` · sitemap_url echoed |
++| native leg (`--require-native`, no fallback permitted) rc=0 | byte-identical |
++| comparison | **IDENTICAL**, and the seed matches the independently-read `<loc>` |
++
++So the compiled path performed a real 84-entry sitemap fetch itself — no fallback, over the Tor plane
++proven before the run (`IsTor:true`, exit IP differing from the box's `203.0.113.1`). Two details
++worth keeping: the reference being external is what makes this evidence rather than agreement, and the
++CLI binary had to be **rebuilt** first — `cargo check` and `cargo test` do not produce one, and the
++pre-existing `target/debug/tallow` predated the arm, so testing against it would have reported a bogus
++"native build unavailable" and indicted a binding that was fine.
++
++The live fixture is deliberately **not** in the repo: its success depends on the network and on Tor being
++up, so putting it in a CI suite would make that suite depend on both.
+ 
+ **With T2 bound, the declared `// native` surface is fully bound** — a claim now checkable by grep.
+ 

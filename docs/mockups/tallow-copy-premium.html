@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tallow Copy — Premium Transfer Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --bg: #101114;
+    --window-bg: #161820;
+    --surface: #1c1e28;
+    --surface-hover: #232530;
+    --surface-active: #2a2d3a;
+    --border: rgba(255,255,255,0.06);
+    --border-strong: rgba(255,255,255,0.1);
+    --accent: #3ecfa7;
+    --accent-hover: #52e0ba;
+    --accent-dim: rgba(62,207,167,0.1);
+    --accent-glow: rgba(62,207,167,0.25);
+    --blue: #5b9aff;
+    --blue-dim: rgba(91,154,255,0.1);
+    --orange: #f0a050;
+    --orange-dim: rgba(240,160,80,0.1);
+    --red: #f06070;
+    --red-dim: rgba(240,96,112,0.1);
+    --text: #e2e4ea;
+    --text-2: #9699a8;
+    --text-3: #5c5f70;
+    --text-4: #3a3d4e;
+    --radius: 18px;
+    --radius-sm: 999px;
+    --radius-md: 14px;
+    --radius-round: 999px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ─── WINDOW FRAME ─── */
+  .window {
+    width: 1120px;
+    height: 720px;
+    background: var(--window-bg);
+    border-radius: 24px;
+    border: 1px solid var(--border-strong);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,0.3),
+      0 24px 70px rgba(0,0,0,0.52),
+      0 0 120px rgba(62,207,167,0.03);
+    position: relative;
+  }
+
+  /* Titlebar */
+  .titlebar {
+    height: 38px;
+    background: #111219;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+
+  .traffic-lights {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .traffic-light {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    position: relative;
+  }
+
+  .traffic-light.close { background: #f06070; }
+  .traffic-light.minimize { background: #f0a050; }
+  .traffic-light.maximize { background: #3ecfa7; }
+
+  .traffic-light::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 35%, rgba(255,255,255,0.25), transparent 60%);
+  }
+
+  .titlebar-title {
+    flex: 1;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: 0.01em;
+  }
+
+  .titlebar-actions {
+    display: flex;
+    gap: 2px;
+  }
+
+  .tb-btn {
+    width: 28px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-3);
+    border-radius: var(--radius-round);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+  }
+
+  .tb-btn:hover { background: var(--surface); color: var(--text-2); }
+
+  /* ─── BODY ─── */
+  .window-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ─── SIDEBAR ─── */
+  .sidebar {
+    width: 200px;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .sb-section {
+    margin-bottom: 16px;
+  }
+
+  .sb-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-4);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 0 10px;
+    margin-bottom: 4px;
+  }
+
+  .sb-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: var(--radius-round);
+    cursor: pointer;
+    font-size: 12.5px;
+    font-weight: 450;
+    color: var(--text-2);
+    transition: all 0.1s;
+    position: relative;
+  }
+
+  .sb-item:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .sb-item.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .sb-icon {
+    width: 16px;
+    height: 16px;
+    opacity: 0.6;
+    flex-shrink: 0;
+  }
+
+  .sb-item.active .sb-icon { opacity: 1; }
+
+  .sb-count {
+    margin-left: auto;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text-4);
+    background: var(--surface);
+    padding: 1px 6px;
+    border-radius: var(--radius-round);
+    font-weight: 400;
+  }
+
+  .sb-item.active .sb-count {
+    background: rgba(62,207,167,0.15);
+    color: var(--accent);
+  }
+
+  .sb-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 8px 10px;
+  }
+
+  .sb-spacer { flex: 1; }
+
+  /* Sidebar footer */
+  .sb-footer {
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  .sb-disk {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .sb-disk-icon {
+    width: 14px;
+    height: 14px;
+    color: var(--text-3);
+  }
+
+  .sb-disk-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sb-disk-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sb-disk-size {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text-4);
+  }
+
+  .sb-disk-bar {
+    height: 3px;
+    background: var(--surface);
+    border-radius: var(--radius-round);
+    overflow: hidden;
+    margin-top: 4px;
+  }
+
+  .sb-disk-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius-round);
+    opacity: 0.6;
+  }
+
+  /* ─── MAIN ─── */
+  .main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    height: 44px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .tool-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .tool-btn {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-2);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 450;
+    border-radius: var(--radius-round);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.1s;
+    white-space: nowrap;
+  }
+
+  .tool-btn:hover {
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+  }
+
+  .tool-btn.primary {
+    background: var(--accent);
+    color: #0a1a14;
+    font-weight: 600;
+    border-color: var(--accent);
+  }
+
+  .tool-btn.primary:hover {
+    background: var(--accent-hover);
+  }
+
+  .tool-btn.danger {
+    color: var(--red);
+  }
+
+  .tool-btn.danger:hover {
+    background: var(--red-dim);
+    border-color: rgba(240,96,112,0.15);
+  }
+
+  .mode-switch {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-round);
+  }
+
+  .mode-pill {
+    height: 24px;
+    padding: 0 10px;
+    border-radius: var(--radius-round);
+    border: 0;
+    background: transparent;
+    color: var(--text-3);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .mode-pill.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .engine-chip {
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px;
+    border-radius: var(--radius-round);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .tool-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border);
+    margin: 0 6px;
+  }
+
+  .toolbar-spacer { flex: 1; }
+
+  .tool-search {
+    height: 32px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-round);
+    padding: 0 8px 0 28px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 11.5px;
+    outline: none;
+    width: 170px;
+    transition: all 0.15s;
+    position: relative;
+  }
+
+  .tool-search:focus {
+    border-color: var(--accent);
+    background: var(--surface-hover);
+    width: 220px;
+  }
+
+  .tool-search::placeholder { color: var(--text-4); }
+
+  .search-wrap {
+    position: relative;
+  }
+
+  .search-wrap svg {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-4);
+    pointer-events: none;
+  }
+
+  /* ─── PATH BAR ─── */
+  .path-bar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 14px;
+    height: 42px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .path-side {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .path-side-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-4);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex-shrink: 0;
+  }
+
+  .path-side-label.from { color: var(--blue); }
+  .path-side-label.to { color: var(--accent); }
+
+  .path-display {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    overflow: hidden;
+    flex: 1;
+  }
+
+  .path-seg {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text-3);
+    white-space: nowrap;
+    padding: 3px 7px;
+    border-radius: var(--radius-round);
+    cursor: default;
+    transition: all 0.1s;
+  }
+
+  .path-seg:hover { background: var(--surface); color: var(--text-2); }
+  .path-seg:last-child { color: var(--text-2); font-weight: 500; }
+
+  .path-arrow-icon {
+    color: var(--text-4);
+    flex-shrink: 0;
+  }
+
+  .path-sep-char {
+    color: var(--text-4);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+
+  .path-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+    margin: 0 12px;
+    flex-shrink: 0;
+  }
+
+  .path-browse {
+    padding: 5px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-round);
+    color: var(--text-3);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.1s;
+    flex-shrink: 0;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  .path-browse:hover {
+    background: var(--surface-hover);
+    color: var(--text-2);
+    border-color: var(--border-strong);
+  }
+
+  /* ─── CONTENT AREA ─── */
+  .content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* File list */
+  .file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 6px 10px;
+  }
+
+  .file-list::-webkit-scrollbar { width: 5px; }
+  .file-list::-webkit-scrollbar-track { background: transparent; }
+  .file-list::-webkit-scrollbar-thumb { background: var(--text-4); border-radius: 3px; }
+
+  /* Column headers */
+  .list-header {
+    display: grid;
+    grid-template-columns: 32px 1fr 80px 100px 90px 40px;
+    gap: 0;
+    padding: 0 8px;
+    height: 28px;
+    align-items: center;
+    border: 1px solid var(--border);
+    position: sticky;
+    top: 8px;
+    background: rgba(28,30,40,0.72);
+    z-index: 2;
+    border-radius: var(--radius-round);
+    margin-bottom: 6px;
+  }
+
+  .list-h-cell {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-4);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.1s;
+  }
+
+  .list-h-cell:hover { color: var(--text-3); }
+
+  .list-h-cell.sorted { color: var(--accent); }
+  .list-h-cell.sorted::after { content: ' ↓'; font-size: 9px; }
+
+  /* File rows */
+  .file-row {
+    display: grid;
+    grid-template-columns: 32px 1fr 80px 100px 90px 40px;
+    gap: 0;
+    padding: 0 8px;
+    height: 34px;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: var(--radius-round);
+    margin-bottom: 4px;
+    cursor: default;
+    transition: background 0.08s;
+  }
+
+  .file-row:hover {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  .file-row.selected {
+    background: var(--accent-dim);
+    border-color: rgba(62,207,167,0.14);
+  }
+
+  .file-row .cell {
+    padding: 0 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-type-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-round);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'DM Mono', monospace;
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    margin: 0 auto;
+  }
+
+  .ft-video { background: rgba(91,154,255,0.12); color: var(--blue); }
+  .ft-archive { background: rgba(160,130,255,0.12); color: #a882ff; }
+  .ft-image { background: rgba(255,100,130,0.12); color: #ff6482; }
+  .ft-doc { background: rgba(240,160,80,0.12); color: var(--orange); }
+  .ft-code { background: rgba(62,207,167,0.12); color: var(--accent); }
+  .ft-folder { background: rgba(255,255,255,0.06); color: var(--text-3); }
+
+  .cell-name {
+    font-size: 12.5px;
+    font-weight: 450;
+    color: var(--text);
+  }
+
+  .cell-size, .cell-modified, .cell-status {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+
+  .cell-status {
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .status-dot.queued { background: var(--text-4); }
+  .status-dot.active { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); animation: pulse 2s infinite; }
+  .status-dot.done { background: var(--accent); opacity: 0.5; }
+  .status-dot.error { background: var(--red); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .row-action {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-4);
+    border-radius: var(--radius-round);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.1s;
+    margin: 0 auto;
+    opacity: 0;
+  }
+
+  .file-row:hover .row-action { opacity: 1; }
+  .row-action:hover { background: var(--surface-hover); color: var(--text-2); }
+
+  /* ─── RIGHT PANEL ─── */
+  .right-panel {
+    width: 230px;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+
+  .right-panel::-webkit-scrollbar { width: 4px; }
+  .right-panel::-webkit-scrollbar-track { background: transparent; }
+  .right-panel::-webkit-scrollbar-thumb { background: var(--text-4); border-radius: 2px; }
+
+  .rp-section {
+    padding: 12px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .rp-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-4);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+  }
+
+  /* Transfer Stats */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .stat-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+  }
+
+  .stat-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    color: var(--text-4);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 3px;
+  }
+
+  .stat-val {
+    font-family: 'DM Mono', monospace;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 1.1;
+  }
+
+  .stat-val.accent { color: var(--accent); }
+  .stat-val.blue { color: var(--blue); }
+  .stat-val.orange { color: var(--orange); }
+
+  .stat-val .sm {
+    font-size: 10px;
+    color: var(--text-3);
+    font-weight: 400;
+  }
+
+  /* Speed mini graph */
+  .speed-mini {
+    margin-top: 10px;
+    height: 32px;
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+  }
+
+  .speed-bar {
+    flex: 1;
+    border-radius: var(--radius-round);
+    min-height: 2px;
+    background: var(--accent);
+    opacity: 0.4;
+    transition: height 0.4s ease, opacity 0.4s ease;
+  }
+
+  .speed-bar:last-child { opacity: 0.8; }
+
+  /* Transfer queue */
+  .queue-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 7px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-round);
+    margin-bottom: 3px;
+  }
+
+  .queue-item:last-child { border-bottom: none; }
+  .queue-item:hover {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+
+  .qi-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-round);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'DM Mono', monospace;
+    font-size: 7px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .qi-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .qi-name {
+    font-size: 11px;
+    font-weight: 450;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .qi-meta {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    color: var(--text-4);
+    margin-top: 1px;
+  }
+
+  .qi-progress {
+    width: 40px;
+    height: 3px;
+    background: var(--surface-active);
+    border-radius: var(--radius-round);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .qi-fill {
+    height: 100%;
+    border-radius: var(--radius-round);
+    background: var(--accent);
+  }
+
+  /* Settings */
+  .rp-setting {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+  }
+
+  .rp-setting-label {
+    font-size: 11.5px;
+    color: var(--text-2);
+  }
+
+  .switch {
+    width: 34px;
+    height: 18px;
+    background: var(--text-4);
+    border-radius: var(--radius-round);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .switch.on { background: var(--accent); }
+
+  .switch::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: white;
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.15s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  .switch.on::after { transform: translateX(16px); }
+
+  .rp-select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-round);
+    padding: 3px 6px;
+    color: var(--text-2);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    outline: none;
+    cursor: pointer;
+    -webkit-appearance: none;
+  }
+
+  .rp-select:hover { border-color: var(--border-strong); }
+
+  /* ─── STATUSBAR ─── */
+  .statusbar {
+    height: 26px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 14px;
+    flex-shrink: 0;
+    background: #111219;
+  }
+
+  .sb-item-status {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text-4);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .sb-item-status .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+  }
+
+  .sb-item-status .dot.green { background: var(--accent); box-shadow: 0 0 4px var(--accent-glow); }
+  .sb-item-status .dot.orange { background: var(--orange); }
+
+  .statusbar-spacer { flex: 1; }
+
+  .sb-speed {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* Progress bar in statusbar */
+  .sb-progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    max-width: 200px;
+  }
+
+  .sb-progress {
+    flex: 1;
+    height: 4px;
+    background: var(--surface);
+    border-radius: var(--radius-round);
+    overflow: hidden;
+  }
+
+  .sb-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius-round);
+    transition: width 0.3s;
+  }
+
+  .sb-progress-pct {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text-3);
+    width: 30px;
+    text-align: right;
+  }
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<div class="window">
+  <!-- Titlebar -->
+  <div class="titlebar">
+    <div class="traffic-lights">
+      <div class="traffic-light close"></div>
+      <div class="traffic-light minimize"></div>
+      <div class="traffic-light maximize"></div>
+    </div>
+    <div class="titlebar-title">Tallow Copy — Mirror Job / Media Archive</div>
+    <div class="titlebar-actions">
+      <button class="tb-btn">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18m-9-9h18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="window-body">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="sb-section">
+        <div class="sb-label">Jobs</div>
+        <div class="sb-item active">
+          <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><polyline points="12,5 19,12 12,19"/></svg>
+          Active
+          <span class="sb-count">3</span>
+        </div>
+        <div class="sb-item">
+          <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+          Plans
+        </div>
+        <div class="sb-item">
+          <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          Paused
+        </div>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-label">Reports</div>
+        <div class="sb-item">
+          <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20,6 9,17 4,12"/></svg>
+          History
+          <span class="sb-count">41</span>
+        </div>
+        <div class="sb-item">
+          <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          Needs review
+          <span class="sb-count">2</span>
+        </div>
+      </div>
+
+      <div class="sb-divider"></div>
+
+      <div class="sb-section">
+        <div class="sb-label">Tallow</div>
+        <div class="sb-item">
+          <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Mirror Media
+        </div>
+        <div class="sb-item">
+          <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="17,1 21,5 17,9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7,23 3,19 7,15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Script Presets
+        </div>
+      </div>
+
+      <div class="sb-spacer"></div>
+
+      <!-- Disk usage -->
+      <div class="sb-footer">
+        <div class="sb-disk">
+          <svg class="sb-disk-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+          <div class="sb-disk-info">
+            <div class="sb-disk-name">Target RAID (Z:)</div>
+            <div class="sb-disk-size">7.8 / 18 TB</div>
+          </div>
+        </div>
+        <div class="sb-disk-bar"><div class="sb-disk-fill" style="width:43%"></div></div>
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <div class="main-area">
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="tool-group">
+          <button class="tool-btn primary">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><polyline points="12,5 19,12 12,19"/></svg>
+            Execute
+          </button>
+          <button class="tool-btn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            Pause
+          </button>
+          <button class="tool-btn danger">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="14" height="14" x="5" y="5" rx="2"/></svg>
+            Cancel
+          </button>
+        </div>
+
+        <div class="tool-sep"></div>
+
+        <div class="tool-group">
+          <button class="tool-btn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Plan
+          </button>
+          <button class="tool-btn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Add Folder
+          </button>
+        </div>
+
+        <div class="toolbar-spacer"></div>
+
+        <div class="mode-switch" aria-label="Transfer mode">
+          <button class="mode-pill">Copy</button>
+          <button class="mode-pill active">Mirror</button>
+          <button class="mode-pill">Sync</button>
+        </div>
+
+        <div class="engine-chip">IOCP · 16 workers</div>
+
+        <div class="search-wrap">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input class="tool-search" type="text" placeholder="Filter plan…">
+        </div>
+      </div>
+
+      <!-- Path Bar -->
+      <div class="path-bar">
+        <div class="path-side">
+          <span class="path-side-label from">Source</span>
+          <div class="path-display">
+            <span class="path-seg">E:</span>
+            <span class="path-sep-char">›</span>
+            <span class="path-seg">Media</span>
+            <span class="path-sep-char">›</span>
+            <span class="path-seg">Archive</span>
+            <span class="path-sep-char">›</span>
+            <span class="path-seg">Raw</span>
+          </div>
+          <button class="path-browse">Browse</button>
+        </div>
+
+        <div class="path-divider"></div>
+
+        <div class="path-side">
+          <span class="path-side-label to">Target</span>
+          <div class="path-display">
+            <span class="path-seg">Z:</span>
+            <span class="path-sep-char">›</span>
+            <span class="path-seg">Backup</span>
+            <span class="path-sep-char">›</span>
+            <span class="path-seg">Media</span>
+          </div>
+          <button class="path-browse">Browse</button>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="content">
+        <div class="file-list">
+          <!-- Column Headers -->
+          <div class="list-header">
+            <div class="list-h-cell"></div>
+            <div class="list-h-cell sorted">Name</div>
+            <div class="list-h-cell">Size</div>
+            <div class="list-h-cell">Modified</div>
+            <div class="list-h-cell">Status</div>
+            <div class="list-h-cell"></div>
+          </div>
+
+          <!-- Rows -->
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-folder">DIR</div></div>
+            <div class="cell cell-name">camera-roll/</div>
+            <div class="cell cell-size">—</div>
+            <div class="cell cell-modified">May 12, 2026</div>
+            <div class="cell cell-status"><div class="status-dot done"></div> Skipped</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row selected">
+            <div class="cell"><div class="file-type-icon ft-video">R3D</div></div>
+            <div class="cell cell-name">A014_C003_0512HQ_001.r3d</div>
+            <div class="cell cell-size">42.8 GB</div>
+            <div class="cell cell-modified">May 11, 2026</div>
+            <div class="cell cell-status"><div class="status-dot active"></div> 42%</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-archive">BAK</div></div>
+            <div class="cell cell-name">lightroom-catalog-v18.lrcat-data</div>
+            <div class="cell cell-size">18.6 GB</div>
+            <div class="cell cell-modified">May 10, 2026</div>
+            <div class="cell cell-status"><div class="status-dot active"></div> Verify</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-code">DIR</div></div>
+            <div class="cell cell-name">renders/ (14,208 files)</div>
+            <div class="cell cell-size">620 GB</div>
+            <div class="cell cell-modified">May 12, 2026</div>
+            <div class="cell cell-status"><div class="status-dot active"></div> Scan</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-image">DNG</div></div>
+            <div class="cell cell-name">stills-selects-2026.dng</div>
+            <div class="cell cell-size">245 GB</div>
+            <div class="cell cell-modified">May 9, 2026</div>
+            <div class="cell cell-status"><div class="status-dot done"></div> Done</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-doc">LOG</div></div>
+            <div class="cell cell-name">audit-manifest.tallow.jsonl</div>
+            <div class="cell cell-size">4.2 MB</div>
+            <div class="cell cell-modified">May 8, 2026</div>
+            <div class="cell cell-status"><div class="status-dot queued"></div> Journal</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-code">TL</div></div>
+            <div class="cell cell-name">mirror-media.tl</div>
+            <div class="cell cell-size">38 KB</div>
+            <div class="cell cell-modified">May 12, 2026</div>
+            <div class="cell cell-status"><div class="status-dot queued"></div> Preset</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-archive">ISO</div></div>
+            <div class="cell cell-name">client-deliverable-master.iso</div>
+            <div class="cell cell-size">1.1 TB</div>
+            <div class="cell cell-modified">May 12, 2026</div>
+            <div class="cell cell-status"><div class="status-dot error"></div> Locked</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-video">MOV</div></div>
+            <div class="cell cell-name">interview-b-roll-0512.mov</div>
+            <div class="cell cell-size">420 GB</div>
+            <div class="cell cell-modified">May 12, 2026</div>
+            <div class="cell cell-status"><div class="status-dot queued"></div> Queued</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+
+          <div class="file-row">
+            <div class="cell"><div class="file-type-icon ft-image">RAW</div></div>
+            <div class="cell cell-name">raw-stills/ (312 files)</div>
+            <div class="cell cell-size">8.6 MB</div>
+            <div class="cell cell-modified">May 7, 2026</div>
+            <div class="cell cell-status"><div class="status-dot done"></div> Done</div>
+            <div class="cell"><button class="row-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+          </div>
+        </div>
+
+        <!-- Right Panel -->
+        <aside class="right-panel">
+          <!-- Transfer Stats -->
+          <div class="rp-section">
+            <div class="rp-title">Transfer Engine</div>
+            <div class="stat-grid">
+<!-- claim label: transfer-speed figures below (1.8 GB/s) are illustrative mockup copy — unmeasured; IOCP is a Windows-path scenario (non-target) (claims register R-T1 class). -->
+              <div class="stat-box">
+                <div class="stat-label">Speed</div>
+                <div class="stat-val accent">1.8<span class="sm"> GB/s</span></div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">ETA</div>
+                <div class="stat-val blue">3m<span class="sm"> 12s</span></div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Files</div>
+                <div class="stat-val">8.2k<span class="sm"> / 12.4k</span></div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Errors</div>
+                <div class="stat-val orange">2</div>
+              </div>
+            </div>
+            <div class="speed-mini" id="miniGraph"></div>
+          </div>
+
+          <!-- Transfer Queue Preview -->
+          <div class="rp-section">
+            <div class="rp-title">Next Up</div>
+            <div class="queue-item">
+              <div class="qi-icon ft-doc">LOG</div>
+              <div class="qi-info">
+                <div class="qi-name">audit-manifest.tallow.jsonl</div>
+                <div class="qi-meta">4.2 MB • Journal</div>
+              </div>
+              <div class="qi-progress"><div class="qi-fill" style="width:0%"></div></div>
+            </div>
+            <div class="queue-item">
+              <div class="qi-icon ft-code">TL</div>
+              <div class="qi-info">
+                <div class="qi-name">mirror-media.tl</div>
+                <div class="qi-meta">38 KB • Preset</div>
+              </div>
+              <div class="qi-progress"><div class="qi-fill" style="width:0%"></div></div>
+            </div>
+            <div class="queue-item">
+              <div class="qi-icon ft-video">MOV</div>
+              <div class="qi-info">
+                <div class="qi-name">interview-b-roll-0512.mov</div>
+                <div class="qi-meta">420 GB • Queued</div>
+              </div>
+              <div class="qi-progress"><div class="qi-fill" style="width:0%"></div></div>
+            </div>
+          </div>
+
+          <!-- Settings -->
+          <div class="rp-section">
+            <div class="rp-title">Options</div>
+            <div class="rp-setting">
+              <span class="rp-setting-label">Full hash verify</span>
+              <div class="switch on"></div>
+            </div>
+            <div class="rp-setting">
+              <span class="rp-setting-label">Resume journal</span>
+              <div class="switch on"></div>
+            </div>
+            <div class="rp-setting">
+              <span class="rp-setting-label">Mirror deletes</span>
+              <div class="switch"></div>
+            </div>
+            <div class="rp-setting">
+              <span class="rp-setting-label">Buffer</span>
+              <select class="rp-select">
+                <option>8 MB</option>
+                <option selected>32 MB</option>
+                <option>128 MB</option>
+              </select>
+            </div>
+            <div class="rp-setting">
+              <span class="rp-setting-label">Threads</span>
+              <select class="rp-select">
+                <option>8</option>
+                <option selected>16</option>
+                <option>32</option>
+              </select>
+            </div>
+            <div class="rp-setting">
+              <span class="rp-setting-label">Backend</span>
+              <select class="rp-select">
+                <option selected>IOCP</option>
+                <option>Direct I/O</option>
+                <option>Auto</option>
+              </select>
+            </div>
+            <div class="rp-setting">
+              <span class="rp-setting-label">Metadata</span>
+              <select class="rp-select">
+                <option>Data only</option>
+                <option selected>Security</option>
+                <option>All</option>
+              </select>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Statusbar -->
+      <div class="statusbar">
+        <div class="sb-item-status">
+          <div class="dot green"></div>
+          Mirroring
+        </div>
+        <div class="sb-progress-wrap">
+          <div class="sb-progress">
+            <div class="sb-progress-fill" style="width: 42%"></div>
+          </div>
+          <span class="sb-progress-pct">42%</span>
+        </div>
+        <div class="sb-item-status">
+          <div class="dot orange"></div>
+          2 errors
+        </div>
+        <div class="statusbar-spacer"></div>
+        <span class="sb-speed">IOCP 1.8 GB/s</span>
+<!-- claim label: IOCP speed figure is mockup copy — unmeasured; Windows/IOCP path is non-target. -->
+        <div class="sb-item-status">12,441 files • 6.4 TB</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Mini speed graph
+  const miniGraph = document.getElementById('miniGraph');
+  for (let i = 0; i < 24; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'speed-bar';
+    bar.style.height = (20 + Math.random() * 80) + '%';
+    miniGraph.appendChild(bar);
+  }
+
+  setInterval(() => {
+    miniGraph.querySelectorAll('.speed-bar').forEach(bar => {
+      bar.style.height = (20 + Math.random() * 80) + '%';
+    });
+  }, 2000);
+
+  // Switches
+  document.querySelectorAll('.switch').forEach(s => {
+    s.addEventListener('click', () => s.classList.toggle('on'));
+  });
+
+  // Sidebar nav
+  document.querySelectorAll('.sb-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.sb-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+    });
+  });
+
+  // File row selection
+  document.querySelectorAll('.file-row').forEach(row => {
+    row.addEventListener('click', () => {
+      document.querySelectorAll('.file-row').forEach(r => r.classList.remove('selected'));
+      row.classList.add('selected');
+    });
+  });
+</script>
+
+</body>
+</html>

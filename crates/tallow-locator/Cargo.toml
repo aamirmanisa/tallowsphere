@@ -1,0 +1,18 @@
+[package]
+name = "tallow-locator"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Tallow locator v1 — lawful catalog watchers + scorer + fail-close selector (local; SPEC-v2 §11, checklist 3.4)"
+
+[dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ureq = { version = "3", features = ["json"] }
+tallow-registry = { path = "../tallow-registry" }
+
+[[bin]]
+name = "tallow-locator"
+path = "src/bin/tallow-locator.rs"

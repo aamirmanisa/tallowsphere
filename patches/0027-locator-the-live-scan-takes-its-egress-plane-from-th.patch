@@ -1,0 +1,181 @@
+From 7364aa59a59fedf55be79d04ba498eb3c7308de3 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 04:55:37 +0000
+Subject: [PATCH 27/27] locator: the live scan takes its egress plane from the
+ caller, and refuses without one
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`HttpWatcher::ureq_transport()` built a bare `ureq::get`, which the tree's egress guard
+bans because it leaves from the box IP: the crate is a workspace member whose only outward
+dependency is `tallow-registry`, so it cannot reach `runtime::egress_http` and the usual fix
+is unavailable. The transport was already an injected seam; the defect was the locator
+wiring a direct one itself.
+
+So the locator no longer owns egress. `proxied_transport()` takes the proxy to ride from
+TALLOW_LOCATOR_PROXY and fails closed when it is unset or unusable — a refusal, never a
+silent fallback to a direct connection. `--live` then names that refusal per provider, and
+the fail-close path prints why each watcher was dark: "no egress plane configured" and "no
+API token" are different problems, and the generic "all watchers dark" line cannot tell them
+apart.
+
+Verified three ways. `cargo test -p tallow-locator` 20 passed (three new tests, written
+against an env-independent core so no process env is mutated); the guard's
+`no_bare_ureq_calls_in_the_runtime_tree` and `..._outside_the_egress_client` both pass, with
+no bare ureq shape left in the crate; and the real binary end-to-end — with no proxy it
+refuses before any request (exit 3, "TALLOW_LOCATOR_PROXY is not set — the locator will not
+egress from the box IP" ×4), while with the box's Tor SOCKS proxy named it proceeds past the
+egress gate and stops at the missing provider token, proving the refusal is the egress gate
+and not a general failure.
+---
+ crates/tallow-locator/src/cli.rs      | 20 ++++++-
+ crates/tallow-locator/src/watchers.rs | 76 ++++++++++++++++++++++++---
+ 2 files changed, 88 insertions(+), 8 deletions(-)
+
+diff --git a/crates/tallow-locator/src/cli.rs b/crates/tallow-locator/src/cli.rs
+index 908c821..73c859a 100644
+--- a/crates/tallow-locator/src/cli.rs
++++ b/crates/tallow-locator/src/cli.rs
+@@ -17,7 +17,8 @@ usage:\n\
+   tallow-locator selftest\n\
+ \n\
+ scan: poll provider catalogs (fixtures, or --live with own keys in env:\n\
+-      HCLOUD_TOKEN / VULTR_API_KEY / DIGITALOCEAN_TOKEN / OVH_APP_KEY),\n\
++      HCLOUD_TOKEN / VULTR_API_KEY / DIGITALOCEAN_TOKEN / OVH_APP_KEY), and
++      the proxy to egress through in TALLOW_LOCATOR_PROXY\n\
+       normalize → score → select. Fail-close: no compliant offer ⇒ refusal + exit 3.\n\
+       --ledger appends one signed locator.scorecard | locator.refusal receipt (DEV key).\n";
+ 
+@@ -83,7 +84,16 @@ fn collect(a: &ScanArgs) -> (Vec<Offer>, Vec<(String, String)>) {
+             let Some((url, token_env)) = HttpWatcher::endpoint(id) else {
+                 continue;
+             };
+-            let w = HttpWatcher::new(id, url, token_env, HttpWatcher::ureq_transport());
++            // The egress plane comes from the caller: without it the live scan
++            // refuses rather than leaving from the box IP.
++            let transport = match HttpWatcher::proxied_transport() {
++                Ok(t) => t,
++                Err(e) => {
++                    status.push((id.to_string(), format!("live refused: {e}")));
++                    continue;
++                }
++            };
++            let w = HttpWatcher::new(id, url, token_env, transport);
+             match w.offers() {
+                 Ok(mut o) => {
+                     status.push((id.to_string(), format!("live ok ({} offers)", o.len())));
+@@ -176,6 +186,12 @@ pub fn run(args: Vec<String>) -> i32 {
+             let (offers, status) = collect(&a);
+             if offers.is_empty() {
+                 eprintln!("error: zero offers collected (all watchers dark). Fail closed.");
++                // Say WHY each watcher was dark: "no egress plane configured" and
++                // "no API token" are different problems with different fixes, and
++                // the generic line above cannot tell them apart.
++                for (id, s) in &status {
++                    eprintln!("  {id}: {s}");
++                }
+                 return 3;
+             }
+             let rec = match select(&offers, a.class, &ScoringModel::default()) {
+diff --git a/crates/tallow-locator/src/watchers.rs b/crates/tallow-locator/src/watchers.rs
+index ead902a..1f0a998 100644
+--- a/crates/tallow-locator/src/watchers.rs
++++ b/crates/tallow-locator/src/watchers.rs
+@@ -349,11 +349,38 @@ impl HttpWatcher {
+         }
+     }
+ 
+-    /// Real transport: blocking ureq GET with the token header. Never used in
+-    /// tests; wired here so the request path is exercised through one seam.
+-    pub fn ureq_transport() -> Transport {
+-        Box::new(|url: &str, headers: &[(&str, &str)]| {
+-            let mut req = ureq::get(url);
++    /// The **caller-supplied egress plane**, as a transport.
++    ///
++    /// The locator does not own egress: this refuses unless `TALLOW_LOCATOR_PROXY`
++    /// names the proxy to ride (e.g. `socks5://127.0.0.1:9050` for this box's Tor
++    /// SOCKS port), so a live scan cannot leave from the box IP by default. A
++    /// configured-but-unusable proxy refuses too — never a silent fallback to a
++    /// direct connection, which is the failure this replaced.
++    pub fn proxied_transport() -> Result<Transport, String> {
++        let url = std::env::var("TALLOW_LOCATOR_PROXY").ok();
++        Self::proxied_transport_from(url.as_deref())
++    }
++
++    /// Env-independent core of [`Self::proxied_transport`], so the refusal is
++    /// testable without mutating the process environment.
++    fn proxied_transport_from(proxy_url: Option<&str>) -> Result<Transport, String> {
++        const REFUSAL: &str = "egress refused: TALLOW_LOCATOR_PROXY is not set";
++        let url = proxy_url
++            .map(str::trim)
++            .filter(|u| !u.is_empty())
++            .ok_or_else(|| {
++                format!("{REFUSAL} — the locator will not egress from the box IP (set it to the proxy to use, e.g. socks5://127.0.0.1:9050)")
++            })?;
++        let proxy = ureq::Proxy::new(url)
++            .map_err(|e| format!("egress refused: TALLOW_LOCATOR_PROXY is not a usable proxy URL ({url}): {e}"))?;
++        // `.proxy(…)` is mandatory, not decorative: the tree's egress guard bans a
++        // hand-built `config_builder()` agent that never sets one.
++        let agent = ureq::Agent::config_builder()
++            .proxy(Some(proxy))
++            .build()
++            .new_agent();
++        Ok(Box::new(move |url: &str, headers: &[(&str, &str)]| {
++            let mut req = agent.get(url);
+             for (k, v) in headers {
+                 req = req.header(*k, *v);
+             }
+@@ -368,7 +395,12 @@ impl HttpWatcher {
+                 }
+                 Err(e) => Err(format!("{e}")),
+             }
+-        })
++        }))
++    }
++
++    /// What the caller must set for `--live`: the proxy the scan rides.
++    pub fn live_proxy_env() -> &'static str {
++        "TALLOW_LOCATOR_PROXY"
+     }
+ 
+     /// Provider endpoints + token env names (official APIs, v1).
+@@ -477,6 +509,38 @@ mod tests {
+         assert_eq!(offers.len(), 3);
+     }
+ 
++    #[test]
++    fn live_transport_refuses_without_a_configured_proxy() {
++        // The property that matters: no proxy configured = no egress, not a
++        // silent direct connection from the box IP. (`Transport` is a boxed
++        // closure and so has no `Debug`, hence the explicit matches.)
++        for absent in [None, Some(""), Some("   ")] {
++            match HttpWatcher::proxied_transport_from(absent) {
++                Ok(_) => panic!("an unset proxy must refuse, not build a direct client"),
++                Err(e) => {
++                    assert!(e.contains("TALLOW_LOCATOR_PROXY"), "{e}");
++                    assert!(e.contains("egress refused"), "{e}");
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn live_transport_refuses_an_unusable_proxy_url() {
++        match HttpWatcher::proxied_transport_from(Some("://")) {
++            Ok(_) => panic!("an unusable proxy URL must refuse, not fall back to direct"),
++            Err(e) => assert!(e.contains("egress refused"), "{e}"),
++        }
++    }
++
++    #[test]
++    fn live_transport_accepts_the_boxes_tor_socks_proxy() {
++        match HttpWatcher::proxied_transport_from(Some("socks5://127.0.0.1:9050")) {
++            Ok(_) => {}
++            Err(e) => panic!("the documented proxy form must build a transport: {e}"),
++        }
++    }
++
+     #[test]
+     fn http_watcher_missing_key_is_error() {
+         let t: Transport = Box::new(|_, _| Ok((200, "{}".into())));

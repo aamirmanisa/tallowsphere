@@ -1,0 +1,177 @@
+From 0b6ea9488002b4f5579751fc1181a18a45e0d44b Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:21:23 +0000
+Subject: [PATCH 02/27] browser: record typed limitations in provenance records
+ and run evidence
+
+ProvenanceRecord gains `limitations`, rendered through the existing warnings
+channel rather than a parallel renderer; run_evidence gains record_limitations,
+an empty-slice no-op so "nothing to declare" and "did not run" stay distinct.
+First caller: the extract verb declares every field its selectors did not yield.
+---
+ src/browser/provenance.rs | 63 +++++++++++++++++++++++++++++++++++++++
+ src/run_evidence.rs       | 51 +++++++++++++++++++++++++++++++
+ 2 files changed, 114 insertions(+)
+
+diff --git a/src/browser/provenance.rs b/src/browser/provenance.rs
+index fa16c4f..3e1aaa7 100644
+--- a/src/browser/provenance.rs
++++ b/src/browser/provenance.rs
+@@ -39,6 +39,15 @@ pub struct ProvenanceRecord {
+ 
+     pub validations: Vec<ValidationStep>,
+ 
++    /// Explicit unknowns for this record: what the extractor could NOT
++    /// establish — a selector that never matched, a field the page did not
++    /// carry, a tier that was refused, a policy that blocked a path.
++    ///
++    /// A record that carries no value and a record that was never able to
++    /// look are different facts; `limitations` carries the second so absence
++    /// can never read as a clean result.
++    pub limitations: Vec<String>,
++
+     pub final_confidence: f64,
+     pub freshness_tier: FreshnessTier,
+ }
+@@ -94,6 +103,7 @@ impl ProvenanceRecord {
+             extraction_method: "unknown".to_string(),
+             extraction_confidence: 0.8,
+             validations: Vec::new(),
++            limitations: Vec::new(),
+             final_confidence: 0.0,
+             freshness_tier: FreshnessTier::Fresh,
+         }
+@@ -206,6 +216,13 @@ impl ProvenanceRecord {
+             }
+         }
+ 
++        // Explicit unknowns ride the EXISTING warnings channel rather than a
++        // parallel renderer: a limitation that is stored must be visible, so it
++        // cannot be recorded and then silently dropped at render time.
++        for l in &self.limitations {
++            warnings.push(format!("Unknown: {l}"));
++        }
++
+         ProvenanceDisplay {
+             confidence_label: label.to_string(),
+             confidence_color: color.to_string(),
+@@ -304,4 +321,50 @@ mod tests {
+         assert_eq!(d.confidence_label, "High");
+         assert_eq!(d.confidence_color, "#4ade80");
+     }
++
++    #[test]
++    fn limitations_start_empty_and_render_nothing() {
++        let p = ProvenanceRecord::new(499, 1, 2, "kroger_api");
++        assert!(p.limitations.is_empty());
++        let d = p.to_display();
++        assert!(
++            !d.warnings.iter().any(|w| w.starts_with("Unknown:")),
++            "a clean record must not manufacture an unknown: {:?}",
++            d.warnings
++        );
++    }
++
++    #[test]
++    fn stored_limitations_are_rendered() {
++        let mut p = ProvenanceRecord::new(499, 1, 2, "kroger_api");
++        p.extraction_confidence = 0.95;
++        p.limitations
++            .push("selector 'h1.title' never matched on this page".into());
++        p.compute_final_confidence();
++        let d = p.to_display();
++        assert!(
++            d.warnings.iter().any(|w| w.contains("h1.title")),
++            "a stored limitation must be visible in the display: {:?}",
++            d.warnings
++        );
++    }
++
++    #[test]
++    fn absent_and_empty_are_distinguishable() {
++        // The whole point of the field: "we looked and there was nothing" is a
++        // different fact from "we could not look", and the record must be able
++        // to say the second.
++        let mut looked_nothing_there = ProvenanceRecord::new(499, 1, 2, "kroger_api");
++        looked_nothing_there.extraction_confidence = 0.95;
++        let could_not_look = {
++            let mut p = ProvenanceRecord::new(499, 1, 2, "kroger_api");
++            p.extraction_confidence = 0.95;
++            p.limitations.push("page served a challenge".into());
++            p
++        };
++        let a = looked_nothing_there.to_display();
++        let b = could_not_look.to_display();
++        assert!(!a.warnings.iter().any(|w| w.starts_with("Unknown:")));
++        assert!(b.warnings.iter().any(|w| w.starts_with("Unknown:")));
++    }
+ }
+diff --git a/src/run_evidence.rs b/src/run_evidence.rs
+index 18dc4a7..ab3e368 100644
+--- a/src/run_evidence.rs
++++ b/src/run_evidence.rs
+@@ -223,6 +223,26 @@ pub fn sweep_observations(observations: &[Observation], canaries: &[String]) ->
+ // Tests
+ // ---------------------------------------------------------------------------
+ 
++/// Record explicit unknowns ("we could not establish X") for the current run.
++///
++/// Fixes the record `kind` and the payload shape, so a limitation is always
++/// attributable as one. An empty list is a successful **no-op** — a caller
++/// with nothing to declare needs no branch. Returns `false` only when the sink
++/// is enabled and the write failed; a disabled sink is not an error (same
++/// contract as [`record`]).
++pub fn record_limitations(items: &[String]) -> bool {
++    if items.is_empty() {
++        return true;
++    }
++    record(
++        "limitations",
++        serde_json::json!({
++            "count": items.len(),
++            "limitations": items,
++        }),
++    )
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -265,6 +285,37 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn limitations_records_carry_their_items() {
++        with_evidence_dir(|dir| {
++            let items = vec![
++                "selector 'h1.title' never matched".to_string(),
++                "tier refused: no credential".to_string(),
++            ];
++            assert!(record_limitations(&items));
++            let path = dir.join(format!("run-{}.jsonl", run_id()));
++            let body = std::fs::read_to_string(&path).expect("evidence file");
++            let line = body.lines().next().expect("one line");
++            let v: serde_json::Value = serde_json::from_str(line).expect("json");
++            assert_eq!(v["kind"], "limitations");
++            assert_eq!(v["payload"]["count"], 2);
++            assert_eq!(v["payload"]["limitations"][0], items[0]);
++            assert_eq!(v["payload"]["limitations"][1], items[1]);
++        });
++    }
++
++    #[test]
++    fn empty_limitations_is_a_no_op() {
++        with_evidence_dir(|dir| {
++            assert!(record_limitations(&[]));
++            let path = dir.join(format!("run-{}.jsonl", run_id()));
++            assert!(
++                !path.exists(),
++                "an empty limitation set must write nothing at all"
++            );
++        });
++    }
++
+     #[test]
+     fn records_append_as_jsonl() {
+         with_evidence_dir(|dir| {
