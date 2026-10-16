@@ -42,6 +42,19 @@ if [ -z "$PROFDATA_BIN" ] || [ ! -x "$PROFDATA_BIN" ]; then
   PROFDATA_BIN="$(find "$HOME/.rustup/toolchains/$TC" -name llvm-profdata -type f 2>/dev/null | head -1)"
 fi
 
+# THE AES TRAP, AND WHY EVERY ARM CARRIES THESE FLAGS EXPLICITLY.
+# `.cargo/config.toml` puts `-C target-feature=+aes --cfg aes_armv8` in the [target.*] table, and
+# cargo IGNORES that whole table the moment RUSTFLAGS is exported — even when RUSTFLAGS is the empty
+# string. Verified with a nested probe crate (2026-10-16):
+#     RUSTFLAGS unset              -> target-feature=+aes, --cfg aes_armv8   present
+#     RUSTFLAGS=""                 -> both ABSENT
+#     RUSTFLAGS="-Ccodegen-units=16" -> both ABSENT
+# Without them libcrux-aesgcm silently assembles its bitsliced fallback: 111 MB/s vs 973 MB/s.
+# So a PGO build that "just adds -Cprofile-use" would ship an ~8.8x crypto regression, and a PGO A/B
+# that only sets RUSTFLAGS on some arms would compare two different configurations. These two flags
+# are therefore re-stated here for EVERY arm, and the `flags` arm below asserts they reach rustc.
+AES_FLAGS="-C target-feature=+aes --cfg aes_armv8"
+
 build() { # $1=arm  $2=RUSTFLAGS  $3=target-subdir
   local arm="$1" flags="$2" tgt="${TMPDIR:-/tmp}/pgo-$1${PGO_TAG:-}"
   rm -rf "$tgt"
@@ -62,11 +75,43 @@ build() { # $1=arm  $2=RUSTFLAGS  $3=target-subdir
 }
 
 case "$ARM" in
-  base) build base "" ;;
+  base) build base "$AES_FLAGS" ;;
   inst)
     rm -rf "$PROFRAW_DIR"; mkdir -p "$PROFRAW_DIR"
-    build inst "-Cprofile-generate=$PROFRAW_DIR" ;;
-  use)  build use  "-Cprofile-use=$PROFDATA -Cllvm-args=-pgo-warn-missing-function" ;;
+    build inst "$AES_FLAGS -Cprofile-generate=$PROFRAW_DIR" ;;
+  use)  build use  "$AES_FLAGS -Cprofile-use=$PROFDATA -Cllvm-args=-pgo-warn-missing-function" ;;
+  flags)
+    # Regression guard for the trap above: build a throwaway crate INSIDE this tree (so it inherits
+    # .cargo/config.toml) under each arm's RUSTFLAGS and assert the AES flags reach rustc. Cheap
+    # enough to run before every PGO build, and it fails loudly rather than shipping a slow binary.
+    PROBE="$HERE/tmp_aesprobe"
+    rm -rf "$PROBE"; mkdir -p "$PROBE/src"
+    printf '[package]\nname = "aesprobe"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n' > "$PROBE/Cargo.toml"
+    echo 'fn main() {}' > "$PROBE/src/main.rs"
+    rc=0
+    # unset -> the config table works. empty -> the trap (informational). pgo -> OUR fix must restore
+    # the flags, which is the assertion that matters.
+    for spec in "unset:" "empty:" "pgo:$AES_FLAGS -Cprofile-generate=$PROFRAW_DIR"; do
+      name="${spec%%:*}"; flags="${spec#*:}"
+      if [ "$name" = "unset" ]; then
+        out=$($CARGO build -v --manifest-path "$PROBE/Cargo.toml" 2>&1 | rg -o 'target-feature=\+aes|--cfg aes_armv8' | sort -u)
+      else
+        out=$(RUSTFLAGS="$flags" $CARGO build -v --manifest-path "$PROBE/Cargo.toml" 2>&1 | rg -o 'target-feature=\+aes|--cfg aes_armv8' | sort -u)
+      fi
+      n=$(printf '%s\n' "$out" | rg -c . || true)
+      n=${n:-0}   # rg -c prints nothing when there are no matches; an empty n breaks the [ ] test
+      echo "  $name -> aes flags present: $n/2" | tee -a "$LOG"
+      # BOTH arms this script actually builds must have them; a bare exported RUSTFLAGS must not,
+      # which is precisely why AES_FLAGS exists.
+      case "$name" in
+        unset|pgo) [ "$n" -ge 2 ] || { rc=1; echo "  FAIL: $name lost the AES flags" >&2; } ;;
+        empty)     [ "$n" -eq 0 ] || echo "  note: exported RUSTFLAGS kept the AES flags on this cargo — the AES_FLAGS restatement is then redundant but harmless" | tee -a "$LOG" ;;
+      esac
+    done
+    rm -rf "$PROBE"
+    [ $rc -eq 0 ] && echo "  guard OK: an arm built by this script carries the AES flags" || echo "  GUARD FAILED" >&2
+    exit $rc
+    ;;
   workload)
     BIN="${TMPDIR:-/tmp}/pgo-inst/release/tallow"
     CORPUS="$2"
