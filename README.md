@@ -177,7 +177,11 @@ real time. First, **`rustup` on the development box has no default toolchain**, 
 that pins one fails with `rustup could not choose a version of cargo to run`; run inside a pinned tree (this
 one) or set the default once with `rustup default 1.98.1-aarch64-unknown-linux-gnu`. Second, a full rebuild
 must be capped with `MemoryMax`, never `MemoryHigh` — a soft watermark below the peak stalls `rustc` at 0% CPU.
-Formatting the whole workspace hangs; format only the files you touched.
+Formatting the whole workspace is impractical — **not a hang, a scale problem.** Measured 2026-10-16:
+`cargo fmt --all --check` finishes in **10.3 s** on a rustfmt-clean tree and takes **over 5 minutes** on this
+one, which carries **2,827 formatting-diff blocks** across 874 tracked `.rs` files; `rustfmt` spends **30–65 s on
+`src/interp.rs` alone** (56,216 lines — the spread is box load). So format only the files you touched — `scripts/fmt-touched.sh` runs
+that over exactly the files changed since a ref, and `--write` rewrites them in place.
 
 **Release artifacts use `--profile max`.** `[profile.release]` is tuned for the development loop
 (thin LTO, 16 codegen units, incremental); `[profile.max]` is fat LTO with `codegen-units=1`. Measured on
