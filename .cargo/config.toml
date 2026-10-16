@@ -49,6 +49,12 @@ protocol = "sparse"
 #     bytes, so this is a speed change only.
 #
 # CAREFUL: exporting RUSTFLAGS makes cargo ignore this table entirely.
+#
+# Do NOT add `-C link-arg=-fuse-ld=gold` here. Tried 2026-10-16: it links, but cargo
+# itself prints "warning: the gold linker is deprecated and has known bugs with Rust",
+# so a deprecated linker with known Rust bugs is not worth a marginal link speedup on a
+# project that has a release gate. lld and mold are not installed; installing one of
+# those is the real fix, and it is a package change, not a config change.
 rustflags = ["-C", "target-feature=+aes", "--cfg", "aes_armv8"]
 
 # The same two flags for the other aarch64 targets this project actually ships.
