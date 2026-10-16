@@ -338,6 +338,27 @@ criterion = { version = "0.5", default-features = false }
 name = "reliability_bench"
 harness = false
 
+# Dev-loop build settings.
+#
+# debug = 1 emits line tables only. The dev profile otherwise defaults to debug = 2
+# (full debug info), which on this crate produces ~1.5 GB .a files and a ~680 MB
+# binary (measured), and the link phase is the dominant build cost — linkers averaged
+# 1.76 GB RSS and read ~10 GB to emit a 5 MB artifact under memory pressure. Line
+# tables keep file:line in panics and backtraces and drop the rest. Release and max
+# are untouched, so nothing shipped changes.
+#
+# Note what is deliberately NOT here: incremental. `.cargo/config.toml` pins
+# `incremental = false` for the dev and test profiles on purpose (V1 F-phase
+# hardening, 2026-09-14): it avoids a known incremental-cache churn class (ENOENT on
+# dep-graph/query-cache under concurrent or large builds) and it preserves run-twice
+# acceptance parity, because pass 2 runs under `env -i` and so cannot inherit a
+# shell-level CARGO_INCREMENTAL while the config file reaches both passes. Enabling it
+# here would trade that determinism for a faster local loop. When you want the fast
+# loop interactively, use `CARGO_INCREMENTAL=1 cargo check` — and never in a run whose
+# result is going to be reported as evidence.
+[profile.dev]
+debug = 1
+
 [profile.release]
 opt-level = 3
 lto = "thin"
