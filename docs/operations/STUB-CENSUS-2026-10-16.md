@@ -121,6 +121,45 @@ spelling", not "provably unreachable".
 
 
 
+## Second reading pass — the sentinel and declaration conventions (settled)
+
+Three findings from finishing the tree, none of them fakes:
+
+1. **`src/stdlib/otel.rs` and `src/stdlib/iot.rs` are documented sentinel modules**, 22 lines each, whose
+   headers state the convention: *"Sentinel module: all types declared in stdlib/otel.tl are interpreter
+   sentinels. Dispatch returns None; execution routes through interp.rs."* Their `dispatch` returns `None`
+   (fall-through) and `dispatch_method` names the sentinel types with the comment *"interp handles all method
+   dispatch."* `interp.rs` implements them — 25 references, with real span/metric handling that ends spans
+   in-process. An empty shim here is the *routing* convention, not an omission.
+2. **The DHT is dispatched, not stubbed**: `src/stdlib/transfer.rs:93-95` routes `"Dht.create"`, `"Dht.announce"`,
+   `"Dht.lookup"` to `dht_create`/`dht_announce`/`dht_lookup`. The `.tl` bodies are comment-only, which is fine
+   precisely because dispatch wins first.
+3. **The fall-through contract is loud**: `src/interp.rs:818` — `undefined function: {0}`. A declared name with
+   no handler cannot return a plausible value; it errors.
+
+### Two body conventions coexist (354 vs 100)
+
+| Convention | Count | Where | Verdict |
+|---|---|---|---|
+| Body `panic("… is dispatch-only; this body must never execute")` | **100** | `stdlib/crypto.tl` only | fail-loud safety net in the body itself |
+| Body is **comment-only**, no guard | **354** | 21 files — `transfer.tl` 119, `browser.tl` 53, `agent.tl` 26, `net.tl` 25, `legal.tl` 21, … | relies entirely on dispatch interception |
+
+These are equivalent **only if dispatch always wins**, which is verified for the DHT and the sentinel modules
+and supported tree-wide by the 0-of-142 unwired result. `crypto.tl` is the belt-and-braces variant: it guards
+the body as well, so a future dispatch regression there is loud rather than silent. Worth noting as the
+*stronger* of the two conventions, not as a defect in the other 354.
+
+### Still open — flagged, not claimed
+
+- **DHT semantics**: the handlers exist; whether `dht_create`/`dht_announce`/`dht_lookup` compute real values or
+  return shape-only structs is the one question the comments ("simulated DHT store") leave open. One read of
+  `transfer.rs`'s `dht_*` bodies settles it.
+- **OTel transport**: `interp.rs`'s own comments say metrics are *"recorded in-process only; call
+  OtelExporter.export()"* — so recording is real and whether `export()` transmits or also only records is
+  untested.
+
+
+
 ## Method limitations
 
 - **This is a census, not a fix wave.** Nothing was edited; the work list is the table above.
