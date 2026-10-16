@@ -83,12 +83,51 @@ with no registered measurement behind them** — the same defect class as a fake
 real while the *claim* is unbacked. This is where "no fakes" is actually unsettled in this tree, and it is a
 citation problem, not a missing implementation.
 
+## Probe results (executed on the built binary — not read)
+
+Probes were three-line `.tl` programs run with `rc` read bare and stdout/stderr captured separately, per the
+procedure. They **supersede the corresponding rows in the table above**, which were classified by reading.
+
+**Probe A — `net.tor_resolve("check.torproject.org")` → rc=1, stdout=`start` (the call never returned).** Two
+independent results, both better than expected:
+
+1. **Codegen is fail-closed against the Fake class by construction.** Its own output:
+   `codegen warning: net.tor_resolve() not yet available in compiled mode` and
+   `native build unavailable (net.tor_resolve() has no native lowering — refusing to emit a silently-truthy
+   stub for it (fail-closed). tallow run falls back to the interpreter, which implements it.)` — the compiler
+   refuses to emit a plausible-looking stub and names the real implementation instead. This is the strongest
+   single answer to the brief in the whole census.
+2. **The interpreter performs real I/O and refuses loudly.** `runtime error:
+   net.tor_resolve(check.torproject.org): tor I/O error: control port connection closed — no DNS via Tor
+   performed (at 6:5)`. It dialled the control port (independently confirmed listening:
+   `127.0.0.1:9051 tor pid 1474702`), attempted a real `RESOLVE`, and returned an error that states what did
+   **not** happen. No fabricated address. **Rows 1, 2 and 6 in the table are therefore settled: real code, loud
+   failures, stale comments.**
+
+**Probe B — `YaraRule` → could not be constructed, and that is itself the finding.** Two attempts:
+the first used `\"` escapes inside the rule literal and failed with `unexpected character: '$'`/`'\\'`; the
+second (a YARA **hex** pattern, `$a = { 6D 61 6C 77 61 72 65 }`, needing no embedded quotes) failed with
+`error[8:52] and [8:93]: unexpected character: '$'`. **Tallow's lexer rejects `$` inside a string literal**, so
+a YARA rule — which requires `$`-prefixed pattern identifiers — cannot be written in Tallow source, and
+`YaraRule.compile` is unreachable by the direct spelling. Class: **declared-not-wired at the language level**
+(loud, since a parse error is loud), not a fake.
+
+Residual uncertainty, stated because it changes the finding's size: whether a `$` can be produced another way
+(a `\u` escape, a char builtin, or interpolation) was **not** tested, so this is "unreachable by the direct
+spelling", not "provably unreachable".
+
+**Still unsettled and NOT claimed as findings:** the simulated DHT (`stdlib/transfer.tl`), `OtelExporter`,
+`iot.tl`'s lightweight crypto, and the daemon's "for now" heuristic. Each needs its own probe.
+
+
+
 ## Method limitations
 
 - **This is a census, not a fix wave.** Nothing was edited; the work list is the table above.
-- Items 1–5 and 7 are **classified by reading, not by execution**. The skill's rule is probe-never-infer for
-  loud-versus-silent, and these were not probed on a binary — so they are stated as *unsettled* rather than as
-  findings. Probing them means three-line `.tl` programs calling the suspect names and reading `rc` bare.
+- Items 1–5 and 7 were **classified by reading**; the Probe section above supersedes rows 1, 2 and 6 with
+  executed evidence, and establishes that row 3 (YaraRule) is unreachable by the direct spelling rather than a
+  fake. The remainder are still reading-only, and are labelled *unsettled* rather than reported as findings —
+  the skill's rule is probe-never-infer for loud-versus-silent.
 - The register's 124 rows were **not** re-executed. Cheap rows were re-derived (the `.tl` dispatch-only
   convention, the TPM path, the contract-stub idiom, the mesh honesty markers); the remainder are read.
 - Scans are line-oriented, so a fabrication split across lines can hide from the string patterns.
