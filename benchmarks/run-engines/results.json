@@ -1,0 +1,114 @@
+{
+  "_meta": {
+    "harness": "benchmarks/run-engines/run_engine_bench.py",
+    "binary": "/home/aamir/tallowsphere/target/release/tallow",
+    "binary_sha256": "1ef1a897a1ab031283e33e6c1519d96a40151a3dd118f2051000c77146c86253",
+    "kernel": "6.8.0-146-generic",
+    "cpu": "0xd0c",
+    "vcpus": 8,
+    "loadavg_1_5_15": [
+      "2.33",
+      "4.64",
+      "3.65"
+    ],
+    "date_utc": "2026-10-16T18:23:20+00:00",
+    "iters": 6,
+    "timing": "median wall over N runs of the whole `tallow run` invocation, perf_counter around the child; this INCLUDES the native path's compile+link, because that is what a user waits for",
+    "floor": "`tallow --version` median = the cost of starting the binary and nothing else; reported so the engine's work can be separated from process startup"
+  },
+  "cases": {
+    "hello (trivial)": {
+      "program": "benchmarks/run-engines/programs/hello.tl",
+      "program_sha256": "9ba95137f788d3a00790f7fed9a78a46c37cdb89471757b81ee444b15e901c76",
+      "engines_agree": true,
+      "known_divergence": false,
+      "native": {
+        "median_ms": 305.44,
+        "min_ms": 302.47,
+        "stdout": [
+          "hello\n"
+        ],
+        "rc": [
+          0
+        ],
+        "median_ms_excl_process_floor": 295.31,
+        "peak_rss_kb": 79616
+      },
+      "interpret": {
+        "median_ms": 13.25,
+        "min_ms": 12.41,
+        "stdout": [
+          "hello\n"
+        ],
+        "rc": [
+          0
+        ],
+        "median_ms_excl_process_floor": 3.12,
+        "peak_rss_kb": 24912
+      },
+      "divergence_status": "engines agree"
+    },
+    "loop 200k (compute)": {
+      "program": "benchmarks/run-engines/programs/loop.tl",
+      "program_sha256": "b29bcba613ebfbdac1aba8065adf296e754a262f4d8765365ba2f0b49c0e4a88",
+      "engines_agree": true,
+      "known_divergence": false,
+      "native": {
+        "median_ms": 309.34,
+        "min_ms": 288.65,
+        "stdout": [
+          "sum 19999900000\n"
+        ],
+        "rc": [
+          0
+        ],
+        "median_ms_excl_process_floor": 299.21,
+        "peak_rss_kb": 80640
+      },
+      "interpret": {
+        "median_ms": 139.73,
+        "min_ms": 135.9,
+        "stdout": [
+          "sum 19999900000\n"
+        ],
+        "rc": [
+          0
+        ],
+        "median_ms_excl_process_floor": 129.6,
+        "peak_rss_kb": 26860
+      },
+      "divergence_status": "engines agree"
+    },
+    "map .set() regression pin": {
+      "program": "tests/parity/parity_programs/06_map_mut.tl",
+      "program_sha256": "ad20b3a3de739d2d573fedfcac74fa8378c508f0a4816f10f76163c14a288150",
+      "engines_agree": true,
+      "known_divergence": false,
+      "native": {
+        "median_ms": 4729.71,
+        "min_ms": 4648.82,
+        "stdout": [
+          "len 10\nk3 3\nMAP_MUT_OK\n"
+        ],
+        "rc": [
+          0
+        ],
+        "median_ms_excl_process_floor": 4719.58,
+        "peak_rss_kb": 715844
+      },
+      "interpret": {
+        "median_ms": 14.29,
+        "min_ms": 13.34,
+        "stdout": [
+          "len 10\nk3 3\nMAP_MUT_OK\n"
+        ],
+        "rc": [
+          0
+        ],
+        "median_ms_excl_process_floor": 4.16,
+        "peak_rss_kb": 27244
+      },
+      "divergence_status": "engines agree"
+    }
+  }
+}
