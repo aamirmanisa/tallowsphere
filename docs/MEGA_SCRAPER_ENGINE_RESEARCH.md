@@ -828,7 +828,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 | Browser automation | Comprehensive | 113 files, 50+ modules | Working |
 | Codegen | LLVM IR → native | Partial (interpreter fallback) | 70% |
 | Self-hosting | Tallow-in-Tallow | Bootstrap in Rust | Not started |
-| Package registry | pkg.tallow-lang.org | tallow.lock only | Not started |
+| Package registry | pkg.github.com/aamirmanisa/tallowsphere | tallow.lock only | Not started |
 | DPDK backend | 10M+ connections | Not implemented | Phase 2 |
 | Mobile targets | iOS/Android | Not supported | Phase 3 |
 

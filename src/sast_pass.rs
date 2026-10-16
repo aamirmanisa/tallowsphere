@@ -1400,7 +1400,7 @@ pub fn generate_sarif(findings: &[SarifFinding]) -> String {
         "driver": {{
           "name": "tallow-sast",
           "version": "0.1.0",
-          "informationUri": "https://tallow-lang.org",
+          "informationUri": "https://github.com/aamirmanisa/tallowsphere",
           "rules": [
             {}
           ]

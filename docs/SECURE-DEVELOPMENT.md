@@ -27,10 +27,10 @@ The release chain has two independent, cryptographically-bound layers:
 
 ```bash
 # Generate a GPG key (ed25519) if you don't have one
-gpg --quick-generate-key "Operator <operator@tallow-lang.org>" ed25519 sign 0
+gpg --quick-generate-key "Operator <aamir@users.noreply.github.com>" ed25519 sign 0
 # Get the key id
 gpg --list-secret-keys --keyid-format LONG
-# →  ed25519/AAAAAAAAAAAAAAAA 2026-08-15  Operator <operator@tallow-lang.org>
+# →  ed25519/AAAAAAAAAAAAAAAA 2026-08-15  Operator <aamir@users.noreply.github.com>
 
 # Tell git to use it for this repo
 git config user.signingkey AAAAAAAAAAAAAAAA

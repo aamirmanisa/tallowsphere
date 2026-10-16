@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://tallow-lang.org/schemas/retailer-config.schema.json",
+  "$id": "https://github.com/aamirmanisa/tallowsphere/blob/main/schemas/retailer-config.schema.json",
   "title": "Tallow Retailer Configuration",
   "description": "Per-retailer scraping configuration for the Tallow deals engine.",
   "type": "object",

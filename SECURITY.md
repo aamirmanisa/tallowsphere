@@ -13,9 +13,10 @@
 
 ### How to Report
 
-Email: security@tallow-lang.org
+Use GitHub's private vulnerability reporting — it is the only reporting channel:
 
-Or use GitHub's private vulnerability reporting:
+https://github.com/aamirmanisa/tallowsphere/security/advisories/new
+
 1. Go to the Security tab of this repository
 2. Click "Report a vulnerability"
 3. Fill in the details
