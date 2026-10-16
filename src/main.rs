@@ -16880,6 +16880,11 @@ const PROBE_TIMEOUT_SECS: u64 = 2;
 /// AND a hard timeout. A handler that panics reports `Panicked`; one that
 /// blocks past the timeout reports `TimedOut` (the leaked thread can no
 /// longer stall the report and dies with the process).
+///
+/// NOTE (docs/PANIC-POLICY.md): every shipped profile sets `panic = "abort"`, so
+/// the panic half of this is INERT in release artifacts — the process aborts at
+/// the panic point and `catch_unwind` never returns. It isolates in the dev loop
+/// and under `cargo test` (both unwind) only. The timeout half is unaffected.
 fn run_guarded_probe<F>(f: F) -> ProbeOutcome
 where
     F: FnOnce() -> ProbeOutcome + Send + 'static,
@@ -16905,6 +16910,9 @@ where
 
 /// Zero-arg dispatch probe: thread + catch_unwind + hard timeout so neither a
 /// panic nor a side-effecting hang can ever stall the report.
+///
+/// Under `panic = "abort"` (every shipped profile) only the timeout half holds.
+/// See run_guarded_probe and docs/PANIC-POLICY.md.
 fn probe_dispatch(module: &str, function: &str) -> ProbeOutcome {
     let m = module.to_string();
     let f = function.to_string();
@@ -19441,6 +19449,11 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
 
     // ── Probe containment (layer 2): a probe that panics or hangs must never
     // crash or stall the report — thread + catch_unwind + hard timeout. ──
+    //
+    // NOTE (docs/PANIC-POLICY.md): this test passes because the TEST profile
+    // unwinds. Release profiles set `panic = "abort"`, where the panic half of
+    // run_guarded_probe cannot fire — a test running under a profile the artifact
+    // is not built with does not test the artifact.
 
     #[test]
     fn guarded_probe_contains_panics() {
