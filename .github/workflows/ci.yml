@@ -135,12 +135,18 @@ jobs:
   #
   #   request_plan_cli       0 / 38   every test fails identically: `error: unexpected argument
   #                                   '--check' found` — the verb this suite drives is not in this build
-  #   pkg_cli                13 / 14  test_pkg_remove_deletes_dependency: `pkg remove` leaves
-  #                                   tallow_modules/foo on disk
-  #   sec1_honesty_sweep     8 / 9    docs_truth expects "Delta-Sync Flags (24)" in the docs
-  #   http_result_model      0 / 3    drives 127.0.0.1 through the stealth SOCKS plane; no runner
-  #                                   provides that proxy ("SOCKS server failure") — environment,
-  #                                   not code, so it needs a declared fixture before it can gate
+  #   pkg_cli                FIXED and promoted above — pkg remove now deletes the package directory
+  #                                   (remove_dir_all, with failures surfaced) — verified 14 passed, 0 failed
+  #   sec1_honesty_sweep     FIXED and promoted above — the assertion was the stale side; the document's 23
+  #                                   matches src/main.rs's 23 named flags — verified 9 passed, 0 failed
+  #   http_result_model      0 / 3    its exclusion reason CHANGED after the loopback work: it no longer
+  #                                   fails on the stealth SOCKS plane (it now reaches a real socket and
+  #                                   reports "io: Connection refused"), and it now fails because
+  #                                   http.batch returns "Response" and raw Errs while the suite asserts a
+  #                                   typed BatchResponse/HttpError model that exists in neither the runtime
+  #                                   nor the stdlib/http.tl stub. That is unimplemented feature work on a
+  #                                   published contract, so it is a decision (author the model, or relax the
+  #                                   assertions), not an environment gap.
   contract-cli:
     name: Contract and CLI suites (integration)
     runs-on: ubuntu-latest
@@ -156,8 +162,10 @@ jobs:
           cargo test --locked --no-fail-fast
           --test audit_cli_contract
           --test fingerprint_audit_cli
+          --test pkg_cli
           --test replay_determinism
           --test scope_gate
+          --test sec1_honesty_sweep
           --test stdlib_scraper_doctor_cli
           --test transport_coherence_audit
           --test vault_enforcement_cli
