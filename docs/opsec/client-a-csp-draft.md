@@ -1,6 +1,6 @@
-# myvapeisland.com — CSP draft (staged, not applied)
+# client-a-store.com — CSP draft (staged, not applied)
 
-**Date:** 2026-09-12 · **Status:** READY TO APPLY after a browser pass · **Source:** live-page inventory (local fetch of `https://myvapeisland.com/`, 16.8 MB single-file HTML)
+**Date:** 2026-09-12 · **Status:** READY TO APPLY after a browser pass · **Source:** live-page inventory (local fetch of `https://client-a-store.com/`, 16.8 MB single-file HTML)
 
 ## Asset inventory (verified)
 - **Scripts:** 8 × inline `<script>` blocks (bundler manifest/ext_resources/template + page logic). **Zero external script sources.**
@@ -27,6 +27,6 @@ Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; 
 Then: `caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy`
 
 ## Test checklist (before declaring done)
-1. Hard-reload `https://myvapeisland.com/` in a real browser, devtools open — console must show **zero** CSP violations.
+1. Hard-reload `https://client-a-store.com/` in a real browser, devtools open — console must show **zero** CSP violations.
 2. Confirm: gate animation, product modal, all images, and fonts render as before.
 3. Rollback: remove the line → validate → reload. (Full-header rollback: `/etc/caddy/Caddyfile.bak-hermes-audit-20260912`.)

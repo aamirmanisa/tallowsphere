@@ -124,15 +124,15 @@ The report schema is `tallow.policy.validation.v1`:
   "effective_policy": {
     "robots_mode": "advisory",
     "allowlist": {
-      "domains": ["apollo.io", "*.apollo.io"],
-      "url_patterns": ["https://*.apollo.io/*"]
+      "domains": ["vendor.example", "*.vendor.example"],
+      "url_patterns": ["https://*.vendor.example/*"]
     },
     "denylist": {
       "domains": [],
-      "url_patterns": ["https://*.apollo.io/private/*"]
+      "url_patterns": ["https://*.vendor.example/private/*"]
     },
     "rate_limits": {
-      "per_domain_keys": ["app.apollo.io", "api.apollo.io"],
+      "per_domain_keys": ["vendor.example", "vendor.example"],
       "per_ip_pool_keys": ["default"]
     }
   },

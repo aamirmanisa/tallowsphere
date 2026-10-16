@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn score_perfect_vault() {
-        let mut entry = make_login("good", "Tr0ub4dor&3xPl!cit99", vec!["https://x.com".into()]);
+        let mut entry = make_login("good", "Tr0ub4dor&3xPl!cit99", vec!["https://site-35.example".into()]);
         if let EntryData::Login(ref mut d) = entry.data {
             d.totp_secret = Some("JBSWY3DPEHPK3PXP".into());
         }
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn score_degrades_with_issues() {
         let entries = vec![
-            make_login("bad1", "123", vec!["http://x.com".into()]),
+            make_login("bad1", "123", vec!["http://site-35.example".into()]),
             make_login("bad2", "123", vec![]),
         ];
         let report = analyze(&entries);

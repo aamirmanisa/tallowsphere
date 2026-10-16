@@ -77,7 +77,7 @@ impl WarmupSequence {
             name: "essential".into(),
             steps: vec![
                 WarmupStep::simple("https://www.google.com", 2.0, 4.0),
-                WarmupStep::simple("https://www.youtube.com", 2.0, 5.0),
+                WarmupStep::simple("https://site-36.example", 2.0, 5.0),
                 WarmupStep::simple("https://www.wikipedia.org", 2.0, 4.0),
             ],
         }
@@ -91,10 +91,10 @@ impl WarmupSequence {
             name: "standard".into(),
             steps: vec![
                 WarmupStep::simple("https://www.google.com", 2.0, 5.0),
-                WarmupStep::simple("https://www.youtube.com", 3.0, 6.0),
+                WarmupStep::simple("https://site-36.example", 3.0, 6.0),
                 WarmupStep::simple("https://www.wikipedia.org", 2.0, 4.0),
-                WarmupStep::simple("https://news.ycombinator.com", 2.0, 5.0),
-                WarmupStep::simple("https://www.reddit.com", 3.0, 6.0),
+                WarmupStep::simple("https://site-20.example", 2.0, 5.0),
+                WarmupStep::simple("https://site-24.example", 3.0, 6.0),
             ],
         }
     }
@@ -106,10 +106,10 @@ impl WarmupSequence {
             name: "full".into(),
             steps: vec![
                 WarmupStep::simple("https://www.google.com", 2.0, 5.0),
-                WarmupStep::simple("https://www.youtube.com", 3.0, 6.0),
+                WarmupStep::simple("https://site-36.example", 3.0, 6.0),
                 WarmupStep::simple("https://www.wikipedia.org", 2.0, 4.0),
-                WarmupStep::simple("https://news.ycombinator.com", 2.0, 5.0),
-                WarmupStep::simple("https://www.reddit.com", 3.0, 6.0),
+                WarmupStep::simple("https://site-20.example", 2.0, 5.0),
+                WarmupStep::simple("https://site-24.example", 3.0, 6.0),
                 WarmupStep::simple("https://shop-06.example", 3.0, 7.0),
                 WarmupStep::simple("https://shop-27.example", 2.0, 5.0),
             ],

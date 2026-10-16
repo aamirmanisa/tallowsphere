@@ -1,4 +1,4 @@
-//! Standard library: `tallow.medium` — Medium.com paywall bypass client.
+//! Standard library: `tallow.medium` — site-18.example paywall bypass client.
 //!
 //! Medium uses a metered paywall: N free articles/month tracked via cookies
 //! (uid, sid, ob). After the limit, premium articles show a truncated preview.
@@ -282,8 +282,8 @@ fn medium_get_by_graphql(args: Vec<Value>) -> StdlibResult {
     let url = arg_str(&args, 0, "get_by_graphql")?;
 
     // Extract post ID from URL
-    // Medium URLs: https://medium.com/@user/post-slug-HASH
-    // or https://medium.com/publication/post-slug-HASH
+    // Medium URLs: https://site-18.example/@user/post-slug-HASH
+    // or https://site-18.example/publication/post-slug-HASH
     let post_id = if let Some(last_dash) = url.rfind('-') {
         url[last_dash + 1..].to_string()
     } else {
@@ -295,7 +295,7 @@ fn medium_get_by_graphql(args: Vec<Value>) -> StdlibResult {
         r#"[{{"operationName":"PostQuery","variables":{{"postId":"{post_id}","skipToMain":true}},"query":"query PostQuery($postId: ID!) {{ post(id: $postId) {{ id title content {{ bodyModel {{ paragraphs {{ name text type }} }} }} }} }}"}}]"#
     );
 
-    let response = http_post_json("https://medium.com/_/graphql", &query)?;
+    let response = http_post_json("https://site-18.example/_/graphql", &query)?;
 
     // Parse the response for content
     let mut fields: Vec<(&str, String)> = Vec::new();
@@ -354,11 +354,11 @@ fn medium_get_cached(args: Vec<Value>) -> StdlibResult {
 fn medium_get_by_freedium(args: Vec<Value>) -> StdlibResult {
     let url = arg_str(&args, 0, "get_by_freedium")?;
 
-    // Extract the path portion after medium.com
-    let path = if let Some(idx) = url.find("medium.com/") {
+    // Extract the path portion after site-18.example
+    let path = if let Some(idx) = url.find("site-18.example/") {
         &url[idx + 11..]
     } else {
-        return Err("URL must contain medium.com/".into());
+        return Err("URL must contain site-18.example/".into());
     };
 
     // Try freedium.cfd (the active mirror as of Aug 2026)
@@ -452,7 +452,7 @@ fn medium_reset_meter(_args: Vec<Value>) -> StdlibResult {
     let mut fields: Vec<(&str, String)> = Vec::new();
     fields.push(("method", "cookie_reset".to_string()));
     fields.push(("cookies_to_clear", "uid, sid, ob, _uetvid".to_string()));
-    fields.push(("instruction", "Clear cookies for medium.com domain. Then reload the article.".to_string()));
+    fields.push(("instruction", "Clear cookies for site-18.example domain. Then reload the article.".to_string()));
     fields.push(("alternative_1", "Open in private/incognito window".to_string()));
     fields.push(("alternative_2", "Use ?source=twitter query parameter".to_string()));
     fields.push(("alternative_3", "Use ?gi=1 (Google Index) query parameter".to_string()));
@@ -462,8 +462,8 @@ fn medium_reset_meter(_args: Vec<Value>) -> StdlibResult {
 
 /// medium.get_with_twitter_referrer(url: str) -> Map
 ///
-/// THE PRIMARY BYPASS. Medium whitelists Twitter's t.co referrer.
-/// Setting `Referer: https://t.co/{random}` tricks Medium into
+/// THE PRIMARY BYPASS. Medium whitelists Twitter's site-28.example referrer.
+/// Setting `Referer: https://site-28.example/{random}` tricks Medium into
 /// serving the full article without paywall restrictions.
 /// This is the technique used by medium-unlimited (5,467 GitHub stars).
 ///
@@ -471,12 +471,12 @@ fn medium_reset_meter(_args: Vec<Value>) -> StdlibResult {
 fn medium_get_with_twitter_referrer(args: Vec<Value>) -> StdlibResult {
     let url = arg_str(&args, 0, "get_with_twitter_referrer")?;
     
-    // Generate random t.co referrer (matching medium-unlimited pattern)
+    // Generate random site-28.example referrer (matching medium-unlimited pattern)
     let random_id = format!("{}", std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos());
-    let referer = format!("https://t.co/{}", &random_id[random_id.len().saturating_sub(10)..]);
+    let referer = format!("https://site-28.example/{}", &random_id[random_id.len().saturating_sub(10)..]);
     
     let resp = AGENT
         .get(&url)
@@ -513,7 +513,7 @@ fn medium_get_with_twitter_referrer(args: Vec<Value>) -> StdlibResult {
     let has_paywall = html.contains("metered-paywall") || html.contains("paywall-meter");
     fields.push(("has_paywall", has_paywall.to_string()));
     fields.push(("method", "twitter_referrer_header".to_string()));
-    fields.push(("note", "Medium whitelists t.co referrers. This is the primary bypass used by medium-unlimited (5.4K GitHub stars).".to_string()));
+    fields.push(("note", "Medium whitelists site-28.example referrers. This is the primary bypass used by medium-unlimited (5.4K GitHub stars).".to_string()));
     
     Ok(build_result_map(fields))
 }

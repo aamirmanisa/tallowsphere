@@ -226,7 +226,7 @@ pub async fn solve_interactive(page: &Page, url: &str) -> Result<Option<String>,
     Ok(Some(cookie_val))
 }
 
-/// Set a cookie in the browser context for `domain` (e.g. "wsj.com").
+/// Set a cookie in the browser context for `domain` (e.g. "site-34.example").
 async fn set_cookie(page: &Page, name: &str, value: &str, domain: &str) {
     // Use document.cookie via CDP (works for non-HttpOnly, which is fine for
     // DataDome replay — the solver returns a client-side cookie).
@@ -239,7 +239,7 @@ async fn set_cookie(page: &Page, name: &str, value: &str, domain: &str) {
 }
 
 /// Extract a registrable-ish domain from a URL: strip scheme, port, and leading
-/// "www." so the cookie applies to the whole site (e.g. "www.wsj.com" -> "wsj.com").
+/// "www." so the cookie applies to the whole site (e.g. "site-34.example" -> "site-34.example").
 fn extract_registrable_domain(url: &str) -> String {
     let after_scheme = url
         .strip_prefix("https://")
@@ -260,8 +260,8 @@ mod tests {
 
     #[test]
     fn domain_strips_www_and_port() {
-        assert_eq!(extract_registrable_domain("https://www.wsj.com/business/earnings/"), "wsj.com");
-        assert_eq!(extract_registrable_domain("https://wsj.com/article"), "wsj.com");
+        assert_eq!(extract_registrable_domain("https://site-34.example/business/earnings/"), "site-34.example");
+        assert_eq!(extract_registrable_domain("https://site-34.example/article"), "site-34.example");
         assert_eq!(extract_registrable_domain("https://www.marketwatch.com:443/x"), "marketwatch.com");
         assert_eq!(extract_registrable_domain("http://example.com"), "example.com");
     }

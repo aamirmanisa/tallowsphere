@@ -581,9 +581,9 @@ pub const ANALYTICS_URLS: &[&str] = &[
     "*google-analytics.com*",
     "*www.google-analytics.com*",
     "*connect.facebook.net*",
-    "*facebook.com/tr*",
+    "*site-09.example/tr*",
     "*snap.licdn.com*",
-    "*analytics.twitter.com*",
+    "*site-32.example*",
     "*cdn.amplitude.com*",
     "*static.hotjar.com*",
     "*in.hotjar.com*",
@@ -607,7 +607,7 @@ pub const ANALYTICS_DOMAINS: &[&str] = &[
     "google-analytics.com",
     "connect.facebook.net",
     "snap.licdn.com",
-    "analytics.twitter.com",
+    "site-32.example",
     "cdn.amplitude.com",
     "static.hotjar.com",
     "in.hotjar.com",
@@ -650,7 +650,7 @@ pub fn analytics_kill_js() -> String {
 (function() {
     'use strict';
     window.__tallow_analytics_killed = true;
-    var URLS=["clarity.ms","sentry.io","googletagmanager.com","google-analytics.com","connect.facebook.net","facebook.com/tr","snap.licdn.com","analytics.twitter.com","cdn.amplitude.com","static.hotjar.com","in.hotjar.com","cdn.mxpnl.com","google.com/recaptcha","gstatic.com/recaptcha","recaptcha"];
+    var URLS=["clarity.ms","sentry.io","googletagmanager.com","google-analytics.com","connect.facebook.net","site-09.example/tr","snap.licdn.com","site-32.example","cdn.amplitude.com","static.hotjar.com","in.hotjar.com","cdn.mxpnl.com","google.com/recaptcha","gstatic.com/recaptcha","recaptcha"];
     function isAnalytics(u){ if(!u) return false; try{ var h=new URL(u,location.href).hostname; for(var i=0;i<URLS.length;i++){ if(h===URLS[i]||h.endsWith('.'+URLS[i])) return true; } }catch(e){} return false; }
     try{ window.clarity=function(){}; delete window.clarity; Object.defineProperty(window,'clarity',{value:function(){},writable:true}); }catch(e){}
     try{
@@ -672,9 +672,9 @@ static TRACKER_PATTERNS: &[&str] = &[
     "*google-analytics.com*",
     "*googletagmanager.com*",
     "*facebook.net/tr*",
-    "*facebook.com/tr*",
+    "*site-09.example/tr*",
     "*connect.facebook.net*",
-    "*pixel.facebook.com*",
+    "*site-09.example*",
     "*hotjar.com*",
     "*fullstory.com*",
     "*mouseflow.com*",
@@ -788,18 +788,18 @@ static MINER_DOMAINS: &[&str] = &[
 // ─────────────────────────────────────────────────────────────────────────────
 
 static SOCIAL_PATTERNS: &[&str] = &[
-    "*platform.twitter.com/widgets*",
-    "*platform.linkedin.com*",
+    "*site-32.example/widgets*",
+    "*site-16.example*",
     "*connect.facebook.net*",
-    "*platform.instagram.com*",
+    "*site-13.example*",
     "*apis.google.com/js/plusone*",
     "*static.addtoany.com*",
     "*s7.addthis.com*",
     "*sharethis.com*",
-    "*pinterest.com/js/pinit*",
+    "*site-22.example/js/pinit*",
     "*snap.licdn.com*",
-    "*tiktok.com/embed*",
-    "*reddit.com/buttons*",
+    "*site-31.example/embed*",
+    "*site-24.example/buttons*",
     "*disqus.com/embed*",
     "*disquscdn.com*",
 ];
@@ -1203,7 +1203,7 @@ mod tests {
     #[test]
     fn social_blocking() {
         let p = BrowserPlugins::default();
-        assert!(p.should_block_url("https://platform.twitter.com/widgets.js"));
+        assert!(p.should_block_url("https://site-32.example/widgets.js"));
         assert!(p.should_block_url("https://connect.facebook.net/en_US/sdk.js"));
         assert!(p.should_block_url("https://disqus.com/embed/comments/"));
     }

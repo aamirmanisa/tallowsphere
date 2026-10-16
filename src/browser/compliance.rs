@@ -121,7 +121,7 @@ impl ComplianceManager {
             ("target",   true, true, true, "https://www.shop-b.example/c/terms-conditions"),
             ("bestbuy",  true, true, true, "https://www.shop-c.example/site/help-topics/conditions-of-use/pcmcat204400050067.c"),
             ("costco",   true, true, true, "https://shop-21.example/terms-and-conditions-of-use.html"),
-            ("kroger",   true, true, true, "https://www.kroger.com/hc/help/policies-information/terms-and-conditions"),
+            ("kroger",   true, true, true, "https://site-15.example/hc/help/policies-information/terms-and-conditions"),
         ];
         for (retailer, pub_ok, no_bypass, no_create, tos) in defaults {
             auth_boundaries.insert(

@@ -413,11 +413,11 @@ mod tests {
     #[test]
     fn bridge_counts_distinct_domains() {
         let instances = [
-            inst("Reuters", "reuters.com"),
-            inst("Reuters mirror", "Reuters.COM "), // same domain, case/space variant
-            inst("AP", "apnews.com"),
+            inst("Reuters", "site-26.example"),
+            inst("Reuters mirror", "site-26.example "), // same domain, case/space variant
+            inst("AP", "site-01.example"),
             inst("anonymous tip", ""), // blank domain: no independence evidence
-            inst("AP again", " apnews.com"),
+            inst("AP again", " site-01.example"),
         ];
         let sig = domain_signal("report-1", &instances);
         assert_eq!(sig.item_id, "report-1");

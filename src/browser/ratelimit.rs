@@ -263,8 +263,8 @@ impl DomainRateManager {
             d if d.contains("shop-02.example") => 0.25,        // 1 req per 4s (double layer)
             d if d.contains("shop-27.example") => 0.5,           // 1 req per 2s
             d if d.contains("google.com") => 0.1,         // 1 req per 10s
-            d if d.contains("x.com") || d.contains("twitter.com") => 0.33,
-            d if d.contains("reddit.com") => 0.5,
+            d if d.contains("site-35.example") || d.contains("site-32.example") => 0.33,
+            d if d.contains("site-24.example") => 0.5,
             d if d.contains("slickdeals.net") => 1.0,     // Light protection
             d if d.contains("myshopify.com") => 1.0,      // Shopify is lenient
             _ => self.default_rate,

@@ -78,7 +78,6 @@ class TlScriptInventoryTests(unittest.TestCase):
         by_path = {entry["path"]: entry for entry in inventory["entries"]}
         expected = {
             "kroger_mega_scrape.tl": "unsafe/deprecated",
-            "scripts/apollo_turbo_max_parallel_graphql_json.tl": "unsafe/deprecated",
             "personal_database/ashraf_ali_business_inquiry/ashraf_ali_business_inquiry.legacy-http-batch.tl": "superseded by manifest/request-plan",
             "examples/hello_simple.tl": "active example",
             "tests/fixtures/stdlib_codegen_test.tl": "fixture test",

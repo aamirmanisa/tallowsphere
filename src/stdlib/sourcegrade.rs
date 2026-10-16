@@ -32,8 +32,8 @@ const TIER_A: &[&str] = &[
 /// Tier-B: established wire services, flagship papers, national
 /// broadcasters, peer-reviewed publishers, and major research bodies.
 const TIER_B: &[&str] = &[
-    "reuters.com", "apnews.com", "ap.org", "bloomberg.com", "ft.com",
-    "wsj.com", "nytimes.com", "washingtonpost.com", "economist.com",
+    "site-26.example", "site-01.example", "ap.org", "site-03.example", "ft.com",
+    "site-34.example", "site-21.example", "washingtonpost.com", "economist.com",
     "bbc.com", "bbc.co.uk", "theguardian.com", "npr.org", "pbs.org",
     "nature.com", "science.org", "bmj.com", "nejm.org", "thelancet.com",
     "cell.com", "jamanetwork.com", "ieee.org", "acm.org", "arxiv.org",
@@ -297,7 +297,7 @@ mod tests {
     fn host_cleanup() {
         assert_eq!(clean_host("HTTPS://Www.Nih.Gov/path?q=1"), "nih.gov");
         assert_eq!(clean_host("http://sub.who.int:8080/x"), "sub.who.int");
-        assert_eq!(clean_host("reuters.com/"), "reuters.com");
+        assert_eq!(clean_host("site-26.example/"), "site-26.example");
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(grade_host("who.int").0, "A");
         assert_eq!(grade_host("data.un.org").0, "A");
         // Tier B.
-        assert_eq!(grade_host("reuters.com").0, "B");
+        assert_eq!(grade_host("site-26.example").0, "B");
         assert_eq!(grade_host("www.bbc.co.uk").0, "B");
         assert_eq!(grade_host("nature.com").0, "B");
         assert_eq!(grade_host("mit.edu").0, "B");

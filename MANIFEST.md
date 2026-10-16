@@ -293,3 +293,33 @@ Kept deliberately, and recorded here so it is a decision rather than an oversigh
   between what they discuss and what is present here.
 - **Bare retailer names remain in design mockups.** The mockups illustrate the product's UI; retailer
   *domains* are neutralised, brand words are not.
+
+### Third pass — the host surface and the engagement examples (2026-10-15)
+
+The first two passes were scoped: pass one to the code directories, pass two to a dictionary built
+from the retailer config names. A whole-tree hostname census (623 distinct non-benign hosts) then
+showed what those scopes had missed. It found a class, not a handful of files.
+
+| omitted or neutralised | what it was |
+|---|---|
+| Content-site hosts in 20 source files (146 occurrences) — `presets.rs`, `corroboration.rs`, `auth.rs` and neighbours | A per-site hardening preset table keyed by real publisher/retailer domains. Same treatment as the retailer profiles: the tuning survives, the site identity does not. Tests keyed to the same domains moved with it |
+| `crates/tallow-net/tests/live_relay_tls.rs` | Hardcoded the downstream product's live relay host. Now a neutral default, overridable by environment |
+| `src/stdlib/beehiiv.rs`, `src/stdlib/jwt.rs` | A module documenting itself as built from reconnaissance of a named third party, whose owner's name also appeared in a password wordlist. Endpoints now generic; the wordlist entry is gone |
+| 19 engagement examples: `tabc_*` (11), `zabalist_*` (3), `realtor_scraper`, `property_scraper`, `smbdealhunter_public_max_graphjson`, and 5 Rust examples driving named sites (`vin_carfax`, `vin_carfax_stealth`, `vin_iaai`, `vin_stealth_scan`, `stma_storelocator_browser`) | Automation written against named third parties, including signup/login flows and proxy scanning. Kept in the private tree |
+| `tests/fixtures/*.modisoft` | A fixture carrying the excluded client's name |
+| `scripts/apollo_turbo_max_parallel_graphql_json.tl` | A target script for a third-party vendor's GraphQL endpoint |
+| A named client in two `docs/opsec/` documents, and the client's name in a filename | Neutralised; the documents' security content is intact |
+| Vendor endpoints in `configs/tallow/` | `vendor.example`; the request-plan machinery and its schema are untouched |
+| Dead references to the removed examples in `tests/interp_codegen_parity.rs` and `tests/test_tl_script_inventory.py` | The tests iterate the filesystem, so deletions alone are safe — but a shipped test naming the engagements is not neutral |
+
+Deliberately kept, and why:
+
+- **Tracker/analytics hosts** in the browser's plugin blocklists (`google-analytics`, `doubleclick`,
+  `hotjar`, `connect.facebook.net`): blocking them *is* the feature.
+- **API endpoints the code genuinely calls** — the LLM engine, a market-data feed, a newsletter
+  platform, a captcha solver, temporary-mail providers, IP lookups: naming a public API is not
+  naming a target.
+- **Synthetic test hosts** (`a.com`, `evil.com`, `redirect.com`, `*.example`): test scaffolding.
+- **`crates/tallow-reader` and the `substack`/`market` modules**: their site constants are the
+  modules' own data sources, not a curated target list.
+- **`docs/codex/smbdealhunter-scraper-spec.md`**: a spec for the operator's own product.

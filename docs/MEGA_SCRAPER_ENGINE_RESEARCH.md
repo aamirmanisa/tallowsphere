@@ -1527,7 +1527,7 @@ domain_history * 0.05
 
 **Domain-Specific Strategies** (8 built-in):
 - shop-a.example: Residential only, US, sticky session, min trust 80
-- kroger.com: ISP/Residential, US, Akamai profile
+- site-06.example: ISP/Residential, US, Akamai profile
 - shop-b.example: Any (permissive API)
 - shop-f.example: Residential/Mobile, min trust 85
 - shop-d.example: Any (direct API)

@@ -11,7 +11,7 @@
 //!    reset the free-article counter (the meter is keyed to cookies the client
 //!    controls).
 //! 2. **Referrer whitelist** — send a heavy-traffic referrer (drudgereport.com for
-//!    WSJ/Dow Jones; t.co for social; news.google.com) so the server serves the
+//!    WSJ/Dow Jones; site-28.example for social; news.google.com) so the server serves the
 //!    full body ungated.
 //! 3. **Block Cxense JS** — strip `cdn.cxense.com` + `cdn.ampproject.org` scripts
 //!    so the meter overlay never runs.
@@ -41,11 +41,11 @@ const GOOGLEBOT_UA: &str = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.
 // Whitelisted heavy-traffic referrers (server-side meter bypass).
 const REFERRERS: &[(&str, &str)] = &[
     ("drudge", "https://www.drudgereport.com/"),
-    ("social", "https://t.co/reader"),
+    ("social", "https://site-28.example/reader"),
     ("google", "https://news.google.com/"),
     ("google_web", "https://www.google.com/"),
-    ("facebook", "https://www.facebook.com/"),
-    ("hn", "https://news.ycombinator.com/"),
+    ("facebook", "https://site-09.example/"),
+    ("hn", "https://site-20.example/"),
 ];
 
 fn referrer_for(style: &str) -> &'static str {
@@ -60,7 +60,7 @@ fn referrer_for(style: &str) -> &'static str {
 const METER_COOKIE_FRAGS: &[&str] = &["cX_P", "cX_C", "cX_G", "cX_S", "_cX_", "cX_"];
 
 fn is_dowjones(url: &str) -> bool {
-    ["wsj.com", "marketwatch.com", "barrons.com", "dowjones.com"]
+    ["site-34.example", "marketwatch.com", "barrons.com", "dowjones.com"]
         .iter()
         .any(|d| url.contains(d))
 }
@@ -340,8 +340,8 @@ fn cxense_reset_meter(_args: Vec<Value>) -> StdlibResult {
     f.push(("cookies_to_clear", "cX_P, cX_C, cX_G, cX_S, _cX_*".to_string()));
     f.push(("instruction", "Clear Cxense cookies (cX_P/cX_C/_cX_*) for the publisher domain, then reload. Meter resets to a fresh free-article quota.".to_string()));
     f.push(("alternative_1", "Open in private/incognito window".to_string()));
-    f.push(("alternative_2", "Use drudgereport/t.co/news.google.com referrer".to_string()));
-    f.push(("note", "WSJ + Dow Jones family: desktop Chrome UA + drudgereport referrer; Googlebot does NOT bypass www.wsj.com. DataDome at the edge needs stealth_http / tallow-reader.".to_string()));
+    f.push(("alternative_2", "Use drudgereport/site-28.example/news.google.com referrer".to_string()));
+    f.push(("note", "WSJ + Dow Jones family: desktop Chrome UA + drudgereport referrer; Googlebot does NOT bypass site-34.example. DataDome at the edge needs stealth_http / tallow-reader.".to_string()));
     Ok(build_result_map(f))
 }
 

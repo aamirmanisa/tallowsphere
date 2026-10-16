@@ -14,12 +14,8 @@ fn known_check_fail(name: &str) -> Option<&str> {
         "agent_demo.tl" => Some("can_spawn exceeds L3"),
         "agent_memory_demo.tl" => Some("undefined variable brain"),
         "channels_demo.tl" => Some("undefined variable Chan"),
-        "smbdealhunter_public_max_graphjson.tl" => Some("undefined HtmlParser"),
         "sqlite_demo.tl" => Some("db import missing"),
         "financial_e2e_test.tl" => Some("top-level let — invalid Tallow (items only); needs fn main() rewrite"),
-        // Untracked WIP examples with syntax errors (unescaped quotes in JS strings)
-        "tabc_rss_scraper.tl" => Some("unescaped quotes in JS strings — invalid Tallow"),
-        "tabc_v4.tl" => Some("WIP syntax error"),
         _ => None,
     }
 }
@@ -30,15 +26,12 @@ fn known_run_fail(name: &str) -> Option<&str> {
         "dealhunter.tl" | "dealhunter_pipeline.tl" => Some("live HTTP fetch — network required"),
         "live_tor_test.tl" => Some("live Tor daemons — network required; handler returns Struct not Ok/Err"),
         "browser_demo.tl" | "browser_full_demo.tl" | "browser_plugins_demo.tl"
-        | "mbs_browser_recon.tl" | "mbs_scraper.tl" | "smbdealhunter_scraper.tl"
         | "ippool_demo.tl" | "bail_test.exe" | "fn_array_param.exe" | "full_demo.exe"
         | "hof_test.exe" | "if_let_test.exe" | "interp_test.exe" | "int_match_default.exe"
         | "map_test.exe" | "mega_test.exe" => Some("exe/browser/network — skip"),
-        // Untracked WIP scrapers hitting live network (need browser/live egress)
-        "property_scraper.tl" | "realtor_scraper.tl" | "public_source_get_batch.tl"
-        | "tor_single_test.tl" | "test_dealhunter.tl" | "smbdealhunter_public_max_graphjson.tl"
-        | "tabc_test.tl" | "tabc_v3.tl" | "tabc_v5.tl" | "tabc_v6.tl" | "tabc_v7.tl"
-        | "tabc_v8.tl" | "tabc_v9.tl" | "tabc_v10.tl" | "tabc_v11.tl" => {
+        // Examples that reach live network/browser (need live egress)
+        "public_source_get_batch.tl"
+        | "tor_single_test.tl" | "test_dealhunter.tl" => {
             Some("live network/browser — skip")
         }
         _ => None,

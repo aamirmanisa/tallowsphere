@@ -111,7 +111,7 @@ impl ResourceBlocker {
                         "*googlesyndication.com*",
                         "*google-analytics.com*",
                         "*googletagmanager.com*",
-                        "*facebook.com/tr*",
+                        "*site-09.example/tr*",
                         "*scorecardresearch.com*",
                         "*hotjar.com*",
                         "*segment.io*",

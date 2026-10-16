@@ -1141,7 +1141,7 @@ footer {
         rotation: .per_request
     }
 
-    <span class="kw">let</span> stores = [<span class="str">"shop-d.example"</span>, <span class="str">"kroger.com"</span>, <span class="str">"shop-b.example"</span>]
+    <span class="kw">let</span> stores = [<span class="str">"shop-d.example"</span>, <span class="str">"site-06.example"</span>, <span class="str">"shop-b.example"</span>]
     <span class="kw">let</span> urls = stores.map { s -> <span class="str">"https://{s}/search?q={query}"</span> }
 
     <span class="kw">let</span> pages = pool.map(urls, concurrency: <span class="num">50</span>) { url ->

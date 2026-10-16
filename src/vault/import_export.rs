@@ -960,13 +960,13 @@ mod tests {
     #[test]
     fn import_chrome() {
         let csv = "name,url,username,password,note\n\
-                   GitHub,https://github.com,user@x.com,hunter2,my note\n\
+                   GitHub,https://github.com,user@site-35.example,hunter2,my note\n\
                    Gmail,https://mail.google.com,user@example.com,pw123,\n";
         let entries = import_chrome_csv(csv).expect("import");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "GitHub");
         if let EntryData::Login(ref d) = entries[0].data {
-            assert_eq!(d.username, "user@x.com");
+            assert_eq!(d.username, "user@site-35.example");
             assert_eq!(d.password, "hunter2");
             assert_eq!(d.urls, vec!["https://github.com"]);
         } else {
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn import_lastpass() {
         let csv = "url,username,password,totp,extra,name,grouping,fav\n\
-                   https://x.com,user,pw,,notes here,Twitter,Social,1\n";
+                   https://site-35.example,user,pw,,notes here,Twitter,Social,1\n";
         let entries = import_lastpass_csv(csv).expect("import");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "Twitter");
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[test]
     fn export_csv_basic() {
-        let entry = VaultEntry::new_login("Site", "user", "pw", vec!["https://x.com".into()]);
+        let entry = VaultEntry::new_login("Site", "user", "pw", vec!["https://site-35.example".into()]);
         let csv = export_csv(&[entry]).expect("export");
         assert!(csv.starts_with("name,type,url,username,password,totp,notes,folder\n"));
         assert!(csv.contains("Site"));
@@ -1336,7 +1336,7 @@ mod tests {
 
     #[test]
     fn export_csv_all_types() {
-        let login = VaultEntry::new_login("MyLogin", "user", "pw", vec!["https://x.com".into()]);
+        let login = VaultEntry::new_login("MyLogin", "user", "pw", vec!["https://site-35.example".into()]);
         let card = VaultEntry::new_card("MyCard", "Holder", "1234", "01", "2030", "999");
         let note = VaultEntry::new_note("MyNote", "secret stuff");
 

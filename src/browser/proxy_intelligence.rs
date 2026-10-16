@@ -1051,9 +1051,9 @@ impl DomainStrategyDatabase {
 
         // Kroger: Akamai — ISP or Residential
         strategies.insert(
-            "kroger.com".into(),
+            "site-15.example".into(),
             DomainProxyStrategy {
-                domain: "kroger.com".into(),
+                domain: "site-15.example".into(),
                 required_asn_type: None, // ISP or Residential both work
                 min_trust_score: 70,
                 preferred_country: Some("US".into()),

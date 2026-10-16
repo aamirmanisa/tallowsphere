@@ -590,12 +590,12 @@ impl PresetManager {
 
         // Known difficult domains get extra hardening regardless of level.
         match domain.as_str() {
-            "linkedin.com" => {
+            "site-16.example" => {
                 cfg.behavioral_sim = true;
                 cfg.weibull_timing = true;
                 cfg.cookie_farm = true;
             }
-            "zillow.com" => {
+            "site-39.example" => {
                 cfg.cookie_farm = true;
                 cfg.vendor_detection = true;
             }
@@ -955,7 +955,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("kroger.com"),
+            domain: s("site-15.example"),
             display_name: s("Kroger"),
             brand_color: s("#0068A5"),
             default_level: ScrapeLevel::L2Standard,
@@ -1486,7 +1486,7 @@ fn builtin_presets() -> Vec<SitePreset> {
         },
         // ─── Real Estate ──────────────────────────────────────────────
         SitePreset {
-            domain: s("zillow.com"),
+            domain: s("site-39.example"),
             display_name: s("Zillow"),
             brand_color: s("#006AFF"),
             default_level: ScrapeLevel::L3Deep,
@@ -1636,7 +1636,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("redfin.com"),
+            domain: s("site-25.example"),
             display_name: s("Redfin"),
             brand_color: s("#A02021"),
             default_level: ScrapeLevel::L2Standard,
@@ -1793,8 +1793,8 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("realtor.com"),
-            display_name: s("Realtor.com"),
+            domain: s("site-23.example"),
+            display_name: s("site-23.example"),
             brand_color: s("#D92228"),
             default_level: ScrapeLevel::L2Standard,
             levels: levels([
@@ -2065,8 +2065,8 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("investing.com"),
-            display_name: s("Investing.com"),
+            domain: s("site-14.example"),
+            display_name: s("site-14.example"),
             brand_color: s("#0B6623"),
             default_level: ScrapeLevel::L2Standard,
             levels: levels([
@@ -2358,7 +2358,7 @@ fn builtin_presets() -> Vec<SitePreset> {
         },
         // ─── News ─────────────────────────────────────────────────────
         SitePreset {
-            domain: s("zacks.com"),
+            domain: s("site-38.example"),
             display_name: s("Zacks"),
             brand_color: s("#0057B8"),
             default_level: ScrapeLevel::L3Deep,
@@ -2522,7 +2522,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("nytimes.com"),
+            domain: s("site-21.example"),
             display_name: s("New York Times"),
             brand_color: s("#000000"),
             default_level: ScrapeLevel::L2Standard,
@@ -2533,7 +2533,7 @@ fn builtin_presets() -> Vec<SitePreset> {
                         description: s("RSS feeds + public headlines"),
                         data_fields: sv(&["title", "url", "published_date", "section"]),
                         endpoints: sv(&[
-                            "/svc/collections/v1/publish/www.nytimes.com/section/{section}",
+                            "/svc/collections/v1/publish/site-21.example/section/{section}",
                             "/services/xml/rss/nyt/{section}.xml",
                         ]),
                         requires_auth: false,
@@ -2556,7 +2556,7 @@ fn builtin_presets() -> Vec<SitePreset> {
                             "tags",
                         ]),
                         endpoints: sv(&[
-                            "/svc/collections/v1/publish/www.nytimes.com/section/{section}",
+                            "/svc/collections/v1/publish/site-21.example/section/{section}",
                             "/{year}/{month}/{day}/{slug}.html",
                         ]),
                         requires_auth: false,
@@ -2650,7 +2650,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("bloomberg.com"),
+            domain: s("site-03.example"),
             display_name: s("Bloomberg"),
             brand_color: s("#000000"),
             default_level: ScrapeLevel::L3Deep,
@@ -2775,7 +2775,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("reuters.com"),
+            domain: s("site-26.example"),
             display_name: s("Reuters"),
             brand_color: s("#FF8000"),
             default_level: ScrapeLevel::L2Standard,
@@ -3160,7 +3160,7 @@ fn builtin_presets() -> Vec<SitePreset> {
         },
         // ─── Social ───────────────────────────────────────────────────
         SitePreset {
-            domain: s("reddit.com"),
+            domain: s("site-24.example"),
             display_name: s("Reddit"),
             brand_color: s("#FF4500"),
             default_level: ScrapeLevel::L1Scout,
@@ -3310,7 +3310,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("linkedin.com"),
+            domain: s("site-16.example"),
             display_name: s("LinkedIn"),
             brand_color: s("#0A66C2"),
             default_level: ScrapeLevel::L4Full,
@@ -3824,7 +3824,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("etsy.com"),
+            domain: s("site-08.example"),
             display_name: s("Etsy"),
             brand_color: s("#F16521"),
             default_level: ScrapeLevel::L2Standard,
@@ -4326,7 +4326,7 @@ mod tests {
     fn recommend_level_site_default_overrides_low_vendor() {
         let mgr = PresetManager::new();
         // LinkedIn defaults to L4Full — should not drop to L1 just because no vendor.
-        let level = mgr.recommend_level("linkedin.com", None);
+        let level = mgr.recommend_level("site-16.example", None);
         assert!(
             level.rank() >= ScrapeLevel::L4Full.rank(),
             "LinkedIn should be at least L4, got {:?}",
@@ -4422,7 +4422,7 @@ mod tests {
     #[test]
     fn auto_configure_linkedin_hardening() {
         let mgr = PresetManager::new();
-        let cfg = mgr.auto_configure("linkedin.com", None, "easy");
+        let cfg = mgr.auto_configure("site-16.example", None, "easy");
         assert!(cfg.behavioral_sim);
         assert!(cfg.weibull_timing);
         assert!(cfg.cookie_farm);
@@ -4483,7 +4483,7 @@ mod tests {
         for domain in &[
             "shop-a.example",
             "shop-b.example",
-            "kroger.com",
+            "site-15.example",
             "shop-d.example",
             "shop-21.example",
             "shop-06.example",
@@ -4499,7 +4499,7 @@ mod tests {
     #[test]
     fn real_estate_sites_present() {
         let mgr = PresetManager::new();
-        for domain in &["zillow.com", "redfin.com", "realtor.com"] {
+        for domain in &["site-39.example", "site-25.example", "site-23.example"] {
             assert!(
                 mgr.get_site_preset(domain).is_some(),
                 "Missing real estate site: {}",
@@ -4513,9 +4513,9 @@ mod tests {
         let mgr = PresetManager::new();
         for domain in &[
             "tradingview.com",
-            "investing.com",
+            "site-14.example",
             "finance.yahoo.com",
-            "zacks.com",
+            "site-38.example",
         ] {
             assert!(
                 mgr.get_site_preset(domain).is_some(),
@@ -4529,23 +4529,23 @@ mod tests {
     fn zacks_lookup_normalizes_www_case_and_whitespace() {
         let mgr = PresetManager::new();
 
-        let direct = mgr.get_site_preset("zacks.com");
-        assert!(direct.is_some(), "Missing zacks.com preset");
-        assert_eq!(direct.unwrap().domain, "zacks.com");
+        let direct = mgr.get_site_preset("site-38.example");
+        assert!(direct.is_some(), "Missing site-38.example preset");
+        assert_eq!(direct.unwrap().domain, "site-38.example");
 
-        let with_www = mgr.get_site_preset("www.zacks.com");
-        assert!(with_www.is_some(), "Missing www.zacks.com lookup");
-        assert_eq!(with_www.unwrap().domain, "zacks.com");
+        let with_www = mgr.get_site_preset("site-38.example");
+        assert!(with_www.is_some(), "Missing site-38.example lookup");
+        assert_eq!(with_www.unwrap().domain, "site-38.example");
 
-        let noisy = mgr.get_site_preset("  WWW.ZACKS.COM  ");
+        let noisy = mgr.get_site_preset("  site-38.example  ");
         assert!(noisy.is_some(), "Missing normalized mixed-case lookup");
-        assert_eq!(noisy.unwrap().domain, "zacks.com");
+        assert_eq!(noisy.unwrap().domain, "site-38.example");
     }
 
     #[test]
     fn news_sites_present() {
         let mgr = PresetManager::new();
-        for domain in &["nytimes.com", "bloomberg.com", "reuters.com"] {
+        for domain in &["site-21.example", "site-03.example", "site-26.example"] {
             assert!(
                 mgr.get_site_preset(domain).is_some(),
                 "Missing news site: {}",
@@ -4557,7 +4557,7 @@ mod tests {
     #[test]
     fn social_sites_present() {
         let mgr = PresetManager::new();
-        for domain in &["reddit.com", "linkedin.com"] {
+        for domain in &["site-24.example", "site-16.example"] {
             assert!(
                 mgr.get_site_preset(domain).is_some(),
                 "Missing social site: {}",

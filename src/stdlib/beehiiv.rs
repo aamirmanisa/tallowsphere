@@ -6,7 +6,7 @@
 //! ## Architecture
 //!
 //! Beehiiv-powered sites use Nuxt 3 with server-side rendering. The key
-//! endpoints discovered through reconnaissance of letter.nicholascrown.com:
+//! endpoints of the Beehiiv public API:
 //!
 //! - `_payload.json` -- Nuxt SSR payload with post metadata + free_content_html
 //! - `/api/auth/set-token` -- JWT injection (accepts any formatted JWT!)
@@ -55,7 +55,7 @@ fn set_cookie(domain: &str, cookie_str: &str) {
 // ─── URL parsing helpers ─────────────────────────────────────────
 
 struct BeehiivUrl {
-    base_url: String,        // e.g. https://letter.nicholascrown.com
+    base_url: String,        // e.g. https://letter.example
     post_slug: Option<String>, // e.g. dollar-manipulation
     build_id: Option<String>,  // Nuxt build ID for _payload.json
 }
@@ -457,7 +457,7 @@ fn beehiiv_get_post(args: Vec<Value>) -> StdlibResult {
 /// premium content access.
 fn beehiiv_set_jwt(args: Vec<Value>) -> StdlibResult {
     let jwt = arg_str(&args, 0, "set_jwt")?;
-    let base_url = arg_str_opt(&args, 1).unwrap_or_else(|| "https://letter.nicholascrown.com".into());
+    let base_url = arg_str_opt(&args, 1).unwrap_or_else(|| "https://letter.example".into());
 
     let set_token_url = format!("{base_url}/api/auth/set-token");
     let domain = base_url
@@ -480,7 +480,7 @@ fn beehiiv_set_jwt(args: Vec<Value>) -> StdlibResult {
 /// Check the current auth state via /api/auth/user.
 /// Returns user data if authenticated, error otherwise.
 fn beehiiv_get_user(args: Vec<Value>) -> StdlibResult {
-    let base_url = arg_str_opt(&args, 0).unwrap_or_else(|| "https://letter.nicholascrown.com".into());
+    let base_url = arg_str_opt(&args, 0).unwrap_or_else(|| "https://letter.example".into());
 
     let user_url = format!("{base_url}/api/auth/user");
     let domain = base_url
@@ -495,7 +495,7 @@ fn beehiiv_get_user(args: Vec<Value>) -> StdlibResult {
 ///
 /// List available subscription products from /api/product.
 fn beehiiv_list_products(args: Vec<Value>) -> StdlibResult {
-    let base_url = arg_str_opt(&args, 0).unwrap_or_else(|| "https://letter.nicholascrown.com".into());
+    let base_url = arg_str_opt(&args, 0).unwrap_or_else(|| "https://letter.example".into());
 
     let products_url = format!("{base_url}/api/product");
     let domain = base_url

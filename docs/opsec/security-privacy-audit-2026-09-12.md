@@ -11,7 +11,7 @@
 ## 1 · Executive summary
 
 - **Re-verified fresh:** egress contract **14/14 PASS** · firewall default-deny (v4+v6) · SSH key-only · fail2ban + auditd active · 0 pending security updates · retention + watchdogs live · `postboot-verify: OK`.
-- **Applied (only change this pass):** Caddy security headers on `myvapeisland.com` (§3).
+- **Applied (only change this pass):** Caddy security headers on `client-a-store.com` (§3).
 - **One state explained & closed:** `tor@default` `enabled-runtime` is the **normal Debian `tor-generator` behavior** — the bring-up edge is regenerated at every boot; verified live. No action (see §5 "don't re-chase").
 - **Open items:** SSH MFA (options §5/P1), 2 held apt packages (libgeos / leftover `pgdg` repo), offsite-backup confirmation, CSP evaluation, `tallow-rmdb-update` cadence.
 
@@ -45,7 +45,7 @@
 
 ### 2.5 Public surface & TLS — OK (headers hardened this pass)
 - Listeners: **public = 22/80/443 only**; loopback = 9050/9051 (tor), 2019 (caddy admin), 8080 (searxng), 8081 (imgproxy), 53 (resolved).
-- Caddy serves only `myvapeisland.com` + `www` (static); cert valid to **2026-11-08**; `:80` → `:443` 308; HTTP/2 + alt-svc h3.
+- Caddy serves only `client-a-store.com` + `www` (static); cert valid to **2026-11-08**; `:80` → `:443` 308; HTTP/2 + alt-svc h3.
 - Headers live: `strict-transport-security: max-age=15552000`, `x-frame-options: SAMEORIGIN`, `permissions-policy: camera=(), microphone=(), geolocation=()`, `x-content-type-options: nosniff`, `referrer-policy: strict-origin-when-cross-origin`. `server: Caddy` (no version). CSP deferred (§5/P2).
 - Note: homepage response is a **≈16.8 MB single HTML** (`content-length: 16833270`) — performance item, not security.
 
@@ -104,7 +104,7 @@
   - Also confirm **Hetzner account 2FA** (the console is the break-glass path).
 - **P1 — apply or drop** the 2 held `libgeos*` packages (leftover `noble-pgdg` repo).
 - **P2 — backups:** confirm offsite strategy (nothing on-box beyond OS defaults; M1 pack+encrypt note exists in the checklist).
-- **P2 — CSP** for `myvapeisland.com`: needs asset inventory + staged testing (report-only first).
+- **P2 — CSP** for `client-a-store.com`: needs asset inventory + staged testing (report-only first).
 - **P3 —** `tallow-rmdb-update` cadence (timer disabled; currently per-boot); homepage size (~16.8 MB); Docker image refresh cadence (`searxng`, `imgproxy`).
 - **Already-explained states — don't re-chase in future audits:** `tor@default` `enabled-runtime` (= `tor-generator`, by design); `ufw` inactive (= `host-firewall.service` owns default-deny); no LUKS (= M4 accepted decision); `server: Caddy` without version + deferred CSP (= intentional); empty `sudo` group / no user accounts (= root-key-only by design).
 - **Closed items:** checklist Disposition H8–H12 / M1–M8 remain closed — don't reopen without cause.
@@ -122,7 +122,7 @@ fail2ban ................ jail sshd; currently banned 195.238.176.70; ~4k attemp
 apt .................... 0 security-pending; dist-upgrade: libgeos3.14.1 + libgeos-c1t64
 postboot-verify.sh ...... OK
 privacy-retention.sh .... dry-run OK (no prunes due); journald 77.5M (cap 300M)
-curl (local) ............ myvapeisland.com 200 + new headers; :80 → 308; www OK
+curl (local) ............ client-a-store.com 200 + new headers; :80 → 308; www OK
 caddy validate + reload . OK (graceful)
 env hygiene ............. clean (no TALLOW_* exports anywhere)
 ```
@@ -141,7 +141,7 @@ Executes the resolvable items from §5 (supersedes them where noted):
   - **searxng** → `/opt/searxng/update.sh` (preserves all 4 mounts incl. anonymous volumes + env from `/opt/searxng/env.sh`). Post-update: HTTP 200, JSON API OK (echoed-query verified), bind `127.0.0.1:8080` only, public path closed on v4+v6.
   - **imgproxy** → `/opt/imgproxy/update.sh`. Post-update: health 200.
   - Old images retained for rollback; prune with `docker image prune` once confidence is earned.
-- **[RESOLVED] CSP** — live-page asset inventory complete (all-inline page; zero external scripts; 0 external font files). Draft policy + apply/test/rollback steps: `myvapeisland-csp-draft.md` (enforcement staged for a browser pass).
+- **[RESOLVED] CSP** — live-page asset inventory complete (all-inline page; zero external scripts; 0 external font files). Draft policy + apply/test/rollback steps: `client-a-store-csp-draft.md` (enforcement staged for a browser pass).
 - **[SKIPPED — accepted risk, 2026-09-12]** SSH MFA — decision: stays key-only for now (single keypair, present twice in `authorized_keys`); no second factor. Runbook remains in §5 if revisited later; Hetzner-account 2FA still worth confirming separately.
 - **[IN PROGRESS] Backups** — paid offsite (Storage Box / cloud) declined; direction set to **pull-to-home**: server-side staged encrypted archive set (nightly: Hermes state incl. Mnemosyne DB + vault + box configs; weekly: Nixe minus `target/`/caches) + client-side pull into the operator's "nas folder" (likely the Windows box that already reaches the server by SSH). Awaiting device/folder confirmation → then build + restore drill. Until that lands the box still has **no offsite copy** (no git remotes; ~1k uncommitted files).
 - **[LEFT AS-IS — user decision, 2026-09-12]** `postgresql@17-main` (failed; teardown leftover). Verified during the decision pass: cluster config + admin user exist, but the data directory is **empty (0 files; entire `/var/lib/postgresql` tree = 4 KB)** and no service on the box uses the stack. Full teardown (packages + `noble-pgdg` repo + empty dirs) offered and **declined — everything stays in place**; the unit will re-attempt and fail at each boot (accepted, harmless). Revisit only if it becomes noise worth removing.

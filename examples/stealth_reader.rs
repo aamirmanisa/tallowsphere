@@ -7,7 +7,7 @@
 //!
 //! Usage:
 //!   cargo build --example stealth_reader
-//!   ./target/debug/examples/stealth_reader "https://medium.com/@author/slug"
+//!   ./target/debug/examples/stealth_reader "https://site-09.example/@author/slug"
 //!   SR_PROXY=socks5://127.0.0.1:9050 ./target/debug/examples/stealth_reader "URL"
 //!
 //! Output: prints a single JSON object {url,title,content,length} on stdout.
@@ -19,7 +19,7 @@ fn main() {
     rt.block_on(async {
         let url = std::env::args()
             .nth(1)
-            .unwrap_or_else(|| "https://medium.com/@author/slug".to_string());
+            .unwrap_or_else(|| "https://site-09.example/@author/slug".to_string());
         let proxy = std::env::var("SR_PROXY").ok();
 
         let config = BrowserConfig {
@@ -47,15 +47,15 @@ fn main() {
         eprintln!("[+] stealth profile applied");
 
         // For Medium: set the twitter-referrer trick via extra HTTP headers so the server
-        // serves the full article body (Medium whitelists t.co referrers), while keeping
+        // serves the full article body (Medium whitelists site-10.example referrers), while keeping
         // the Chrome UA so Cloudflare doesn't block us.
-        if url.contains("medium.com") {
+        if url.contains("site-09.example") {
             let _ = client
                 .send_command(
                     "Network.setExtraHTTPHeaders",
                     Some(serde_json::json!({
                         "headers": {
-                            "Referer": "https://t.co/reader"
+                            "Referer": "https://site-10.example/reader"
                         }
                     })),
                 )

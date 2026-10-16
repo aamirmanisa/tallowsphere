@@ -1650,7 +1650,7 @@ fn scrape() { }"#);
     #[test]
     fn fmt_named_args() {
         let result =
-            fmt(r#"fn main() { fetch("https://x.com", timeout: 10, follow_redirects: true) }"#);
+            fmt(r#"fn main() { fetch("https://site-35.example", timeout: 10, follow_redirects: true) }"#);
         assert!(
             result.contains("timeout: 10"),
             "should contain named arg: {result}"

@@ -1,6 +1,6 @@
 // examples/sitescan_demo.tl — comprehensive website + infrastructure scan (D5).
 //
-// Owner-authorized, READ-ONLY scan of an own asset (myvapeisland.com, which
+// Owner-authorized, READ-ONLY scan of an own asset (client-a-store.com, which
 // is hosted on this same machine). Demonstrates the full depth ladder:
 //   D1 surface -> D2 pages -> D3 assets & endpoints -> D4 infra -> D5 network
 // with the network stage gated by an explicit owner authorization CIDR
@@ -26,7 +26,7 @@ fn main() {
     print("depth ladder: " + di.get("levels").len().to_string() + " levels, 1..5")
 
     // 2. Full-scope scan at D5. Owner authorization CIDR = this box's public IP.
-    let target = "https://myvapeisland.com"
+    let target = "https://client-a-store.com"
     let opts = '{"max_pages": 6, "link_depth": 2, "max_js": 8, "max_css": 4, "authorized_cidr": "203.0.113.1/32", "port_timeout_ms": 1200}'
     print("scanning " + target + " @ depth 5 ...")
     let raw = sitescan.scan(target, 5, opts).unwrap()
@@ -55,9 +55,9 @@ fn main() {
     print("errors/notes: " + env.get("errors").len().to_string())
 
     // 4. Aggregate findings: raw envelope + rendered report.
-    fs.write_file("artifacts/sitescan_2026-09-12/myvapeisland_d5_scan.json", raw)
+    fs.write_file("artifacts/sitescan_2026-09-12/client-a-store_d5_scan.json", raw)
     let md = sitescan.report(raw).unwrap()
-    fs.write_file("artifacts/sitescan_2026-09-12/myvapeisland_d5_report.md", md)
-    print('wrote artifacts/sitescan_2026-09-12/{myvapeisland_d5_scan.json,myvapeisland_d5_report.md}')
+    fs.write_file("artifacts/sitescan_2026-09-12/client-a-store_d5_report.md", md)
+    print('wrote artifacts/sitescan_2026-09-12/{client-a-store_d5_scan.json,client-a-store_d5_report.md}')
     print("DONE")
 }

@@ -68,8 +68,8 @@ Rate limit entries support:
 ```json
 {
   "targets": [
-    "https://app.apollo.io/graphql",
-    "https://api.apollo.io/graphql"
+    "https://vendor.example/graphql",
+    "https://vendor.example/graphql"
   ]
 }
 ```
@@ -79,14 +79,14 @@ Rate limit entries support:
 ```json
 {
   "targets": [
-    "https://app.apollo.io/graphql",
-    "https://app.apollo.io/api/graphql",
-    "https://api.apollo.io/graphql"
+    "https://vendor.example/graphql",
+    "https://vendor.example/api/graphql",
+    "https://vendor.example/graphql"
   ],
   "headers": {
     "Accept": "application/json, text/plain, */*",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Referer": "https://app.apollo.io/"
+    "Referer": "https://vendor.example/"
   },
   "auth": {
     "mode": "bearer",
@@ -100,20 +100,20 @@ Rate limit entries support:
     "backoff_ms": [250, 1000]
   },
   "per_domain": {
-    "app.apollo.io": {
+    "vendor.example": {
       "headers": {
-        "Origin": "https://app.apollo.io"
+        "Origin": "https://vendor.example"
       },
       "retry": {
         "wave_concurrency": [120, 40, 20]
       }
     },
-    "api.apollo.io": {
+    "vendor.example": {
       "retry": {
         "wave_concurrency": [100, 40, 20]
       },
       "extra_targets": [
-        "https://api.apollo.io/status"
+        "https://vendor.example/status"
       ]
     }
   },
@@ -133,13 +133,13 @@ Rate limit entries support:
     },
     "rate_limits": {
       "per_domain": {
-        "app.apollo.io": {
+        "vendor.example": {
           "requests_per_minute": 120,
           "burst": 20,
           "concurrent": 20,
           "cooldown_ms": 250
         },
-        "api.apollo.io": {
+        "vendor.example": {
           "requests_per_minute": 100,
           "burst": 20,
           "concurrent": 16,

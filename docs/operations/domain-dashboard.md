@@ -46,7 +46,7 @@ The script reads per-run artifacts from discovered `run_*` folders:
 - `unresolved_count`: unresolved URL entries parsed from summary key `unresolved_urls` (pipe-delimited list).
 - `status_distribution`: counts by `status` in CSV rows (for example `200`, `404`, `429`).
 
-Domain key is normalized from URL host and rolled up to root domain (for example `app.apollo.io` -> `apollo.io`).
+Domain key is normalized from URL host and rolled up to root domain (for example `vendor.example` -> `vendor.example`).
 
 ## Default Output Paths
 

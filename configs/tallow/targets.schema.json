@@ -28,7 +28,7 @@
     },
     "per_domain": {
       "type": "object",
-      "description": "Optional overrides keyed by hostname (for example: app.apollo.io).",
+      "description": "Optional overrides keyed by hostname (for example: vendor.example).",
       "propertyNames": {
         "$ref": "#/$defs/hostname"
       },

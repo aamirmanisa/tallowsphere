@@ -76,13 +76,10 @@ scripts/free_coin_*
 scripts/reverse_*.tl
 scripts/aga_khan_*
 scripts/pw_*.py
-scripts/zabalist_*.py
 scripts/hetzner_*
-scripts/apollo_turbo_parallel_check.tl
 scripts/_argtest.tl
 scripts/anonymous_line.py
 scripts/realtor_parse.py
-scripts/tabc_rss_downloader.py
 scripts/dealhunter_cron.py
 scripts/intel_watch.tl
 scripts/nhtsa_vin_lookup.tl

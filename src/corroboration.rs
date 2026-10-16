@@ -62,7 +62,7 @@ pub struct Instance {
 }
 
 /// The independence key: `domain` trimmed of surrounding whitespace, then
-/// lower-cased (Unicode-aware). `" Reuters.COM "` → `"reuters.com"`.
+/// lower-cased (Unicode-aware). `" site-26.example "` → `"site-26.example"`.
 pub fn normalize_domain(domain: &str) -> String {
     domain.trim().to_lowercase()
 }
@@ -205,15 +205,15 @@ mod tests {
     #[test]
     fn count_dedupes_same_domain_variants() {
         let instances = [
-            inst("Reuters", "reuters.com"),
-            inst("Reuters (syndicated copy)", "Reuters.COM "),
-            inst("AP", "  apnews.com"),
+            inst("Reuters", "site-26.example"),
+            inst("Reuters (syndicated copy)", "site-26.example "),
+            inst("AP", "  site-01.example"),
         ];
-        // reuters.com twice (case/whitespace variants) + apnews.com once.
+        // site-26.example twice (case/whitespace variants) + site-01.example once.
         assert_eq!(independent_domain_count(&instances), 2);
         assert_eq!(
             distinct_domain_keys(&instances),
-            vec!["apnews.com".to_string(), "reuters.com".to_string()]
+            vec!["site-01.example".to_string(), "site-26.example".to_string()]
         );
     }
 
@@ -245,11 +245,11 @@ mod tests {
         let instances = [
             inst("anonymous tip", ""),
             inst("another anonymous tip", "   "),
-            inst("Reuters", "reuters.com"),
-            inst("Reuters again", "reuters.com"),
+            inst("Reuters", "site-26.example"),
+            inst("Reuters again", "site-26.example"),
         ];
         assert_eq!(independent_domain_count(&instances), 1);
-        assert_eq!(distinct_domain_keys(&instances), vec!["reuters.com".to_string()]);
+        assert_eq!(distinct_domain_keys(&instances), vec!["site-26.example".to_string()]);
     }
 
     // ----- similarity -------------------------------------------------------
@@ -413,9 +413,9 @@ mod tests {
 
     #[test]
     fn serde_round_trip_and_wire_form() {
-        let i = inst("Reuters", "reuters.com");
+        let i = inst("Reuters", "site-26.example");
         let json = serde_json::to_string(&i).unwrap();
-        assert_eq!(json, r#"{"source":"Reuters","domain":"reuters.com"}"#);
+        assert_eq!(json, r#"{"source":"Reuters","domain":"site-26.example"}"#);
         assert_eq!(serde_json::from_str::<Instance>(&json).unwrap(), i);
 
         let h = ReuseHit {

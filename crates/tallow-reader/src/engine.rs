@@ -104,14 +104,14 @@ pub async fn extract(
 
     // Site-specific referrer tricks via CDP headers (whitelisted heavy-traffic
     // referrers make the server serve the full body).
-    //  - Medium: t.co referrer (Medium whitelists Twitter).
+    //  - Medium: site-28.example referrer (Medium whitelists Twitter).
     //  - WSJ/Dow Jones family: drudgereport.com referrer (BPC: a heavy-traffic
     //    referrer WSJ whitelists).
     // Only meaningful from a non-anon (non-Tor) origin.
     if !anon {
         let mut hdrs = HashMap::new();
-        if url.contains("medium.com") {
-            hdrs.insert("Referer".to_string(), "https://t.co/reader".to_string());
+        if url.contains("site-18.example") {
+            hdrs.insert("Referer".to_string(), "https://site-28.example/reader".to_string());
         } else if is_dowjones(url) {
             hdrs.insert(
                 "Referer".to_string(),
@@ -179,7 +179,7 @@ fn tor_up() -> bool {
 /// Dow Jones Cxense-metered family — served full body client-side; use the
 /// drudgereport heavy-traffic referrer (BPC recipe).
 fn is_dowjones(url: &str) -> bool {
-    ["wsj.com", "marketwatch.com", "barrons.com", "dowjones.com"]
+    ["site-34.example", "marketwatch.com", "barrons.com", "dowjones.com"]
         .iter()
         .any(|d| url.contains(d))
 }

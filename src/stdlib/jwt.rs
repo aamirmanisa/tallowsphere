@@ -232,7 +232,7 @@ fn jwt_attack_weak_secrets(args: Vec<Value>) -> StdlibResult {
             // Default wordlist of common secrets
             let defaults = [
                 "secret", "password", "jwt_secret", "key", "private",
-                "beehiiv", "crownmacro", "nicholascrown", "supersecret",
+                "beehiiv", "exampleword", "supersecret",
                 "changeme", "admin", "test", "123456", "token",
             ];
             if s == "default" {

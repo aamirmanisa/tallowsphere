@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
-        let entry = VaultEntry::new_login("test", "user", "pw", vec!["https://x.com".into()]);
+        let entry = VaultEntry::new_login("test", "user", "pw", vec!["https://site-35.example".into()]);
 
         // Generate a recipient X25519 keypair.
         let recipient_secret = x25519_dalek::StaticSecret::random_from_rng(rand_core_06::OsRng);

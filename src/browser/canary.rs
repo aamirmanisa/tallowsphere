@@ -157,7 +157,7 @@ impl CanaryRegistry {
     pub fn seed_for_houston_grocery(&mut self) {
         let retailers = [
             "shop-d.example",
-            "kroger.com",
+            "site-15.example",
             "shop-a.example",
             "shop-b.example",
             "shop-04.example",
@@ -278,7 +278,7 @@ mod tests {
     fn small_drift_passes() {
         let mut reg = CanaryRegistry::new();
         reg.register_canary(CanaryProduct {
-            retailer: "kroger.com".into(),
+            retailer: "site-15.example".into(),
             sku: "milk_1gal".into(),
             product_name: "milk".into(),
             expected_url: "".into(),
@@ -286,11 +286,11 @@ mod tests {
             rolling_window_days: 7,
         });
         for _ in 0..5 {
-            reg.update_baseline("kroger.com", "milk_1gal", 450);
+            reg.update_baseline("site-15.example", "milk_1gal", 450);
         }
         let mut obs = HashMap::new();
         obs.insert("milk_1gal".into(), 470); // ~4% drift
-        let r = reg.check_batch("kroger.com", &obs);
+        let r = reg.check_batch("site-15.example", &obs);
         assert_eq!(r.canaries_drifted.len(), 0);
         assert!(!r.should_quarantine_batch);
     }
