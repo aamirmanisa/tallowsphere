@@ -106,6 +106,33 @@ Two things that fell out of this and are worth knowing before re-running it:
   meaningless −0.91% it produced was only recognisable as meaningless *because* the floor was
   measured alongside it.
 
+## A defect in this pipeline, found by the tree's own build notes
+
+Every arm above exported `RUSTFLAGS`, and this tree's `.cargo/config.toml` puts
+`-C target-feature=+aes --cfg aes_armv8` in a `[target.*]` table — which **cargo ignores the moment
+`RUSTFLAGS` is exported, including when it is the empty string.** Verified with a probe crate nested in
+this tree (so it inherits the same config):
+
+```
+RUSTFLAGS unset                 -> target-feature=+aes, --cfg aes_armv8   present
+RUSTFLAGS=""                    -> both ABSENT
+RUSTFLAGS="-Ccodegen-units=16"  -> both ABSENT
+```
+
+Without them libcrux-aesgcm silently selects its bitsliced fallback: **111 MB/s vs 973 MB/s**. So:
+
+* **the pipeline as first written would have shipped a binary with an ~8.8× crypto regression** — a
+  PGO build is exactly the kind of build where "just add `-Cprofile-use`" looks complete.
+* **the binaries in the table above all lack AES**, `base` included (an empty `RUSTFLAGS` is still an
+  exported one). The comparison stays sound because both arms are equally affected and neither
+  measured workload — `check`, `copy` — touches AES, so the deltas stand as deltas. What is *not*
+  sound is reading the absolute timings or the 13%-smaller size as the production configuration.
+* **Fixed:** every arm now carries `AES_FLAGS="-C target-feature=+aes --cfg aes_armv8"` explicitly, and
+  a new `flags` arm builds a throwaway crate inside the tree under each arm's `RUSTFLAGS` and asserts
+  the flags reach rustc — `unset 2/2, empty 0/2, pgo 2/2`, rc=0. Re-running `all` on the fixed
+  pipeline is the clean next step; it cannot change the PGO conclusion, since the workloads are
+  non-crypto.
+
 ## Scope
 
 PGO is wired as a scriptable pipeline, not as a CI workflow: this repo's CI is intentionally not
