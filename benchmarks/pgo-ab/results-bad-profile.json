@@ -1,0 +1,57 @@
+{
+  "_meta": {
+    "harness": "benchmarks/pgo-ab/run_pgo_ab.py",
+    "item": "U-C11 (PGO half; BOLT absent on this box)",
+    "base_binary": "/tmp/pgo-base/release/tallow",
+    "base_sha256": "d1738f2676dfb2e04cbbb28b3678897ebae5905f134c46bf7c4e262fab323eb4",
+    "pgo_binary": "/tmp/pgo-use/release/tallow",
+    "pgo_sha256": "90522a4694f63af8dd3b5c76587fdca47f5dc21488dcb4616ad633a165f2a8f1",
+    "iters": 5,
+    "copy_mib": 1024,
+    "check_corpus": [
+      "fe-20000.tl"
+    ],
+    "loadavg_before": [
+      "1.26",
+      "2.49",
+      "3.26"
+    ],
+    "loadavg_after": [
+      "1.51",
+      "1.76",
+      "2.71"
+    ],
+    "date_utc": "2026-10-16T23:12:46+00:00",
+    "correctness": "copy sha verified identical and check stdout verified identical before timing"
+  },
+  "arms": {
+    "base": {
+      "median_s": {
+        "copy": 1.3536,
+        "check": 25.3448,
+        "floor": 0.0097
+      },
+      "runs": {
+        "copy": 5,
+        "check": 5,
+        "floor": 5
+      }
+    },
+    "pgo": {
+      "median_s": {
+        "copy": 1.3825,
+        "check": 32.1848,
+        "floor": 0.0097
+      },
+      "runs": {
+        "copy": 5,
+        "check": 5,
+        "floor": 5
+      }
+    },
+    "delta": {
+      "copy": -2.14,
+      "check": -26.99
+    }
+  }
+}
