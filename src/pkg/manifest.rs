@@ -544,7 +544,7 @@ auth = "token"
 
 [[registries]]
 name = "public"
-url  = "https://registry.tallow-lang.org"
+url  = "https://github.com/aamirmanisa/tallowsphere/packages"
 auth = "none"
 "#;
         let manifest = parse_manifest(toml).unwrap();

@@ -17,7 +17,7 @@ pub struct SearchResult {
 
 /// Hosted package registry that wraps a LocalRegistry and exposes REST-like API methods.
 ///
-/// This simulates the `pkg.tallow-lang.org` hosted registry contract without an actual HTTP server.
+/// This simulates the `pkg.github.com/aamirmanisa/tallowsphere` hosted registry contract without an actual HTTP server.
 /// Methods mirror the API: publish, search, get_versions, download.
 pub struct HostedRegistry {
     inner: LocalRegistry,

@@ -77,7 +77,7 @@ pub fn generate_slsa_provenance(
         "predicateType": "https://slsa.dev/provenance/v1",
         "predicate": {
             "buildDefinition": {
-                "buildType": "https://tallow-lang.org/TallowPackageBuild/v1",
+                "buildType": "https://github.com/aamirmanisa/tallowsphere/schemas/TallowPackageBuild/v1",
                 "externalParameters": {
                     "source": artifact_name
                 },
@@ -86,7 +86,7 @@ pub fn generate_slsa_provenance(
             },
             "runDetails": {
                 "builder": {
-                    "id": format!("https://tallow-lang.org/builder/v1/{tallow_version}"),
+                    "id": format!("https://github.com/aamirmanisa/tallowsphere/schemas/builder/v1/{tallow_version}"),
                     "version": {
                         "tallow": tallow_version
                     }
@@ -481,7 +481,7 @@ pub fn slsa_provenance(
         "predicateType": "https://slsa.dev/provenance/v1",
         "predicate": {
             "buildDefinition": {
-                "buildType": "https://tallow-lang.org/TallowPackageBuild/v1",
+                "buildType": "https://github.com/aamirmanisa/tallowsphere/schemas/TallowPackageBuild/v1",
                 "externalParameters": {
                     "source": source,
                 },
@@ -492,7 +492,7 @@ pub fn slsa_provenance(
             },
             "runDetails": {
                 "builder": {
-                    "id": format!("https://tallow-lang.org/builder/v1/{builder}"),
+                    "id": format!("https://github.com/aamirmanisa/tallowsphere/schemas/builder/v1/{builder}"),
                     "version": {
                         "tallow": tallow_version,
                     }
@@ -645,7 +645,7 @@ mod tests {
         let result = SigstoreSigningResult {
             artifact_hash: artifact_hash.clone(),
             certificate: "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n".into(),
-            identity: "builder@tallow-lang.org".into(),
+            identity: "aamir@users.noreply.github.com".into(),
             log_index: 1,
             simulation: false,
             log_uuid: "00000000-0000-0000-0000-000000000000".into(),

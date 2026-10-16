@@ -6922,7 +6922,7 @@ OriginAS:       AS15169
     fn test_web_archive_snapshot_url_format() {
         let cdx_json = r#"[
             ["timestamp","original","statuscode","digest"],
-            ["20240315143022","https://tallow-lang.org/docs","200","XYZ789"]
+            ["20240315143022","https://github.com/aamirmanisa/tallowsphere/blob/main/docs","200","XYZ789"]
         ]"#;
         let result = parse_cdx_response(cdx_json).unwrap();
         if let Value::Array(snapshots) = &result {
@@ -6937,7 +6937,7 @@ OriginAS:       AS15169
                     "snapshot_url must contain timestamp"
                 );
                 assert!(
-                    url.ends_with("https://tallow-lang.org/docs"),
+                    url.ends_with("https://github.com/aamirmanisa/tallowsphere/blob/main/docs"),
                     "snapshot_url must end with original URL"
                 );
             }

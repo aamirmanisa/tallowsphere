@@ -247,7 +247,7 @@ pub fn generate_spdx(
         hex[..16].to_string()
     };
     let document_namespace = format!(
-        "https://tallow-lang.org/spdx/{project_name}/{project_version}/{namespace_hash}"
+        "https://github.com/aamirmanisa/tallowsphere/spdx/{project_name}/{project_version}/{namespace_hash}"
     );
 
     // Build ISO 8601 timestamp
@@ -1022,7 +1022,7 @@ dependencies = []
 
         // documentNamespace must be a URL string
         let ns = spdx["documentNamespace"].as_str().unwrap();
-        assert!(ns.starts_with("https://tallow-lang.org/spdx/"), "namespace should be a URL: {ns}");
+        assert!(ns.starts_with("https://github.com/aamirmanisa/tallowsphere/spdx/"), "namespace should be a URL: {ns}");
         assert!(ns.contains("test-project"), "namespace should contain project name");
 
         // creationInfo

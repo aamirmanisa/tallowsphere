@@ -781,7 +781,7 @@ enum Command {
         /// SOCKS5 proxy (e.g., socks5://127.0.0.1:9050 for Tor)
         #[arg(long)]
         proxy: Option<String>,
-        /// Signal server for global peer discovery (e.g., signal.tallow-lang.org:6890)
+        /// Signal server for global peer discovery (e.g., signal.github.com/aamirmanisa/tallowsphere:6890)
         #[arg(long)]
         signal: Option<String>,
         /// Use the legacy v0 plaintext relay protocol (insecure escape hatch;
@@ -821,7 +821,7 @@ enum Command {
         /// SOCKS5 proxy (e.g., socks5://127.0.0.1:9050 for Tor)
         #[arg(long)]
         proxy: Option<String>,
-        /// Signal server for global peer discovery (e.g., signal.tallow-lang.org:6890)
+        /// Signal server for global peer discovery (e.g., signal.github.com/aamirmanisa/tallowsphere:6890)
         #[arg(long)]
         signal: Option<String>,
         /// Disable receive resume (design §3.2: resume is ON by default)
@@ -2149,7 +2149,7 @@ fn ffmpeg_remove() {
 /// Default signal server address (no public server yet - run your own with `tallow signal`).
 /// Kept as a named constant for future `--signal default` shorthand.
 #[allow(dead_code)]
-const DEFAULT_SIGNAL_SERVER: &str = "signal.tallow-lang.org:6890";
+const DEFAULT_SIGNAL_SERVER: &str = "signal.github.com/aamirmanisa/tallowsphere:6890";
 
 /// Detect this machine's local outbound IP address.
 /// For true public IP detection use an external service; this returns the
