@@ -121,61 +121,169 @@ impl DoubleRatchet {
     ///
     /// If the message counter is ahead of the current receive counter,
     /// intermediate message keys are cached for later decryption.
+    ///
+    /// This entry point is POSITIONAL: the message number is whatever this side
+    /// expects next, because the caller has no number of its own to offer. A
+    /// frame that arrives after a gap therefore cannot be placed, and is
+    /// refused — with the receive state left untouched (see
+    /// [`Self::decrypt_message_at`]), but still refused. Use
+    /// [`Self::decrypt_message_labeled`] when the frame carries the sender's own
+    /// position.
     pub fn decrypt_message(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
         self.decrypt_message_at(ciphertext, self.recv_counter)
+    }
+
+    /// Decrypt the frame the sender LABELLED with `declared`.
+    ///
+    /// `declared` is the position the sender says it used for this frame (on
+    /// the v9 chat wire that is `ChatTextV9.sequence`). The label is NOT
+    /// authenticated — it is a key-selection hint and nothing else — and the
+    /// AEAD decides whether it was right, because key and nonce are both
+    /// functions of the position. Two attempts are made, in this order:
+    ///
+    /// 1. the declared position — what a labelling peer needs. This is what
+    ///    makes a frame that arrives AFTER A GAP (a frame the relay dropped, or
+    ///    two frames it swapped) decrypt at its own position via the skipped-key
+    ///    cache, instead of leaving the receive direction unusable;
+    /// 2. this side's own positional expectation, `recv_counter` — what a peer
+    ///    that does not label its frames needs, so a receiver that adopts this
+    ///    entry point does not refuse an honest unlabelled peer.
+    ///
+    /// Acceptance always means the frame authenticated AT THE POSITION USED, so
+    /// neither attempt can accept a frame the peer did not produce at that
+    /// position: a forgery or a replay fails both. The worst a lying label can
+    /// do is cost a refusal — which any mutation of the frame costs anyway.
+    pub fn decrypt_message_labeled(&mut self, ciphertext: &[u8], declared: u64) -> Result<Vec<u8>> {
+        let first_err = match self.decrypt_message_at(ciphertext, declared) {
+            Ok(plaintext) => return Ok(plaintext),
+            Err(e) => e,
+        };
+
+        // A peer that does not label its frames: tried at the position we
+        // expect. Skipped when the declared position already WAS that one.
+        let positional = self.recv_counter;
+        if declared == positional {
+            return Err(first_err);
+        }
+        match self.decrypt_message_at(ciphertext, positional) {
+            Ok(plaintext) => Ok(plaintext),
+            // Both attempts refused: report the first one (the sender's own
+            // claim), so the caller sees why the frame as labelled did not fit.
+            Err(_) => Err(first_err),
+        }
     }
 
     /// Decrypt a message with an explicit message number
     ///
     /// Supports out-of-order delivery by checking the skipped keys cache.
+    ///
+    /// A refused frame is a NO-OP on receive state: nothing is committed until
+    /// the frame authenticates. Concretely, the chain key and the counter are
+    /// only moved, and skipped keys are only cached, after the AEAD call for
+    /// this frame has returned `Ok`. A frame that fails to authenticate — a
+    /// forgery, a bit-flipped frame, or one the caller placed wrongly — costs
+    /// itself and nothing else.
+    ///
+    /// (The previous shape advanced `recv_chain_key` BEFORE the AEAD call and
+    /// returned on the error before advancing `recv_counter`, leaving the chain
+    /// key one step ahead of the counter forever: every later frame in that
+    /// direction was keyed one step ahead of its own nonce and was refused too.
+    /// One refused frame killed the direction — see the `refusal_is_a_noop`
+    /// tests.)
+    ///
+    /// A position BELOW the receive counter with no cached key is refused as an
+    /// ordering violation (the frame was already consumed, or is older than the
+    /// skip window) rather than being decrypted against the wrong key.
     pub fn decrypt_message_at(&mut self, ciphertext: &[u8], message_num: u64) -> Result<Vec<u8>> {
         let dh_pub = self.ephemeral_keypair.public_bytes().to_vec();
 
-        // Check if this is a skipped message
-        if let Some(mut mk) = self.skipped_keys.remove(&(dh_pub.clone(), message_num)) {
+        // A frame whose position is inside the skipped window: its key was
+        // cached when the gap was stepped over. SINGLE USE — the entry is
+        // consumed only when the frame authenticates, so a failed attempt
+        // leaves the cache exactly as it was.
+        if let Some(mut mk) = self
+            .skipped_keys
+            .get(&(dh_pub.clone(), message_num))
+            .copied()
+        {
             let mut nonce = [0u8; 12];
             nonce[..8].copy_from_slice(&message_num.to_le_bytes());
 
-            let plaintext = chacha_decrypt(&mk, &nonce, ciphertext, &[])?;
-            mk.zeroize();
-            return Ok(plaintext);
-        }
-
-        // Skip ahead if necessary
-        if message_num > self.recv_counter {
-            let skip_count = message_num - self.recv_counter;
-            if skip_count > MAX_SKIP {
-                return Err(CryptoError::Decryption(format!(
-                    "Too many skipped messages: {} exceeds maximum of {}",
-                    skip_count, MAX_SKIP
-                )));
-            }
-
-            // Cache intermediate keys
-            while self.recv_counter < message_num {
-                let mk = blake3::derive_key("message", &self.recv_chain_key);
-                self.skipped_keys
-                    .insert((dh_pub.clone(), self.recv_counter), mk);
-                self.recv_chain_key = blake3::derive_key("chain_advance", &self.recv_chain_key);
-                self.recv_counter = self.recv_counter.checked_add(1).ok_or_else(|| {
-                    CryptoError::Decryption("recv counter overflow during skip".into())
-                })?;
+            match chacha_decrypt(&mk, &nonce, ciphertext, &[]) {
+                Ok(plaintext) => {
+                    if let Some(mut consumed) =
+                        self.skipped_keys.remove(&(dh_pub, message_num))
+                    {
+                        consumed.zeroize();
+                    }
+                    mk.zeroize();
+                    return Ok(plaintext);
+                }
+                Err(e) => {
+                    mk.zeroize();
+                    return Err(e);
+                }
             }
         }
 
-        // Derive message key for this message
-        let message_key = blake3::derive_key("message", &self.recv_chain_key);
+        // Below the window, and no cached key for it: this position has been
+        // passed and its key is gone. That is a replay of a consumed frame, or
+        // a frame older than the skip window — an ordering refusal, not a
+        // decryption attempt against a key that cannot be right.
+        if message_num < self.recv_counter {
+            return Err(CryptoError::Decryption(format!(
+                "message number {} is below the receive counter {} and no skipped key is cached: \
+                 the frame was already consumed or is older than the skip window",
+                message_num, self.recv_counter
+            )));
+        }
 
-        // Advance chain key
-        self.recv_chain_key = blake3::derive_key("chain_advance", &self.recv_chain_key);
+        // Stepping over a gap: derive the keys of the positions crossed into a
+        // STAGING list. Nothing is committed until this frame authenticates.
+        let skip_count = message_num - self.recv_counter;
+        if skip_count > MAX_SKIP {
+            return Err(CryptoError::Decryption(format!(
+                "Too many skipped messages: {} exceeds maximum of {}",
+                skip_count, MAX_SKIP
+            )));
+        }
 
-        // Decrypt with nonce = counter
+        let mut staged: Vec<(u64, [u8; 32])> = Vec::with_capacity(skip_count as usize);
+        let mut chain = self.recv_chain_key;
+        let mut position = self.recv_counter;
+        while position < message_num {
+            staged.push((position, blake3::derive_key("message", &chain)));
+            chain = blake3::derive_key("chain_advance", &chain);
+            position += 1;
+        }
+        let message_key = blake3::derive_key("message", &chain);
+
+        // Decrypt with nonce = the position actually being attempted (this is
+        // the message number, not "whatever the counter happens to be").
         let mut nonce = [0u8; 12];
-        nonce[..8].copy_from_slice(&self.recv_counter.to_le_bytes());
+        nonce[..8].copy_from_slice(&message_num.to_le_bytes());
 
-        let plaintext = chacha_decrypt(&message_key, &nonce, ciphertext, &[])?;
+        let plaintext = match chacha_decrypt(&message_key, &nonce, ciphertext, &[]) {
+            Ok(plaintext) => plaintext,
+            Err(e) => {
+                // Refused: every derived key is discarded and the receive state
+                // is left exactly as it was.
+                for (_, mut mk) in staged {
+                    mk.zeroize();
+                }
+                chain.zeroize();
+                return Err(e);
+            }
+        };
 
-        self.recv_counter = self.recv_counter.checked_add(1).ok_or_else(|| {
+        // Commit — reached only by a frame that authenticated at this position.
+        for (position, mk) in staged {
+            self.skipped_keys.insert((dh_pub.clone(), position), mk);
+        }
+        let next_chain = blake3::derive_key("chain_advance", &chain);
+        chain.zeroize();
+        self.recv_chain_key = next_chain;
+        self.recv_counter = message_num.checked_add(1).ok_or_else(|| {
             CryptoError::Decryption("recv counter overflow — session must be re-established".into())
         })?;
 
@@ -183,6 +291,28 @@ impl DoubleRatchet {
         self.prune_skipped_keys();
 
         Ok(plaintext)
+    }
+
+    /// The ratchet position this side will use for its NEXT outgoing frame.
+    ///
+    /// This is the number a transport must put in the frame's own sequence
+    /// field so the peer can place it (see [`Self::decrypt_message_labeled`]).
+    /// It is derived from the ratchet's own counter, deliberately: a caller's
+    /// parallel counter and the ratchet's position can drift (a re-established
+    /// session resets both, but only the ratchet's own counter cannot), and a
+    /// label that is not the position is a label the peer cannot use.
+    pub fn send_sequence(&self) -> u64 {
+        self.send_counter
+    }
+
+    /// The ratchet position this side expects NEXT from the peer.
+    ///
+    /// With a labelling peer this is an expectation, not a verdict: a frame may
+    /// legitimately arrive at a LATER position (a gap is stepped over) or at an
+    /// earlier cached one. It is what a caller asserts on when it needs to show
+    /// that a refusal moved nothing — see [`Self::decrypt_message_at`].
+    pub fn recv_sequence(&self) -> u64 {
+        self.recv_counter
     }
 
     /// Get the current DH ratchet public key bytes.
@@ -384,6 +514,195 @@ mod tests {
         // Try to skip more than MAX_SKIP
         let result = receiver.decrypt_message_at(&[0u8; 32], MAX_SKIP + 1);
         assert!(result.is_err());
+        assert_eq!(
+            receiver.recv_sequence(),
+            0,
+            "a refused frame must not move the window, not even for a too-far skip"
+        );
+    }
+
+    // --- Phase 5 follow-up: one refused frame must not kill the direction ---
+
+    /// The measurement the card was filed on, at the ratchet: a frame that fails
+    /// to authenticate used to leave the chain key one step ahead of the
+    /// counter, and every later frame in that direction was refused too.
+    ///
+    /// The contract now: a refusal moves NOTHING, and the frame that follows
+    /// decrypts.
+    #[test]
+    fn test_refusal_is_a_noop_on_receive_state() {
+        let shared_secret = [7u8; 32];
+        let mut sender = DoubleRatchet::init(&shared_secret);
+        let mut receiver = DoubleRatchet::init_responder(&shared_secret);
+
+        let ct0 = sender.encrypt_message(b"alpha").unwrap();
+        let ct1 = sender.encrypt_message(b"beta").unwrap();
+
+        // The relay bit-flips the first frame.
+        let mut corrupted = ct0.clone();
+        corrupted[0] ^= 0x01;
+
+        let before = receiver.recv_sequence();
+        assert!(
+            receiver.decrypt_message_labeled(&corrupted, 0).is_err(),
+            "a corrupted frame must be refused"
+        );
+        assert_eq!(
+            receiver.recv_sequence(),
+            before,
+            "a refused frame must leave the receive position exactly where it was"
+        );
+
+        // The undamaged frame at the same position still decrypts: the refusal
+        // cost the corrupted frame and nothing else.
+        assert_eq!(
+            receiver.decrypt_message_labeled(&ct0, 0).unwrap(),
+            b"alpha"
+        );
+        // ...and the direction continues.
+        assert_eq!(receiver.decrypt_message_labeled(&ct1, 1).unwrap(), b"beta");
+    }
+
+    /// A frame that arrives AFTER A GAP decrypts at its own position.
+    ///
+    /// This is the property the positional path cannot have, and the reason the
+    /// frame's own position has to be carried: the receiver cannot know it
+    /// missed a frame. The contrast is asserted in the same test so the cost of
+    /// choosing the positional path stays visible.
+    #[test]
+    fn test_frame_after_a_gap_decrypts_at_its_own_position() {
+        let shared_secret = [8u8; 32];
+        let mut sender = DoubleRatchet::init(&shared_secret);
+        let mut receiver = DoubleRatchet::init_responder(&shared_secret);
+
+        let ct0 = sender.encrypt_message(b"alpha").unwrap(); // dropped in flight
+        let ct1 = sender.encrypt_message(b"beta").unwrap();
+        let ct2 = sender.encrypt_message(b"gamma").unwrap();
+
+        // Positional: the frame over the gap cannot be placed, and rollback
+        // alone does not help — leaving the state untouched leaves the receiver
+        // still expecting a frame that will never come.
+        assert!(
+            receiver.decrypt_message(&ct1).is_err(),
+            "the positional path cannot place a frame that arrives after a gap"
+        );
+        assert_eq!(receiver.recv_sequence(), 0);
+        assert!(
+            receiver.decrypt_message(&ct2).is_err(),
+            "and it stays unable to place the frames that follow — this is the \
+             defect, measured: a dropped frame costs the DIRECTION"
+        );
+
+        // Labelled: the frame says where it belongs, so it decrypts, and the
+        // direction survives. (ct1 is delivered once more here: the two
+        // positional attempts above committed nothing.)
+        assert_eq!(receiver.decrypt_message_labeled(&ct1, 1).unwrap(), b"beta");
+        assert_eq!(receiver.decrypt_message_labeled(&ct2, 2).unwrap(), b"gamma");
+
+        // And the frame that was never delivered is still placeable if it turns
+        // up late: its key was cached when the gap was stepped over.
+        assert_eq!(receiver.decrypt_message_labeled(&ct0, 0).unwrap(), b"alpha");
+    }
+
+    /// A replay of an already-consumed frame is refused as an ORDERING
+    /// violation — the position is below the window and its key is gone — and
+    /// the refusal names the rule rather than surfacing as a bare AEAD failure.
+    #[test]
+    fn test_replay_below_the_window_is_refused_as_an_ordering_violation() {
+        let shared_secret = [9u8; 32];
+        let mut sender = DoubleRatchet::init(&shared_secret);
+        let mut receiver = DoubleRatchet::init_responder(&shared_secret);
+
+        let ct0 = sender.encrypt_message(b"once").unwrap();
+        assert_eq!(receiver.decrypt_message_labeled(&ct0, 0).unwrap(), b"once");
+        assert_eq!(receiver.recv_sequence(), 1);
+
+        let err = receiver
+            .decrypt_message_labeled(&ct0, 0)
+            .expect_err("the resent frame must be refused");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("below the receive counter"),
+            "the refusal must credit the ordering rule: {msg}"
+        );
+        assert_eq!(
+            receiver.recv_sequence(),
+            1,
+            "a refused replay must not move the receive position"
+        );
+    }
+
+    /// A peer that does not label its frames at all still gets its traffic
+    /// decrypted: the declared position is tried first, then this side's own
+    /// positional expectation. Both are AEAD-checked, so the fallback cannot
+    /// accept anything the peer did not produce at the position used.
+    #[test]
+    fn test_an_unlabelled_peers_frame_decrypts_positionally() {
+        let shared_secret = [10u8; 32];
+        let mut sender = DoubleRatchet::init(&shared_secret);
+        let mut receiver = DoubleRatchet::init_responder(&shared_secret);
+
+        let ct0 = sender.encrypt_message(b"no label").unwrap();
+        // The peer claims a position it did not use — the shape a pre-label
+        // peer presents when its label is a counter shared with another path.
+        assert_eq!(
+            receiver.decrypt_message_labeled(&ct0, 250).unwrap(),
+            b"no label",
+            "the positional fallback must still place it"
+        );
+        assert_eq!(receiver.recv_sequence(), 1);
+    }
+
+    /// A skipped key is SINGLE USE, and it survives a failed attempt on it: it
+    /// is consumed only by the frame that authenticates with it.
+    #[test]
+    fn test_a_skipped_key_is_consumed_once() {
+        let shared_secret = [11u8; 32];
+        let mut sender = DoubleRatchet::init(&shared_secret);
+        let mut receiver = DoubleRatchet::init_responder(&shared_secret);
+
+        let ct0 = sender.encrypt_message(b"first").unwrap();
+        let ct1 = sender.encrypt_message(b"second").unwrap();
+
+        // ct1 first: ct0's key is cached as skipped.
+        assert_eq!(receiver.decrypt_message_labeled(&ct1, 1).unwrap(), b"second");
+
+        // A forgery at the skipped position must not eat the cached key.
+        let mut corrupted = ct0.clone();
+        corrupted[0] ^= 0xff;
+        assert!(receiver.decrypt_message_labeled(&corrupted, 0).is_err());
+
+        // The real frame still decrypts...
+        assert_eq!(receiver.decrypt_message_labeled(&ct0, 0).unwrap(), b"first");
+        // ...and a second delivery of it does not.
+        assert!(
+            receiver.decrypt_message_labeled(&ct0, 0).is_err(),
+            "a consumed position must not decrypt twice"
+        );
+    }
+
+    /// A forged frame claiming a position far ahead must not walk the receive
+    /// window: the label is unauthenticated, and acting on it before the AEAD
+    /// decides would be a free denial-of-service window-move for any middleman.
+    #[test]
+    fn test_a_forged_label_does_not_move_the_window() {
+        let shared_secret = [12u8; 32];
+        let mut sender = DoubleRatchet::init(&shared_secret);
+        let mut receiver = DoubleRatchet::init_responder(&shared_secret);
+
+        let ct0 = sender.encrypt_message(b"honest").unwrap();
+
+        // 500 positions of garbage.
+        assert!(receiver.decrypt_message_labeled(&[0u8; 64], 500).is_err());
+        assert_eq!(
+            receiver.recv_sequence(),
+            0,
+            "an unauthenticated label must not advance the receive position"
+        );
+
+        // The honest first frame still decrypts at position 0, so no skipped-key
+        // batch was committed for positions 0..500 either.
+        assert_eq!(receiver.decrypt_message_labeled(&ct0, 0).unwrap(), b"honest");
     }
 
     #[test]

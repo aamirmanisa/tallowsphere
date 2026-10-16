@@ -803,6 +803,150 @@ pub enum Message {
         /// Code-derived MAC over (label, transfer_id, mode).
         mac: [u8; 32],
     },
+    /// v9 handshake response (ordinal 77, receiver -> initiator), sent
+    /// **instead of** `HandshakeResponse` when the initiator declared
+    /// `protocol_version >= 9`. Appended last so no existing postcard ordinal
+    /// moves.
+    ///
+    /// WHY A NEW VARIANT: `HandshakeResponse.selected_kem` is a FULL carrier —
+    /// bits 0-1 hold the KEM discriminant and bits 2-7 already carry six
+    /// capability flags (SCOPED_TRANSFER, CANONICAL_KEX, PQ_AUTH,
+    /// DEFLATE_CHUNK, NO_ZSTD_CHUNK, FLOW_CREDIT). There is no free bit for a
+    /// new capability, and adding a field to `HandshakeResponse` itself would
+    /// break positional postcard decode for a deployed v8 peer.
+    ///
+    /// INTEROP-SAFE BY CONSTRUCTION: the receiver already knows the declared
+    /// version (it is `process_init`'s first argument), so it only ever sends
+    /// this to a peer that declared >= 9. A v9 initiator MUST still accept the
+    /// older `HandshakeResponse` — it cannot know the receiver's build in
+    /// advance — and a missing `capability_bits` means "no v9 capabilities":
+    /// a disclosed downgrade, never a refusal.
+    ///
+    /// (DO NOT reorder; postcard ordinal)
+    HandshakeResponseV9 {
+        /// Selected KEM algorithm discriminant
+        selected_kem: u8,
+        /// CPace responder public message (32 bytes)
+        cpace_public: [u8; 32],
+        /// Serialized hybrid KEM public key
+        kem_public_key: Vec<u8>,
+        /// Random nonce for session ID binding (16 bytes)
+        nonce: [u8; 16],
+        /// Receiver capability bits; see `CAP_PQ_CHAT`.
+        ///
+        /// Phase 5 item 2: from [`CAPABILITY_BINDING_VERSION`] on, this byte is
+        /// bound into the handshake transcript by BOTH peers — see
+        /// [`crate::wire::capabilities`] — so clearing or altering it in flight
+        /// diverges the session key, the ratchet seed and both confirmation tags
+        /// and the handshake FAILS instead of downgrading silently. Below that
+        /// version it is a plain field, and a clear value is a DISCLOSED
+        /// "no capabilities" (the static-key chat path), never a refusal.
+        ///
+        /// `Message::handshake_response_parts` is the sanctioned way to read it;
+        /// a direct match on `Message::HandshakeResponse` sees only the older shape
+        /// and reads the byte as `0`.
+        ///
+        /// [`CAPABILITY_BINDING_VERSION`]: crate::wire::capabilities::CAPABILITY_BINDING_VERSION
+        capability_bits: u8,
+    },
+    /// v9: encrypted chat text carried by a `RatchetSession` instead of the static-key
+    /// `ChatSession` (`ChatText`).
+    ///
+    /// A separate variant rather than a flag inside `ChatText`, for two reasons:
+    ///
+    ///   1. The two envelopes differ structurally. `ChatText` carries an explicit
+    ///      `nonce` because the static-key path supplies one; a ratchet payload carries
+    ///      its own framing (`TQP1` magic+flags(5) | payload | Poly1305 tag(16)) and has
+    ///      nothing separate to send. Overloading `nonce` to mean "the rest of the
+    ///      ratchet frame" would be framing metadata wearing crypto material — the
+    ///      anti-pattern docs 08 and 09 both reject.
+    ///   2. A receiver that does not know v9 REJECTS this as an unexpected message,
+    ///      which is the correct fail-closed outcome. A flag inside `ChatText` would be
+    ///      inert to an old receiver, which would then try to AEAD-decrypt ratchet bytes
+    ///      as if they were static-key ciphertext — a confusing failure deeper in the
+    ///      stack instead of a clean protocol rejection.
+    ///
+    /// (DO NOT reorder; postcard ordinal)
+    ChatTextV9 {
+        /// Unique message ID for read receipts (random 16 bytes)
+        message_id: [u8; 16],
+        /// Monotonic sequence number for ordering
+        sequence: u64,
+        /// The ratchet's own framing, passed through untranslated:
+        /// `TQP1` magic+flags(5) | payload | Poly1305 tag(16)` — the payload is
+        /// `frame_pq_payload`'s output (optional ML-KEM rekey control records,
+        /// then the text) and the trailing 16 bytes are the AEAD tag.
+        ///
+        /// There is NO ratchet public key and NO counter on this path: chat
+        /// encrypts through `TripleRatchet::encrypt_message` (the headerless
+        /// entry point), not `encrypt_with_header`. Measured against the shipped
+        /// build with no control records: `text + 21` bytes. Do not derive a
+        /// size model from this comment — `10-CHAT-FRAME-CELLS-DESIGN.md` §3
+        /// carries the measured frame model.
+        ratchet_ciphertext: Vec<u8>,
+    },
+}
+
+/// Receiver capability: it can drive browser chat on the **ratcheting** session
+/// (`RatchetSession::encryptChat`/`decryptChat`) rather than the static-key
+/// `ChatSession`. Bit 0 of `HandshakeResponseV9::capability_bits`.
+///
+/// Cleared/absent means the static-key chat path: a disclosed downgrade, never
+/// a refusal, so chat keeps working between generations instead of breaking.
+pub const CAP_PQ_CHAT: u8 = 0x01;
+
+impl Message {
+    /// Unified view of BOTH handshake-response shapes.
+    ///
+    /// Returns `(selected_kem, cpace_public, kem_public_key, nonce,
+    /// capability_bits)`. `capability_bits` is `0` for the older
+    /// `HandshakeResponse`, which has no capability byte — it means "no v9
+    /// capabilities", not an error.
+    ///
+    /// CALLERS MUST USE THIS instead of matching `Message::HandshakeResponse`
+    /// directly. A v9 receiver answers a peer that declared >= 9 with
+    /// `HandshakeResponseV9`, and a direct match treats that as an unexpected
+    /// message: a handshake failure that **compiles cleanly**, which is exactly
+    /// the silent-break class this accessor exists to remove.
+    pub fn handshake_response_parts(&self) -> Option<(u8, [u8; 32], Vec<u8>, [u8; 16], u8)> {
+        match self {
+            Message::HandshakeResponse {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+            } => Some((
+                *selected_kem,
+                *cpace_public,
+                kem_public_key.clone(),
+                *nonce,
+                0,
+            )),
+            Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                capability_bits,
+            } => Some((
+                *selected_kem,
+                *cpace_public,
+                kem_public_key.clone(),
+                *nonce,
+                *capability_bits,
+            )),
+            _ => None,
+        }
+    }
+
+    /// True for either handshake-response shape; use with
+    /// [`Message::handshake_response_parts`].
+    pub fn is_handshake_response(&self) -> bool {
+        matches!(
+            self,
+            Message::HandshakeResponse { .. } | Message::HandshakeResponseV9 { .. }
+        )
+    }
 }
 
 /// Presence information for a nearby device.

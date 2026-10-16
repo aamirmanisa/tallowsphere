@@ -88,3 +88,15 @@ pub const DOMAIN_RATCHET_SEND_CHAIN: &str = "tallow.ratchet.send_chain.v1";
 
 /// Domain separator for the receive chain key in the double ratchet
 pub const DOMAIN_RATCHET_RECV_CHAIN: &str = "tallow.ratchet.recv_chain.v1";
+
+/// Domain separator for the v9 browser-chat **ratchet seed**.
+///
+/// Distinct from [`DOMAIN_SESSION_KEY_KEM_PAKE`]: the ratchet seed and the AEAD
+/// session key are derived from the SAME handshake IKM under different labels, so
+/// neither is recoverable from the other and moving chat onto the ratchet cannot
+/// weaken the session key that still protects everything else on the connection.
+///
+/// Also distinct from [`DOMAIN_RATCHET_SEND_CHAIN`]/[`DOMAIN_RATCHET_RECV_CHAIN`],
+/// which separate the ratchet's OWN send and receive chains one layer down.
+/// Reusing those here would collapse two distinct separations into one.
+pub const DOMAIN_CHAT_RATCHET_SEED: &str = "tallow.chat.ratchet_seed.v1";
