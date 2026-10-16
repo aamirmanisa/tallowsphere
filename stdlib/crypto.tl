@@ -563,7 +563,12 @@ fn hacl_poly1305_mac(key_hex: String, message_hex: String) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// TPM 2.0 Attestation (Phase 43) — simulated via BLAKE3
+// TPM 2.0 Attestation (Phase 43) — REAL device I/O, not a simulation
+//
+// The dispatch target is `src/stdlib/crypto.rs::crypto_tpm_quote`, which probes for a TPM, reads PCRs
+// over the device (`tpm2_pcr_read -> Result<Vec<[u8; 32]>, String>`) and marshals the quote to the
+// TPM 2.0 spec (Part 2 §12.4.4). An earlier version of this heading said "simulated via BLAKE3",
+// which understated working code: a reader trusting it would report a fake that does not exist.
 // ---------------------------------------------------------------------------
 
 struct TpmQuote {

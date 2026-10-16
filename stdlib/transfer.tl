@@ -396,7 +396,12 @@ fn Swarm.schedule(swarm: Swarm, chunks_needed: []i64) -> Schedule {
     // native: round-robin distribution
 }
 
-// ── DHT (simulated Kademlia) ──
+// ── DHT (real UDP transport, in-process store; no iterative Kademlia routing) ──
+//
+// `Dht.create` binds a real UDP socket and derives a BLAKE3 node id; `Dht.announce` stores locally and
+// sends ANNOUNCE to every known peer; `Dht.lookup` reads the local store first, then asks peers. What is
+// absent is the *routing* — there is no peer discovery and no iterative lookup, and `routing_table_size`
+// is a constant. A node whose bind failed reports `mode: "memory"`, so the degradation is visible.
 
 struct DhtNode {
     node_id: String,

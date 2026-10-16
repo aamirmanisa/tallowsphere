@@ -103,6 +103,25 @@ Every intentional gate/limitation in first-party Nixe paths: owner + reason + ti
 
 | 44 | tallow-search-api main binary build (pre-existing) | ~~Fails to compile: 1×E0432 engine.rs imports `tallow::browser::{VendorDetector,PresetManager,ImageTextDetector}` (never resolvable at that path per git history) + 3×E0609 `AppState.meili` missing vs search.rs usage (April-era)~~ **FIXED in tree 2026-09-15 (uncommitted): module-qualified imports in engine.rs + `AppState.meili` restored with bounded init in state.rs; `cargo check` RC=0; contract tests deferred (disk guard) — rerun post-R-01** | Fixed; pending commit (see COMMIT_PLAN.md batch B3) | `artifacts/nixe-remediation-2026-09-14/R3-2.md`, `API-BUILD-FIX.md` |
 
+## 2026-10-16 — two limitations the stub census found unregistered
+
+A read-only census of the published engine (`docs/operations/STUB-CENSUS-2026-10-16.md`) settled every
+"simulated"/stub-looking surface as real, loud, or disclosed and found **no** stub, fake or silent
+simulation. Two deliberate limitations it confirmed are nonetheless **absent from this register**, which by
+this file's own convention should not happen — a limitation that is not registered is indistinguishable from
+an accident:
+
+| # | Entry (kind / method) | What it returns / does | Why kept | Ticket |
+|---|---|---|---|---|
+| 93 | `net.i2p_connect`, `net.i2p_lookup` | **Honest `Err`** — "I2P is not supported in this build (no SAMv3 bridge implementation)"; the doc comment adds that a lookup "must never claim `found: true` for an unresolvable name". Verified by source read; never a shape-correct struct. | No SAMv3 bridge implemented | census 2026-10-16 |
+| 94 | `YaraRule.compile` from Tallow source | Declared and implemented as interpreter sentinels, but **unreachable by the direct spelling**: the lexer rejects `$` inside a string literal (`error[8:52]: unexpected character: '$'`), and every YARA rule requires `$`-prefixed pattern identifiers. Loud (a parse error), so this is a reachability gap, not a fake. | Lexer/string-literal limitation | census 2026-10-16 |
+
+Row 94 is the one worth a decision: whether a YARA rule string should be expressible from Tallow at all.
+The same census also corrected three comments that **understated working code** (the TPM heading in
+`stdlib/crypto.tl`, the anonymization comment in `src/stdlib/net.rs:237`, the DHT heading in
+`stdlib/transfer.tl`) — the inverse of the defect this register exists to catch, and equally able to
+mislead a reader.
+
 ## R1 dispositions — privacy/security wave, deferred/kept items (`R1-*.md` evidence)
 
 | # | Entry (site) | What it does | Why kept / limitation | Ticket |
