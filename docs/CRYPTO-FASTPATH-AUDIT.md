@@ -40,19 +40,33 @@ production compiler contains **8,587** ARMv8 AES instructions, 280 SHA-256,
 **F2 — `+aes` is load-bearing and is correctly set for all three aarch64
 targets** (`.cargo/config.toml`: gnu, musl, darwin).
 
-**F3 — GAP: the three x86_64 release targets ship with no flags.**
+**F3 — the three x86_64 release targets carried no flags. FIXED 2026-10-16 by
+operator decision.**
 `release.yml` builds six targets; `x86_64-unknown-linux-musl`,
-`x86_64-apple-darwin` and `x86_64-pc-windows-msvc` have no
-`[target.*] rustflags`. The x86_64 default feature set is
-`sse,sse2,fxsr,crt-static` — **no `aes`**, so the inlining argument above applies
-unchanged. **This is [inferred], not measured**: this box is aarch64 and the
-x86_64 std target is not installed, so the cross-build could not be run.
-Settling it needs one build on an x86_64 host:
-`cargo build --release --target x86_64-unknown-linux-musl` then
-`objdump -d target/x86_64-unknown-linux-musl/release/tallow | grep -c aesenc`.
-**Fixing it is a compatibility call, not a config tweak** — `+aes` makes the
-binary require AES-NI — so it is reported, not applied. `.cargo/config.toml`
-already says not to add it without making that call.
+`x86_64-apple-darwin` and `x86_64-pc-windows-msvc` had no `[target.*] rustflags`.
+The x86_64 default feature set is `sse,sse2,fxsr,crt-static` — **no `aes`** — so the
+inlining argument above applies unchanged. **The exposure was [inferred], not measured**:
+this box is aarch64 and the x86_64 std target is not installed, so no cross-build was
+possible; the confirmatory test on an x86_64 host is one command:
+
+```
+cargo build --release --target x86_64-unknown-linux-musl
+objdump -d target/x86_64-unknown-linux-musl/release/tallow | grep -c aesenc   # expect > 0
+```
+
+**Applied:** `rustflags = ["-C", "target-feature=+aes,+avx2,+pclmulqdq"]` on all four
+x86_64 triples — the three that ship, plus `x86_64-unknown-linux-gnu` so CI and local
+x86 builds stop measuring a path ~9× slower than the one that ships. No `--cfg
+aes_armv8`: that is RustCrypto's ARM opt-in and means nothing on x86, where RustCrypto
+auto-detects AES-NI at runtime. **Compatibility consequence, accepted deliberately:**
+the binaries now require AES-NI + AVX2 + PCLMULQDQ (Intel Haswell 2013+ / AMD Excavator
+2015+); older x86_64 will fault. `+` adds to the default set, so `crt-static` and the
+baseline SSE2 defaults are preserved. **Applied to both trees** — this repo *and*
+`/home/aamir/Nixe/.cargo/config.toml`, because `release.yml` builds from the Nixe tree,
+so editing only this one would have fixed nothing that ships.
+
+**Not yet true until a release runs:** the already-published x86_64 artifacts are still
+on the old path. This changes what the next release build produces.
 
 **F4 — the RUSTFLAGS hazard is clear today.** An exported `RUSTFLAGS` makes cargo
 ignore the `[target.*]` tables entirely, which would undo the whole thing
@@ -97,8 +111,8 @@ Exit: `0` clean · `1` gap found · `2` incompletely evaluated.
 |---|---|
 | aarch64 AES (bulk AEAD) | **closed** — flag set, present in the shipped binary |
 | aarch64 SHA-256 / PMULL | **closed** — present in the shipped binary |
-| x86_64 AES (3 shipped targets) | **OPEN — needs an operator go/no-go** |
+| x86_64 AES (3 shipped targets) | **closed** — flags applied 2026-10-16 to both trees; takes effect at the next release build |
 | `RUSTFLAGS` bypass | clear, and gated |
 
-The gate exits **1** today, on F3 alone. It will exit 0 the moment the x86_64
-call is made one way or the other.
+The gate exits **0** on this tree. It exited 1 on F3 alone until the x86_64 call was
+made; that is the gate doing its job, not a defect to be silenced.
