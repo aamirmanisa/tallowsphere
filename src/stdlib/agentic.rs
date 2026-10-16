@@ -1,13 +1,12 @@
 //! Standard library: `tallow.agentic` — AI agent integration and MCP protocol.
 //!
-//! Implements MCP (Model Context Protocol) tool spec export, natural language
-//! to Tallow script generation, and agentic navigation (LLM-controlled browsing).
+//! Implements MCP (Model Context Protocol) tool spec export and natural language
+//! to Tallow script generation.
 //!
 //! # API
 //! - `Agent.mcp_tools()` — export Tallow capabilities as MCP tool definitions
 //! - `Agent.mcp_resources()` — export available resources (files, browsers, proxies)
 //! - `Agent.nl_to_script(prompt)` — generate .tl script from natural language
-//! - `Agent.navigate_goal(url, goal)` — agentic browsing: navigate to achieve a goal
 
 use super::StdlibResult;
 use crate::interp::Value;
