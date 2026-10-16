@@ -1,0 +1,395 @@
+From 78213adade565094c320a3c9a5c88dc711b7540e Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 03:57:56 +0000
+Subject: [PATCH 21/27] test+interp: parity for StructuredData.extract, and the
+ defect it found
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The three graded assertions the class uses (both legs exit 0 with the native leg refusing
+to fall back; stdout byte-identical; stdout equal to a pinned reference) all pass on the
+four deliberately-discriminating documents, so the P2.T1 binding is now proven against
+the interpreter rather than against itself.
+
+The fourth assertion did NOT pass, and that is the point of it. `extract(42)`:
+
+  * the interpreter exit 0 and printed `false` — its arm coerced the argument with
+    `v.as_string()`, parsed `"42"` as HTML, and returned a plausible `has_json_ld: false`;
+  * the compiled leg refused, because its arm requires an I8Ptr and has no coercion to
+    offer;
+  * `tallow check` PASSED on the bad argument (1 items, 1 warning), so nothing caught it
+    before run time either.
+
+That is the "plausible success, wrong answer" class this harness exists to catch, and it
+means T4's requirement — the same refusal from both engines — was unmet by the
+interpreter, not by the binding.
+
+Fix: the interpreter arm now matches `Value::String` and refuses anything else, naming the
+same cause as the compiled leg. The two agree on the phrase
+"expected an HTML string argument"; the compiled leg refuses at LOWERING time and the
+interpreter at run time, so the *kind* of failure differs while the cause does not, and the
+test asserts the cause.
+
+Two limits recorded in the test rather than left implied:
+
+  * refusing at run time is a floor, not the fix. The declared `html: String` is not
+    enforced by the type checker — `tallow check` accepts the bad call — so the real fix
+    belongs there.
+  * `v.as_string()` appears 549 times in `interp.rs`. Coercing arguments is the
+    interpreter's house convention, so this arm is deliberately the strict one; whether
+    the other 548 should behave the same is a language-level question that needs its own
+    audit, not a patch smuggled in under a binding.
+
+Verified: cargo test --test structured_data_parity → pass (both tests); the FFI suite and
+the cli suite re-run green after the interpreter change; and the fixtures were
+deliberately built with no braces in any HTML literal, because Tallow reads `{...}` inside
+a string as interpolation — which is how the first version of the probe broke the native
+build and made --require-native refuse.
+---
+ src/codegen.rs                                |   6 +-
+ src/interp.rs                                 |  17 +-
+ .../parity_programs/17_structured_data.tl     |  42 ++++
+ .../18_structured_data_refusal.tl             |   9 +
+ tests/structured_data_parity.rs               | 218 ++++++++++++++++++
+ 5 files changed, 289 insertions(+), 3 deletions(-)
+ create mode 100644 tests/parity/parity_programs/17_structured_data.tl
+ create mode 100644 tests/parity/parity_programs/18_structured_data_refusal.tl
+ create mode 100644 tests/structured_data_parity.rs
+
+diff --git a/src/codegen.rs b/src/codegen.rs
+index cfe4b6c..428d2c2 100644
+--- a/src/codegen.rs
++++ b/src/codegen.rs
+@@ -18967,8 +18967,12 @@ impl<'a> CodeGen<'a> {
+ 
+         let html = self.emit_expr(&args[0].value)?;
+         if !matches!(html.ty, LLType::I8Ptr) {
++            // Wording shared with the interpreter arm (`interp.rs`, the same method) so
++            // the two engines refuse in the same words — the refusal-parity test asserts
++            // on that phrase. This leg refuses at LOWERING time, the interpreter at run
++            // time; the cause is identical either way.
+             return Err(format!(
+-                "StructuredData.extract: html must be a string, got {}",
++                "StructuredData.extract: expected an HTML string argument, got {}",
+                 html.ty.to_ir()
+             ));
+         }
+diff --git a/src/interp.rs b/src/interp.rs
+index 0bd0bce..cea6177 100644
+--- a/src/interp.rs
++++ b/src/interp.rs
+@@ -9957,11 +9957,24 @@ impl Interpreter {
+             // fields. `json_ld` is `[]String` by declaration, which the facade now
+             // produces from `extract::jsonld_raw_text`.
+             "StructuredData.extract" => {
++                // A non-string argument is REFUSED, not coerced. `v.as_string()` here
++                // turned `extract(42)` into `extract("42")`, parsed that as HTML, and
++                // returned a plausible `has_json_ld: false` — the "plausible success,
++                // wrong answer" class. The compiled leg has no coercion to offer (its arm
++                // requires an I8Ptr), so this arm is where the two engines can actually
++                // be made to agree: both refuse, naming the same cause.
+                 let html = match positional.first() {
+-                    Some(v) => v.as_string(),
++                    Some(Value::String(s)) => s.clone(),
++                    Some(other) => {
++                        return Err(RuntimeError::Error(format!(
++                            "StructuredData.extract: expected an HTML string argument, got {}",
++                            type_name(other)
++                        )));
++                    }
+                     None => {
+                         return Err(RuntimeError::Error(
+-                            "StructuredData.extract requires HTML string".into(),
++                            "StructuredData.extract: expected an HTML string argument, got no argument"
++                                .into(),
+                         ));
+                     }
+                 };
+diff --git a/tests/parity/parity_programs/17_structured_data.tl b/tests/parity/parity_programs/17_structured_data.tl
+new file mode 100644
+index 0000000..89a256e
+--- /dev/null
++++ b/tests/parity/parity_programs/17_structured_data.tl
+@@ -0,0 +1,42 @@
++// Parity fixture: `StructuredData.extract` — the P2.T1 native binding.
++//
++// One value per line with a literal tag, deliberately: interpolating `{sd.json_ld.len}`
++// would test the interpolation rules rather than the binding, and braces inside the HTML
++// string literals are read as interpolation too (which is how this fixture's first draft
++// broke the native build).
++//
++// Four documents, chosen so the two engines cannot agree by accident:
++//   A  JSON-LD present (one block) + an og tag
++//   B  nothing structured at all
++//   C  two JSON-LD blocks, so "only the first survives" predicts a different count
++//   D  og tag with content BEFORE property, so an order-sensitive reader yields nothing
++
++fn main() {
++    let a = "<html><head><meta property='og:title' content='Hello'><script type='application/ld+json'>[1]</script></head><body>hi</body></html>"
++    let sd = StructuredData.extract(a)
++    print("A_has")
++    print(sd.has_json_ld)
++    print("A_len")
++    print(sd.json_ld.len)
++
++    let b = "<html><body>no structured data</body></html>"
++    let empty = StructuredData.extract(b)
++    print("B_has")
++    print(empty.has_json_ld)
++    print("B_len")
++    print(empty.json_ld.len)
++
++    let c = "<html><head><script type='application/ld+json'>[2]</script><script type='application/ld+json'>[3]</script></head></html>"
++    let pair = StructuredData.extract(c)
++    print("C_has")
++    print(pair.has_json_ld)
++    print("C_len")
++    print(pair.json_ld.len)
++
++    let d = "<html><head><meta content='Hello' property='og:title'></head></html>"
++    let rev = StructuredData.extract(d)
++    print("D_has")
++    print(rev.has_json_ld)
++    print("D_len")
++    print(rev.json_ld.len)
++}
+diff --git a/tests/parity/parity_programs/18_structured_data_refusal.tl b/tests/parity/parity_programs/18_structured_data_refusal.tl
+new file mode 100644
+index 0000000..775b807
+--- /dev/null
++++ b/tests/parity/parity_programs/18_structured_data_refusal.tl
+@@ -0,0 +1,9 @@
++// Refusal-parity fixture: a non-string argument to `StructuredData.extract`.
++//
++// P2.T4 asks for the SAME refusal from both engines, not merely "both fail" — so the
++// test compares the cause each engine names, not just the exit codes.
++
++fn main() {
++    let sd = StructuredData.extract(42)
++    print(sd.has_json_ld)
++}
+diff --git a/tests/structured_data_parity.rs b/tests/structured_data_parity.rs
+new file mode 100644
+index 0000000..c4bf7bf
+--- /dev/null
++++ b/tests/structured_data_parity.rs
+@@ -0,0 +1,218 @@
++//! P2.T3/T4 — `StructuredData.extract`: interpreter ↔ native parity and refusal parity.
++//!
++//! The binding this pins: P2.T1 was the last unbound schema-first native. The interpreter
++//! reached the value through the stdlib facade while the compiled path had no lowering at
++//! all, so `--require-native` refused and a plain run fell back to the tree-walker. Both
++//! engines now read one HTML document the same way (commit `7fd59db4`).
++//!
++//! Three assertions, in increasing strength — the shape `tests/regex_engine_parity.rs`
++//! established for this class, because assertion 2 alone cannot catch two engines that
++//! agree on the *wrong* answer:
++//!
++//! 1. **both legs exit 0** — the native leg runs under `--require-native`, so a silent
++//!    interpreter fallback cannot masquerade as a native pass.
++//! 2. **byte-identical stdout** — interpreter vs compiled binary.
++//! 3. **stdout == the pinned reference** — so a shared drift still fails.
++//!
++//! T4 is the second test: a non-string argument must produce the same refusal from both
++//! engines, not merely a failure from both.
++//!
++//! **This test found a real defect the first time it ran**, which is why it exists. The
++//! interpreter did NOT refuse `StructuredData.extract(42)`: its arm coerced the argument
++//! with `v.as_string()`, parsed `"42"` as HTML, and returned a plausible
++//! `has_json_ld: false` — exit code 0, wrong answer, no complaint. That is the same
++//! "plausible success" class the regex parity test was written for. The arm now refuses,
++//! naming the same cause as the compiled leg (`interp.rs`, `codegen.rs`).
++//!
++//! Two facts from that investigation, recorded because they bound how much this test can
++//! promise:
++//!
++//! * **`tallow check` passes on the bad argument** (`1 items, 1 warning`) — the type
++//!   checker does not enforce the declared `html: String`, so nothing catches this before
++//!   run time. Refusing at run time is a floor, not the fix; the fix belongs in the checker.
++//! * **`v.as_string()` appears 549 times in `interp.rs`.** Coercing arguments is the
++//!   interpreter's house convention, not a stray line — so this arm is deliberately the
++//!   strict one, and whether the other 548 should behave the same is a language-level
++//!   question that belongs to its own audit, not to this binding's parity test.
++//!
++//! Deliberately NOT covered: `open_graph`. The interpreter holds a real `Value::Map` and
++//! the AOT field holds the serialized form, because codegen has no Map value at all (see
++//! `runtime::structured_data_ffi`). Pinning that here would pin a divergence as if it were
++//! parity; it is recorded in the binding's header instead.
++
++use std::path::{Path, PathBuf};
++use std::process::Command;
++
++const FIXTURE: &str = "tests/parity/parity_programs/17_structured_data.tl";
++const REFUSAL_FIXTURE: &str = "tests/parity/parity_programs/18_structured_data_refusal.tl";
++
++/// The interpreter's answer for the four documents, pinned and not derived.
++/// A: JSON-LD present · B: nothing structured · C: two blocks · D: og tag, reversed attrs.
++const EXPECTED: &str = "\
++A_has
++true
++A_len
++1
++B_has
++false
++B_len
++0
++C_has
++true
++C_len
++2
++D_has
++false
++D_len
++0
++";
++
++fn repo_root() -> PathBuf {
++    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
++}
++
++fn tallow_bin() -> PathBuf {
++    if let Some(p) = std::env::var_os("TALLOW_BIN") {
++        if !p.is_empty() {
++            return PathBuf::from(p);
++        }
++    }
++    let release = repo_root().join("target/release/tallow");
++    if release.is_file() {
++        release
++    } else {
++        repo_root().join("target/debug/tallow")
++    }
++}
++
++struct Out {
++    rc: i32,
++    stdout: String,
++    stderr: String,
++}
++
++fn run(args: &[String], cwd: &Path) -> Out {
++    let out = Command::new(tallow_bin())
++        .args(args)
++        .current_dir(cwd)
++        .output()
++        .expect("spawn tallow");
++    Out {
++        rc: out.status.code().unwrap_or(-1),
++        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
++        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
++    }
++}
++
++/// Cross target ⇒ `is_cross` ⇒ the tree-walking interpreter path.
++fn run_interp(file: &Path) -> Out {
++    let args: Vec<String> = vec![
++        "run".into(),
++        file.display().to_string(),
++        "--target".into(),
++        "x86_64-linux".into(),
++    ];
++    run(&args, &repo_root())
++}
++
++/// `--require-native` refuses the interpreter fallback, so a pass here is a real
++/// compiled-path pass.
++fn run_native(file: &Path) -> Out {
++    let args: Vec<String> = vec![
++        "run".into(),
++        "--require-native".into(),
++        file.display().to_string(),
++    ];
++    run(&args, &repo_root())
++}
++
++#[test]
++fn structured_data_engines_agree_byte_for_byte() {
++    let fixture = repo_root().join(FIXTURE);
++    assert!(fixture.is_file(), "fixture missing: {}", fixture.display());
++
++    let interp = run_interp(&fixture);
++    assert_eq!(
++        interp.rc, 0,
++        "interpreter leg failed (rc={}): {}",
++        interp.rc, interp.stderr
++    );
++    assert!(
++        !interp.stderr.contains("panicked"),
++        "interpreter leg panicked: {}",
++        interp.stderr
++    );
++
++    let native = run_native(&fixture);
++    assert_eq!(
++        native.rc, 0,
++        "native leg failed (rc={}); stderr={}",
++        native.rc, native.stderr
++    );
++    // A refusal here means the compiled path cannot lower StructuredData.extract —
++    // the exact divergence this test exists to catch, not an acceptable skip.
++    assert!(
++        !native.stderr.contains("native build unavailable")
++            && !native.stderr.contains("interpreter fallback"),
++        "native leg fell back to the interpreter: {}",
++        native.stderr
++    );
++
++    // (2) byte-for-byte agreement between the engines.
++    assert_eq!(
++        native.stdout, interp.stdout,
++        "interp↔native stdout divergence\n--- interp ---\n{}\n--- native ---\n{}",
++        interp.stdout, native.stdout
++    );
++
++    // (3) and both agree with the pinned reference — a shared drift still fails.
++    assert_eq!(
++        interp.stdout, EXPECTED,
++        "reference block drifted (interpreter is the reference engine)"
++    );
++    assert_eq!(
++        native.stdout, EXPECTED,
++        "native output is not the reference block"
++    );
++}
++
++/// T4: the same refusal, not merely two failures.
++#[test]
++fn a_non_string_argument_is_refused_by_both_engines_the_same_way() {
++    let fixture = repo_root().join(REFUSAL_FIXTURE);
++    assert!(fixture.is_file(), "fixture missing: {}", fixture.display());
++
++    let interp = run_interp(&fixture);
++    let native = run_native(&fixture);
++
++    assert_ne!(
++        interp.rc, 0,
++        "the interpreter must refuse a non-string argument"
++    );
++    assert_ne!(
++        native.rc, 0,
++        "the native path must refuse a non-string argument"
++    );
++
++    // The cause, named identically by both. This leg refuses at LOWERING time and the
++    // interpreter at run time, so the kind of failure differs; the phrase is what must
++    // match, and it is the part that says *why*.
++    let cause = "expected an HTML string argument";
++    assert!(
++        interp.stderr.contains(cause),
++        "interpreter refusal does not name the cause ({cause}): {}",
++        interp.stderr
++    );
++    assert!(
++        native.stderr.contains(cause),
++        "native refusal does not name the cause ({cause}): {}",
++        native.stderr
++    );
++
++    // And neither may have produced output before refusing.
++    assert!(
++        native.stdout.trim().is_empty(),
++        "the native path emitted output before refusing: {:?}",
++        native.stdout
++    );
++}

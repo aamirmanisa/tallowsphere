@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#131316">
+<title>Tallow</title>
+<link rel="preconnect" href="https://rsms.me/">
+<link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+<style>
+/* ============================================
+   TALLOW — Final Design
+
+   Jony Ive: Remove until it breaks.
+   Linear: Craft is the differentiator.
+
+   Dark-first. Keyboard-first. Search-first.
+   Warm near-black, not cold. Subtle, not loud.
+   Information density without clutter.
+   Every pixel intentional.
+   ============================================ */
+
+:root {
+  /* Linear-derived warm dark palette */
+  --bg-0: #111113;
+  --bg-1: #18181B;
+  --bg-2: #222225;
+  --bg-3: #2C2C30;
+  --bg-hover: rgba(255,255,255,0.04);
+  --bg-active: rgba(255,255,255,0.06);
+
+  /* Text — never pure white (Linear rule) */
+  --t1: rgba(255,255,255,0.88);
+  --t2: rgba(255,255,255,0.55);
+  --t3: rgba(255,255,255,0.32);
+
+  /* Borders — nearly invisible (Linear: 0.08 opacity) */
+  --b1: rgba(255,255,255,0.06);
+  --b2: rgba(255,255,255,0.10);
+
+  /* Single accent — Linear purple */
+  --accent: #5E6AD2;
+  --accent-soft: rgba(94,106,210,0.12);
+  --accent-text: #8299FF;
+
+  /* Semantic (muted, not shouty) */
+  --green: #3FB27F;
+  --amber: #D4993D;
+  --red: #D44B4B;
+  --cyan: #3DAFB2;
+
+  /* Typography — Inter with Linear's alternate glyphs */
+  --font: 'Inter', -apple-system, system-ui, sans-serif;
+  --mono: 'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
+
+  /* Spacing — 4px grid */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+}
+
+@supports (font-variation-settings: normal) {
+  :root { --font: 'Inter var', -apple-system, system-ui, sans-serif; }
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  background: var(--bg-0);
+  color: var(--t1);
+  font-size: 13px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.003em;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--t1);
+}
+
+/* ============ THE LANDING ============ */
+/*
+  Ive: "That's it?" — said with admiration.
+  Linear: dark, warm, one accent.
+  Google: one box, nothing else.
+
+  The search box IS the entire product.
+*/
+
+.landing {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+}
+
+.wordmark {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--t1);
+  margin-bottom: 40px;
+}
+
+/* The One Box */
+.search {
+  width: 100%;
+  max-width: 520px;
+  position: relative;
+}
+
+.search-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 44px 0 16px;
+  font-size: 14px;
+  font-family: var(--font);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  color: var(--t1);
+  background: var(--bg-1);
+  border: 1px solid var(--b2);
+  border-radius: var(--r-md);
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.search-input::placeholder { color: var(--t3); }
+
+.search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-icon {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--t3);
+  pointer-events: none;
+}
+
+.search-kbd {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 3px;
+}
+
+.kbd {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--t3);
+  background: var(--bg-2);
+  border: 1px solid var(--b1);
+  border-radius: 3px;
+  padding: 1px 5px;
+  line-height: 16px;
+}
+
+/* Hint text */
+.hint {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--t3);
+}
+
+/* Protection indicator — subtle, not shouting */
+.protection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 32px;
+  font-size: 11px;
+  color: var(--t3);
+  font-family: var(--mono);
+}
+
+.protection-dot {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--green);
+  opacity: 0.7;
+}
+
+/* Bottom — barely there */
+.landing-footer {
+  position: absolute;
+  bottom: 16px;
+  font-size: 11px;
+  color: var(--t3);
+  font-family: var(--mono);
+  letter-spacing: 0.02em;
+}
+
+/* ============ APP SHELL (after search) ============ */
+/*
+  Linear layout: narrow sidebar + content.
+  Keyboard navigable. Dense but calm.
+*/
+
+.app {
+  display: flex;
+  height: 100vh;
+  margin-top: 60px; /* space from landing demo */
+  border-top: 1px solid var(--b1);
+}
+
+/* Sidebar — Linear pattern: 220px, icon + text */
+.sidebar {
+  width: 220px;
+  background: var(--bg-1);
+  border-right: 1px solid var(--b1);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.sidebar-head {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  border-bottom: 1px solid var(--b1);
+}
+
+.sidebar-nav {
+  padding: 8px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sidebar-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 12px 8px 4px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  color: var(--t2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+  text-decoration: none;
+}
+
+.sidebar-item:hover { background: var(--bg-hover); color: var(--t1); }
+
+.sidebar-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.sidebar-item svg {
+  width: 15px; height: 15px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.sidebar-item.active svg { opacity: 0.9; }
+
+.sidebar-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--t3);
+}
+
+.sidebar-keys {
+  padding: 12px 16px;
+  border-top: 1px solid var(--b1);
+  font-size: 11px;
+  color: var(--t3);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ============ MAIN CONTENT ============ */
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Top bar — minimal, Linear-style */
+.topbar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--b1);
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.topbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.topbar-count {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--t3);
+}
+
+.topbar-spacer { flex: 1; }
+
+.topbar-search {
+  width: 200px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: var(--font);
+  color: var(--t1);
+  background: var(--bg-2);
+  border: 1px solid var(--b1);
+  border-radius: var(--r-sm);
+  outline: none;
+}
+
+.topbar-search:focus { border-color: var(--accent); }
+.topbar-search::placeholder { color: var(--t3); }
+
+.topbar-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font);
+  color: var(--t2);
+  background: none;
+  border: 1px solid var(--b1);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 100ms;
+}
+
+.topbar-btn:hover { background: var(--bg-hover); color: var(--t1); border-color: var(--b2); }
+
+.topbar-btn-accent {
+  background: var(--accent);
+  color: white;
+  border: none;
+  font-weight: 600;
+}
+
+.topbar-btn-accent:hover { opacity: 0.9; }
+
+/* ============ RESULTS LIST (Linear's dense rows) ============ */
+.results {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  height: 40px;
+  border-bottom: 1px solid var(--b1);
+  transition: background 80ms ease;
+  cursor: pointer;
+  gap: 12px;
+}
+
+.result-row:hover { background: var(--bg-hover); }
+
+.result-row:last-child { border-bottom: none; }
+
+/* Store color indicator — 3px left bar (Ive: color is information) */
+.result-color {
+  width: 3px;
+  height: 20px;
+  border-radius: 1.5px;
+  flex-shrink: 0;
+}
+
+.result-store {
+  width: 56px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--t2);
+  flex-shrink: 0;
+}
+
+.result-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--t1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-name mark {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.result-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Tags — Linear's compact pill style */
+.tag {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--mono);
+  letter-spacing: 0.02em;
+}
+
+.tag-green { background: rgba(63,178,127,0.12); color: var(--green); }
+.tag-amber { background: rgba(212,153,61,0.12); color: var(--amber); }
+.tag-red { background: rgba(212,75,75,0.12); color: var(--red); }
+.tag-accent { background: var(--accent-soft); color: var(--accent-text); }
+.tag-ghost { background: var(--bg-2); color: var(--t3); }
+
+.result-price {
+  width: 64px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.price-best { color: var(--green); }
+.price-mid { color: var(--t1); }
+.price-high { color: var(--red); }
+
+.result-lock {
+  width: 14px; height: 14px;
+  color: var(--t3);
+  flex-shrink: 0;
+}
+
+/* ============ DETAIL PANEL (right side — Linear peek) ============ */
+.detail {
+  width: 360px;
+  border-left: 1px solid var(--b1);
+  background: var(--bg-1);
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.detail-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--b1);
+}
+
+.detail-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+
+.detail-url {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--t3);
+}
+
+.detail-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--b1);
+}
+
+.detail-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.detail-label { font-size: 12px; color: var(--t2); }
+
+.detail-value {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--t1);
+  font-weight: 500;
+}
+
+/* Difficulty bar — minimal */
+.diff-bar {
+  display: flex; gap: 2px; align-items: center;
+}
+
+.diff-seg {
+  width: 16px; height: 4px;
+  border-radius: 2px;
+  background: var(--bg-3);
+}
+
+.diff-seg.on { background: var(--amber); }
+.diff-seg.on.easy { background: var(--green); }
+.diff-seg.on.hard { background: var(--red); }
+
+/* Crypto pipeline — quiet, inline */
+.crypto-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.crypto-step {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--t3);
+}
+
+.crypto-dot {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+}
+
+.crypto-arrow { color: var(--t3); font-size: 8px; }
+
+/* ============ COMMAND PALETTE (Cmd+K) ============ */
+.cmd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 20vh;
+  z-index: 100;
+}
+
+.cmd-palette {
+  width: 520px;
+  background: var(--bg-1);
+  border: 1px solid var(--b2);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+
+.cmd-input-wrap {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--b1);
+}
+
+.cmd-input {
+  width: 100%;
+  height: 32px;
+  font-size: 14px;
+  font-family: var(--font);
+  color: var(--t1);
+  background: none;
+  border: none;
+  outline: none;
+}
+
+.cmd-input::placeholder { color: var(--t3); }
+
+.cmd-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 16px 4px;
+}
+
+.cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: background 60ms;
+}
+
+.cmd-item:hover, .cmd-item.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.cmd-item svg { width: 15px; height: 15px; opacity: 0.5; }
+.cmd-item:hover svg { opacity: 0.8; }
+
+.cmd-item-keys {
+  margin-left: auto;
+  display: flex;
+  gap: 3px;
+}
+
+.cmd-footer {
+  padding: 8px 16px;
+  border-top: 1px solid var(--b1);
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--t3);
+}
+
+.cmd-footer-key {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<!-- ============================================================
+     STATE 1: THE LANDING
+
+     One search box. Dark. Warm. Nothing else.
+     Ive: "Remove until it breaks."
+     Linear: "Craft is the differentiator."
+     ============================================================ -->
+
+<section class="landing">
+  <div class="wordmark">tallow</div>
+
+  <div class="search">
+    <input class="search-input" type="text" placeholder="Search or paste a URL..." autofocus />
+    <div class="search-kbd">
+      <span class="kbd">/</span>
+    </div>
+  </div>
+
+  <div class="hint">Press <span style="font-family:var(--mono);color:var(--t2)">/</span> to focus &middot; <span style="font-family:var(--mono);color:var(--t2)">Cmd K</span> for commands</div>
+
+  <div class="protection">
+    <span class="protection-dot"></span>
+    <span>5-layer encrypted</span>
+  </div>
+
+  <div class="landing-footer">tallow v0.4</div>
+</section>
+
+<!-- ============================================================
+     STATE 2: THE APP
+
+     Linear layout: sidebar + list + detail panel.
+     Dense rows. Keyboard navigable.
+     Each result shows store, name, tags, price, lock icon.
+     Right panel shows site analysis + crypto pipeline.
+     ============================================================ -->
+
+<section class="app">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-head">tallow</div>
+    <div class="sidebar-nav">
+      <a class="sidebar-item active">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5"/><path d="M11 11l3 3"/></svg>
+        Search
+      </a>
+      <a class="sidebar-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 10h2"/></svg>
+        Jobs
+        <span class="sidebar-count">3</span>
+      </a>
+      <a class="sidebar-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>
+        Results
+      </a>
+      <a class="sidebar-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 14V6l4-4 4 4v8"/><path d="M6 14v-4h4v4"/></svg>
+        Export
+      </a>
+
+      <div class="sidebar-label">Intelligence</div>
+      <a class="sidebar-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11h.01"/></svg>
+        Analyze
+      </a>
+      <a class="sidebar-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M2 8h3M11 8h3"/></svg>
+        Proxies
+      </a>
+
+      <div class="sidebar-label">System</div>
+      <a class="sidebar-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2"/></svg>
+        Settings
+      </a>
+    </div>
+    <div class="sidebar-keys">
+      <span>Search</span>
+      <span class="kbd">/</span>
+    </div>
+  </nav>
+
+  <!-- Main List -->
+  <div class="content">
+    <div class="topbar">
+      <span class="topbar-title">Results</span>
+      <span class="topbar-count">2,847</span>
+      <span class="topbar-spacer"></span>
+      <input class="topbar-search" placeholder="Filter..." />
+      <button class="topbar-btn">Export</button>
+      <button class="topbar-btn-accent">New</button>
+    </div>
+
+    <div class="results">
+      <!-- H-E-B — Best Price -->
+      <div class="result-row">
+        <div class="result-color" style="background:#E31837"></div>
+        <span class="result-store">H-E-B</span>
+        <span class="result-name">Natural <mark>Organic Chicken Breast</mark> — Boneless Skinless</span>
+        <div class="result-meta">
+          <span class="tag tag-green">Best</span>
+          <span class="tag tag-ghost">SNAP</span>
+        </div>
+        <span class="result-price price-best">$4.99</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+
+      <!-- Walmart -->
+      <div class="result-row">
+        <div class="result-color" style="background:#0071CE"></div>
+        <span class="result-store">Walmart</span>
+        <span class="result-name">Great Value <mark>Organic</mark> Boneless Skinless <mark>Chicken Breast</mark></span>
+        <div class="result-meta">
+          <span class="tag tag-accent">PX</span>
+          <span class="tag tag-ghost">SNAP</span>
+        </div>
+        <span class="result-price price-mid">$5.47</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+
+      <!-- Kroger -->
+      <div class="result-row">
+        <div class="result-color" style="background:#003B73"></div>
+        <span class="result-store">Kroger</span>
+        <span class="result-name">Simple Truth <mark>Organic Chicken Breast</mark> Fillets</span>
+        <div class="result-meta">
+          <span class="tag tag-accent">Akamai</span>
+          <span class="tag tag-ghost">SNAP</span>
+        </div>
+        <span class="result-price price-mid">$5.99</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+
+      <!-- Target -->
+      <div class="result-row">
+        <div class="result-color" style="background:#CC0000"></div>
+        <span class="result-store">Target</span>
+        <span class="result-name">Good &amp; Gather <mark>Organic Chicken Breast</mark></span>
+        <div class="result-meta">
+          <span class="tag tag-green">Open</span>
+          <span class="tag tag-ghost">SNAP</span>
+        </div>
+        <span class="result-price price-high">$6.29</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+
+      <!-- Costco -->
+      <div class="result-row">
+        <div class="result-color" style="background:#E31837"></div>
+        <span class="result-store">Costco</span>
+        <span class="result-name">Kirkland <mark>Organic Chicken Breast</mark> — 6.5 lb</span>
+        <div class="result-meta">
+          <span class="tag tag-amber">CF</span>
+        </div>
+        <span class="result-price price-best">$4.49</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+
+      <!-- Amazon -->
+      <div class="result-row">
+        <div class="result-color" style="background:#FF9900"></div>
+        <span class="result-store">Amazon</span>
+        <span class="result-name">365 Whole Foods <mark>Organic Chicken Breast</mark></span>
+        <div class="result-meta">
+          <span class="tag tag-red">DD</span>
+          <span class="tag tag-ghost">Prime</span>
+        </div>
+        <span class="result-price price-high">$7.49</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+
+      <!-- Aldi -->
+      <div class="result-row">
+        <div class="result-color" style="background:#00568E"></div>
+        <span class="result-store">Aldi</span>
+        <span class="result-name">Simply Nature <mark>Organic Chicken Breast</mark></span>
+        <div class="result-meta">
+          <span class="tag tag-green">Open</span>
+        </div>
+        <span class="result-price price-best">$4.79</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+
+      <!-- Sprouts -->
+      <div class="result-row">
+        <div class="result-color" style="background:#5B8C2A"></div>
+        <span class="result-store">Sprouts</span>
+        <span class="result-name"><mark>Organic</mark> Free-Range <mark>Chicken Breast</mark></span>
+        <div class="result-meta">
+          <span class="tag tag-accent">CF</span>
+        </div>
+        <span class="result-price price-mid">$5.99</span>
+        <svg class="result-lock" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail Panel (Linear peek) -->
+  <aside class="detail">
+    <div class="detail-header">
+      <div class="detail-title">Kirkland Organic Chicken Breast</div>
+      <div class="detail-url">shop-21.example/kirkland-organic-chicken</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Price</div>
+      <div class="detail-row">
+        <span class="detail-label">Price</span>
+        <span class="detail-value" style="color:var(--green)">$4.49/lb</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">vs Average</span>
+        <span class="detail-value" style="color:var(--green)">-21%</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">SNAP</span>
+        <span class="detail-value">Yes</span>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Site Analysis</div>
+      <div class="detail-row">
+        <span class="detail-label">Vendor</span>
+        <span class="detail-value" style="color:var(--amber)">Cloudflare</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Difficulty</span>
+        <div class="diff-bar">
+          <div class="diff-seg on"></div>
+          <div class="diff-seg on"></div>
+          <div class="diff-seg on"></div>
+          <div class="diff-seg"></div>
+          <div class="diff-seg"></div>
+        </div>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">TLS</span>
+        <span class="detail-value">Chrome 136</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Rate</span>
+        <span class="detail-value">~5 req/s</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Stealth</span>
+        <span class="detail-value">Standard</span>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Protection</div>
+      <div class="crypto-row">
+        <div class="crypto-step"><div class="crypto-dot" style="background:var(--cyan)"></div> BLAKE3</div>
+        <span class="crypto-arrow">&rarr;</span>
+        <div class="crypto-step"><div class="crypto-dot" style="background:var(--accent)"></div> Argon2</div>
+        <span class="crypto-arrow">&rarr;</span>
+        <div class="crypto-step"><div class="crypto-dot" style="background:var(--amber)"></div> AES</div>
+        <span class="crypto-arrow">&rarr;</span>
+        <div class="crypto-step"><div class="crypto-dot" style="background:var(--red)"></div> XCha</div>
+        <span class="crypto-arrow">&rarr;</span>
+        <div class="crypto-step"><div class="crypto-dot" style="background:var(--green)"></div> ML-KEM</div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Export</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        <button class="topbar-btn" style="font-size:11px;height:24px;padding:0 8px">CSV</button>
+        <button class="topbar-btn" style="font-size:11px;height:24px;padding:0 8px">XLSX</button>
+        <button class="topbar-btn" style="font-size:11px;height:24px;padding:0 8px">PDF</button>
+        <button class="topbar-btn" style="font-size:11px;height:24px;padding:0 8px">DOCX</button>
+        <button class="topbar-btn" style="font-size:11px;height:24px;padding:0 8px">PPTX</button>
+        <button class="topbar-btn" style="font-size:11px;height:24px;padding:0 8px">JSON</button>
+      </div>
+    </div>
+  </aside>
+</section>
+
+<!-- ============================================================
+     COMMAND PALETTE (Cmd+K)
+
+     Linear's signature interaction.
+     Floats over everything. Keyboard-driven.
+     Routes to any action in the app.
+     ============================================================ -->
+
+<div class="cmd-overlay">
+  <div class="cmd-palette">
+    <div class="cmd-input-wrap">
+      <input class="cmd-input" type="text" placeholder="Type a command..." autofocus />
+    </div>
+
+    <div class="cmd-group-label">Actions</div>
+    <div class="cmd-item selected">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5"/><path d="M11 11l3 3"/></svg>
+      New Search
+      <div class="cmd-item-keys"><span class="kbd">S</span></div>
+    </div>
+    <div class="cmd-item">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8h12M8 2v12"/></svg>
+      New Scrape Job
+      <div class="cmd-item-keys"><span class="kbd">C</span></div>
+    </div>
+    <div class="cmd-item">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 14V6l4-4 4 4v8"/></svg>
+      Export Results
+      <div class="cmd-item-keys"><span class="kbd">E</span></div>
+    </div>
+    <div class="cmd-item">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11h.01"/></svg>
+      Analyze URL
+      <div class="cmd-item-keys"><span class="kbd">A</span></div>
+    </div>
+
+    <div class="cmd-group-label">Navigate</div>
+    <div class="cmd-item">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>
+      Go to Jobs
+      <div class="cmd-item-keys"><span class="kbd">G</span><span class="kbd">J</span></div>
+    </div>
+    <div class="cmd-item">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M2 8h3M11 8h3"/></svg>
+      Go to Proxies
+      <div class="cmd-item-keys"><span class="kbd">G</span><span class="kbd">P</span></div>
+    </div>
+    <div class="cmd-item">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2"/></svg>
+      Go to Settings
+      <div class="cmd-item-keys"><span class="kbd">G</span><span class="kbd">S</span></div>
+    </div>
+
+    <div class="cmd-footer">
+      <div class="cmd-footer-key"><span class="kbd" style="font-size:10px">&uarr;&darr;</span> Navigate</div>
+      <div class="cmd-footer-key"><span class="kbd" style="font-size:10px">&crarr;</span> Select</div>
+      <div class="cmd-footer-key"><span class="kbd" style="font-size:10px">esc</span> Close</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

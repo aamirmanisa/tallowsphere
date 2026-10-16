@@ -1,0 +1,48 @@
+{
+  "ai_act_report": {
+    "ai_system_inventory": {
+      "high_risk": 0,
+      "limited": 0,
+      "minimal": 0,
+      "prohibited": 0,
+      "systems": [],
+      "total": 0
+    },
+    "annex_iv_model_provenance": {
+      "model_provenance_used": false,
+      "status": "WARN"
+    },
+    "art12_record_keeping": {
+      "ai_inference_log_used": false,
+      "status": "FAIL"
+    },
+    "art13_transparency": {
+      "explainable_functions": 0,
+      "status": "PASS"
+    },
+    "art14_human_oversight": {
+      "human_approval_gates": 0,
+      "status": "PASS"
+    },
+    "art9_risk_management": {
+      "high_risk_total": 0,
+      "high_risk_with_art9": 0,
+      "status": "PASS"
+    },
+    "compliance_summary": {
+      "checks_passed": 3,
+      "checks_total": 5,
+      "status": "PARTIAL"
+    },
+    "file": "tests/fixtures/legal_valid.tl",
+    "recommendations": [
+      "Add @ai_system annotations to AI-related functions",
+      "Add AiInferenceLog for Art.12 inference record-keeping",
+      "Add ModelProvenance tracking for Annex IV documentation"
+    ],
+    "regulation": "EU AI Act (Regulation 2024/1689)",
+    "timestamp": "<ts>"
+  },
+  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "schema": "tallow.audit.ai_act.v1"
+}

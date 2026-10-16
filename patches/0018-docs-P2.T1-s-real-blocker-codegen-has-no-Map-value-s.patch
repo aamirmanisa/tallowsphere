@@ -1,0 +1,78 @@
+From a56d9adb0491ce237f63a33dc8d2e5d73cce3c2a Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 02:33:56 +0000
+Subject: [PATCH 18/27] =?UTF-8?q?docs:=20P2.T1's=20real=20blocker=20?=
+ =?UTF-8?q?=E2=80=94=20codegen=20has=20no=20Map=20value,=20so=20the=20scop?=
+ =?UTF-8?q?e=20was=20wrong?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+I recorded P2.T1 as "ready-for-agent, fully specified" an hour ago. That was
+premature: I had checked the FFI contract and the struct layout but not whether the
+field types can actually be BUILT. Measuring that changes the item's size class.
+
+`[]String` is fine — tallow_array_len is declared (codegen.rs:1401), the count-slot
+convention is real, and "StringArray" is a consumed kind with .len routing
+(emit_array_count_inline :7609, emit_array_count_value :14082).
+
+`Map` is not. The layout registers field_kinds["open_graph"] = "Map" (codegen.rs:1946)
+and a Map does lower to I8Ptr (:20736), but nothing in codegen ever PRODUCES a Map
+value: rg for '%struct.Map|map_alloc|MapEntry' in codegen.rs returns zero matches,
+and the "Map" tag has no consumer — unlike "StringArray", which has the routing above.
+The interpreter, by contrast, returns a real Value::Map from extract_open_graph
+(stdlib/browser.rs:73) and asserts it (:1430).
+
+So P2.T1's step 2 ("a serialized string for open_graph") contradicts the kind its own
+layout registers. That decides whether this item is a binding (small, as scoped) or a
+language feature (Map values in AOT, far beyond a scraper task), and it is a decision
+rather than a task. Both options and a recommendation are recorded; the FFI module is
+deliberately NOT written, because a function nothing can call correctly is the
+uncalled-helper anti-pattern this plan exists to remove.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 32 ++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index 039edaa..1487ca8 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -198,7 +198,37 @@ byte-identical to the interpreter's — and it sits on the `interp.rs`/`codegen.
+ half-applied change is worse than none. There is **no correctness defect** to fix: the fallback returns
+ correct output and `--require-native` refuses loudly. Attempting it with a nearly-exhausted context is
+ how an unfinished ABI edit gets left behind, which is the one outcome the plan forbids outright.
+-**Status: ready-for-agent, fully specified, not started.**
++**BLOCKED 2026-10-15 on a codegen gap the plan's own scope does not name.** Measured, not inferred:
++
++*`[]String` is fine.* `tallow_array_len(ptr)` is declared (`codegen.rs:1401`), the "array count slot"
++convention is real, and `"StringArray"` is a consumed kind — `emit_array_count_inline` /
++`emit_array_count_value` (`:7609`, `:14082`) route `.len` to it. So `json_ld` is mechanically bindable.
++
++*`Map` is not.* The layout registers `field_kinds["open_graph"] = "Map"` (`:1946`), and a Map type does
++lower to `LLType::I8Ptr` (`:20736`) — but **nothing in codegen ever produces a Map value**:
++`rg '%struct.Map|map_alloc|MapEntry'` in `codegen.rs` → zero matches, and the `"Map"` tag has **no
++consumer** (contrast `"StringArray"`, which has the `.len` routing above). Meanwhile the interpreter's
++`extract_open_graph` (`stdlib/browser.rs:73`) returns a genuine `Value::Map`, and its own test asserts
++exactly that (`:1430`, "expected open_graph Map").
++
++So step 2 above — "a serialized string for `open_graph`" — **contradicts the kind the layout
++registers**. That is not a cosmetic inconsistency: it decides whether P2.T1 is a binding (small, as
++scoped) or a language feature (Map values in AOT, well beyond this item). Reconciling the two is a
++**decision, not a task**:
++
++- **(a) Register the field as `"String"`** and have the native emit `open_graph` serialized, accepting a
++  documented divergence from the interpreter that the parity test in P2.T3 must then encode as
++  *expected*, not as a failure. Small — but it means AOT and interpreted `StructuredData` are not the
++  same value, which is precisely what P2.T3 exists to guarantee.
++- **(b) Build Map values in codegen** (allocator, entry layout, `.len`/index routing) — a real language
++  feature; P2.T1 becomes its first consumer, not its scope.
++
++Recommendation: **(a)**, with the divergence stated in the header contract and in P2.T3's acceptance
++test, because (b) is a language change smuggled in under a scraper task and the plan's own byte-parity
++rule would otherwise be quietly weakened.
++
++**Status: blocked on that decision. The FFI module is not written** — writing it first would produce a
++function nothing can call correctly, which is the uncalled-helper anti-pattern this plan exists to fix.
+ 
+ ### P2.T2 — `tallow_crawler_from_sitemap`
+ **Files:** same pattern; facade exists at `src/stdlib/browser.rs:293`; `Crawler` fields at `stdlib/browser.tl:381`.

@@ -1,0 +1,65 @@
+From 50956530e4a9fe5e45ada026543efcde76da5bb4 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 04:23:20 +0000
+Subject: [PATCH 25/27] docs: reconcile three stale status headers with the
+ record
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+P1 said "PARTIAL: T3/T5/T6 open", P2 said "HALTED", and P3.T3 said "BLOCKED ON AN
+EGRESS-POLICY DECISION" — all three false as of the tasks below them, which are
+complete and carry their own evidence. History is kept (each header is marked
+superseded rather than erased), but the headline now matches the body.
+
+The pattern is the plan's own subject: an artifact whose advertised state no longer
+matches its actual state. It was worth naming, not just fixing, because the same
+shape produced the earlier P2.T1 scope error.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 19 ++++++++++++++++---
+ 1 file changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index 04fcfc9..dce251f 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -137,7 +137,11 @@ Prior gate offered (a) conditional default vs (b) install Ollama. **Both are sup
+ **Objective:** `Crawler.from_sitemap` and `StructuredData.extract` are declared `// native` in `.tl` with interpreter facades in Rust but no native symbol, so the compiled path cannot lower them.
+ **Verified state:** `tallow_crawler_from_links` (`src/runtime/crawler_ffi.rs:49`) and `tallow_page_cache_create` (`src/runtime/page_cache_ffi.rs:46-47`) are already bound — **copy those two files' shape, do not invent a new one.**
+ 
+-### P2 — ⛔ HALTED (2026-10-14 23:12 UTC) — contested, not unstarted
++### P2 — ✅ COMPLETE (2026-10-15): T1, T2, T3, T4 all landed
++
++*(Header superseded. The halt below is history: it was recorded when a sibling lane held
++`crawler_ffi.rs` and the phase's premise had not yet expired. T1 `7fd59db4`, T3/T4 `381475fb`,
++T2 `f9fb8f27` — with T2 bound, the declared `// native` surface is fully bound.)*
+ 
+ Investigated before writing code. Two independent grounds, both measured.
+ 
+@@ -412,7 +416,11 @@ question needing its own audit — not a patch smuggled in under a binding.
+ 1. **A build raced a source edit.** The first E2E run compiled `main.rs` while the `Plan` enum variant existed and its dispatch arm did not, so the build died with `E0004: non-exhaustive patterns: Command::Plan { .. } not covered`; the binary was never relinked and the E2E then tested the **stale 21:00 binary**, reporting `unrecognized subcommand 'schema'` — a false product failure. **Guard added:** the E2E script now aborts when `BUILD_RC != 0` and prints the binary's mtime instead of assuming freshness.
+ 2. **A pre-existing failure sits in the same test filter, and it is NOT from this work:** `cli::fingerprint_audit_cmd::tests::test_ja4h_cookie_sorting_and_freeform_values` fails at `src/cli/fingerprint_audit_cmd.rs:1715` (`left: "ge11cn01…"` vs `right: "ge11nn01…"`). Nothing here touches that path. `cargo test --lib cli::` is therefore red for a reason unrelated to P3; a suite-level green requires that fixed separately.
+ 
+-### P3.T3 — ⛔ BLOCKED ON AN EGRESS-POLICY DECISION (not buildable-then-verifiable as written)
++### P3.T3 — ✅ RESOLVED (2026-10-14): built as (a) local-only, verified end to end
++
++*(Header superseded. The block was resolved by the operator's "continue": the extract verb was
++built local-only — `mode: local_mock`, `live_scraping: false` — and verified against the repo's
++own row validator on both a complete page and one missing a required field.)*
+ **Steps:** wire to the existing crawl/extract pipeline; write rows to `--out`; emit the run evidence record from P1.T3.
+ **Verify (as written):** run against a local fixture server (`examples/fixtures/mock_server.py`) → rows written, exit 0.
+ 
+@@ -603,7 +611,12 @@ entries), and redaction is not bypassable — imported URLs, header values and b
+ **Verified:** `cargo check --lib --bins` RC=0 · `browser::har_import` **7 passed/0** ·
+ `browser::network` **63 passed/0** (the new derives do not disturb the recorder).
+ 
+-### P1 — 🔄 PARTIAL: T1/T2/T4 landed; T3/T5/T6 open
++### P1 — ✅ COMPLETE (2026-10-15): T1–T6 all landed
++
++*(Header superseded. This section was written when the phase was partial; the per-task records
++below still carry that history and have since been closed: T2 custody `6f087814`, T5 compliance
++gate `30dfa52e`, T6 budget `8923ea72` — and this is the third stale headline found in this
++document, which is why the pattern is worth naming rather than fixing one at a time.)*
+ 
+ The tier was Ollama-only, so the engine actually chosen for it could not be called at all.
+ Landed: explicit `Engine` (default `Ollama`, unknown names refused), `with_engine` with the same

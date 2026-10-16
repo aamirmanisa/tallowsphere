@@ -1,0 +1,123 @@
+From 4a71094b227df9724d5aaa54cc3709f254842db4 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 03:07:24 +0000
+Subject: [PATCH 20/27] docs: P2.T1 done in fact, and P2.T3's scope corrected
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two corrections to the plan's own record, both because the code moved past it.
+
+P2.T1 was recorded as "blocked on that decision" — a fork between registering the field
+as a String and building Map values in codegen. That fork was false: codegen has no Map
+value at all and the layout's "Map" tag had no consumer, so serializing was the only
+option that did not mean inventing Map values and readers under a scraper task. The
+blocker note is superseded with the measurements that replaced it, the two defects the
+proof caught (a probe whose JSON-LD braces became string interpolation, and a first
+commit that swept 184 lines of rustfmt churn around a four-site edit), and its evidence.
+
+P2.T3 said "exercise both natives". Only one is bound — P2.T2 was re-scoped out — so the
+acceptance is now stated for StructuredData.extract alone, with the three graded
+assertions copied from the harness that established them for this class, and open_graph
+excluded by name because the interpreter and the compiled path hold different
+representations of it.
+
+P2.T4's refusal arms were listed as blank seed URL and malformed HTML; those belong to
+the crawler/sitemap natives, not this one. Corrected to the arm this native has.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 73 ++++++++++++++++---
+ 1 file changed, 62 insertions(+), 11 deletions(-)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index 1487ca8..d53e97b 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -227,8 +227,40 @@ Recommendation: **(a)**, with the divergence stated in the header contract and i
+ test, because (b) is a language change smuggled in under a scraper task and the plan's own byte-parity
+ rule would otherwise be quietly weakened.
+ 
+-**Status: blocked on that decision. The FFI module is not written** — writing it first would produce a
+-function nothing can call correctly, which is the uncalled-helper anti-pattern this plan exists to fix.
++**SUPERSEDED — P2.T1 IS IMPLEMENTED AND VERIFIED (2026-10-15, `7fd59db4`).** The "blocked on a
++decision" note above was wrong, and so was the fork it offered. Measuring the runtime's own surface
++settled it without a decision:
++
++* **(a) vs (b) was a false choice.** `open_graph` cannot be a Map in AOT and cannot be "serialized by
++  choice" either: codegen has no Map value at all (`%struct.Map`, `map_alloc`, `MapEntry`: zero
++  occurrences; no `tallow_map_*` anywhere) and the layout's `"Map"` tag had **no consumer**. Serializing
++  is the only option that does not mean inventing Map *values and readers* under a scraper task.
++* **The plan's step-2 mechanism was wrong.** A raw `**c_char` out-param cannot work: a runtime array has
++  one shape (`native_array`: `[count][slot…]` as a boxed `[i64]`) built inside producers, with no public
++  constructor — so the native builds it with the same helper the other string-array producers use.
++* **The field split was already solved by a bound native.** Mirroring `tallow_crawler_from_links`
++  (return the one computed string, out-param the rest) meant refusal propagation reuses
++  `emit_runtime_string_null_check` — no new IR failure path to trust.
++* `has_json_ld` is the one struct field anywhere that is genuinely `i1`, so it is stored by hand;
++  `emit_store_i64_field` would write eight bytes into one bit.
++
++**Evidence:** `cargo check --lib --bins` RC=0 · codegen suite **621 passed / 0 failed** ·
++`runtime::structured_data_ffi` **7 passed / 0** · then the CLI under `--require-native`, which by contract
++refuses the interpreter fallback, exited 0 printing `true/1/false/0` over a native link step — and the
++same flag on the same binary exited 1 with "native build unavailable" when the probe was broken, which
++is the contrast proving the values came from the AOT path.
++
++**Two defects the proof caught, both in the test rather than the binding:** the probe's original JSON-LD
++body contained braces, which Tallow reads as string *interpolation*, so the emitted IR referenced an
++undefined global and the native build failed — and `--require-native` refused instead of quietly
++interpreting, which is the flag doing its job. Then the first commit of this change was **reverted and
++redone**: `rustfmt` on `codegen.rs` (never format-clean) turned a four-site edit into 55 hunks and 184
++deletions; the churn was removed and the edits re-applied against the baseline, giving a 4-hunk diff that
++was re-verified on its own.
++
++**Remaining in this phase:** T3/T4 were scoped out because T2's natives were unbound — with this native
++bound, the parity and refusal coverage for **it** is now possible, and is tracked as P2.T3 below with the
++both-natives wording corrected.
+ 
+ ### P2.T2 — `tallow_crawler_from_sitemap`
+ **Files:** same pattern; facade exists at `src/stdlib/browser.rs:293`; `Crawler` fields at `stdlib/browser.tl:381`.
+@@ -236,17 +268,36 @@ function nothing can call correctly, which is the uncalled-helper anti-pattern t
+ **Verify:** `cargo check` clean.
+ 
+ ### P2.T3 — Parity coverage (the house acceptance for this class)
+-**Files:** `tests/interp_codegen_parity.rs`, `tests/generated_tl_parity.rs`, `tests/browser_codegen_integration.rs`.
+-**Steps:** add a flow exercising both natives and run it under both engines.
+-**Verify:**
+-- `cargo test --test interp_codegen_parity -- --nocapture` → pass
+-- `cargo test --test generated_tl_parity -- --nocapture` → pass
+-- `cargo test --test browser_codegen_integration <new_name> -- --nocapture` → pass
+-**Acceptance:** native and interpreted output byte-identical for the same input.
++**Wording corrected 2026-10-15:** the original said "exercise both natives". Only one of the two is
++bound — P2.T2 (`tallow_crawler_from_sitemap`) was re-scoped out by decision, and T3 must not silently
++claim coverage it does not have. The coverage below is for `StructuredData.extract` alone.
++
++**Files:** new `tests/structured_data_parity.rs` (modelled on `tests/regex_engine_parity.rs`, which
++established this three-assertion shape for the class) + fixtures
++`tests/parity/parity_programs/17_structured_data.tl` and `18_structured_data_refusal.tl`.
++**Steps:** one program, run under both engines — the interpreter forced via `--target x86_64-linux`
++(a cross target takes the tree-walking path), the native via `--require-native`.
++**Verify:** `cargo test --test structured_data_parity -- --nocapture` → pass.
++**Acceptance, in increasing strength** (the third is what catches two engines agreeing on the *wrong*
++answer, which the second alone cannot):
++1. both legs exit 0, and the native leg must not report a fallback;
++2. stdout byte-identical between the engines;
++3. stdout equal to a **pinned reference block** for four deliberately-discriminating documents
++   (JSON-LD present · nothing structured · two blocks, so "only the first survives" predicts a
++   different count · an og tag with its attributes reversed, so an order-sensitive reader yields
++   nothing).
++
++**Not covered, by name:** `open_graph` is excluded from the pinned block. The interpreter holds a real
++`Value::Map` and the AOT field holds the serialized form — pinning that would pin a divergence as
++parity. It is recorded in `runtime::structured_data_ffi`'s header instead.
+ 
+ ### P2.T4 — Refusal parity
+-**Steps:** cover the refusal arms (blank seed URL, non-string argument, malformed HTML) in the same test file.
+-**Verify:** both engines produce the **same refusal**, not merely "both fail".
++**Steps:** the refusal arms reachable for **this** native: a non-string argument, over
++`18_structured_data_refusal.tl`. (The plan's original arms — blank seed URL, malformed HTML — belong to
++the crawler/sitemap natives, which remain unbound; they were mis-assigned to this native.)
++**Verify:** both engines name the **same cause** — asserted on the shared phrase, since the binding
++prefixes its own name where the interpreter surfaces the facade's message verbatim — and the native
++path must not emit output before refusing.
+ 
+ ---
+ 

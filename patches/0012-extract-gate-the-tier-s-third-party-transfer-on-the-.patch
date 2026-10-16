@@ -1,0 +1,829 @@
+From c83d5dbb14aa2c5ccbf154449095d6b2651f947f Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 01:34:37 +0000
+Subject: [PATCH 12/27] extract: gate the tier's third-party transfer on the
+ plan's own compliance block
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The tier sends a sample of third-party page content and a prompt to whatever
+engine is configured. For a loopback engine nothing leaves the box. For a remote
+engine the content leaves the box to a vendor — and that transfer is exactly what
+the request plan already governs through its per-request `compliance` block
+(`pii_policy`, `requires_approval`), so it is governed here too instead of being
+the one path that bypasses its own governance.
+
+Fail-closed: `TransferPolicy::none()` — the default — REFUSES a remote transfer.
+The reading is deliberate: "nothing said otherwise" is precisely the condition
+this gate exists to refuse, not a licence to send.
+
+A redact-class `pii_policy` is refused rather than honoured by redacting the
+sample, because the tier sends the sample it was given and silently transforming
+it would make the extraction's provenance describe something other than what left
+the box. Refusing keeps "what the plan said" and "what was sent" the same claim.
+
+Wiring: the policy rides the extractor (`with_transfer`), so it is enforced at the
+one place that decides to call an engine rather than at each call site. The plan
+supplies it via `TransferPolicy::from_compliance`; a run with no plan declares it
+through TALLOW_LLM_PII_POLICY, and the source is recorded so a reader can tell
+which authorised the transfer. No plan-driven caller reaches the tier today, which
+is why the gate sits on the tier and not in a helper with no caller.
+
+The transfer decision is part of `tier_state`, not a separate concern: an engine
+that is reachable but not permitted to receive content is NOT enabled, and
+`transfer_allowed` is in the run-evidence record alongside the rest.
+
+Verified: cargo check --lib --bins RC=0; llm_transfer 7 passed/0 — loopback needs
+no authorisation; no policy refuses; redact-class refuses; requires_approval
+refuses; a declared no-PII policy permits; the specimen's real block parses; and
+from_env reports "none" when it declares nothing. That last test earned its place:
+the first run caught `from_env` reporting its source as the environment when no
+variable was set — a gate misreporting its own provenance, which is the one thing
+this module must never do. engine_tests, smart_extract and llm_extract suites pass.
+---
+ src/browser/llm_extract.rs   |  72 +++++++++-
+ src/browser/llm_transfer.rs  | 233 ++++++++++++++++++++++++++++++++
+ src/browser/mod.rs           | 248 ++++++++++++++++++-----------------
+ src/browser/smart_extract.rs |   9 +-
+ 4 files changed, 432 insertions(+), 130 deletions(-)
+ create mode 100644 src/browser/llm_transfer.rs
+
+diff --git a/src/browser/llm_extract.rs b/src/browser/llm_extract.rs
+index 8c25409..819bebc 100644
+--- a/src/browser/llm_extract.rs
++++ b/src/browser/llm_extract.rs
+@@ -230,6 +230,11 @@ impl From<std::io::Error> for ExtractError {
+ pub struct LlmExtractor {
+     /// Which API this extractor speaks to.
+     pub engine: Engine,
++    /// Whether page content may be sent to this engine (see
++    /// [`crate::browser::llm_transfer`]). Defaults to *no policy*, which refuses
++    /// a remote transfer — the gate is fail-closed, so a caller that never
++    /// considered the question does not get to send content to a vendor.
++    pub transfer: crate::browser::llm_transfer::TransferPolicy,
+     /// Engine base URL (default: `http://localhost:11434`). Named for its
+     /// historical Ollama-only meaning; with `engine: OpenAiCompatible` it is the
+     /// OpenAI-compatible root that `/v1/chat/completions` is appended to.
+@@ -271,6 +276,7 @@ impl LlmExtractor {
+ 
+         let mut extractor = Self {
+             engine,
++            transfer: crate::browser::llm_transfer::TransferPolicy::none(),
+             ollama_url: base_url.trim_end_matches('/').to_string(),
+             model: model.to_string(),
+             schema_cache: HashMap::new(),
+@@ -748,6 +754,13 @@ impl LlmExtractor {
+     /// credential is present. A missing credential is refused, never sent
+     /// unauthenticated.
+     async fn ensure_engine_available(&mut self) -> Result<(), ExtractError> {
++        // The transfer gate comes first: it is not about whether the engine
++        // answers, but whether we are permitted to send to it at all.
++        if let crate::browser::llm_transfer::TransferDecision::Refuse(reason) =
++            crate::browser::llm_transfer::decide(self.is_third_party(), &self.transfer)
++        {
++            return Err(ExtractError::EngineMisconfigured(reason));
++        }
+         match self.engine {
+             Engine::Ollama => self.ensure_ollama_available().await,
+             Engine::OpenAiCompatible => {
+@@ -788,6 +801,23 @@ impl LlmExtractor {
+         Ok(text)
+     }
+ 
++    /// Declare the transfer policy this extractor runs under.
++    pub fn with_transfer(mut self, transfer: crate::browser::llm_transfer::TransferPolicy) -> Self {
++        self.transfer = transfer;
++        self
++    }
++
++    /// Is this engine's endpoint outside the box's zone?
++    ///
++    /// An unknown route counts as third-party: failing closed is the only safe
++    /// reading of "we could not tell where this would go".
++    fn is_third_party(&self) -> bool {
++        !matches!(
++            crate::browser::zone::browser_zone_egress_for(&self.ollama_url),
++            Ok(crate::browser::zone::ZoneEgress::InZone)
++        )
++    }
++
+     /// Measure the tier's state: every field is observed here, so "enabled" and
+     /// "working" stop being the same claim. Idempotent — the probe is cached.
+     pub async fn tier_state(&mut self) -> TierState {
+@@ -798,15 +828,36 @@ impl LlmExtractor {
+                 credential_present && self.check_openai_compatible_available().await
+             }
+         };
+-        let reason = if self.engine == Engine::OpenAiCompatible && !credential_present {
+-            format!("disabled (no credential: {LLM_API_KEY_ENV})")
+-        } else if !reachable {
+-            format!("disabled (engine not reachable at {})", self.ollama_url)
+-        } else {
+-            "enabled".to_string()
++        // The transfer decision is part of the tier's state, not a separate
++        // concern: a tier that could reach the engine but is not permitted to
++        // send to it is not enabled, and saying "enabled" there would be the same
++        // conflation this phase removes.
++        let third_party = self.is_third_party();
++        let decision = crate::browser::llm_transfer::decide(third_party, &self.transfer);
++        let transfer_allowed = decision.is_allowed();
++
++        let reason = match &decision {
++            crate::browser::llm_transfer::TransferDecision::Refuse(r) => {
++                format!("disabled ({r})")
++            }
++            crate::browser::llm_transfer::TransferDecision::Allow => {
++                if self.engine == Engine::OpenAiCompatible && !credential_present {
++                    format!("disabled (no credential: {LLM_API_KEY_ENV})")
++                } else if !reachable {
++                    format!("disabled (engine not reachable at {})", self.ollama_url)
++                } else if third_party {
++                    format!(
++                        "enabled (third-party transfer permitted by {})",
++                        self.transfer.source
++                    )
++                } else {
++                    "enabled (in-zone engine: content does not leave the box)".to_string()
++                }
++            }
+         };
+         TierState {
+-            enabled: credential_present && reachable,
++            enabled: credential_present && reachable && transfer_allowed,
++            transfer_allowed,
+             engine: self.engine.as_str(),
+             engine_url: self.ollama_url.clone(),
+             model: self.model.clone(),
+@@ -2348,6 +2399,10 @@ pub struct TierState {
+     pub model: String,
+     pub credential_present: bool,
+     pub reachable: bool,
++    /// Whether the content may be sent to this engine at all. False for a remote
++    /// engine with no authorising policy, which is what makes the gate
++    /// fail-closed rather than advisory.
++    pub transfer_allowed: bool,
+     pub reason: String,
+ }
+ 
+@@ -2362,6 +2417,7 @@ impl TierState {
+             "model": self.model,
+             "credential_present": self.credential_present,
+             "reachable": self.reachable,
++            "transfer_allowed": self.transfer_allowed,
+             "reason": self.reason,
+         })
+     }
+@@ -2525,6 +2581,7 @@ mod engine_tests {
+             model: DEFAULT_CLOUD_MODEL.to_string(),
+             credential_present: false,
+             reachable: false,
++            transfer_allowed: false,
+             reason: "disabled (no credential: TALLOW_LLM_API_KEY)".to_string(),
+         };
+         let ev = state.to_evidence();
+@@ -2535,6 +2592,7 @@ mod engine_tests {
+             "model",
+             "credential_present",
+             "reachable",
++            "transfer_allowed",
+             "reason",
+         ] {
+             assert!(ev.get(key).is_some(), "missing {key} in {ev}");
+diff --git a/src/browser/llm_transfer.rs b/src/browser/llm_transfer.rs
+new file mode 100644
+index 0000000..6328e40
+--- /dev/null
++++ b/src/browser/llm_transfer.rs
+@@ -0,0 +1,233 @@
++//! Whether the schema-first tier may send page content to a **third-party
++//! vendor**.
++//!
++//! The tier sends a sample of third-party page content and a prompt to whatever
++//! engine is configured. For a loopback engine nothing leaves the box, so there
++//! is nothing to authorise. For a remote engine the content leaves the box to a
++//! vendor, and that transfer is exactly the kind the request plan already
++//! governs through its per-request `compliance` block — so it is governed here
++//! too, instead of being the one path that bypasses its own governance.
++//!
++//! **Fail-closed.** With no policy, a remote transfer is refused. The default is
++//! not "allow because nothing said otherwise": nothing saying otherwise is the
++//! condition this module exists to refuse.
++
++/// The plan's `compliance` fields this gate reads.
++///
++/// Names match `schemas/tallow/request-plan-execution-contract.v1.json` and the
++/// committed specimens (`pii_policy`, `requires_approval`), so a plan can be fed
++/// in without translation.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct TransferPolicy {
++    /// The plan's `pii_policy`, when a plan supplied one.
++    pub pii_policy: Option<String>,
++    /// The plan's `requires_approval`.
++    pub requires_approval: bool,
++    /// Where the policy came from, for the refusal message and the record.
++    pub source: String,
++}
++
++impl TransferPolicy {
++    /// No policy — nothing was supplied, so a remote transfer is refused.
++    pub fn none() -> Self {
++        Self {
++            pii_policy: None,
++            requires_approval: false,
++            source: "none".to_string(),
++        }
++    }
++
++    /// Build from a plan's `compliance` object.
++    pub fn from_compliance(compliance: &serde_json::Value) -> Self {
++        Self {
++            pii_policy: compliance
++                .get("pii_policy")
++                .and_then(|v| v.as_str())
++                .map(|s| s.to_string()),
++            requires_approval: compliance
++                .get("requires_approval")
++                .and_then(|v| v.as_bool())
++                .unwrap_or(false),
++            source: "plan compliance block".to_string(),
++        }
++    }
++
++    /// Build from the environment, for a run with no plan.
++    ///
++    /// Read explicitly rather than defaulting: an operator who wants the tier to
++    /// send content to a vendor states the policy, exactly as a plan would.
++    pub fn from_env(getenv: &dyn Fn(&str) -> Option<String>) -> Self {
++        let policy = getenv("TALLOW_LLM_PII_POLICY")
++            .map(|s| s.trim().to_string())
++            .filter(|s| !s.is_empty());
++        let requires_approval = getenv("TALLOW_LLM_REQUIRES_APPROVAL")
++            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
++            .unwrap_or(false);
++        // The source describes where the policy ACTUALLY came from. Reporting
++        // "environment" when nothing was declared would be the module
++        // misreporting its own provenance — the one thing a gate about
++        // authorisation must not do.
++        let source = if policy.is_some() || requires_approval {
++            "environment (TALLOW_LLM_PII_POLICY)".to_string()
++        } else {
++            "none".to_string()
++        };
++        Self {
++            pii_policy: policy,
++            requires_approval,
++            source,
++        }
++    }
++
++    /// Does this policy permit sending an unredacted sample to a vendor?
++    ///
++    /// A redact-class policy is refused rather than honoured by redaction: the
++    /// tier sends the sample it was given, and quietly transforming it would
++    /// make the extraction's own provenance a description of something other
++    /// than what was sent. Refusing keeps "what the plan said" and "what left the
++    /// box" the same claim.
++    pub fn permits_third_party(&self) -> Result<(), String> {
++        let Some(policy) = self.pii_policy.as_deref() else {
++            return Err(format!(
++                "no pii_policy is declared ({}) — a remote engine would send third-party page \
++                 content to a vendor, and nothing has authorised that",
++                self.source
++            ));
++        };
++        if self.requires_approval {
++            return Err(format!(
++                "the compliance block sets requires_approval with pii_policy={policy:?} — a \
++                 third-party transfer needs that approval, and the tier cannot grant it"
++            ));
++        }
++        if policy.to_ascii_lowercase().contains("redact") {
++            return Err(format!(
++                "pii_policy={policy:?} requires redaction, and the tier sends the sample it was \
++                 given — refusing rather than silently sending unredacted content"
++            ));
++        }
++        Ok(())
++    }
++}
++
++/// The gate, for a transfer whose destination is or is not third-party.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum TransferDecision {
++    Allow,
++    Refuse(String),
++}
++
++impl TransferDecision {
++    pub fn is_allowed(&self) -> bool {
++        matches!(self, TransferDecision::Allow)
++    }
++}
++
++/// Decide whether the tier may send.
++///
++/// `third_party` is false when the engine is in-zone (a loopback engine): the
++/// content never leaves the box, so no authorisation is required and none is
++/// invented.
++pub fn decide(third_party: bool, policy: &TransferPolicy) -> TransferDecision {
++    if !third_party {
++        return TransferDecision::Allow;
++    }
++    match policy.permits_third_party() {
++        Ok(()) => TransferDecision::Allow,
++        Err(reason) => TransferDecision::Refuse(reason),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn plan(pii_policy: &str, requires_approval: bool) -> TransferPolicy {
++        TransferPolicy::from_compliance(&serde_json::json!({
++            "source_authority": "public_web",
++            "purpose": "fixture",
++            "legal_basis": "legitimate_interest",
++            "pii_policy": pii_policy,
++            "retention_days": 1,
++            "robots_mode": "strict",
++            "requires_approval": requires_approval,
++        }))
++    }
++
++    #[test]
++    fn a_loopback_engine_needs_no_authorisation() {
++        // Nothing leaves the box, so there is nothing to authorise — and the gate
++        // must not invent a requirement that would disable the offline path.
++        assert!(decide(false, &TransferPolicy::none()).is_allowed());
++    }
++
++    #[test]
++    fn a_third_party_transfer_with_no_policy_is_refused() {
++        match decide(true, &TransferPolicy::none()) {
++            TransferDecision::Refuse(reason) => {
++                assert!(reason.contains("no pii_policy"), "{reason}");
++            }
++            d => panic!("expected a refusal, got {d:?}"),
++        }
++    }
++
++    #[test]
++    fn a_redact_class_policy_is_refused_not_silently_obeyed() {
++        for policy in ["redact", "pii_redact_before_transfer", "REDACT"] {
++            let d = decide(true, &plan(policy, false));
++            assert!(
++                !d.is_allowed(),
++                "{policy} must not permit an unredacted send: {d:?}"
++            );
++        }
++    }
++
++    #[test]
++    fn requires_approval_refuses_even_with_a_permitting_policy() {
++        let d = decide(true, &plan("no_pii_expected", true));
++        match d {
++            TransferDecision::Refuse(reason) => assert!(reason.contains("approval"), "{reason}"),
++            other => panic!("expected a refusal, got {other:?}"),
++        }
++    }
++
++    #[test]
++    fn a_declared_no_pii_policy_permits_the_transfer() {
++        assert!(decide(true, &plan("no_pii_expected", false)).is_allowed());
++    }
++
++    #[test]
++    fn the_env_path_declares_its_own_source() {
++        let none = |_: &str| None;
++        let p = TransferPolicy::from_env(&none);
++        assert_eq!(p.pii_policy, None);
++        assert_eq!(p.source, "none");
++
++        let env = |k: &str| match k {
++            "TALLOW_LLM_PII_POLICY" => Some("no_pii_expected".to_string()),
++            _ => None,
++        };
++        let p = TransferPolicy::from_env(&env);
++        assert_eq!(p.pii_policy.as_deref(), Some("no_pii_expected"));
++        assert!(p.source.contains("TALLOW_LLM_PII_POLICY"), "{}", p.source);
++        assert!(decide(true, &p).is_allowed());
++    }
++
++    #[test]
++    fn the_specimens_block_parses_as_the_gate_expects() {
++        // The shape taken verbatim from examples/request_plan_get_only.
++        let block = serde_json::json!({
++            "source_authority": "local_fixture_public_web",
++            "purpose": "release_example_request_plan_get_only",
++            "legal_basis": "legitimate_interest",
++            "pii_policy": "no_pii_expected",
++            "retention_days": 1,
++            "robots_mode": "strict",
++            "requires_approval": false
++        });
++        let p = TransferPolicy::from_compliance(&block);
++        assert_eq!(p.pii_policy.as_deref(), Some("no_pii_expected"));
++        assert!(!p.requires_approval);
++        assert!(decide(true, &p).is_allowed());
++    }
++}
+diff --git a/src/browser/mod.rs b/src/browser/mod.rs
+index 6fe570d..14d4e2c 100644
+--- a/src/browser/mod.rs
++++ b/src/browser/mod.rs
+@@ -4,56 +4,65 @@
+ //! page navigation with lifecycle events, element querying with auto-waiting,
+ //! robots.txt compliance, rate limiting, retry logic, and typed error handling.
+ 
++pub mod ab_detector;
+ pub mod accessibility;
+ pub mod adaptive_crawler;
++pub mod advanced_stealth;
+ pub mod affiliate;
+ pub mod ai_extract;
+ pub mod antibot;
+ pub mod auth;
++pub mod auth_strategy;
++pub mod autonomous;
+ pub mod basket_optimizer;
+ pub mod behavior;
+ pub mod cadence;
+-pub mod compliance;
+-pub mod recipe_parser;
+-pub mod unit_normalizer;
+-pub mod captcha;
+ pub mod canary;
++pub mod captcha;
+ pub mod cdp;
+ pub mod cft_pins;
+ pub mod circuit_breaker;
++pub mod compliance;
+ pub mod config;
+ pub mod cookie_farm;
+ pub mod crawl_pipeline;
+ pub mod crawl_queue;
+-pub mod dlq;
+-pub mod snapshot_sampler;
+-pub mod socks_shim;
+ pub mod devices;
+ pub mod distributed;
++pub mod dlq;
+ pub mod download;
++pub mod dpi_bypass;
++pub mod dual_mode;
+ pub mod element;
+ pub mod emulation;
+ pub mod error;
+ pub mod fallback;
+-pub mod fingerprint_validator;
+ pub mod fingerprint_coherence;
+-pub mod free_proxies;
++pub mod fingerprint_validator;
+ pub mod frame;
++pub mod free_proxies;
+ pub mod har_import;
+ pub mod household;
+ pub mod html_parser;
+ pub mod http2_fingerprint;
++pub mod intelligence;
+ pub mod interaction;
+ pub mod ippool;
++pub mod ipv6_pool;
+ pub mod job_queue;
+ pub mod juggler;
+ pub mod llm_extract;
++pub mod llm_transfer;
+ pub mod markdown;
+ pub mod ml;
+ pub mod network;
++pub mod network_stealth;
++pub mod observability;
+ pub mod page;
++pub mod perf_engine;
+ pub mod plugins;
+ pub mod pool;
++pub mod presets;
+ pub mod price_bounds;
+ pub mod price_history;
+ pub mod privacy;
+@@ -61,176 +70,171 @@ pub mod process;
+ pub mod product_matcher;
+ pub mod provenance;
+ pub mod proxy;
+-pub mod search_index;
+ pub mod quality_validator;
+ pub mod ratelimit;
++pub mod reality;
++pub mod recipe_parser;
+ pub mod recording;
++pub mod residential;
++pub mod resource_blocker;
+ pub mod retry;
++pub mod retry_intelligence;
+ pub mod robots;
+ pub mod route_model;
++pub mod router;
+ pub mod runtime_fingerprint_audit;
+ pub mod scheduler;
++pub mod schema_drift;
+ pub mod scrub;
+ pub mod search_engine;
++pub mod search_index;
+ pub mod selector_chain;
++pub mod self_heal;
+ pub mod session;
+-pub mod slider_captcha;
++pub mod shrinkflation;
+ pub mod sitemap;
+-pub mod storage;
+-pub mod schema_drift;
+-pub mod observability;
+-pub mod auth_strategy;
+-pub mod self_heal;
++pub mod slider_captcha;
+ pub mod smart_extract;
++pub mod snapshot_sampler;
++pub mod socks_shim;
+ pub mod stealth;
+ pub mod stealth_v2;
+ pub mod stealth_v3;
+-pub mod residential;
+-pub mod shrinkflation;
++pub mod storage;
+ pub mod structured_data;
+ pub mod substitution;
+ pub mod tor_stealth;
+-pub mod typesense;
+ pub mod trace;
++pub mod traffic_morph;
+ pub mod triangulation;
++pub mod typesense;
++pub mod unit_normalizer;
++pub mod vendor_detect;
+ pub mod visual;
+ pub mod warmup;
+-pub mod resource_blocker;
+-pub mod ab_detector;
+-pub mod zip_rotation;
+ pub mod wordfence_bypass;
+ pub mod wordpress_auth;
+-pub mod advanced_stealth;
+-pub mod autonomous;
+-pub mod dpi_bypass;
+-pub mod dual_mode;
+-pub mod intelligence;
+-pub mod ipv6_pool;
+-pub mod network_stealth;
+-pub mod perf_engine;
+-pub mod presets;
+-pub mod reality;
+-pub mod retry_intelligence;
+-pub mod router;
+-pub mod traffic_morph;
+-pub mod vendor_detect;
++pub mod zip_rotation;
+ pub mod zone;
+ 
++pub use ab_detector::{AbLayoutDetector, DetectionResult, LayoutFingerprint, StructuralFeatures};
++pub use accessibility::{
++    AXNode, AXProperty, AXValue, ConsentBannerInfo, WcagAuditResult, WcagLevel, WcagViolation,
++    accept_consent, detect_consent_banner, get_accessibility_tree, impact_weight,
++    query_accessibility_node, reject_tracking_cookies, run_wcag_audit,
++};
++pub use adaptive_crawler::{AdaptiveCrawler, CrawlResult, CrawlSource};
++pub use ai_extract::{
++    ArticleData, ProductData as AiProductData, RecipeData, SchemaExtractor, html_to_clean_text,
++};
++pub use antibot::{AntiBotOrchestrator, AntiBotSettings, FreeProxySources, RetailerConfig};
++pub use auth::{
++    OAuthTokenResult, capture_oauth_redirect, decode_totp_secret, generate_totp,
++    generate_totp_default, is_logged_in, restore_login_session, save_login_session,
++};
++pub use behavior::BehaviorSimulator;
++pub use captcha::{
++    CaptchaInfo, CaptchaSolverConfig, CaptchaType, detect_captcha, inject_captcha_solution,
++    solve_captcha, wait_for_manual_solve,
++};
+ pub use cdp::{CdpClient, TransportMode};
++pub use config::BrowserFullConfig;
++pub use cookie_farm::{AntiBotCookie, CookieFarm, CookieType, DomainCookieJar, RetailerAntiBot};
++pub use crawl_queue::{CrawlJob, CrawlQueue, DeltaPlan, delta_crawl_enabled};
++pub use devices::{
++    DeviceDescriptor, device_count, get_device, list_devices, list_devices_by_category,
++};
+ pub use download::{
+     ensure_browser_available, find_installed_chrome, install_browser, list_installed,
+     remove_version,
+ };
+ pub use element::{ElementChain, ElementHandle, ShadowRoot};
++pub use emulation::{
++    DeviceProfile, apply_stealth_profile, clear_device_metrics, clear_geolocation, set_geolocation,
++    set_locale, set_timezone, set_touch_emulation, set_user_agent, set_viewport,
++};
+ pub use error::{BrowserError, NavigationError};
++pub use fingerprint_validator::{
++    ALL_CONSISTENT_FINGERPRINTS, ConsistentFingerprint, FingerprintValidator, FingerprintWarning,
++    LINUX_CHROME_MESA, MAC_CHROME_APPLE, Severity, WINDOWS_CHROME_INTEL, WINDOWS_CHROME_NVIDIA,
++    detect_os_from_fonts, validate_fingerprint, validate_fonts_for_ua,
++};
+ pub use frame::FrameInfo;
++pub use html_parser::{HtmlParser, strip_html_tags};
++pub use http2_fingerprint::{
++    Http2ConnConfig, Http2Fingerprint, akamai_fingerprint_string, chrome_header_order,
++    firefox_header_order, header_order_for, safari_header_order,
++};
+ pub use interaction::{
+-    bezier_mouse_path, gaussian_keystroke_delay, ClickOptions, MouseButton, SelectBy,
+-    MODIFIER_ALT, MODIFIER_CTRL, MODIFIER_META, MODIFIER_SHIFT,
++    ClickOptions, MODIFIER_ALT, MODIFIER_CTRL, MODIFIER_META, MODIFIER_SHIFT, MouseButton,
++    SelectBy, bezier_mouse_path, gaussian_keystroke_delay,
+ };
+-pub use page::{CookieConsentStrategy, DialogHandler, NavigationResult, Page, PaginationInfo, WaitUntil};
+-pub use process::{BrowserBackend, BrowserConfig, BrowserProcess};
+-pub use retry::{retry_with_backoff, BackoffStrategy, RetryConfig};
++pub use llm_extract::{
++    ExtractError, ExtractedData, ExtractionSchema, ExtractorContractVersion, FieldExtractor,
++    LlmExtractor, TransformFn, ValidationResult,
++};
++pub use markdown::html_to_markdown;
+ pub use network::{
+     HeaderEntry, InterceptAction, InterceptRule, MockResponse, NetworkInterceptor, RequestStage,
+     ResourceType, WebSocketConnection, WebSocketFrame, WebSocketFrameDirection,
+     WebSocketInterceptConfig, WebSocketInterceptor, WebSocketMonitor,
+ };
+-pub use emulation::{
+-    apply_stealth_profile, clear_device_metrics, clear_geolocation, set_geolocation, set_locale,
+-    set_timezone, set_touch_emulation, set_user_agent, set_viewport, DeviceProfile,
+-};
+-pub use pool::{BrowserPool, PoolConfig, PoolHandle, PoolSnapshot, PoolStats, ScalingPolicy, LoadSignal, system_headroom};
+-pub use storage::{
+-    StorageBackend, StorageError, StoredItem, UpsertOutcome, InMemoryBackend, SqliteBackend,
+-    ParquetBackend, S3Backend, StorageKind, canonical_key, open_backend,
+-};
+-pub use robots::{RateLimiter, RobotsCache};
+-pub use session::{
+-    capture_session, clear_cookies, get_cookies, get_local_storage, get_session_storage,
+-    load_session, save_session, BrowserSession, CdpCookie,
+-};
+-pub use scrub::{
+-    scrub, scrub_files, scrub_on_exit, scrub_on_exit_default, set_scrub_on_exit_default,
+-    FileScrubReport, ScrubGuard, ScrubPolicy, ScrubReport, ScrubSession,
+-};
+-pub use auth::{
+-    capture_oauth_redirect, decode_totp_secret, generate_totp, generate_totp_default,
+-    is_logged_in, restore_login_session, save_login_session, OAuthTokenResult,
+-};
+-pub use captcha::{
+-    detect_captcha, inject_captcha_solution, solve_captcha, wait_for_manual_solve,
+-    CaptchaInfo, CaptchaSolverConfig, CaptchaType,
++pub use page::{
++    CookieConsentStrategy, DialogHandler, NavigationResult, Page, PaginationInfo, WaitUntil,
+ };
+-pub use stealth::StealthProfile;
+-pub use devices::{DeviceDescriptor, get_device, list_devices, list_devices_by_category, device_count};
+-pub use accessibility::{
+-    AXNode, AXProperty, AXValue, WcagAuditResult, WcagLevel, WcagViolation, ConsentBannerInfo,
+-    get_accessibility_tree, query_accessibility_node, run_wcag_audit,
+-    detect_consent_banner, accept_consent, reject_tracking_cookies, impact_weight,
++pub use pool::{
++    BrowserPool, LoadSignal, PoolConfig, PoolHandle, PoolSnapshot, PoolStats, ScalingPolicy,
++    system_headroom,
+ };
+ pub use privacy::{
+-    scan_and_redact, ContentFingerprint, PiiScanResult, PiiType,
+-    RetentionEntry, RetentionRegistry,
++    ContentFingerprint, PiiScanResult, PiiType, RetentionEntry, RetentionRegistry, scan_and_redact,
+ };
+-pub use html_parser::{HtmlParser, strip_html_tags};
+-pub use http2_fingerprint::{
+-    Http2Fingerprint, Http2ConnConfig, akamai_fingerprint_string,
+-    chrome_header_order, firefox_header_order, safari_header_order, header_order_for,
++pub use process::{BrowserBackend, BrowserConfig, BrowserProcess};
++pub use product_matcher::{
++    CanonicalProduct, MatchMethod, MatchResult, ProductMatcher, ScrapedListing,
+ };
+-pub use trace::{TraceRecorder, TraceAction, TraceNetworkEvent, open_trace_viewer};
+-pub use visual::{
+-    capture_screenshot, capture_viewport_screenshot, capture_element_screenshot,
+-    print_to_pdf, PdfOptions, compare_screenshots, DiffResult,
+-    save_baseline, load_baseline, compare_with_baseline, BaselineManifest,
++pub use proxy::{ProxyEntry, ProxyHealth, ProxyPool, ProxyTier};
++pub use ratelimit::{AdaptiveRateLimiter, DomainRateManager, ResponseClass};
++pub use recording::{
++    RecordingConfig, RecordingResult, encode_as_avi_mjpeg, encode_frames, encode_with_ffmpeg,
++    ffmpeg_available, parse_resolution, save_as_frames,
+ };
++pub use resource_blocker::{BlockProfile, ResourceBlocker};
++pub use retry::{BackoffStrategy, RetryConfig, retry_with_backoff};
++pub use robots::{RateLimiter, RobotsCache};
+ pub use scheduler::{
+-    ScheduledJob, ScheduleStore, SchedulerDaemon, Frequency, MissedPolicy,
+-    parse_interval, print_schedule_table, CronExpr, validate_daily_time,
+-    epoch_secs, format_epoch,
++    CronExpr, Frequency, MissedPolicy, ScheduleStore, ScheduledJob, SchedulerDaemon, epoch_secs,
++    format_epoch, parse_interval, print_schedule_table, validate_daily_time,
+ };
+-pub use recording::{
+-    RecordingConfig, RecordingResult, encode_frames, encode_as_avi_mjpeg,
+-    encode_with_ffmpeg, save_as_frames, ffmpeg_available, parse_resolution,
++pub use scrub::{
++    FileScrubReport, ScrubGuard, ScrubPolicy, ScrubReport, ScrubSession, scrub, scrub_files,
++    scrub_on_exit, scrub_on_exit_default, set_scrub_on_exit_default,
+ };
+ pub use search_engine::urlencoded as search_engine_urlencoded;
+-pub use config::BrowserFullConfig;
+-pub use proxy::{ProxyPool, ProxyTier, ProxyEntry, ProxyHealth};
+-pub use ratelimit::{AdaptiveRateLimiter, DomainRateManager, ResponseClass};
+-pub use cookie_farm::{CookieFarm, CookieType, DomainCookieJar, AntiBotCookie, RetailerAntiBot};
+-pub use warmup::{WarmupSequence, ManagedProfile, ProfilePool, RetailerWarmup};
+-pub use behavior::BehaviorSimulator;
+-pub use slider_captcha::{
+-    generic_slider, jd_slider, tencent_slider, alibaba_slider, generate_slider_trajectory,
+-    trajectory_to_cdp_events, validate_trajectory, SliderConfig, SliderSpeed, SliderTrajectory,
+-    TrajectoryPoint, TrajectoryValidation, CdpMouseEvent,
+-};
+-pub use antibot::{AntiBotOrchestrator, AntiBotSettings, RetailerConfig, FreeProxySources};
+-pub use fingerprint_validator::{
+-    FingerprintValidator, FingerprintWarning, Severity, ConsistentFingerprint,
+-    validate_fingerprint, validate_fonts_for_ua, detect_os_from_fonts,
+-    WINDOWS_CHROME_INTEL, WINDOWS_CHROME_NVIDIA, MAC_CHROME_APPLE, LINUX_CHROME_MESA,
+-    ALL_CONSISTENT_FINGERPRINTS,
++pub use self_heal::{SelectorCandidate, SelfHealingSelector};
++pub use session::{
++    BrowserSession, CdpCookie, capture_session, clear_cookies, get_cookies, get_local_storage,
++    get_session_storage, load_session, save_session,
+ };
+-pub use adaptive_crawler::{AdaptiveCrawler, CrawlResult, CrawlSource};
+-pub use crawl_queue::{CrawlQueue, CrawlJob, DeltaPlan, delta_crawl_enabled};
+-pub use sitemap::{SitemapParser, SitemapEntry};
+-pub use structured_data::{StructuredDataExtractor, ProductData, MicrodataItem};
+-pub use markdown::html_to_markdown;
+-pub use ai_extract::{
+-    html_to_clean_text, SchemaExtractor,
+-    ProductData as AiProductData, ArticleData, RecipeData,
++pub use sitemap::{SitemapEntry, SitemapParser};
++pub use slider_captcha::{
++    CdpMouseEvent, SliderConfig, SliderSpeed, SliderTrajectory, TrajectoryPoint,
++    TrajectoryValidation, alibaba_slider, generate_slider_trajectory, generic_slider, jd_slider,
++    tencent_slider, trajectory_to_cdp_events, validate_trajectory,
+ };
+-pub use llm_extract::{
+-    LlmExtractor, ExtractedData, ExtractionSchema, ExtractorContractVersion, FieldExtractor,
+-    TransformFn, ValidationResult, ExtractError,
++pub use stealth::StealthProfile;
++pub use storage::{
++    InMemoryBackend, ParquetBackend, S3Backend, SqliteBackend, StorageBackend, StorageError,
++    StorageKind, StoredItem, UpsertOutcome, canonical_key, open_backend,
+ };
+-pub use self_heal::{SelfHealingSelector, SelectorCandidate};
+-pub use product_matcher::{
+-    CanonicalProduct, MatchMethod, MatchResult, ProductMatcher, ScrapedListing,
++pub use structured_data::{MicrodataItem, ProductData, StructuredDataExtractor};
++pub use trace::{TraceAction, TraceNetworkEvent, TraceRecorder, open_trace_viewer};
++pub use visual::{
++    BaselineManifest, DiffResult, PdfOptions, capture_element_screenshot, capture_screenshot,
++    capture_viewport_screenshot, compare_screenshots, compare_with_baseline, load_baseline,
++    print_to_pdf, save_baseline,
+ };
+-pub use resource_blocker::{BlockProfile, ResourceBlocker};
+-pub use ab_detector::{AbLayoutDetector, DetectionResult, LayoutFingerprint, StructuralFeatures};
++pub use warmup::{ManagedProfile, ProfilePool, RetailerWarmup, WarmupSequence};
+ pub use zip_rotation::{Region, ZipEntry, ZipPool, ZipRotator};
+ // Root re-exports added 2026-09-15: the tallow-search browser-gated contract
+ // tests import these at the `tallow::browser` root; they were only reachable
+diff --git a/src/browser/smart_extract.rs b/src/browser/smart_extract.rs
+index cb333f5..f88d84a 100644
+--- a/src/browser/smart_extract.rs
++++ b/src/browser/smart_extract.rs
+@@ -119,6 +119,9 @@ pub struct SmartExtractor {
+     pub model: String,
+     /// On-disk schema cache directory for `LlmExtractor`.
+     pub cache_dir: String,
++    /// Whether the tier may send page content to a third-party vendor. Fail-closed:
++    /// `TransferPolicy::none()` refuses a remote engine.
++    pub llm_transfer: crate::browser::llm_transfer::TransferPolicy,
+     /// Why the tier is in its current state — `"configured"`, or the exact
+     /// refusal that kept it off. Carried on the struct so a caller can report it
+     /// without re-deriving it from the environment.
+@@ -156,6 +159,9 @@ impl Default for SmartExtractor {
+             ollama_url: url,
+             model,
+             cache_dir: ".tallow-schemas".to_string(),
++            llm_transfer: crate::browser::llm_transfer::TransferPolicy::from_env(&|k| {
++                std::env::var(k).ok()
++            }),
+             llm_reason: reason,
+         }
+     }
+@@ -259,7 +265,8 @@ impl SmartExtractor {
+                 LlmExtractor::with_engine(cfg.engine, &cfg.base_url, &cfg.model, &self.cache_dir)
+             }
+             Err(_) => LlmExtractor::with_config(&self.ollama_url, &self.model, &self.cache_dir),
+-        };
++        }
++        .with_transfer(self.llm_transfer.clone());
+ 
+         // Measure, record, then decide — nothing is sent before both hold. This
+         // is the difference P1.T4 is about: "tier enabled" and "tier working"

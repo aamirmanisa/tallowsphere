@@ -1,0 +1,889 @@
+# docs/claims-ledger.yaml — Tallow claims ledger (SEED, E-3-06)
+#
+# Design: research/tallow-v1/cycle-02/03-claims-register.md §3.1 (register — the 59
+# rows below are its faithful conversion; R-M10 was added by the M-07 audit to
+# register mockup content per design §6 Q7) + §3.2 (data model + gate mechanics).
+# M-07 audit (2026-09-13): anchors re-resolved against the live tree; residual sites
+# registered; reasons refreshed. The remaining sweep warnings are the named residuals.
+# Checker: scripts/claims_ledger_check.sh (logic: .py) · Sweep: scripts/claims_sweep.sh
+# R4-2 (2026-09-15): R-M11..R-M13 appended from the R4-2 docs reconciliation (entry count 61 -> 64).
+# R2 (2026-09-16): docs-claims sync — README's umbrella wording reworded to "claims
+# are registered and labeled" (it no longer asserts every number traces to a measured
+# artifact; the ledger is a register, not proof of measurement). Method census on the
+# same date: 63/65 rows `method: null` BY DESIGN — `method` is a resolvable proof path
+# (tests/*.rs::name | benches/* | docs/benchmarks/*.md) required only for
+# label=shipped (rule R2); partial/target-only rows keep null until a measurement
+# artifact exists. Stale-number rows re-counted in this pass (R-M1/R-M2/R-P14) carry
+# the measured value + command in `reason`; R-M14 was appended for the vault at-rest
+# precedence sentence added to README (audit C8). Entry count 64 -> 65.
+#
+# label semantics (frozen 2026-09-13): the status the claim may be PRESENTED with today,
+# across the registered sources — shipped (verified in-repo) | partial (code exists,
+# wiring/measurement incomplete, or some sources still unlabeled) | target-only
+# (ambition with a proof path, not a current capability). A label=shipped entry
+# REQUIRES a resolvable `method` (R2); bucket D REQUIRES label=target-only and
+# action in {rewrite,retire} (R3). Remaining unlabeled surfaces are named in
+# `reason` — they are the E3/E6 worklist. `last_verified` = seed freeze date.
+#
+# Buckets: A ≈10× · B ≈100× · C ≈1000× (economics only) · D physically impossible · S system-framing
+# Actions: keep | edit | rewrite | retire
+- id: R-P1
+  claim: single-request HTTP fetch ~50µs
+  sources:
+  - docs/tallow-complete-reference.html:274-278
+  - CLAUDE.md:116
+  bucket: D
+  label: target-only
+  owner: runtime
+  method: null
+  reason: "ref-html:274-278 labeled Target/not-achievable-as-designed (E-1-01); CLAUDE.md:116-119 relabel BLOCKED (protected agent-instruction file; exact patch in exec/W2-14-15-claims-gate.md OPEN). As-designed path (sync ureq + Tor-default egress + 250 ms/host delay, no pooling) cannot hit this."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-P2
+  claim: 100K concurrent reqs — io_uring + userspace TCP ✅
+  sources:
+  - docs/tallow-complete-reference.html:293-296
+  - CLAUDE.md:119
+  bucket: D
+  label: target-only
+  owner: concurrency
+  method: null
+  reason: "ref-html:293-296 Target-only/not implemented (E-1-01); CLAUDE.md:119 same pending patch (protected). No io_uring network path; no userspace TCP stack in tree."
+  action: retire
+  last_verified: '2026-09-13'
+- id: R-P3
+  claim: DPDK option for kernel bypass (10M+ connections)
+  sources:
+  - docs/tallow-complete-reference.html:256
+  - docs/tallow-complete-reference.html:329
+  - docs/browser-specs.md:1485
+  - docs/browser-specs.md:1524
+  - CLAUDE.md:106
+  bucket: D
+  label: target-only
+  owner: concurrency
+  method: null
+  reason: "ref-html:256/:329 + browser-specs:1485/:1524 labeled target-only/stub; CLAUDE.md:106 pending (protected). StubDpdkBackend only (src/net/ip_pool.rs:30-31,207-213)."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-P4
+  claim: 2,621 MB/s ×3 (Disk, BLAKE3, Zstd)
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:553
+  - docs/TALLOW-CAPABILITIES.md:554
+  - docs/TALLOW-CAPABILITIES.md:556
+  bucket: D
+  label: target-only
+  owner: runtime
+  method: null
+  reason: "§5 rows labeled 'unverified (no producing bench)' + footnote names the shared v1.0.0-import value (E-1-01/E-2-04); retire/replace with separately measured numbers at E6 (CAPS file under another lane's active edit; anchors re-resolved 2026-09-13)."
+  action: retire
+  last_verified: '2026-09-13'
+- id: R-P5
+  claim: <1ms startup
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:845
+  - docs/tallow-complete-reference.html:268-272
+  - CLAUDE.md:115
+  bucket: A
+  label: partial
+  owner: runtime
+  method: null
+  reason: "ref-html:268-272 target/unmeasured; CAPS startup row 'treat as target'; CLAUDE.md:115 pending (protected). Measurement converts (E6/C4)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P6
+  claim: Parse 10K HTML pages ~40ms (SIMD tokenizer)
+  sources:
+  - docs/tallow-complete-reference.html:281-284
+  - CLAUDE.md:117
+  bucket: B
+  label: partial
+  owner: runtime
+  method: null
+  reason: "ref-html:281-284 'no SIMD tokenizer in tree' (E-1-01); CLAUDE.md:117 pending (protected)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P7
+  claim: Encrypt 1GB ~200ms (AES-NI)
+  sources:
+  - docs/tallow-complete-reference.html:286-290
+  - CLAUDE.md:118
+  bucket: A
+  label: partial
+  owner: runtime
+  method: null
+  reason: "ref-html:286-290 method corrected (AES-NI x86 / ARMv8) but value unmeasured; CLAUDE.md:118 pending (protected)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P8
+  claim: AES-256-GCM 699 MB/s
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:555
+  bucket: A
+  label: partial
+  owner: runtime
+  method: null
+  reason: "CAPS:555 '699 MB/s' still unlabeled — CAPS under another lane's active edit; measure (>=500 MB/s) or cite source at E6."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P9
+  claim: io_uring backend (Linux 5.1+) for async I/O
+  sources:
+  - docs/tallow-complete-reference.html:255
+  - CLAUDE.md:105
+  bucket: A
+  label: partial
+  owner: runtime
+  method: null
+  reason: "ref-html:255 'partial: optional, off by default; single-op file I/O only'; CLAUDE.md:105 pending (protected)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P10
+  claim: SIMD string processing (32 bytes at once)
+  sources:
+  - docs/tallow-complete-reference.html:257
+  - CLAUDE.md:107
+  bucket: B
+  label: target-only
+  owner: runtime
+  method: null
+  reason: "ref-html:257 'target-only (no SIMD tokenizer in tree)'; CLAUDE.md:107 pending (protected)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P11
+  claim: Arena allocators, zero GC
+  sources:
+  - docs/tallow-complete-reference.html:257
+  - CLAUDE.md:108
+  bucket: A
+  label: partial
+  owner: runtime
+  method: null
+  reason: "ref-html:257 split-labeled (arena target-only / zero GC true); CLAUDE.md:108 pending (protected)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P12
+  claim: Compiled binary size 20.5 MB
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:4
+  - docs/TALLOW-CAPABILITIES.md:844
+  - docs/TALLOW-330-TOOLS.md:3
+  bucket: S
+  label: partial
+  owner: toolchain
+  method: null
+  reason: all three sites now qualified 'unverified — no release-build measurement'; conflicts with the <12 MB release-size assert (tests/perf_binary_startup.rs:3) — regen per build
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P13
+  claim: Delta-sync (80K files, 2nd run) ~3s
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:557
+  bucket: B
+  label: partial
+  owner: transfer
+  method: null
+  reason: "CAPS:557 '~3 seconds' unlabeled — CAPS under another lane's active edit; instrument via copy warm gate (C11)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-P14
+  claim: Tests passing 4,633+
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:839
+  - docs/TALLOW-CAPABILITIES.md:914
+  bucket: S
+  label: partial
+  owner: toolchain
+  method: null
+  reason: "CAPS:839/:914 '4,633+' floating metric unlabeled; regen from harness or drop exactness (RG-1 cites 8,404 test sites, itself now stale). R2 re-count 2026-09-16: static #[test] attribute occurrences = src 8,837 + crates 942 + tests 436 = 10,215 (+238 #[tokio::test] prefixes; rg -o — not executed tests) — '4,633+' is below every scope's static count; no executed-suite count exists (whole-lib sweep quarantined, LESSONS #9). Replace with the registered formulation ('test sites per surface') or drop the metric; CAPS under another lane's active edit."
+  action: edit
+  last_verified: '2026-09-16'
+- id: R-P15
+  claim: Native binary, no interpreter (method cell)
+  sources:
+  - docs/tallow-complete-reference.html:272
+  bucket: S
+  label: partial
+  owner: runtime
+  method: null
+  reason: method cell now 'Target — unmeasured; compiled binary only (tallow run may build or run interpreted)' (E-1-01); per-path startup claims still pending measurement
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-C1
+  claim: Scales from 10K (epoll) → 1M (io_uring) → 10M+ (DPDK)
+  sources:
+  - docs/tallow-complete-reference.html:329
+  - CLAUDE.md:105
+  - CLAUDE.md:150
+  - CLAUDE.md:762-763
+  bucket: D
+  label: target-only
+  owner: concurrency
+  method: null
+  reason: "ref-html:329 relabeled (io_uring feature-gated; DPDK target-only); CLAUDE.md:105/:150 + scale table :762-763 pending (protected file; M-07 audit re-resolved :155->:150); backends epoll-only (cycle-01/04 §2)."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-C2
+  claim: Unlimited IP connections / IPPool first-class primitive
+  sources:
+  - docs/tallow-complete-reference.html:326-333
+  - TALLOW_SPEC.md:14
+  bucket: D
+  label: target-only
+  owner: concurrency
+  method: null
+  reason: "ref-html Pillar 5 heading/list relabeled (W2-14, 2026-09-13); TALLOW_SPEC.md banner + scope note landed (W2-14); keeps the first-class-syntax half."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-C3
+  claim: 100K concurrent / 10M+ in public mockups
+  sources:
+  - docs/mockups/v1-editorial.html:1092-1099
+  - docs/mockups/v2-cinematic.html:945-1036
+  - docs/mockups/v3-stripe.html:605-662
+  - docs/mockups/v4-spatial.html:610-620
+  bucket: D
+  label: target-only
+  owner: docs/concurrency
+  method: null
+  reason: "13/13 mockups carry the truth banner (E-3-09) + per-claim labels; jurisdiction line labeled (W2-14); no unlabeled stat block remains."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-C4
+  claim: Auto-tunes kernel parameters at runtime (restored on exit)
+  sources:
+  - docs/tallow-complete-reference.html:331
+  bucket: A
+  label: partial
+  owner: concurrency
+  method: null
+  reason: "ref-html:331 relabeled (W2-14); sysctl tuning/revert exists in src/browser/network_stealth.rs:109-170 (not default-on); verify runtime behavior."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-T1
+  claim: 4.2 GB/s peak / AES-256-GCM / 1.1 GB/s BLAKE3
+  sources:
+  - docs/transfer-reference.html:134
+  - docs/transfer-reference.html:176
+  - docs/transfer-reference.html:192
+  - docs/transfer-reference.html:253
+  - docs/transfer-reference.html:322
+  - docs/transfer-reference.html:370-374
+  - docs/transfer-reference.html:403
+  - docs/transfer-reference.html:828
+  - docs/transfer-reference.html:829
+  - docs/transfer-reference.html:830
+  - docs/transfer-reference.html:841
+  - docs/transfer-reference.html:844
+  - docs/transfer-reference.html:862
+  bucket: D
+  label: target-only
+  owner: transfer
+  method: null
+  reason: every headline site carries '(target — unmeasured)' / 'Targets (unmeasured)' (E-1-01); the §11 target table (:828-:844, section note ':824 Not verified — design targets'), the speed-test sample (:370-374, ':363 Illustrative output — values are targets') and the inline comments (:253/:322) are registered here by the M-07 audit — measurement converts via the copy protocol
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-T2
+  claim: Delta Sync (changed 1%) 300x faster
+  sources:
+  - docs/transfer-reference.html:832
+  - docs/benchmarks/copy-benchmark-protocol.md:140
+  - docs/benchmarks/copy-benchmark-protocol.md:144
+  - docs/benchmarks/copy-benchmark-protocol.md:159
+  bucket: B
+  label: target-only
+  owner: transfer
+  method: null
+  reason: row now '(target)' (E-1-01); the copy protocol's gates/reporting rules for this family are registered (:140 full-copy baseline, :144 ≥10× one-percent gate, :159 no-universal-1000× rule); instrument before any label change
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-T3
+  claim: 'Next day: 0.3s / 330 GB/s equiv'
+  sources:
+  - docs/transfer-reference.html:842
+  bucket: B
+  label: target-only
+  owner: transfer
+  method: null
+  reason: derived-equivalent arithmetic now marked '(target)' (E-1-01)
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-T4
+  claim: QUIC Transfer 900 Mbps
+  sources:
+  - docs/transfer-reference.html:834
+  bucket: B
+  label: target-only
+  owner: transfer
+  method: null
+  reason: row now '(target)'; network-condition-dependent, needs conditions in any future measurement
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-T5
+  claim: Comparison speeds vs rsync 2.5 / Robocopy 2 GB/s
+  sources:
+  - docs/transfer-reference.html:192
+  - docs/transfer-reference.html:862
+  bucket: D
+  label: target-only
+  owner: transfer
+  method: null
+  reason: "our column labeled target; competitor cells (:192/:862) still unqualified and the :171 intro superlative ('fastest, most secure … available') is unlabeled — retire comparison until a same-host run exists (transfer-reference.html: transfer lane)."
+  action: retire
+  last_verified: '2026-09-13'
+- id: R-T6
+  claim: Delta Sync (22 Flags)
+  sources:
+  - docs/transfer-reference.html:133
+  - docs/transfer-reference.html:180
+  - docs/TALLOW-CAPABILITIES.md:227
+  - docs/TALLOW-CAPABILITIES.md:243
+  bucket: S
+  label: partial
+  owner: transfer
+  method: null
+  reason: "transfer-ref counts 24 named flags / 26 fields (counted 2026-09-13); CAPS updated by W2-08 (:243 heading '(23)' + :245 count note '23 named flags / 25 #[arg] fields') but the CLI table :227 still says '24 flags' — converge on one counting method"
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-T7
+  claim: Protocol references `cargo test --test perf_copy_engine copy_engine_perf_smoke_tiny_dataset`
+  sources:
+  - docs/benchmarks/copy-benchmark-protocol.md:168
+  - docs/benchmarks/copy-benchmark-protocol.md:176
+  bucket: S
+  label: partial
+  owner: transfer
+  method: null
+  reason: tests/perf_copy_engine.rs absent; protocol carries the ':168-171 not yet in tree — do not cite a green run' note + the planned :176 command (E-2-04); fix ref or land the test
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-T8
+  claim: File routed through relay, still encrypted end-to-end + comparison 'Network (QUIC) Yes (TLS 1.3)'
+  sources:
+  - docs/transfer-reference.html:653
+  - docs/transfer-reference.html:863
+  bucket: S
+  label: partial
+  owner: transfer
+  method: null
+  reason: "both lines (:653/:863) still unqualified; relay encryption/streaming landed (E-3-01r) but end-to-end claim not re-verified — doc edit belongs to the transfer lane (W2-14+15 log OPEN)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B1
+  claim: '''undetectable by anti-bot systems'''
+  sources:
+  - src/browser/traffic_morph.rs:295
+  - src/browser/stealth.rs:1-14
+  bucket: D
+  label: target-only
+  owner: browser
+  method: null
+  reason: "stealth.rs header relabeled (E-1/E-3); src/browser/traffic_morph.rs:295 'slow but undetectable' remains — foreign file, exact patch in exec/W2-14-15-claims-gate.md OPEN."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-B2
+  claim: 'Evasion Vectors: 20+'
+  sources:
+  - docs/browser-specs.md:7
+  - docs/browser-specs.md:86
+  - docs/browser-specs.md:1751
+  bucket: S
+  label: partial
+  owner: browser
+  method: null
+  reason: :86 + feature matrix now 'design targets, not a guarantee'; :7 stat line still '20+' vs 6+13=19 in the same doc (F4)
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B3
+  claim: 'Modules: 38 / 31 modules / Browser modules: 25 / ~14,000+ lines'
+  sources:
+  - docs/browser-specs.md:4
+  - docs/browser-specs.md:1742
+  - docs/TALLOW-CAPABILITIES.md:834
+  bucket: S
+  label: partial
+  owner: browser
+  method: null
+  reason: browser-specs header+appendix regen'd to 132 files / 95,778 LOC (E-1-01); CAPS:834 'Browser modules | 25' still unfixed (E-2-04 open §2; line re-resolved by the M-07 audit)
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B4
+  claim: PQC encryption (ML-KEM) for session/SQLite
+  sources:
+  - docs/browser-specs.md:89
+  - docs/browser-specs.md:749
+  - docs/browser-specs.md:798
+  - docs/browser-specs.md:1551
+  - docs/browser-specs.md:1754
+  bucket: D
+  label: target-only
+  owner: browser
+  method: null
+  reason: "sites :89/:749/:798/:1754 corrected to AES-256-GCM + PQC-as-design-target (E-1-01); session.toml descriptor :1551 corrected (W2-14)."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-B5
+  claim: Real Chrome, not patched + authentic TLS fingerprints (JA3/JA4)
+  sources:
+  - docs/browser-specs.md:52
+  bucket: A
+  label: partial
+  owner: browser
+  method: null
+  reason: real-Chrome half true; fingerprint audit not run — measure via `tallow fingerprint-audit` and keep with method
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B6
+  claim: 20+ evasion vectors injected before page load (isolation semantics)
+  sources:
+  - docs/browser-specs.md:86
+  - src/browser/stealth.rs:1-10
+  bucket: S
+  label: partial
+  owner: browser
+  method: null
+  reason: :86 now labels design targets + main-world inspectability; stealth.rs header relabeled; module-table counts 6/13 remain
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B7
+  claim: 163 device profiles
+  sources:
+  - docs/browser-specs.md:4
+  - docs/browser-specs.md:946
+  - src/browser/devices.rs:3
+  bucket: S
+  label: partial
+  owner: browser
+  method: null
+  reason: code self-documents 163 (devices.rs:3); deterministic recount method still open (Q8) before this can be shipped-labeled
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B8
+  claim: 163 device profiles vs Playwright ~50 (competitor cell)
+  sources:
+  - docs/browser-specs.md:1758
+  bucket: S
+  label: partial
+  owner: benchmarking
+  method: null
+  reason: competitor count undated; date-stamp or drop the competitor cell
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B9
+  claim: HtmlParser ~100x faster (no browser)
+  sources:
+  - tallow_1000x_upgrade_prompt.md:23
+  bucket: B
+  label: partial
+  owner: browser
+  method: null
+  reason: "cell relabeled self-reported/unmeasured (W2-14); measure or rewrite (root-prompt sweep)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-B10
+  claim: '5 solver backends / CAPTCHA Types: 8'
+  sources:
+  - docs/browser-specs.md:9
+  - docs/browser-specs.md:69
+  - docs/browser-specs.md:1712
+  bucket: S
+  label: partial
+  owner: browser
+  method: null
+  reason: counts not re-verified this pass; regen from src/browser/captcha.rs
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-K1
+  claim: 42+ real crypto algorithms
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:13
+  - docs/TALLOW-CAPABILITIES.md:299
+  - docs/TALLOW-CAPABILITIES.md:303
+  - docs/TALLOW-CAPABILITIES.md:846
+  - docs/TALLOW-330-TOOLS.md:3
+  bucket: S
+  label: partial
+  owner: crypto
+  method: null
+  reason: "now scoped everywhere to 'stdlib surface; 18 registry-governed; no external audit' (E-1-01); name both sets once the registry view lands (anchor set re-resolved by the M-07 audit: section :299 + status note :303 + stats row :846)"
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-K2
+  claim: 124 crypto tests (zero simulations)
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:840
+  bucket: S
+  label: partial
+  owner: crypto
+  method: null
+  reason: replaced with per-surface counts 206/126/218/5 (E-2-04); pair with the R-K5 mock disposition (C6)
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-K3
+  claim: ML-KEM-768 / ML-DSA defaults (uniform claim)
+  sources:
+  - docs/tallow-complete-reference.html:319
+  - docs/tallow-complete-reference.html:320
+  - docs/tallow-complete-reference.html:1809-1812
+  bucket: S
+  label: partial
+  owner: crypto
+  method: null
+  reason: per-layer defaults now stated (768/65 .tl+vault vs 1024/87 crate, divergence tracked) (E-2-04)
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-K4
+  claim: PQC default; hybrid mode available (Pillar 4)
+  sources:
+  - docs/tallow-complete-reference.html:317-323
+  bucket: A
+  label: partial
+  owner: crypto
+  method: null
+  reason: primitives real; per-layer divergence labeled; no production handshake proven to use them (cycle-01/07 §) — wiring caveat to keep
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-K5
+  claim: '''zero simulations, zero BLAKE3 fakes'''
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:301
+  - stdlib/crypto.tl:16-23
+  bucket: S
+  label: partial
+  owner: crypto
+  method: null
+  reason: "mock verify() stubs removed (W2-04 KeyPair disposition 2026-09-13; crypto.tl:16-23 note); CAPS 'zero simulations' line unedited — CAPS under another lane's active edit; final wording at C6/E7."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-K6
+  claim: 'Code sample: `backend: .dpdk // DPDK kernel bypass — Linux only`'
+  sources:
+  - docs/tallow-complete-reference.html:1066
+  bucket: D
+  label: target-only
+  owner: runtime
+  method: null
+  reason: "sample relabeled target-only/stub (W2-14); stub backend only (F11)."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-L1
+  claim: 'Supported jurisdictions: 10 (US, EU, UK, CA, AU, BR, JP, SG, CN, Global)'
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:648
+  - docs/TALLOW-CAPABILITIES.md:653-657
+  - docs/TALLOW-CAPABILITIES.md:659
+  - docs/TALLOW-CAPABILITIES.md:848
+  - docs/tallow-complete-reference.html:882
+  bucket: S
+  label: partial
+  owner: compliance
+  method: null
+  reason: was D-as-stated (F2); E-1-01 added target labels for CCPA/LGPD/PIPEDA/APPI/PIPL + enforcement note; 'declared' wording and planned column still to converge
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-L2
+  claim: 'EU regulations enforced: 5 (GDPR, CRA, NIS2, DORA, AI Act)'
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:849
+  - docs/TALLOW-CAPABILITIES.md:663
+  bucket: S
+  label: partial
+  owner: compliance
+  method: null
+  reason: "re-bucketed D->S per the E-3-06 re-bucket rule (demotion-to-reality: 5 passes real, annotation-gated); footnote :663 scopes enforcement; CAPS:849 row unqualified — CAPS under another lane's active edit."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-L3
+  claim: '`tallow audit --ai_act`'
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:199
+  - docs/TALLOW-CAPABILITIES.md:680
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: flag corrected to --ai-act in both places (E-1-01); CLI-example truth pass (E5) will generalize
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-L4
+  claim: Compiler auto-generates audit logs / auto-detects jurisdiction / court-ready
+  sources:
+  - docs/tallow-complete-reference.html:310-314
+  bucket: S
+  label: partial
+  owner: compliance
+  method: null
+  reason: "Pillar 3 claims relabeled partial + 'engineering-process evidence, not court evidence' (E-1-01); compiled-side auto-emission landed (W2-05: codegen helper + JSONL sink + tests; default-on, entry-only) — interp parity (P1) + the CAPS:676-695 doc text still pending; verification of the W2-05 test suite queued in its lane"
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-L5
+  claim: ComplianceEngine (GDPR, CCPA, HIPAA, SOX, PCI-DSS)
+  sources:
+  - docs/TALLOW-330-TOOLS.md:6
+  - docs/TALLOW-330-TOOLS.md:83
+  - docs/TALLOW-330-TOOLS.md:138
+  bucket: S
+  label: partial
+  owner: compliance
+  method: null
+  reason: "catalog decision recorded (W2-14): 330-tools = buildable-programs catalog (note :6); item 83 scoped (GDPR enforced today; CRA/NIS2/DORA passes; CCPA/HIPAA/SOX target-only)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-L6
+  claim: GDPR/CCPA audit trail (comparison + getting-started row)
+  sources:
+  - docs/tallow-complete-reference.html:237
+  - docs/getting-started.html:455
+  bucket: S
+  label: partial
+  owner: compliance
+  method: null
+  reason: "getting-started:455 regime-context only (reviewed, kept); ref-html:237 comparison cell still unqualified — ref-html had a concurrent sibling writer; edit recorded OPEN in W2-14+15 log."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-L7
+  claim: NIST PQC deadline context fact
+  sources:
+  - docs/tallow-complete-reference.html:166
+  bucket: S
+  label: partial
+  owner: compliance
+  method: null
+  reason: consistent with NIST IR 8547 public guidance; external fact, optionally cite source URL
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-M1
+  claim: '''Zero dependencies'' vs ''Crate dependencies: 55'''
+  sources:
+  - docs/TALLOW-CAPABILITIES.md:4
+  - docs/TALLOW-CAPABILITIES.md:841
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: "both lines still present; wording fix ('no runtime deps; 55 build deps') pending (F13). R2 re-count 2026-09-16 (python3 tomllib): root [dependencies]=130, [dev-dependencies]=2, workspace members=7 — the prescribed '55' is itself stale; fix with measured values, do not hard-code. CAPS :4/:841 edits still open (CAPS-owned file)."
+  action: edit
+  last_verified: '2026-09-16'
+- id: R-M2
+  claim: Header stat block propagates across docs
+  sources:
+  - docs/TALLOW-330-TOOLS.md:3-4
+  - docs/TALLOW-CAPABILITIES.md:4-5
+  - docs/TALLOW-CAPABILITIES.md:831
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: "20.5 MB + 42+ now qualified (E-1-01); 'Post-quantum by default' / 'Legal compliance at compile time' taglines still unqualified; ':831 Compiler passes | 29' still contradicts ':89/:914 31' (E-3-09 missed it; W2-14+15 OPEN). R2 re-count 2026-09-16: 31 *_pass.rs files (rg --files src -g '*_pass.rs'); src/main.rs = 35 'Pass::new(' sites over 32 distinct types — '37 pass constructions' (CAPS:89/:914) does not reproduce; LOC: src=495,872 lines, src+crates+tests=586,643 (rg --files -g '*.rs' | xargs wc -l) — '182,328/182K' reproduces under no obvious first-party scope; replace with scope-labeled measured values or delete."
+  action: edit
+  last_verified: '2026-09-16'
+- id: R-M3
+  claim: Same perf table duplicated in agent-facing root file
+  sources:
+  - CLAUDE.md:103-119
+  bucket: D
+  label: target-only
+  owner: docs
+  method: null
+  reason: "CLAUDE.md Pillar 1 relabel BLOCKED (protected agent-instruction file; exact patch in exec/W2-14-15-claims-gate.md OPEN); same claims as R-P1/P2/P5/P9/P10/P11."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-M4
+  claim: Build-spec with scale ambition presented as requirement
+  sources:
+  - TALLOW_SPEC.md:14
+  bucket: D
+  label: target-only
+  owner: docs
+  method: null
+  reason: "TALLOW_SPEC.md banner + scope note landed (W2-14)."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-M5
+  claim: '''Tallow 2.0 — 1000x Language Specification'' + provenance'
+  sources:
+  - docs/mega/tallow-2.0-spec.md:1-8
+  - docs/mega/tallow-2.0-spec.md:147
+  - docs/mega/tallow-2.0-spec.md:160
+  - docs/mega/tallow-2.0-spec.md:212
+  - docs/mega/tallow-2.0-spec.md:216
+  - docs/mega/tallow-2.0-spec.md:251
+  - docs/mega/tallow-2.0-spec.md:252
+  - docs/mega/tallow-2.0-spec.md:379
+  - docs/mega/tallow-2.0-spec.md:421
+  bucket: D
+  label: target-only
+  owner: docs
+  method: null
+  reason: "not-implemented banner landed (W2-14); the spec-target numbers inside (:147…:421) are covered by the banner and registered here by the M-07 audit."
+  action: rewrite
+  last_verified: '2026-09-13'
+- id: R-M6
+  claim: '''Stdlib: 100 modules'' + ''full PQC suite … HSM PKCS#11, sigstore'''
+  sources:
+  - docs/mega/tallow-1000x-adversary-upgrade-plan.md:57-58
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: "plan lines date-stamped/qualified (W2-14)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-M7
+  claim: Point-in-time research report (stale provenance, E:\ paths)
+  sources:
+  - docs/TALLOW_FULL_FEATURES_REPORT.md:1-8
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: "snapshot banner landed (W2-14)."
+  action: edit
+  last_verified: '2026-09-13'
+- id: R-M8
+  claim: Any `tallow run`-measured perf claim inadmissible until engine-labeled
+  sources:
+  - docs/tallow-complete-reference.html:268-292
+  bucket: S
+  label: partial
+  owner: benchmarking
+  method: null
+  reason: method cells labeled target (E-1-01); engine-labeling rule (C4) not yet enforced anywhere else
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-M9
+  claim: Competitor-cost envelope ($1.01–$16.08/1K etc.)
+  sources:
+  - docs/benchmarks/competitor-references.md:1-6
+  bucket: C
+  label: shipped
+  owner: benchmarking
+  method: docs/benchmarks/competitor-references.md
+  reason: dated 2026-04-27, URL-sourced cost baselines — the one legitimately-methoded external dataset (re-verify quarterly; D4 gates)
+  action: keep
+  last_verified: '2026-09-13'
+- id: R-M10
+  claim: Mockup demo numbers & animation timings (docs/mockups/*.html)
+  sources:
+  - docs/mockups/v1-editorial.html:52-53
+  - docs/mockups/v1-editorial.html:59-63
+  - docs/mockups/v1-editorial.html:178
+  - docs/mockups/v1-editorial.html:231
+  - docs/mockups/v1-editorial.html:308
+  - docs/mockups/v1-editorial.html:536-540
+  - docs/mockups/v1-editorial.html:811
+  - docs/mockups/v1-editorial.html:954
+  - docs/mockups/v1-editorial.html:1042
+  - docs/mockups/v1-editorial.html:1046
+  - docs/mockups/v1-editorial.html:1050
+  - docs/mockups/v1-editorial.html:1054
+  - docs/mockups/v1-editorial.html:1058
+  - docs/mockups/v2-cinematic.html:69
+  - docs/mockups/v2-cinematic.html:76-86
+  - docs/mockups/v2-cinematic.html:94
+  - docs/mockups/v2-cinematic.html:160
+  - docs/mockups/v2-cinematic.html:224
+  - docs/mockups/v2-cinematic.html:299
+  - docs/mockups/v2-cinematic.html:505
+  - docs/mockups/v2-cinematic.html:600
+  - docs/mockups/v2-cinematic.html:745
+  - docs/mockups/v2-cinematic.html:763
+  - docs/mockups/v2-cinematic.html:843
+  - docs/mockups/v2-cinematic.html:864
+  - docs/mockups/v2-cinematic.html:909
+  - docs/mockups/v2-cinematic.html:917
+  - docs/mockups/v3-stripe.html:61-65
+  - docs/mockups/v3-stripe.html:72
+  - docs/mockups/v3-stripe.html:285
+  - docs/mockups/v3-stripe.html:330
+  - docs/mockups/v3-stripe.html:540-541
+  - docs/mockups/v4-spatial.html:72
+  - docs/mockups/v4-spatial.html:92
+  - docs/mockups/v4-spatial.html:98
+  - docs/mockups/v4-spatial.html:131
+  - docs/mockups/v4-spatial.html:139
+  - docs/mockups/v4-spatial.html:156
+  - docs/mockups/v4-spatial.html:168
+  - docs/mockups/v4-spatial.html:236
+  - docs/mockups/v4-spatial.html:334
+  - docs/mockups/v4-spatial.html:384
+  - docs/mockups/v4-spatial.html:409
+  - docs/mockups/v4-spatial.html:439
+  - docs/mockups/v4-spatial.html:624
+  bucket: S
+  label: target-only
+  owner: docs
+  method: null
+  reason: "M-07 audit register (design §6 Q7: mockups are gated for numbers). All 13 mockups carry the docs-truth banner 'design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim' (E-3-09) + 18 per-claim labels; the registered lines are illustrative demo values / animation timings under that banner (v3:285 and the v4 :615 claim label self-document their blocks). Not capability claims; re-register with measured values only if a mockup ever ships as a real artifact."
+  action: keep
+  last_verified: '2026-09-13'
+
+- id: R-T9
+  claim: Warm no-op sync at least 100× faster than a full recopy (copy-protocol acceptance gate)
+  sources:
+  - docs/benchmarks/copy-benchmark-protocol.md:143
+  - docs/plans/2026-05-12-tallow-ultrafast-copy-tool.md:529-545
+  bucket: B
+  label: target-only
+  owner: transfer
+  method: docs/benchmarks/copy-benchmark-results-linux-2026-09-13.md
+  reason: "M-06 measured item; [measured] NOT met at smoke scale — warm no-op 1.78× vs full recopy on the mixed tree (16.9 vs 30.1 ms), 49.25× on a 1 GiB-file dir, 6.48× on a 10k-file dir (results doc §2–§4; independent raw-row recompute 2026-09-13, see exec/M-06-bucket-c-measured.md §2). Requires ≥1.3 s of copy work in the denominator (6.5 ms release floor + mandatory scan paid by both paths); smoke full copies run 0.45–0.66 s → shortfall ≥2×. Re-scoped (results doc §4): per-scale measured ratios only; universal ≥100× replaced by a scale-qualified ≥8 GiB-class target (unmeasured — full-scale dataset deferred on the disk-headroom gate); manifest-cache >1000× stretch stays separate [target-only] (protocol:153). Caveat F1: no-op rows are on cp -a-preseeded destinations; tallow-written destinations never reach no-op (mtimes not preserved)."
+  action: edit
+  last_verified: '2026-09-13'
+
+- id: R-M11
+  claim: 'TALLOW_UPGRADE_SPEC.md status line: "IMPLEMENTED (Phase A + §C core) — verified build-clean, 0 real vulnerabilities"'
+  sources:
+  - TALLOW_UPGRADE_SPEC.md:9
+  - TALLOW_UPGRADE_SPEC.md:234
+  - TALLOW_UPGRADE_SPEC.md:240
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: "R4-2 (2026-09-15): truth banner added above the status line (mirrors TALLOW_SPEC.md's R-M4 banner style); the doc's own §G self-reports Phase A complete / Phase C PARTIAL (§C2–C6, :240) and '0 real vulnerabilities' is the 2026-09-08 cargo-audit result (:234), not a continuing guarantee. Per-item re-verification against the current tree is a future claims pass."
+  action: edit
+  last_verified: '2026-09-15'
+- id: R-M12
+  claim: ".planning phase-completion bookkeeping: DONE-stub 'all tests passing' assertions + stale ROADMAP/REQUIREMENTS/STATE vs phases 47–49"
+  sources:
+  - .planning/phases/36-supply-chain-integrity/36-01-DONE.md:6
+  - .planning/phases/47-codegen-parity/47-01-DONE.md:6
+  - .planning/phases/48a-browser-automation-upgrade-OLD/48-01-DONE.md:6
+  - .planning/ROADMAP.md:594
+  - .planning/ROADMAP.md:631
+  - .planning/ROADMAP.md:650
+  - .planning/ROADMAP.md:662
+  - .planning/STATE.md:29
+  - .planning/REQUIREMENTS.md:554
+  bucket: S
+  label: partial
+  owner: planning
+  method: null
+  reason: "R4-2 (2026-09-15; audit a07): 57 DONE stubs (44 <200B) assert completion/green tests with no record; 47-05/47-06 and phase 48/49 boxes unchecked though DONE/SUMMARY files and 47-VERIFICATION (passed, 8/8) exist; STATE/ROADMAP/REQUIREMENTS drift incl. the unrecorded v1.0 freeze (tag 70e338a, 2026-09-14). Discrepancy register: .planning/RECONCILIATION-NOTE-2026-09-15.md; checkboxes/history NOT rewritten."
+  action: edit
+  last_verified: '2026-09-15'
+- id: R-M13
+  claim: "Root-artifact policy: '59 of the remaining 70 tracked loose-clutter files should eventually leave the repo root'"
+  sources:
+  - docs/codex/root-artifact-policy.md:15
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: "R4-2 (2026-09-15; audit a07): counts/promise not re-audited since 2026-04-29; repo root now holds ~277 files (mostly untracked logs/screens). Re-audit needed before relying on the counts; doc not edited here."
+  action: edit
+  last_verified: '2026-09-15'
+
+- id: R-M14
+  claim: Vault at-rest default write path unstated — v2 PQ-hybrid container (ML-KEM-768 wrap; inner classical layer AES-256-GCM) by default; XChaCha20-Poly1305 v3 only when pqc_enabled=false
+  sources:
+  - README.md:49-52
+  bucket: S
+  label: partial
+  owner: docs
+  method: null
+  reason: "C8 (audit 2026-09-15): code-verified — src/vault/db.rs:16 (v2 hybrid written when pqc_enabled==true; default for new vaults, A6.1.3), :27-29 (v3 XChaCha20-Poly1305 written when pqc_enabled==false and cipher=xchacha20-poly1305), :264 (pqc_enabled: true in Default). README Security posture now states the precedence (R2, 2026-09-16); CAPS:330 still lacks it (CAPS-owned file). Re-verify on any container-format change."
+  action: edit
+  last_verified: '2026-09-16'

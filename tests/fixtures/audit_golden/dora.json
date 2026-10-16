@@ -1,0 +1,66 @@
+{
+  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "dora_report": {
+    "art17_ict_risk_management": {
+      "description": "ICT risk management annotations present on network functions",
+      "legal_annotated_functions": 1,
+      "status": "PASS"
+    },
+    "art19_incident_reporting": {
+      "description": "DoraCitIncident not found in program \u2014 incident logging not configured",
+      "dora_cit_incident_used": false,
+      "status": "FAIL"
+    },
+    "art21_notification_timeline": {
+      "deadlines": [
+        {
+          "deadline": "4 hours after classification",
+          "stage": "Initial notification"
+        },
+        {
+          "deadline": "72 hours after initial notification",
+          "stage": "Intermediate report"
+        },
+        {
+          "deadline": "1 month after intermediate report",
+          "stage": "Final report"
+        }
+      ],
+      "description": "DORA regulatory notification deadlines (informational)"
+    },
+    "compliance_summary": {
+      "checks_passed": 1,
+      "checks_total": 2,
+      "status": "PARTIAL"
+    },
+    "file": "tests/fixtures/legal_valid.tl",
+    "ict_incident_classification": {
+      "description": "DORA RTS severity classification framework",
+      "dora_cit_incident_type": "available",
+      "severity_levels": [
+        {
+          "criteria": "critical_function_impaired AND (duration > 24h OR records > 100K)",
+          "level": "CRITICAL"
+        },
+        {
+          "criteria": "critical_function_impaired OR clients > 10% OR records > 5,000",
+          "level": "HIGH"
+        },
+        {
+          "criteria": "clients > 1% OR duration > 2h OR cross_border",
+          "level": "MEDIUM"
+        },
+        {
+          "criteria": "All other incidents",
+          "level": "LOW"
+        }
+      ]
+    },
+    "recommendations": [
+      "Add DoraCitIncident logging to critical network functions for Art.19 compliance"
+    ],
+    "regulation": "DORA (EU 2022/2554)",
+    "timestamp": "<ts>"
+  },
+  "schema": "tallow.audit.dora.v1"
+}

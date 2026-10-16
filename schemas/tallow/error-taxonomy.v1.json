@@ -1,0 +1,200 @@
+{
+  "schema_version": "tallow.error_taxonomy.v1",
+  "error_kinds": [
+    {
+      "kind": "none",
+      "description": "No error occurred.",
+      "retryable": false,
+      "replayable": false,
+      "policy_escalation": false,
+      "legacy_aliases": [],
+      "maps_to_row_error_kind_v1": "none"
+    },
+    {
+      "kind": "transport",
+      "description": "Generic network transport/connectivity failure not otherwise classified.",
+      "retryable": true,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "NetworkError"
+      ],
+      "maps_to_row_error_kind_v1": "transport"
+    },
+    {
+      "kind": "dns",
+      "description": "DNS resolution failure.",
+      "retryable": true,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "DnsFailure"
+      ],
+      "maps_to_row_error_kind_v1": "transport"
+    },
+    {
+      "kind": "tls",
+      "description": "TLS/certificate/protocol negotiation failure.",
+      "retryable": false,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "TlsFailure",
+        "Http2Error"
+      ],
+      "maps_to_row_error_kind_v1": "transport"
+    },
+    {
+      "kind": "timeout",
+      "description": "Connect, request, navigation, or extraction timeout.",
+      "retryable": true,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "Timeout"
+      ],
+      "maps_to_row_error_kind_v1": "transport"
+    },
+    {
+      "kind": "http_4xx",
+      "description": "HTTP 4xx response that is not auth or rate-limit specific.",
+      "retryable": false,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "auth",
+      "description": "Authentication, authorization, session, or paywall failure.",
+      "retryable": false,
+      "replayable": false,
+      "policy_escalation": true,
+      "legacy_aliases": [
+        "Blocked"
+      ],
+      "maps_to_row_error_kind_v1": "auth"
+    },
+    {
+      "kind": "rate_limited",
+      "description": "HTTP 429 or detected quota/throttle response.",
+      "retryable": true,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "RateLimited"
+      ],
+      "maps_to_row_error_kind_v1": "rate_limited"
+    },
+    {
+      "kind": "http_5xx",
+      "description": "HTTP 5xx/server-side response.",
+      "retryable": true,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "ServerError",
+        "server"
+      ],
+      "maps_to_row_error_kind_v1": "server"
+    },
+    {
+      "kind": "robots_policy",
+      "description": "Robots, denylist, target policy, or compliance gate blocked the request.",
+      "retryable": false,
+      "replayable": false,
+      "policy_escalation": true,
+      "legacy_aliases": [
+        "policy_blocked"
+      ],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "browser",
+      "description": "Browser/CDP/navigation/rendering failure.",
+      "retryable": true,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "BrowserError"
+      ],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "extraction",
+      "description": "Selector/parser/extraction logic failed after a response was obtained.",
+      "retryable": false,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "SelectorBreak"
+      ],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "validation",
+      "description": "Output row or extraction result failed schema/data-quality validation.",
+      "retryable": false,
+      "replayable": false,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "ValidationFail"
+      ],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "body_too_large",
+      "description": "HTTP response body exceeded the configured capture or execution byte limit.",
+      "retryable": false,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "BodyTooLarge",
+        "ResponseBodyTooLarge"
+      ],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "storage",
+      "description": "Filesystem/database/export/artifact persistence failure.",
+      "retryable": true,
+      "replayable": false,
+      "policy_escalation": false,
+      "legacy_aliases": [],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "internal",
+      "description": "Internal compiler/runtime/orchestrator bug.",
+      "retryable": false,
+      "replayable": false,
+      "policy_escalation": false,
+      "legacy_aliases": [],
+      "maps_to_row_error_kind_v1": "other"
+    },
+    {
+      "kind": "unknown",
+      "description": "Unclassified failure; should be reduced over time.",
+      "retryable": false,
+      "replayable": true,
+      "policy_escalation": false,
+      "legacy_aliases": [
+        "Unknown",
+        "other"
+      ],
+      "maps_to_row_error_kind_v1": "other"
+    }
+  ],
+  "error_object": {
+    "schema_version": "tallow.error_object.v1",
+    "required_fields": [
+      "kind",
+      "message",
+      "retryable",
+      "policy_blocked",
+      "source_target_id",
+      "url",
+      "phase"
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "defaults": {
+    "browser_fallback": {
+      "mode": "never"
+    },
+    "headers": {
+      "Accept": "application/json",
+      "User-Agent": "TallowBot/generated-package-e2e"
+    }
+  },
+  "manifest_id": "generated_public_source_package_minimal",
+  "policy": {
+    "allowlist": {
+      "domains": [
+        "127.0.0.1",
+        "localhost"
+      ],
+      "url_patterns": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ]
+    },
+    "denylist": {
+      "domains": [],
+      "url_patterns": []
+    },
+    "rate_limits": {
+      "per_domain": {
+        "127.0.0.1": {
+          "concurrent": 2,
+          "requests_per_minute": 120
+        },
+        "localhost": {
+          "concurrent": 2,
+          "requests_per_minute": 120
+        }
+      },
+      "per_ip_pool": {
+        "default": {
+          "concurrent": 2,
+          "requests_per_minute": 120
+        }
+      }
+    },
+    "robots": {
+      "mode": "strict"
+    }
+  },
+  "schema_version": "tallow.target_manifest.v2",
+  "targets": [
+    {
+      "compliance": {
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "purpose": "generated_package_e2e_loopback",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "source_authority": "owned_system"
+      },
+      "id": "loopback_alpha",
+      "method": "GET",
+      "url": "http://127.0.0.1/alpha"
+    },
+    {
+      "compliance": {
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "purpose": "generated_package_e2e_loopback",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "source_authority": "owned_system"
+      },
+      "id": "loopback_beta",
+      "method": "GET",
+      "url": "http://127.0.0.1/beta"
+    }
+  ]
+}

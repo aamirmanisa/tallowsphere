@@ -1,0 +1,1430 @@
+From ade013f96f6e1ca63ad9fc1f03148bc41ba92523 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:21:23 +0000
+Subject: [PATCH 01/27] cli: add tallow `schema check`, `plan dry-run`, and
+ local `extract` verbs
+
+Three verbs that call the same loaders the runtime uses, so a second source of
+truth for "is this schema usable" / "is this plan well-formed" cannot drift in.
+
+  tallow schema check <f>   -> ExtractionSchema::from_v1_json, names the failing field
+  tallow plan dry-run <f>   -> egresses nothing (statically barred + measured delta 0)
+  tallow extract ...        -> local html + a v1 contract -> tallow.extraction_row.v1
+
+`extract` is local-only by construction: the row contract pins mode=local_mock and
+all non_claims false, so a live-crawl variant would be a lying artifact rather than
+a feature. It writes rows AND a quarantine file, both in the gate's vocabulary.
+
+Verified: cargo check --lib --bins RC=0; 22 tests (schema_cmd 6, plan_cmd 7,
+extract_cmd 9); end-to-end both paths -- accepted page -> validator RC=0, missing
+required field -> quarantined row with hard_errors=0.
+---
+ docs/TALLOW-CAPABILITIES.md |   9 +-
+ src/browser/llm_extract.rs  | 101 +++++
+ src/cli/extract_cmd.rs      | 709 ++++++++++++++++++++++++++++++++++++
+ src/cli/mod.rs              |   3 +
+ src/cli/plan_cmd.rs         | 270 ++++++++++++++
+ src/cli/schema_cmd.rs       | 156 ++++++++
+ src/main.rs                 |  48 +++
+ 7 files changed, 1295 insertions(+), 1 deletion(-)
+ create mode 100644 src/cli/extract_cmd.rs
+ create mode 100644 src/cli/plan_cmd.rs
+ create mode 100644 src/cli/schema_cmd.rs
+
+diff --git a/docs/TALLOW-CAPABILITIES.md b/docs/TALLOW-CAPABILITIES.md
+index 6c22ec8..f1d0c18 100644
+--- a/docs/TALLOW-CAPABILITIES.md
++++ b/docs/TALLOW-CAPABILITIES.md
+@@ -149,7 +149,7 @@ Source (.tl)
+ 
+ ---
+ 
+-## 2. CLI Commands (81)
++## 2. CLI Commands (80 documented invocations)
+ 
+ ### Core Language Commands
+ 
+@@ -285,6 +285,13 @@ Source (.tl)
+ | `tallow ffmpeg version` | Show ffmpeg version |
+ | `tallow ffmpeg remove` | Remove ffmpeg installation |
+ 
++### Extraction
++
++| Command | Description |
++|---------|-------------|
++| `tallow schema check <file>` | Validate a `tallow.extraction_schema.v1` extraction contract; exit 0 = valid, 1 = invalid (the failing field is named on stderr), 64 = usage or unreadable file |
++| `tallow plan dry-run <file>` | Print what a `tallow.request_plan.v1` manifest would fetch, with **no egress**; refuses a manifest whose requests omit their `compliance` block. Exit 0 = ok, 1 = invalid (the offending request is named), 64 = usage |
++
+ ### Configuration
+ 
+ | Command | Description |
+diff --git a/src/browser/llm_extract.rs b/src/browser/llm_extract.rs
+index 5991a2a..cd34ad2 100644
+--- a/src/browser/llm_extract.rs
++++ b/src/browser/llm_extract.rs
+@@ -912,6 +912,28 @@ impl LlmExtractor {
+         self.execute_schema(html, &schema)
+     }
+ 
++    /// Apply an arbitrary [`ExtractionSchema`] — typically one produced by
++    /// [`ExtractionSchema::from_v1_json`] — to one HTML document.
++    ///
++    /// This is the public half of `execute_schema`, exposed so the extraction
++    /// path can be driven by a **schema file** from outside this module (the
++    /// `schema-first` tier's whole premise) without reimplementing selector
++    /// application anywhere else. A second implementation of "apply this field's
++    /// selectors" would be a second answer to "which fields did this page
++    /// yield", which is exactly how two callers come to disagree about a page.
++    ///
++    /// Returns one map per extracted item: field name → value. A field that
++    /// matched nothing is **absent from the map**, never present as an empty
++    /// string — absence is a fact the caller must be able to see (see
++    /// `ProvenanceRecord::limitations` and `run_evidence::record_limitations`).
++    pub fn extract_with_schema(
++        &self,
++        html: &str,
++        schema: &ExtractionSchema,
++    ) -> Result<Vec<HashMap<String, String>>, ExtractError> {
++        self.execute_schema(html, schema)
++    }
++
+     // -----------------------------------------------------------------------
+     // Schema caching
+     // -----------------------------------------------------------------------
+@@ -1130,11 +1152,32 @@ struct V1Contract {
+     entity: String,
+     #[serde(default)]
+     fields: Vec<V1Field>,
++    /// The contract's own quality thresholds. Shipped schemas declare them
++    /// (`min_row_confidence`, `max_null_required_fields`,
++    /// `quarantine_below_confidence`); absent means "no threshold".
++    #[serde(default)]
++    quality: V1Quality,
++}
++
++/// `quality` block of a v1 contract, as the row gate reads it.
++#[derive(Debug, Deserialize, Default)]
++struct V1Quality {
++    #[serde(default)]
++    min_row_confidence: f64,
++    #[serde(default)]
++    max_null_required_fields: u64,
++    #[serde(default)]
++    quarantine_below_confidence: f64,
+ }
+ 
+ #[derive(Debug, Deserialize)]
+ struct V1Field {
+     name: String,
++    /// The contract's declared field type (a row cell must carry it). Captured
++    /// here rather than re-read elsewhere so this module stays the only parser
++    /// of the v1 format.
++    #[serde(rename = "type", default)]
++    type_name: String,
+     #[serde(default)]
+     required: bool,
+     #[serde(default)]
+@@ -1155,6 +1198,64 @@ struct V1Selector {
+     priority: i32,
+ }
+ 
++/// The parts of a `tallow.extraction_schema.v1` contract the **row** contract
++/// needs and the extractor does not: the contract's own id and each field's
++/// declared type.
++///
++/// Deliberately a sibling of [`ExtractionSchema::from_v1_json`] rather than new
++/// fields on `ExtractionSchema`: selector application has no use for either
++/// value, and widening that struct would churn every construction site (the
++/// predefined-schema builders included). Both readers share `V1Contract`, so the
++/// v1 format still has exactly one parser — a second one would be a second
++/// answer to "what does this contract say".
++#[derive(Debug, Clone)]
++pub struct SchemaMetadata {
++    /// `schema_id` from the contract — the row's `extraction_schema_id`.
++    pub schema_id: String,
++    /// `entity` from the contract (`""` when absent).
++    pub entity: String,
++    /// Field name → declared type, for the row's `field_cell.type`.
++    pub field_types: HashMap<String, String>,
++    /// A row below this confidence is quarantined (`quality.min_row_confidence`).
++    pub min_row_confidence: f64,
++    /// More null required fields than this quarantines the row
++    /// (`quality.max_null_required_fields`).
++    pub max_null_required_fields: u64,
++    /// `quality.quarantine_below_confidence`. Carried for completeness: the
++    /// repository's row gate does NOT read it, so it must not drive the status
++    /// decision here without that gate being changed to match.
++    pub quarantine_below_confidence: f64,
++}
++
++/// Read the row-facing metadata out of a `tallow.extraction_schema.v1` document.
++///
++/// Refuses a document that is not a v1 contract, with the same message the
++/// loader gives, so a caller cannot get metadata for a contract the loader would
++/// reject.
++pub fn v1_schema_metadata(json: &str) -> Result<SchemaMetadata, String> {
++    let c: V1Contract = serde_json::from_str(json)
++        .map_err(|e| format!("invalid tallow.extraction_schema.v1 document: {e}"))?;
++    if c.schema_version != "tallow.extraction_schema.v1" {
++        return Err(format!(
++            "unsupported schema_version {:?} (expected \"tallow.extraction_schema.v1\")",
++            c.schema_version
++        ));
++    }
++    let field_types = c
++        .fields
++        .iter()
++        .map(|f| (f.name.clone(), f.type_name.clone()))
++        .collect();
++    Ok(SchemaMetadata {
++        schema_id: c.schema_id,
++        entity: c.entity,
++        field_types,
++        min_row_confidence: c.quality.min_row_confidence,
++        max_null_required_fields: c.quality.max_null_required_fields,
++        quarantine_below_confidence: c.quality.quarantine_below_confidence,
++    })
++}
++
+ /// Map a `tallow.extraction_schema.v1` coercion name to a [`TransformFn`].
+ fn coercion_to_transform(coercion: &str) -> Option<TransformFn> {
+     match coercion {
+diff --git a/src/cli/extract_cmd.rs b/src/cli/extract_cmd.rs
+new file mode 100644
+index 0000000..8eb380e
+--- /dev/null
++++ b/src/cli/extract_cmd.rs
+@@ -0,0 +1,709 @@
++//! `tallow extract` — produce `tallow.extraction_row.v1` rows from **local** input.
++//!
++//! # Why this verb never egresses
++//!
++//! `schemas/tallow/extraction-row.schema.json` pins `"mode": {"enum":
++//! ["local_mock"]}` and `non_claims.{live_scraping, external_dataset,
++//! production_ready}` as `const: false`. A verb that fetched live URLs and wrote
++//! these rows would be asserting `live_scraping: false` about data it had just
++//! scraped live — a lying artifact. So `extract` reads HTML you already hold and
++//! says so. A live variant is a **claim-policy** change (what may this artifact
++//! assert?), not a feature switch, which is why it is not a flag here.
++//!
++//! # Why it reuses rather than reimplements
++//!
++//! Selector application lives in `browser::llm_extract` and nowhere else: this
++//! module calls [`LlmExtractor::extract_with_schema`] (the public half of the
++//! extractor's own `execute_schema`) and [`v1_schema_metadata`] (the same parser
++//! as [`ExtractionSchema::from_v1_json`]). A second implementation of "apply this
++//! field's selectors" would be a second answer to "what did this page yield".
++//!
++//! # The gate
++//!
++//! Output is JSONL and is meant to be checked by the repository's own validator:
++//! `scripts/validate_extraction_rows.py --rows <out> --fail-on-invalid`. Rows are
++//! written all-or-nothing (temp file + rename), so a failed run leaves no
++//! half-written artifact behind for the validator to judge.
++//!
++//! Exit codes, mirroring the set declared at the top of `src/main.rs`:
++//! `0` = rows written · `1` = the schema or the page yielded nothing usable
++//! (the offending field is named) · `64` = usage error or unreadable file.
++
++use std::collections::HashMap;
++use std::path::{Path, PathBuf};
++
++use chrono::{SecondsFormat, Utc};
++use serde_json::{Map, Value, json};
++
++use crate::browser::llm_extract::{ExtractionSchema, LlmExtractor, v1_schema_metadata};
++
++const EXIT_OK: i32 = 0;
++const EXIT_INVALID: i32 = 1;
++const EXIT_USAGE: i32 = 64;
++
++const ROW_SCHEMA_VERSION: &str = "tallow.extraction_row.v1";
++/// The row contract's `extraction_schema_version` is a `const` — it names the
++/// CONTRACT version, not the schema document's own version number.
++const CONTRACT_VERSION: &str = "tallow.extraction_schema.v1";
++/// `source_evidence` is capped at 256 chars by the row contract.
++const EVIDENCE_CAP: usize = 256;
++
++/// `extract --schema <f> --html <f> --out <dir> [--target-id <id>] [--source-url <u>]`
++pub fn run_extract_args(args: &[String]) -> i32 {
++    if matches!(
++        args.first().map(String::as_str),
++        Some("-h") | Some("--help")
++    ) {
++        print_usage();
++        return EXIT_OK;
++    }
++    extract(args)
++}
++
++fn print_usage() {
++    eprintln!("usage: tallow extract --schema <FILE> --html <FILE> --out <DIR>");
++    eprintln!("                      [--target-id <ID>] [--source-url <URL>]");
++    eprintln!();
++    eprintln!("Extracts tallow.extraction_row.v1 rows from a LOCAL html file using a");
++    eprintln!("tallow.extraction_schema.v1 contract. Performs no network access: the row");
++    eprintln!("contract permits only `mode: local_mock` with `live_scraping: false`.");
++    eprintln!("Exit codes: 0 rows written, 1 nothing usable (the field is named), 64 usage.");
++}
++
++/// The parsed command line.
++struct Args {
++    schema: String,
++    html: String,
++    out: String,
++    target_id: Option<String>,
++    source_url: Option<String>,
++}
++
++fn parse_args(args: &[String]) -> Result<Args, String> {
++    let mut schema = None;
++    let mut html = None;
++    let mut out = None;
++    let mut target_id = None;
++    let mut source_url = None;
++
++    let mut i = 0;
++    while i < args.len() {
++        let flag = args[i].as_str();
++        let value = || -> Result<String, String> {
++            args.get(i + 1)
++                .cloned()
++                .ok_or_else(|| format!("{flag}: expected a value"))
++        };
++        match flag {
++            "--schema" => {
++                schema = Some(value()?);
++                i += 2;
++            }
++            "--html" => {
++                html = Some(value()?);
++                i += 2;
++            }
++            "--out" => {
++                out = Some(value()?);
++                i += 2;
++            }
++            "--target-id" => {
++                target_id = Some(value()?);
++                i += 2;
++            }
++            "--source-url" => {
++                source_url = Some(value()?);
++                i += 2;
++            }
++            other => return Err(format!("unexpected argument {other:?}")),
++        }
++    }
++
++    Ok(Args {
++        schema: schema.ok_or("--schema is required")?,
++        html: html.ok_or("--html is required")?,
++        out: out.ok_or("--out is required")?,
++        target_id,
++        source_url,
++    })
++}
++
++fn extract(args: &[String]) -> i32 {
++    let parsed = match parse_args(args) {
++        Ok(p) => p,
++        Err(e) => {
++            eprintln!("extract: {e}");
++            print_usage();
++            return EXIT_USAGE;
++        }
++    };
++
++    let read = |path: &str, what: &str| -> Result<String, i32> {
++        std::fs::read_to_string(path).map_err(|e| {
++            eprintln!("extract: cannot read {what} {path}: {e}");
++            EXIT_USAGE
++        })
++    };
++    let schema_text = match read(&parsed.schema, "schema") {
++        Ok(t) => t,
++        Err(code) => return code,
++    };
++    let html = match read(&parsed.html, "html") {
++        Ok(t) => t,
++        Err(code) => return code,
++    };
++
++    // Metadata first: it validates the contract version, so a document the
++    // loader would reject cannot reach the extractor.
++    let meta = match v1_schema_metadata(&schema_text) {
++        Ok(m) => m,
++        Err(e) => {
++            eprintln!("extract: {}: {e}", parsed.schema);
++            return EXIT_INVALID;
++        }
++    };
++    let schema = match ExtractionSchema::from_v1_json(&schema_text, &meta.schema_id) {
++        Ok(s) => s,
++        Err(e) => {
++            eprintln!("extract: {}: {e}", parsed.schema);
++            return EXIT_INVALID;
++        }
++    };
++
++    // No engine is contacted by `extract_with_schema` (pure CSS application), so
++    // the extractor's LLM fields are inert here. The cache dir goes to the temp
++    // tree: `LlmExtractor::new()` would create `.tallow-schemas` in the CWD.
++    let cache = std::env::temp_dir().join("tallow-extract-schema-cache");
++    let extractor = LlmExtractor::with_config(
++        "http://127.0.0.1:1",
++        "unused-local-css-path",
++        &cache.to_string_lossy(),
++    );
++
++    let items = match extractor.extract_with_schema(&html, &schema) {
++        Ok(items) => items,
++        Err(e) => {
++            eprintln!("extract: {}: {e}", parsed.html);
++            return EXIT_INVALID;
++        }
++    };
++    if items.is_empty() {
++        // An empty artifact that "succeeded" is worse than a refusal: it would be
++        // indistinguishable from a page that was never read.
++        eprintln!(
++            "extract: {}: the contract {} matched no items on this page",
++            parsed.html, meta.schema_id
++        );
++        return EXIT_INVALID;
++    }
++
++    let run_id = crate::run_evidence::run_id();
++    let target_id = parsed
++        .target_id
++        .clone()
++        .unwrap_or_else(|| stem(&parsed.html));
++    let source_url = parsed
++        .source_url
++        .clone()
++        .unwrap_or_else(|| parsed.html.clone());
++    let extracted_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
++
++    let (rows, limitations) = build_rows(
++        &schema,
++        &meta,
++        &items,
++        &run_id,
++        &target_id,
++        &source_url,
++        &extracted_at,
++        &parsed.html,
++        &parsed.schema,
++    );
++
++    // All-or-nothing: build both documents, then rename them into place.
++    let (rows_path, quarantine_path) = match write_rows(&parsed.out, &run_id, &rows) {
++        Ok(paths) => paths,
++        Err(e) => {
++            eprintln!("extract: cannot write rows to {}: {e}", parsed.out);
++            return EXIT_USAGE;
++        }
++    };
++
++    crate::run_evidence::record(
++        "extract_rows",
++        json!({
++            "run_id": run_id,
++            "schema_id": meta.schema_id,
++            "html": parsed.html,
++            "rows": rows.len(),
++            "mode": "local_mock",
++            "egress": "none",
++        }),
++    );
++    // P4.T2's helper, finally with a real caller: one entry per field the page
++    // did not yield, so "we looked and it was not there" is recorded.
++    crate::run_evidence::record_limitations(&limitations);
++
++    println!("extract: {} item(s) → {} row(s)", items.len(), rows.len());
++    println!("  rows:       {}", rows_path.display());
++    println!("  quarantine: {}", quarantine_path.display());
++    println!("  schema: {} (no egress performed)", meta.schema_id);
++    for l in &limitations {
++        println!("  unknown: {l}");
++    }
++    EXIT_OK
++}
++
++fn stem(path: &str) -> String {
++    Path::new(path)
++        .file_stem()
++        .map(|s| s.to_string_lossy().to_string())
++        .unwrap_or_else(|| path.to_string())
++}
++
++/// Build one row per extracted item, plus the limitation strings for fields the
++/// page did not yield. Pure over its inputs — no filesystem, no clock, no egress
++/// — so the row contract can be tested without either.
++#[allow(clippy::too_many_arguments)]
++fn build_rows(
++    schema: &ExtractionSchema,
++    meta: &crate::browser::llm_extract::SchemaMetadata,
++    items: &[HashMap<String, String>],
++    run_id: &str,
++    target_id: &str,
++    source_url: &str,
++    extracted_at: &str,
++    html_path: &str,
++    schema_path: &str,
++) -> (Vec<Value>, Vec<String>) {
++    let schema_id = if meta.schema_id.is_empty() {
++        stem(schema_path)
++    } else {
++        meta.schema_id.clone()
++    };
++    let entity = if !meta.entity.is_empty() {
++        meta.entity.clone()
++    } else if !schema_id.is_empty() {
++        schema_id.clone()
++    } else {
++        "unknown".to_string()
++    };
++    let evidence = {
++        let raw = format!("local html: {html_path}");
++        raw.chars().take(EVIDENCE_CAP).collect::<String>()
++    };
++
++    let mut rows = Vec::with_capacity(items.len());
++    let mut limitations: Vec<String> = Vec::new();
++
++    for (idx, item) in items.iter().enumerate() {
++        let mut cells = Map::new();
++        let mut required_null_count = 0u64;
++        let mut required_null_names: Vec<String> = Vec::new();
++        let mut present = 0u64;
++
++        for f in &schema.fields {
++            let value = item.get(&f.name);
++            if value.is_some() {
++                present += 1;
++            } else if f.required {
++                required_null_count += 1;
++                // The row gate keys off this exact prefix.
++                required_null_names.push(f.name.clone());
++            }
++            if value.is_none() {
++                limitations.push(format!(
++                    "{target_id}: field {:?} not yielded by selector {:?}",
++                    f.name, f.selector
++                ));
++            }
++            // `type` must come from the contract; an undeclared type is a plain
++            // string cell rather than an invented one.
++            let declared = meta
++                .field_types
++                .get(&f.name)
++                .filter(|t| !t.is_empty())
++                .cloned()
++                .unwrap_or_else(|| "string".to_string());
++            cells.insert(
++                f.name.clone(),
++                json!({
++                    "value": value.map(|v| Value::String(v.clone())).unwrap_or(Value::Null),
++                    "type": declared,
++                    "required": f.required,
++                    "confidence": if value.is_some() { 1.0 } else { 0.0 },
++                    "null_reason": if value.is_some() { Value::Null } else { Value::String("missing".into()) },
++                    "selector_kind": "css",
++                    "selector": f.selector,
++                    "degraded": false,
++                    "source_evidence": evidence,
++                }),
++            );
++        }
++
++        let total = schema.fields.len().max(1) as f64;
++        let selector_health = present as f64 / total;
++        // The row's confidence is the share of the contract's fields the page
++        // actually yielded. `min_row_confidence` below is the contract's own
++        // threshold, not a number invented here.
++        let row_confidence = selector_health;
++
++        // Status and reason vocabulary follow scripts/validate_extraction_rows.py
++        // exactly: it quarantines on `required_null_count > max_null_required_fields`
++        // OR `row_confidence < min_row_confidence`, and it requires reasons it can
++        // match — a `required_field_null…` prefix per null required field, and the
++        // literal `row_confidence_below_min`. A row that disagrees with either
++        // rule is a hard error in the gate, so the two must be kept in step.
++        let mut quarantine_reasons = Vec::new();
++        for name in &required_null_names {
++            quarantine_reasons.push(format!("required_field_null: {name}"));
++        }
++        let below_min_confidence = row_confidence < meta.min_row_confidence;
++        if below_min_confidence {
++            quarantine_reasons.push("row_confidence_below_min".to_string());
++        }
++        let should_quarantine =
++            required_null_count > meta.max_null_required_fields || below_min_confidence;
++        let status = if should_quarantine {
++            "quarantined"
++        } else {
++            "accepted"
++        };
++
++        rows.push(json!({
++            "schema_version": ROW_SCHEMA_VERSION,
++            "row_id": format!("{run_id}-{idx}"),
++            "run_id": run_id,
++            "target_id": target_id,
++            "source_url": source_url,
++            "extraction_schema_id": schema_id,
++            "extraction_schema_version": CONTRACT_VERSION,
++            "entity": entity,
++            "row_index": idx,
++            "extracted_at_utc": extracted_at,
++            "mode": "local_mock",
++            "status": status,
++            "row_confidence": row_confidence,
++            "fields": Value::Object(cells),
++            "quality": {
++                "required_null_count": required_null_count,
++                "selector_health": selector_health,
++                "drift_detected": false,
++                "quarantine_reasons": quarantine_reasons,
++            },
++            "non_claims": {
++                "live_scraping": false,
++                "external_dataset": false,
++                "production_ready": false,
++            },
++        }));
++    }
++
++    (rows, limitations)
++}
++
++/// Write every row, or none.
++///
++/// Two files, each through a temp+rename pair: `<run_id>.rows.jsonl` (every row)
++/// and `<run_id>.quarantine.jsonl` (only the quarantined ones). The quarantine
++/// file is part of the contract, not a convenience — the repository's gate reads
++/// it and raises `quarantine_row_missing` for a quarantined row absent from it,
++/// and `quarantine_accepted_row_present` for an accepted row present in it. An
++/// empty quarantine file is written rather than skipped, so "nothing was
++/// quarantined" is a fact on disk instead of an absence.
++fn write_rows(out_dir: &str, run_id: &str, rows: &[Value]) -> std::io::Result<(PathBuf, PathBuf)> {
++    std::fs::create_dir_all(out_dir)?;
++    let dir = Path::new(out_dir);
++    let rows_final = dir.join(format!("{run_id}.rows.jsonl"));
++    let quarantine_final = dir.join(format!("{run_id}.quarantine.jsonl"));
++
++    let encode = |items: &[&Value]| -> String {
++        let mut body = String::new();
++        for row in items {
++            body.push_str(&serde_json::to_string(row).unwrap_or_default());
++            body.push('\n');
++        }
++        body
++    };
++    let all: Vec<&Value> = rows.iter().collect();
++    let quarantined: Vec<&Value> = rows
++        .iter()
++        .filter(|r| r.get("status").and_then(|s| s.as_str()) == Some("quarantined"))
++        .collect();
++
++    let rows_tmp = dir.join(format!("{run_id}.rows.jsonl.tmp"));
++    let quarantine_tmp = dir.join(format!("{run_id}.quarantine.jsonl.tmp"));
++    std::fs::write(&rows_tmp, encode(&all))?;
++    std::fs::write(&quarantine_tmp, encode(&quarantined))?;
++    std::fs::rename(&rows_tmp, &rows_final)?;
++    std::fs::rename(&quarantine_tmp, &quarantine_final)?;
++    Ok((rows_final, quarantine_final))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const SCHEMA: &str = include_str!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/schemas/tallow/examples/product-listing.extraction.schema.json"
++    ));
++
++    /// `.product .name` is the required field; price/url are optional.
++    const FULL_HTML: &str = r#"
++        <html><body>
++        <div class="product">
++          <span class="name">Probe Widget</span>
++          <span class="price">$19.99</span>
++          <a href="https://example.invalid/p/1">link</a>
++        </div>
++        </body></html>"#;
++
++    /// The required field is absent; the page is otherwise fine.
++    const MISSING_REQUIRED: &str = r#"
++        <html><body>
++        <div class="product"><span class="price">$19.99</span></div>
++        </body></html>"#;
++
++    fn extract_items(html: &str) -> Vec<HashMap<String, String>> {
++        let schema = ExtractionSchema::from_v1_json(SCHEMA, "test").expect("schema loads");
++        let cache = std::env::temp_dir().join("tallow-extract-schema-cache");
++        let ex =
++            LlmExtractor::with_config("http://127.0.0.1:1", "unused", &cache.to_string_lossy());
++        ex.extract_with_schema(html, &schema).expect("extracts")
++    }
++
++    fn rows_for(html: &str) -> (Vec<Value>, Vec<String>) {
++        let meta = v1_schema_metadata(SCHEMA).expect("metadata");
++        let schema = ExtractionSchema::from_v1_json(SCHEMA, &meta.schema_id).expect("schema");
++        let items = extract_items(html);
++        build_rows(
++            &schema,
++            &meta,
++            &items,
++            "run-1",
++            "target",
++            "file:///tmp/x.html",
++            "2026-10-14T00:00:00Z",
++            "/tmp/x.html",
++            "schema.json",
++        )
++    }
++
++    #[test]
++    fn a_complete_page_yields_an_accepted_row() {
++        let (rows, limitations) = rows_for(FULL_HTML);
++        assert_eq!(rows.len(), 1, "one item → one row");
++        let row = &rows[0];
++        assert_eq!(row["schema_version"], ROW_SCHEMA_VERSION);
++        assert_eq!(row["mode"], "local_mock");
++        assert_eq!(row["status"], "accepted");
++        assert_eq!(row["extraction_schema_version"], CONTRACT_VERSION);
++        assert_eq!(row["extraction_schema_id"], "example.product_listing.v1");
++        assert_eq!(row["entity"], "product_listing");
++        assert_eq!(row["quality"]["required_null_count"], 0);
++        // Every schema field must have a cell — the validator's
++        // `field_cell_missing` hard error.
++        assert_eq!(row["fields"].as_object().unwrap().len(), 3);
++        // `non_claims` are pinned false by the contract, not by this code.
++        assert_eq!(row["non_claims"]["live_scraping"], false);
++        assert_eq!(row["non_claims"]["production_ready"], false);
++        // Every cell carries the nine required keys, including the null ones.
++        for (_name, cell) in row["fields"].as_object().unwrap() {
++            for key in [
++                "value",
++                "type",
++                "required",
++                "confidence",
++                "null_reason",
++                "selector_kind",
++                "selector",
++                "degraded",
++                "source_evidence",
++            ] {
++                assert!(cell.get(key).is_some(), "cell missing {key}");
++            }
++        }
++        assert!(
++            limitations.is_empty(),
++            "nothing was absent: {limitations:?}"
++        );
++    }
++
++    #[test]
++    fn a_missing_required_field_quarantines_and_records_a_limitation() {
++        let (rows, limitations) = rows_for(MISSING_REQUIRED);
++        assert_eq!(rows.len(), 1);
++        let row = &rows[0];
++        assert_eq!(row["status"], "quarantined");
++        assert_eq!(row["quality"]["required_null_count"], 1);
++        assert!(
++            !row["quality"]["quarantine_reasons"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
++        // The absent field is visible BOTH ways: null_reason in the cell, and a
++        // limitation string for the evidence sink.
++        let name_cell = &row["fields"]["name"];
++        assert_eq!(name_cell["value"], Value::Null);
++        assert_eq!(name_cell["null_reason"], "missing");
++        assert_eq!(name_cell["confidence"], 0.0);
++        assert!(
++            limitations.iter().any(|l| l.contains("\"name\"")),
++            "the absent field must be named: {limitations:?}"
++        );
++    }
++
++    #[test]
++    fn the_declared_type_travels_from_the_contract_into_the_cell() {
++        let (rows, _) = rows_for(FULL_HTML);
++        let fields = rows[0]["fields"].as_object().unwrap();
++        assert_eq!(fields["name"]["type"], "string");
++        assert_eq!(fields["price"]["type"], "money");
++        assert_eq!(fields["url"]["type"], "url");
++    }
++
++    #[test]
++    fn every_row_passes_its_own_mechanical_consistency_checks() {
++        // The two hard errors my first hand-built row tripped:
++        // `field_required_mismatch` (cell.required must match the schema) and
++        // `quality_required_null_count` (the count must match reality).
++        let meta = v1_schema_metadata(SCHEMA).unwrap();
++        let schema = ExtractionSchema::from_v1_json(SCHEMA, &meta.schema_id).unwrap();
++        for html in [FULL_HTML, MISSING_REQUIRED] {
++            let (rows, _) = rows_for(html);
++            for row in rows {
++                let cells = row["fields"].as_object().unwrap();
++                let mut actual_null_required = 0;
++                for f in &schema.fields {
++                    let cell = cells.get(&f.name).expect("cell per schema field");
++                    assert_eq!(
++                        cell["required"].as_bool().unwrap(),
++                        f.required,
++                        "cell.required must match the schema field"
++                    );
++                    if f.required && cell["value"].is_null() {
++                        actual_null_required += 1;
++                    }
++                }
++                assert_eq!(
++                    row["quality"]["required_null_count"].as_u64().unwrap(),
++                    actual_null_required,
++                    "quality_required_null_count must match the cells"
++                );
++            }
++        }
++    }
++
++    #[test]
++    fn quarantine_reasons_use_the_gates_vocabulary() {
++        let (rows, _) = rows_for(MISSING_REQUIRED);
++        let reasons: Vec<String> = rows[0]["quality"]["quarantine_reasons"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .map(|r| r.as_str().unwrap().to_string())
++            .collect();
++        // The gate matches a PREFIX here...
++        assert!(
++            reasons.iter().any(|r| r.starts_with("required_field_null")),
++            "{reasons:?}"
++        );
++        // ...and an exact membership here. Both must be present or the gate
++        // reports a hard error against the verb's own honest output.
++        assert!(
++            reasons.iter().any(|r| r == "row_confidence_below_min"),
++            "{reasons:?}"
++        );
++        // A complete page must carry no quarantine reason at all.
++        let (clean, _) = rows_for(FULL_HTML);
++        assert!(
++            clean[0]["quality"]["quarantine_reasons"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
++        assert_eq!(clean[0]["status"], "accepted");
++    }
++
++    #[test]
++    fn rows_and_quarantine_are_written_as_two_files() {
++        let dir = std::env::temp_dir().join(format!("tallow-extract-test-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&dir);
++
++        let (quarantined_rows, _) = rows_for(MISSING_REQUIRED);
++        let (_r, q) =
++            write_rows(&dir.to_string_lossy(), "run-q", &quarantined_rows).expect("write");
++        let body = std::fs::read_to_string(&q).expect("quarantine file");
++        assert!(body.contains("\"status\":\"quarantined\""), "{body}");
++        assert_eq!(body.lines().count(), 1, "only quarantined rows belong here");
++
++        // A clean run writes an EMPTY quarantine file rather than no file, so
++        // "nothing was quarantined" is a fact on disk instead of an absence.
++        let (clean_rows, _) = rows_for(FULL_HTML);
++        let (r2, q2) = write_rows(&dir.to_string_lossy(), "run-c", &clean_rows).expect("write");
++        assert!(std::fs::read_to_string(&q2).expect("file").is_empty());
++        assert_eq!(
++            std::fs::read_to_string(&r2).expect("rows").lines().count(),
++            1
++        );
++
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn usage_paths() {
++        assert_eq!(run_extract_args(&["--help".to_string()]), EXIT_OK);
++        assert_eq!(run_extract_args(&[]), EXIT_USAGE);
++        assert_eq!(run_extract_args(&["--schema".to_string()]), EXIT_USAGE);
++        assert_eq!(
++            run_extract_args(&[
++                "--schema".into(),
++                "s.json".into(),
++                "--html".into(),
++                "/nonexistent.html".into(),
++                "--out".into(),
++                "/tmp/x".into(),
++            ]),
++            EXIT_USAGE
++        );
++    }
++
++    #[test]
++    fn a_bad_contract_is_refused_before_any_extraction() {
++        assert_eq!(
++            run_extract_args(&[
++                "--schema".into(),
++                "/nonexistent-schema.json".into(),
++                "--html".into(),
++                "/nonexistent.html".into(),
++                "--out".into(),
++                "/tmp/x".into(),
++            ]),
++            EXIT_USAGE
++        );
++    }
++
++    /// The verb must not reach the network: the row contract permits only
++    /// `local_mock`, so any egress reference here is a defect. Needles are
++    /// assembled so this test cannot satisfy them itself.
++    #[test]
++    fn the_extract_module_cannot_egress() {
++        let src: String = include_str!("extract_cmd.rs")
++            .lines()
++            .filter(|l| {
++                let t = l.trim_start();
++                !(t.starts_with("//") || t.starts_with("//!"))
++            })
++            .collect::<Vec<_>>()
++            .join("\n");
++        for needle in [
++            concat!("execute", "_get"),
++            concat!("egress", "_http"),
++            concat!("ur", "eq"),
++        ] {
++            assert!(!src.contains(needle), "extract must not reference {needle}");
++        }
++    }
++}
+diff --git a/src/cli/mod.rs b/src/cli/mod.rs
+index ff8b8c1..3041c09 100644
+--- a/src/cli/mod.rs
++++ b/src/cli/mod.rs
+@@ -1,12 +1,15 @@
+ pub mod canary_cmd;
+ pub mod daemon;
++pub mod extract_cmd;
+ pub mod fingerprint_audit_cmd;
+ pub mod fixity_cmd;
+ pub mod never_probe;
+ pub mod phone_cmd;
+ pub mod pin_cmd;
++pub mod plan_cmd;
+ pub mod rmdb_cmd;
+ pub mod sandbox_cmd;
++pub mod schema_cmd;
+ pub mod secrets_cmd;
+ pub mod sluice_cmd;
+ pub mod verify_ledger_cmd;
+diff --git a/src/cli/plan_cmd.rs b/src/cli/plan_cmd.rs
+new file mode 100644
+index 0000000..07d8a5d
+--- /dev/null
++++ b/src/cli/plan_cmd.rs
+@@ -0,0 +1,270 @@
++//! `tallow plan` — dry-run a `tallow.request_plan.v1` manifest.
++//!
++//! `plan dry-run <file>` prints exactly what **would** be fetched and performs
++//! no egress at all. That is the whole point of the verb: the plan format
++//! already mandates a `compliance` block on every request, so a manifest can be
++//! reviewed — and refused — before anything is fetched.
++//!
++//! This module deliberately never names [`crate::request_plan::execute_get`],
++//! the one egress entry point. "Dry run" that can reach the network is not a dry
++//! run, and the test at the bottom makes that structural rather than a promise.
++//!
++//! Exit codes, mirroring the set declared at the top of `src/main.rs`:
++//! `0` = the plan is well-formed and was not fetched · `1` = the plan is not a
++//! valid v1 manifest (the offending request is named) · `64` = usage error or
++//! unreadable file.
++
++use serde::Deserialize;
++
++const EXIT_OK: i32 = 0;
++const EXIT_INVALID: i32 = 1;
++const EXIT_USAGE: i32 = 64;
++
++/// The only `schema_version` this verb accepts.
++const PLAN_SCHEMA: &str = "tallow.request_plan.v1";
++
++/// A `tallow.request_plan.v1` manifest — only the fields this verb reads.
++#[derive(Deserialize)]
++struct Plan {
++    #[serde(default)]
++    schema_version: String,
++    #[serde(default)]
++    manifest_id: String,
++    /// The manifest's own count. Checked against the array: a manifest whose
++    /// arithmetic disagrees with its contents has already lost the reviewer it
++    /// was written for.
++    #[serde(default)]
++    request_count: Option<usize>,
++    #[serde(default)]
++    requests: Vec<Request>,
++}
++
++#[derive(Deserialize)]
++struct Request {
++    #[serde(default)]
++    index: i64,
++    #[serde(default)]
++    target_id: String,
++    #[serde(default)]
++    url: String,
++    #[serde(default)]
++    method: String,
++    /// The mandate: every request must declare its legal basis before it can be
++    /// fetched. `None` here is exactly the case `plan dry-run` exists to catch.
++    #[serde(default)]
++    compliance: Option<serde_json::Value>,
++}
++
++/// `plan dry-run <file>` · `plan --help`.
++pub fn run_plan_args(args: &[String]) -> i32 {
++    match args.first().map(String::as_str) {
++        Some("dry-run") => dry_run(&args[1..]),
++        Some("-h") | Some("--help") => {
++            print_usage();
++            EXIT_OK
++        }
++        Some(other) => {
++            eprintln!("plan: unknown subcommand {other:?}");
++            print_usage();
++            EXIT_USAGE
++        }
++        None => {
++            print_usage();
++            EXIT_USAGE
++        }
++    }
++}
++
++fn print_usage() {
++    eprintln!("usage: tallow plan dry-run <FILE.request-plan.v1.json>");
++    eprintln!();
++    eprintln!("Prints what a `tallow.request_plan.v1` manifest would fetch.");
++    eprintln!("Performs no egress. Refuses a manifest whose requests omit their");
++    eprintln!("`compliance` block. Exit codes: 0 ok, 1 invalid, 64 usage.");
++}
++
++/// `plan dry-run <file>`: resolve the path, read it, decide.
++fn dry_run(args: &[String]) -> i32 {
++    let path = match args.iter().find(|a| !a.starts_with('-')) {
++        Some(p) => p,
++        None => {
++            eprintln!("plan dry-run: expected a manifest path");
++            print_usage();
++            return EXIT_USAGE;
++        }
++    };
++    let text = match std::fs::read_to_string(path) {
++        Ok(t) => t,
++        Err(e) => {
++            eprintln!("plan dry-run: cannot read {path}: {e}");
++            return EXIT_USAGE;
++        }
++    };
++    dry_run_text(path, &text)
++}
++
++/// The decision, split out so it is testable without the filesystem. Returns
++/// the process exit code and prints the manifest's contents.
++fn dry_run_text(path: &str, text: &str) -> i32 {
++    let plan: Plan = match serde_json::from_str(text) {
++        Ok(p) => p,
++        Err(e) => {
++            eprintln!("plan dry-run: {path}: not a readable manifest: {e}");
++            return EXIT_INVALID;
++        }
++    };
++    if plan.schema_version != PLAN_SCHEMA {
++        eprintln!(
++            "plan dry-run: {path}: unsupported schema_version {:?} (expected {PLAN_SCHEMA:?})",
++            plan.schema_version
++        );
++        return EXIT_INVALID;
++    }
++    if plan.requests.is_empty() {
++        eprintln!("plan dry-run: {path}: the manifest carries no requests");
++        return EXIT_INVALID;
++    }
++    if let Some(declared) = plan.request_count {
++        if declared != plan.requests.len() {
++            eprintln!(
++                "plan dry-run: {path}: request_count says {declared} but {} request(s) are present",
++                plan.requests.len()
++            );
++            return EXIT_INVALID;
++        }
++    }
++
++    // The mandate. One undeclared request refuses the whole manifest: a partial
++    // dry-run would invite fetching the compliant subset and calling it consent.
++    let undeclared: Vec<String> = plan
++        .requests
++        .iter()
++        .filter(|r| r.compliance.is_none())
++        .map(|r| format!("[{}] {} — {}", r.index, r.target_id, r.url))
++        .collect();
++    if !undeclared.is_empty() {
++        eprintln!(
++            "plan dry-run: {path}: {} request(s) declare no compliance block:",
++            undeclared.len()
++        );
++        for u in &undeclared {
++            eprintln!("  {u}");
++        }
++        return EXIT_INVALID;
++    }
++
++    println!("plan dry-run: {path}");
++    println!("  manifest_id: {}", plan.manifest_id);
++    println!(
++        "  would fetch {} request(s); egress performed: none",
++        plan.requests.len()
++    );
++    for r in &plan.requests {
++        println!(
++            "  [{}] {} {}  ({})",
++            r.index,
++            if r.method.is_empty() {
++                "GET"
++            } else {
++                &r.method
++            },
++            r.url,
++            r.target_id
++        );
++    }
++    EXIT_OK
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// The shipped specimen — the same manifest the plan's P3.T2 verification
++    /// names (`examples/request_plan_get_only/`).
++    const SPECIMEN: &str = include_str!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/examples/request_plan_get_only/request-plan.v1.json"
++    ));
++
++    #[test]
++    fn the_shipped_manifest_dry_runs() {
++        assert_eq!(dry_run_text("specimen", SPECIMEN), EXIT_OK);
++    }
++
++    #[test]
++    fn a_request_without_a_compliance_block_refuses_the_whole_plan() {
++        let bad = r#"{"schema_version":"tallow.request_plan.v1","manifest_id":"m",
++                      "requests":[{"index":0,"target_id":"t","url":"https://x.invalid/a"}]}"#;
++        assert_eq!(dry_run_text("bad", bad), EXIT_INVALID);
++        // And the compliant sibling still passes, so the refusal is specific to
++        // the missing block rather than a blanket rejection.
++        let good = r#"{"schema_version":"tallow.request_plan.v1","manifest_id":"m",
++                      "requests":[{"index":0,"target_id":"t","url":"https://x.invalid/a",
++                                   "compliance":{"legal_basis":"legitimate_interest"}}]}"#;
++        assert_eq!(dry_run_text("good", good), EXIT_OK);
++    }
++
++    #[test]
++    fn a_count_that_disagrees_with_the_contents_is_refused() {
++        let bad = r#"{"schema_version":"tallow.request_plan.v1","manifest_id":"m","request_count":7,
++                      "requests":[{"index":0,"target_id":"t","url":"https://x.invalid/a",
++                                   "compliance":{"legal_basis":"legitimate_interest"}}]}"#;
++        assert_eq!(dry_run_text("bad", bad), EXIT_INVALID);
++    }
++
++    #[test]
++    fn a_wrong_schema_version_is_refused() {
++        let bad = r#"{"schema_version":"tallow.request_plan.v2","requests":[
++                      {"index":0,"url":"https://x.invalid/a","compliance":{}}]}"#;
++        assert_eq!(dry_run_text("bad", bad), EXIT_INVALID);
++    }
++
++    #[test]
++    fn an_empty_manifest_is_refused_rather_than_reported_clean() {
++        let empty = r#"{"schema_version":"tallow.request_plan.v1","requests":[]}"#;
++        assert_eq!(dry_run_text("empty", empty), EXIT_INVALID);
++    }
++
++    #[test]
++    fn usage_paths() {
++        assert_eq!(run_plan_args(&[]), EXIT_USAGE);
++        assert_eq!(run_plan_args(&["nope".to_string()]), EXIT_USAGE);
++        assert_eq!(run_plan_args(&["--help".to_string()]), EXIT_OK);
++        assert_eq!(
++            run_plan_args(&["dry-run".to_string(), "/nonexistent/plan.json".to_string()]),
++            EXIT_USAGE
++        );
++    }
++
++    /// A "dry run" that can reach the network is not a dry run. This is the
++    /// static form of the plan's `ss -tnp` proof — the module must not name the
++    /// egress entry point, an HTTP client, or the egress layer. The needles are
++    /// assembled so this test's own source cannot satisfy them.
++    ///
++    /// Comments are stripped first: this module's own doc comment names the
++    /// egress entry point in a rustdoc link, and the invariant is "never CALLS
++    /// it", not "never mentions it". (The first version of this test failed on
++    /// its own documentation.)
++    #[test]
++    fn the_dry_run_module_cannot_egress() {
++        let src: String = include_str!("plan_cmd.rs")
++            .lines()
++            .filter(|l| {
++                let t = l.trim_start();
++                !(t.starts_with("//") || t.starts_with("//!"))
++            })
++            .collect::<Vec<_>>()
++            .join("\n");
++        for needle in [
++            concat!("execute", "_get"),
++            concat!("ur", "eq"),
++            concat!("egress", "_http"),
++            concat!("reqwest", "::"),
++        ] {
++            assert!(
++                !src.contains(needle),
++                "plan dry-run must never reference {needle}"
++            );
++        }
++    }
++}
+diff --git a/src/cli/schema_cmd.rs b/src/cli/schema_cmd.rs
+new file mode 100644
+index 0000000..feeed09
+--- /dev/null
++++ b/src/cli/schema_cmd.rs
+@@ -0,0 +1,156 @@
++//! `tallow schema` — validate a `tallow.extraction_schema.v1` contract from the
++//! command line, so a schema can be gated in CI before any run depends on it.
++//!
++//! House CLI shape (see `sluice_cmd`): `run_<verb>_args(&[String]) -> i32`, and
++//! `main.rs` hands the result straight to `std::process::exit`.
++//!
++//! Exit codes, mirroring the set declared at the top of `src/main.rs`:
++//! `0` = valid · `1` = the document is not a valid v1 contract (the offending
++//! field is named on stderr) · `64` = usage error or unreadable file.
++//!
++//! The validation is **not** reimplemented here: this calls
++//! [`ExtractionSchema::from_v1_json`], the same loader the extraction path uses.
++//! A second validator would be a second source of truth for "is this schema
++//! usable", which is exactly how a schema passes CI and then fails at run time.
++
++use crate::browser::llm_extract::ExtractionSchema;
++
++const EXIT_OK: i32 = 0;
++const EXIT_INVALID: i32 = 1;
++const EXIT_USAGE: i32 = 64;
++
++/// Cache key handed to the loader. A v1 contract carries no domain and this
++/// command only validates — nothing is cached — so a constant is the honest
++/// value here rather than an invented one.
++const CLI_DOMAIN: &str = "schema-cli";
++
++/// `schema check <file>` · `schema --help`.
++pub fn run_schema_args(args: &[String]) -> i32 {
++    match args.first().map(String::as_str) {
++        Some("check") => check(&args[1..]),
++        Some("-h") | Some("--help") => {
++            print_usage();
++            EXIT_OK
++        }
++        Some(other) => {
++            eprintln!("schema: unknown subcommand {other:?}");
++            print_usage();
++            EXIT_USAGE
++        }
++        None => {
++            print_usage();
++            EXIT_USAGE
++        }
++    }
++}
++
++fn print_usage() {
++    eprintln!("usage: tallow schema check <FILE.extraction.schema.json>");
++    eprintln!();
++    eprintln!("Validates one `tallow.extraction_schema.v1` contract document.");
++    eprintln!("Exit codes: 0 valid, 1 invalid (the failing field is named), 64 usage.");
++}
++
++/// `schema check <file>`: resolve the path, read it, validate it.
++fn check(args: &[String]) -> i32 {
++    let path = match args.iter().find(|a| !a.starts_with('-')) {
++        Some(p) => p,
++        None => {
++            eprintln!("schema check: expected a schema file path");
++            print_usage();
++            return EXIT_USAGE;
++        }
++    };
++    let text = match std::fs::read_to_string(path) {
++        Ok(t) => t,
++        Err(e) => {
++            eprintln!("schema check: cannot read {path}: {e}");
++            return EXIT_USAGE;
++        }
++    };
++    check_text(path, &text)
++}
++
++/// The validation itself, split out so it is testable without the filesystem.
++/// Returns the process exit code and prints the verdict.
++fn check_text(path: &str, text: &str) -> i32 {
++    match ExtractionSchema::from_v1_json(text, CLI_DOMAIN) {
++        Ok(schema) => {
++            println!(
++                "ok: {path} — tallow.extraction_schema.v1, {} field(s)",
++                schema.fields.len()
++            );
++            EXIT_OK
++        }
++        Err(e) => {
++            eprintln!("schema check: {path}: {e}");
++            EXIT_INVALID
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// The shipped example contract — the same document the plan's P3.T1
++    /// verification names.
++    const FIXTURE: &str = include_str!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/schemas/tallow/examples/product-listing.extraction.schema.json"
++    ));
++
++    #[test]
++    fn the_shipped_example_schema_is_valid() {
++        assert_eq!(check_text("example", FIXTURE), EXIT_OK);
++    }
++
++    #[test]
++    fn a_corrupted_version_is_refused() {
++        let bad = FIXTURE.replace("tallow.extraction_schema.v1", "tallow.extraction_schema.v2");
++        assert_eq!(check_text("bad", &bad), EXIT_INVALID);
++        let err = ExtractionSchema::from_v1_json(&bad, CLI_DOMAIN).unwrap_err();
++        assert!(err.contains("schema_version"), "{err}");
++    }
++
++    #[test]
++    fn a_field_without_a_css_selector_names_that_field() {
++        let bad = r#"{"schema_version":"tallow.extraction_schema.v1",
++                      "fields":[{"name":"price","selectors":[{"kind":"json_path","value":"$.p"}]}]}"#;
++        assert_eq!(check_text("bad", bad), EXIT_INVALID);
++        let err = ExtractionSchema::from_v1_json(bad, CLI_DOMAIN).unwrap_err();
++        assert!(
++            err.contains("price"),
++            "must name the offending field: {err}"
++        );
++        assert!(err.contains("no css selector"), "{err}");
++    }
++
++    #[test]
++    fn the_command_agrees_with_the_loader_it_calls() {
++        // Guards the one thing that would make this command worse than useless:
++        // a validator whose verdict drifts from the loader the run actually uses.
++        assert_eq!(
++            check_text("fixture", FIXTURE),
++            match ExtractionSchema::from_v1_json(FIXTURE, CLI_DOMAIN) {
++                Ok(_) => EXIT_OK,
++                Err(_) => EXIT_INVALID,
++            }
++        );
++    }
++
++    #[test]
++    fn unknown_subcommand_is_a_usage_error() {
++        assert_eq!(run_schema_args(&["nope".to_string()]), EXIT_USAGE);
++        assert_eq!(run_schema_args(&[]), EXIT_USAGE);
++        assert_eq!(run_schema_args(&["--help".to_string()]), EXIT_OK);
++    }
++
++    #[test]
++    fn a_missing_file_is_a_usage_error_not_a_silent_pass() {
++        assert_eq!(
++            run_schema_args(&["check".to_string(), "/nonexistent/schema.json".to_string()]),
++            EXIT_USAGE
++        );
++    }
++}
+diff --git a/src/main.rs b/src/main.rs
+index 527740e..1b4f104 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -224,6 +224,37 @@ enum Command {
+         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+         args: Vec<String>,
+     },
++    /// Validate a `tallow.extraction_schema.v1` extraction contract from the
++    /// command line, so a schema can be gated in CI before a run depends on it.
++    /// Subcommand: `check <file>`. Exit codes: 0 = valid, 1 = invalid (the
++    /// failing field is named on stderr), 64 = usage error or unreadable file.
++    Schema {
++        /// Everything after `schema`, e.g.
++        /// `check schemas/tallow/examples/product-listing.extraction.schema.json`
++        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
++        args: Vec<String>,
++    },
++    /// Dry-run a `tallow.request_plan.v1` manifest: print exactly what would be
++    /// fetched and perform NO egress. Refuses a manifest whose requests omit
++    /// their `compliance` block. Subcommand: `dry-run <file>`.
++    /// Exit codes: 0 = ok, 1 = invalid (the offending request is named),
++    /// 64 = usage error or unreadable file.
++    Plan {
++        /// Everything after `plan`, e.g.
++        /// `dry-run examples/request_plan_get_only/request-plan.v1.json`
++        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
++        args: Vec<String>,
++    },
++    /// Extract `tallow.extraction_row.v1` rows from a LOCAL html file using a
++    /// `tallow.extraction_schema.v1` contract. Performs NO network access: the
++    /// row contract permits only `mode: local_mock` with `live_scraping: false`.
++    /// Exit codes: 0 = rows written, 1 = nothing usable (the field is named),
++    /// 64 = usage error or unreadable file.
++    Extract {
++        /// `--schema <f> --html <f> --out <dir> [--target-id <id>] [--source-url <u>]`
++        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
++        args: Vec<String>,
++    },
+     /// Manage Tallow configuration
+     Config {
+         #[command(subcommand)]
+@@ -2601,6 +2632,23 @@ fn real_main() -> anyhow::Result<()> {
+         Command::FixitySweep { args } => {
+             std::process::exit(tallow::cli::fixity_cmd::run_fixity_sweep_args(&args));
+         }
++        Command::Schema { args } => {
++            // Exit status is the verdict: 0 valid, 1 invalid (the failing field
++            // is named on stderr), 64 usage / unreadable file.
++            std::process::exit(tallow::cli::schema_cmd::run_schema_args(&args));
++        }
++        Command::Plan { args } => {
++            // Exit status is the verdict: 0 ok, 1 invalid (the offending request
++            // is named), 64 usage / unreadable file. This path must not egress —
++            // the arm it calls is statically barred from naming the egress entry.
++            std::process::exit(tallow::cli::plan_cmd::run_plan_args(&args));
++        }
++        Command::Extract { args } => {
++            // Exit status is the verdict: 0 rows written, 1 nothing usable (the
++            // field is named), 64 usage. Local-only: the row contract allows
++            // `mode: local_mock` and `live_scraping: false` and nothing else.
++            std::process::exit(tallow::cli::extract_cmd::run_extract_args(&args));
++        }
+         Command::Compliance { ref action } => {
+             // Row #179 (lane I): local-only generators. `--now` accepts unix
+             // seconds or `YYYY-MM-DDTHH:MM:SSZ` so reports are reproducible.

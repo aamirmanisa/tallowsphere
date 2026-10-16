@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/extraction-schema.schema.json",
+  "title": "Tallow Extraction Schema",
+  "description": "Schema-first normalized extraction contract for Phase 2 data-quality gates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "schema_id",
+    "entity",
+    "fields",
+    "quality"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "tallow.extraction_schema.v1"
+    },
+    "schema_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "entity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/field"
+      }
+    },
+    "pagination": {
+      "$ref": "#/$defs/pagination"
+    },
+    "drift": {
+      "$ref": "#/$defs/drift"
+    },
+    "quality": {
+      "$ref": "#/$defs/quality"
+    },
+    "quarantine": {
+      "$ref": "#/$defs/quarantine"
+    }
+  },
+  "$defs": {
+    "fieldType": {
+      "type": "string",
+      "enum": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "url",
+        "email",
+        "phone",
+        "date",
+        "datetime",
+        "money",
+        "array",
+        "object"
+      ]
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "css",
+            "xpath",
+            "json_path",
+            "regex",
+            "meta",
+            "ld_json",
+            "literal"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attribute": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confidence_hint": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "coercion": {
+      "type": "string",
+      "enum": [
+        "none",
+        "trim",
+        "normalize_whitespace",
+        "parse_number",
+        "parse_money",
+        "parse_date",
+        "parse_url",
+        "lowercase",
+        "uppercase"
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "required",
+        "selectors"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "type": {
+          "$ref": "#/$defs/fieldType"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "selectors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/selector"
+          }
+        },
+        "coercion": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coercion"
+          },
+          "uniqueItems": true
+        },
+        "null_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "not_applicable",
+              "blocked",
+              "parse_failed",
+              "policy_redacted",
+              "unknown"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "min_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "source_evidence": {
+          "type": "boolean",
+          "default": true
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "pagination": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "link",
+            "cursor",
+            "offset",
+            "infinite_scroll"
+          ]
+        },
+        "max_pages": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selector_health_min": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "sample_on_failure": {
+          "type": "boolean"
+        },
+        "alert_after_consecutive_failures": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_row_confidence",
+        "quarantine_below_confidence"
+      ],
+      "properties": {
+        "min_row_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "quarantine_below_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "max_null_required_fields": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "quarantine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "path_template": {
+          "type": "string"
+        },
+        "include_source_snippet": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

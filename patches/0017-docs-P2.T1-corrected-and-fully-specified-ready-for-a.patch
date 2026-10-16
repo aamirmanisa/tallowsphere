@@ -1,0 +1,72 @@
+From 8914f7f7ae90c98ab519388ce529056ea743f154 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 02:26:25 +0000
+Subject: [PATCH 17/27] docs: P2.T1 corrected and fully specified,
+ ready-for-agent
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+I told the operator this item needs a native that constructs
+`%struct.StructuredData`, including the compiled layout of `[]String` and `Map`.
+That was WRONG, and this plan says so: step 1 mandates out-params and never a
+struct-pointer return, with the reason documented — a struct-pointer return
+silently couples LLVM struct layout to a hand-written #[repr(C)] and breaks on any
+field reorder or pad change. The native returns the pieces; the LOWERING ARM builds
+the struct. The ABI risk I described is therefore not present, and the correction is
+recorded here rather than left in the transcript.
+
+Added: the measured edit sites (interp arm at interp.rs:9959 — already correct and
+the parity reference; the single facade at stdlib/browser.rs:35; the layout at
+codegen.rs:1938-1955 whose field_kinds is load-bearing because all three fields
+lower to I8Ptr and the kind alone routes `sd.json_ld.len` to the array count slot;
+regex_ffi.rs as the FFI template and tallow_regex_is_match as the declare+call-arm
+template), and why the remaining work is a fresh-session item: the codegen arm sits
+on the interp/codegen byte-parity surface, there is no correctness defect to fix,
+and a half-applied change there is worse than none.
+
+Status: ready-for-agent, fully specified, not started.
+---
+ ...026-10-14-tallow-scraper-execution-plan.md | 29 +++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+index 4b3baa0..039edaa 100644
+--- a/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
++++ b/docs/plans/2026-10-14-tallow-scraper-execution-plan.md
+@@ -171,6 +171,35 @@ That lane is binding natives by this exact playbook (`tallow_regex_is_match` / `
+ 4. Null out-parameter ⇒ `set_last_error` + null return; never write partially.
+ **Verify:** `cargo check` clean.
+ 
++**MEASURED 2026-10-15 — the exact sites, and a correction to what I said earlier about the ABI.**
++The plan is right and my earlier characterisation was wrong: this does **not** require a native that
++constructs `%struct.StructuredData`. Step 1's convention — out-params, never a struct-pointer return —
++is the documented house style, and it exists precisely to avoid coupling LLVM struct layout to a
++hand-written `#[repr(C)]`. The native returns the pieces; **the lowering arm builds the struct.**
++
++Sites, all verified by reading rather than assumed:
++- **Interpreter arm**: `src/interp.rs:9959` (`"StructuredData.extract"`). It already delegates to the
++  facade — no change needed, and it is the parity reference.
++- **The facade to call** (one implementation, so native and interpreted cannot disagree):
++  `src/stdlib/browser.rs:35` (`pub(crate) fn structured_data_extract(args) -> StdlibResult`), dispatched
++  at `:520`.
++- **The layout the ARM must produce**: `src/codegen.rs:1938-1955` registers `%struct.StructuredData`
++  with `field_kinds` — **load-bearing and unlike the three other layouts**, because all three fields
++  lower to `I8Ptr` and the *kind* is the only thing that routes `sd.json_ld.len` to the array count slot
++  instead of `strlen`. `has_json_ld` is `i1`.
++- **The template for the FFI file**: `src/runtime/regex_ffi.rs` (`#[unsafe(no_mangle)] pub extern "C"`,
++  landed in `8e5bdaac`), plus `crawler_ffi.rs:1-30` for the header contract.
++- **The template for the declare + call arm**: `tallow_regex_is_match`, declared at `codegen.rs:1287`
++  and called at `:20641`, with assertions at `:30032`/`:32620` that the IR contains the call.
++
++**Why this is still a fresh-session item, stated as a resource limit and not a wall:** the delicate part
++is the codegen arm — allocating the struct, storing the out-params into it, and keeping the result
++byte-identical to the interpreter's — and it sits on the `interp.rs`/`codegen.rs` parity surface where a
++half-applied change is worse than none. There is **no correctness defect** to fix: the fallback returns
++correct output and `--require-native` refuses loudly. Attempting it with a nearly-exhausted context is
++how an unfinished ABI edit gets left behind, which is the one outcome the plan forbids outright.
++**Status: ready-for-agent, fully specified, not started.**
++
+ ### P2.T2 — `tallow_crawler_from_sitemap`
+ **Files:** same pattern; facade exists at `src/stdlib/browser.rs:293`; `Crawler` fields at `stdlib/browser.tl:381`.
+ **Steps:** mirror P2.T1. Note `crawler_from_links` writes 4 ints through one out buffer — reuse that convention for consistency.

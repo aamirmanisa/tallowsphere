@@ -1,0 +1,38 @@
+{
+  "name": "shop-a",
+  "base_url": "https://www.shop-a.example",
+  "deals_page_url": "https://www.shop-a.example/shop/deals",
+  "clearance_page_url": "https://www.shop-a.example/browse/clearance",
+  "product_selector": "div[data-item-id]",
+  "price_selector": "span[data-automation-id='product-price'], div[data-automation-id='product-price']",
+  "title_selector": "span[data-automation-id='product-title'], a[data-automation-id='product-title']",
+  "image_selector": "img[data-testid='product-image']",
+  "was_price_selector": "span[data-automation-id='product-was-price'], div[data-automation-id='product-was-price']",
+  "stock_selector": "span:contains('Add to cart'), button:contains('Add')",
+  "sku_pattern": "/ip/[^/]*/(\\d+)",
+  "api_endpoints": {
+    "search_api": "https://www.shop-a.example/orchestra/home/api/v3/search?query={query}",
+    "product_api": "https://www.shop-a.example/orchestra/home/api/v3/product/{sku}",
+    "price_api": "https://www.shop-a.example/price/{sku}",
+    "store_api": "https://www.shop-a.example/store/{store_id}/items",
+    "affiliate_api": "https://developer.shop-a.example/api/affiliate"
+  },
+  "affiliate": {
+    "network": "Impact Radius (primary), Rakuten Advertising (secondary)",
+    "network_id": "shop-a",
+    "program_url": "https://affiliates.shop-a.example",
+    "commission_rate": "1-4% (general), 4-18% (select categories)",
+    "cookie_duration_days": 3,
+    "product_api_available": true,
+    "api_details": "shop-a Affiliate API via developer.shop-a.example \u2014 provides product search, lookup, and trending endpoints with affiliate links"
+  },
+  "rate_limit_ms": 2000,
+  "requires_browser": true,
+  "notes": "PerimeterX bot detection on most pages (robot-or-human challenge). Product cards use data-item-id and data-automation-id attributes. SKU extracted from /ip/slug/{sku} pattern. shop-a has the best affiliate API among major retailers with real product search and data endpoints. Rollback (original) prices available on product pages. Live-probed OK 2026-10-02T16:23:22Z (https://www.shop-a.example/shop/deals); selectors still need rendered-page verification.",
+  "product_url_pattern": "https://www.shop-a.example/ip/{slug}/{sku}",
+  "store_url_pattern": "https://www.shop-a.example/store/{store_id}",
+  "pagination_pattern": "?page={page}",
+  "page_size": 40,
+  "probe_status": 200,
+  "probe_date": "2026-10-02T16:23:22Z"
+}

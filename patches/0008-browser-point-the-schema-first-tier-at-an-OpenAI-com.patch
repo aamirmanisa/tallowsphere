@@ -1,0 +1,417 @@
+From 7527ecab26c4839ebe60ecf8ebe43c2419aa23a5 Mon Sep 17 00:00:00 2001
+From: Aamir <aamir@tallow-lang.org>
+Date: Thu, 15 Oct 2026 00:44:54 +0000
+Subject: [PATCH 08/27] browser: point the schema-first tier at an
+ OpenAI-compatible engine
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The tier was Ollama-only, so the engine actually chosen for it could not be
+called: there was no way to select another API. Engine is now explicit, with
+Ollama as the default so no existing caller changes behaviour silently, and an
+unknown engine name is refused rather than defaulted.
+
+The egress route is unchanged: with_engine runs the same zone predicate in the
+constructor, and the OpenAI-compatible call rides self.client, so adding an engine
+does not add an egress path.
+
+Credential handling: TALLOW_LLM_API_KEY, read at call time and never stored on the
+extractor (so it cannot reach a Debug render, the disk schema cache, or a receipt),
+never an argv value, never a .tl literal. A missing credential is refused as
+EngineMisconfigured — new, and deliberately distinct from OllamaUnavailable,
+because "not configured" and "not answering" need different fixes. Error text
+quotes URL and status only, never a response body that could echo the request.
+
+Which engine ran is recorded via run_evidence::record("llm_engine", ...), so it is
+a fact about the run rather than an inference from configuration.
+
+Verified: 5 offline tests — the chat-request shape, the response shape, rejection
+of an Ollama-shaped response, the credential refusal, and the env-name contract;
+browser::llm_extract's existing 35 tests still pass.
+UNVERIFIED and stated as such: the live call — it needs a key, so the wire path is
+plausible but not demonstrated.
+---
+ src/browser/llm_extract.rs | 290 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 273 insertions(+), 17 deletions(-)
+
+diff --git a/src/browser/llm_extract.rs b/src/browser/llm_extract.rs
+index cd34ad2..be7b0aa 100644
+--- a/src/browser/llm_extract.rs
++++ b/src/browser/llm_extract.rs
+@@ -133,11 +133,54 @@ pub struct ExtractedData {
+     pub confidence: f64,
+ }
+ 
++// ---------------------------------------------------------------------------
++// Engine selection
++// ---------------------------------------------------------------------------
++
++/// Which HTTP API the schema-first tier speaks to.
++///
++/// This was Ollama-only, which made the *decided* engine unreachable: there was
++/// no way to point the tier at an OpenAI-compatible endpoint. Selection is
++/// explicit and the default preserves the previous behaviour rather than
++/// changing it silently.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum Engine {
++    /// Ollama's `/api/generate` — the historical default.
++    #[default]
++    Ollama,
++    /// An OpenAI-compatible `/v1/chat/completions` endpoint.
++    OpenAiCompatible,
++}
++
++impl Engine {
++    /// Parse an engine name as an operator would spell it.
++    pub fn parse(name: &str) -> Option<Engine> {
++        match name.trim().to_ascii_lowercase().as_str() {
++            "" | "ollama" => Some(Engine::Ollama),
++            "openai" | "openai-compatible" | "openai_compatible" => Some(Engine::OpenAiCompatible),
++            _ => None,
++        }
++    }
++
++    /// The name recorded in run evidence, so "which tier ran" is a fact about
++    /// the run rather than an inference from configuration.
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Engine::Ollama => "ollama",
++            Engine::OpenAiCompatible => "openai-compatible",
++        }
++    }
++}
++
+ /// Errors during LLM extraction.
+ #[derive(Debug)]
+ pub enum ExtractError {
+     /// Ollama is not reachable.
+     OllamaUnavailable(String),
++    /// The selected engine cannot be used as configured — a missing credential,
++    /// say. Distinct from `OllamaUnavailable`, which is a reachability failure:
++    /// "not configured" and "not answering" need different fixes.
++    EngineMisconfigured(String),
+     /// LLM returned unparseable output.
+     LlmParseFailed(String),
+     /// No schema available and LLM unavailable.
+@@ -156,6 +199,7 @@ impl std::fmt::Display for ExtractError {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         match self {
+             ExtractError::OllamaUnavailable(msg) => write!(f, "ollama unavailable: {msg}"),
++            ExtractError::EngineMisconfigured(msg) => write!(f, "engine misconfigured: {msg}"),
+             ExtractError::LlmParseFailed(msg) => write!(f, "LLM parse failed: {msg}"),
+             ExtractError::NoSchema(msg) => write!(f, "no schema: {msg}"),
+             ExtractError::SelectorError(msg) => write!(f, "selector error: {msg}"),
+@@ -184,7 +228,11 @@ impl From<std::io::Error> for ExtractError {
+ /// schemas from sample HTML, then executes extraction at CSS speed with no
+ /// subsequent LLM calls.
+ pub struct LlmExtractor {
+-    /// Ollama API base URL (default: `http://localhost:11434`).
++    /// Which API this extractor speaks to.
++    pub engine: Engine,
++    /// Engine base URL (default: `http://localhost:11434`). Named for its
++    /// historical Ollama-only meaning; with `engine: OpenAiCompatible` it is the
++    /// OpenAI-compatible root that `/v1/chat/completions` is appended to.
+     pub ollama_url: String,
+     /// Model name to use (default: `llama3.2`).
+     pub model: String,
+@@ -204,13 +252,26 @@ impl LlmExtractor {
+         Self::with_config("http://localhost:11434", "llama3.2", ".tallow-schemas")
+     }
+ 
+-    /// Create a new `LlmExtractor` with custom Ollama URL, model, and cache dir.
++    /// Create a new `LlmExtractor` for an Ollama endpoint.
++    ///
++    /// Kept because callers (`smart_extract`) describe an Ollama URL and that is
++    /// part of their contract. It is exactly [`Self::with_engine`] with
++    /// [`Engine::Ollama`], so one body serves both and they cannot drift.
+     pub fn with_config(ollama_url: &str, model: &str, cache_dir: &str) -> Self {
++        Self::with_engine(Engine::Ollama, ollama_url, model, cache_dir)
++    }
++
++    /// Create a new `LlmExtractor` for an explicit engine.
++    ///
++    /// The URL is checked against the zone predicate here, before any request
++    /// exists, so an engine cannot be added that bypasses the egress route.
++    pub fn with_engine(engine: Engine, base_url: &str, model: &str, cache_dir: &str) -> Self {
+         let cache_path = PathBuf::from(cache_dir);
+         let _ = std::fs::create_dir_all(&cache_path);
+ 
+         let mut extractor = Self {
+-            ollama_url: ollama_url.trim_end_matches('/').to_string(),
++            engine,
++            ollama_url: base_url.trim_end_matches('/').to_string(),
+             model: model.to_string(),
+             schema_cache: HashMap::new(),
+             cache_dir: cache_path,
+@@ -218,14 +279,12 @@ impl LlmExtractor {
+                 // T-207: the zone predicate decides the route — loopback
+                 // (default Ollama) stays in-zone; a WAN URL rides the
+                 // contract.
+-                let mut builder = reqwest::Client::builder()
+-                    .timeout(std::time::Duration::from_secs(120));
+-                match crate::browser::zone::browser_zone_egress_for(ollama_url) {
++                let mut builder =
++                    reqwest::Client::builder().timeout(std::time::Duration::from_secs(120));
++                match crate::browser::zone::browser_zone_egress_for(base_url) {
+                     Ok(crate::browser::zone::ZoneEgress::InZone) => {}
+                     Ok(_) => {
+-                        if let Ok(Some(zp)) =
+-                            crate::browser::zone::browser_zone_reqwest_proxy()
+-                        {
++                        if let Ok(Some(zp)) = crate::browser::zone::browser_zone_reqwest_proxy() {
+                             builder = builder.proxy(zp);
+                         }
+                     }
+@@ -271,12 +330,12 @@ impl LlmExtractor {
+         domain: &str,
+         page_type: &str,
+     ) -> Result<ExtractionSchema, ExtractError> {
+-        self.ensure_ollama_available().await?;
++        self.ensure_engine_available().await?;
+ 
+         let clean_sample = Self::prepare_html_sample(html);
+         let prompt = Self::build_prompt(&clean_sample, domain, page_type);
+ 
+-        let response = self.call_ollama(&prompt).await?;
++        let response = self.call_engine(&prompt).await?;
+         let schema = self.parse_llm_response(&response, domain, page_type)?;
+ 
+         // Validate the schema actually works on the source HTML.
+@@ -660,6 +719,77 @@ impl LlmExtractor {
+         }
+     }
+ 
++    /// Ensure the selected engine is usable before a request is spent.
++    ///
++    /// An OpenAI-compatible endpoint has no cheap liveness probe that is not
++    /// itself a billed request, so availability here means *configured*: a
++    /// credential is present. A missing credential is refused, never sent
++    /// unauthenticated.
++    async fn ensure_engine_available(&mut self) -> Result<(), ExtractError> {
++        match self.engine {
++            Engine::Ollama => self.ensure_ollama_available().await,
++            Engine::OpenAiCompatible => resolve_api_key(&|k| std::env::var(k).ok()).map(|_| ()),
++        }
++    }
++
++    /// Call the selected engine.
++    ///
++    /// One place decides, so an engine cannot be selected in configuration and
++    /// then ignored by the call path.
++    async fn call_engine(&self, prompt: &str) -> Result<String, ExtractError> {
++        let text = match self.engine {
++            Engine::Ollama => self.call_ollama(prompt).await?,
++            Engine::OpenAiCompatible => self.call_openai_compatible(prompt).await?,
++        };
++        // Which engine ran is RECORDED, not inferred from configuration: a
++        // configured engine that was never called is not a fact about the run.
++        crate::run_evidence::record(
++            "llm_engine",
++            serde_json::json!({
++                "engine": self.engine.as_str(),
++                "model": self.model,
++                "base_url": self.ollama_url,
++                "prompt_chars": prompt.len(),
++                "response_chars": text.len(),
++            }),
++        );
++        Ok(text)
++    }
++
++    /// Call an OpenAI-compatible `/v1/chat/completions` endpoint.
++    ///
++    /// Rides `self.client`, which the constructor already bound to the guarded
++    /// egress plane — adding an engine does not add an egress path.
++    async fn call_openai_compatible(&self, prompt: &str) -> Result<String, ExtractError> {
++        let key = resolve_api_key(&|k| std::env::var(k).ok())?;
++        let url = format!("{}/v1/chat/completions", self.ollama_url);
++        let body = openai_request_body(&self.model, prompt);
++
++        let resp = self
++            .client
++            .post(&url)
++            .header("Authorization", format!("Bearer {key}"))
++            .json(&body)
++            .send()
++            .await
++            .map_err(|e| ExtractError::HttpError(e.to_string()))?;
++
++        let status = resp.status();
++        if !status.is_success() {
++            // The URL and status only: an error body can quote the request back,
++            // and the request carries the credential.
++            return Err(ExtractError::HttpError(format!(
++                "{url} returned status {status}"
++            )));
++        }
++
++        let json: serde_json::Value = resp
++            .json()
++            .await
++            .map_err(|e| ExtractError::HttpError(e.to_string()))?;
++        parse_openai_response(&json)
++    }
++
+     /// Call the Ollama generate API.
+     async fn call_ollama(&self, prompt: &str) -> Result<String, ExtractError> {
+         let url = format!("{}/api/generate", self.ollama_url);
+@@ -2057,6 +2187,132 @@ fn extract_json_block(text: &str) -> Option<String> {
+     None
+ }
+ 
++// ---------------------------------------------------------------------------
++// ---------------------------------------------------------------------------
++// Engine helpers (pure, so they are testable without a network)
++// ---------------------------------------------------------------------------
++
++/// Environment variable holding the engine credential.
++///
++/// Read at call time and never stored on the extractor, so a credential cannot
++/// reach a `Debug` rendering, a disk cache, or a receipt. It is never an argv
++/// value and never a `.tl` literal.
++pub const LLM_API_KEY_ENV: &str = "TALLOW_LLM_API_KEY";
++
++/// Resolve the credential, refusing rather than egressing unauthenticated.
++pub fn resolve_api_key(getenv: &dyn Fn(&str) -> Option<String>) -> Result<String, ExtractError> {
++    match getenv(LLM_API_KEY_ENV) {
++        Some(k) if !k.trim().is_empty() => Ok(k),
++        _ => Err(ExtractError::EngineMisconfigured(format!(
++            "{LLM_API_KEY_ENV} is not set: refusing to call an OpenAI-compatible endpoint \
++             without a credential"
++        ))),
++    }
++}
++
++/// The body an OpenAI-compatible chat endpoint expects.
++pub fn openai_request_body(model: &str, prompt: &str) -> serde_json::Value {
++    serde_json::json!({
++        "model": model,
++        "messages": [{ "role": "user", "content": prompt }],
++        "temperature": 0.1,
++        "max_tokens": 4096,
++        "stream": false
++    })
++}
++
++/// Pull the assistant text out of an OpenAI-compatible chat response.
++pub fn parse_openai_response(json: &serde_json::Value) -> Result<String, ExtractError> {
++    json.get("choices")
++        .and_then(|c| c.as_array())
++        .and_then(|a| a.first())
++        .and_then(|c| c.get("message"))
++        .and_then(|m| m.get("content"))
++        .and_then(|t| t.as_str())
++        .map(|s| s.to_string())
++        .ok_or_else(|| {
++            ExtractError::LlmParseFailed("response had no choices[0].message.content".to_string())
++        })
++}
++
++#[cfg(test)]
++mod engine_tests {
++    use super::*;
++
++    #[test]
++    fn the_engine_parses_the_names_an_operator_would_use() {
++        assert_eq!(Engine::parse("ollama"), Some(Engine::Ollama));
++        assert_eq!(Engine::parse(""), Some(Engine::Ollama));
++        assert_eq!(
++            Engine::parse(" openai-compatible "),
++            Some(Engine::OpenAiCompatible)
++        );
++        assert_eq!(Engine::parse("openai"), Some(Engine::OpenAiCompatible));
++        assert_eq!(
++            Engine::parse("gemini"),
++            None,
++            "an unknown engine is refused, not silently defaulted"
++        );
++        assert_eq!(
++            Engine::default(),
++            Engine::Ollama,
++            "the default must not change silently out from under existing callers"
++        );
++    }
++
++    #[test]
++    fn the_openai_body_is_a_chat_request_and_not_an_ollama_one() {
++        let body = openai_request_body("deepseek/deepseek-flash", "extract this");
++        assert_eq!(body["model"], "deepseek/deepseek-flash");
++        assert_eq!(body["stream"], false);
++        assert_eq!(body["messages"][0]["role"], "user");
++        assert_eq!(body["messages"][0]["content"], "extract this");
++        // Ollama's shape is `prompt` + `options`; neither may leak through.
++        assert!(body.get("options").is_none(), "{body}");
++        assert!(body.get("prompt").is_none(), "{body}");
++    }
++
++    #[test]
++    fn the_response_is_parsed_where_the_text_actually_lives() {
++        let chat = serde_json::json!({
++            "choices": [{ "message": { "role": "assistant", "content": "hello" } }]
++        });
++        assert_eq!(parse_openai_response(&chat).unwrap(), "hello");
++
++        // An Ollama-shaped response must not be mistaken for a chat response:
++        // reading `response` here would silently succeed against the wrong API.
++        let ollama = serde_json::json!({ "response": "hello" });
++        assert!(matches!(
++            parse_openai_response(&ollama),
++            Err(ExtractError::LlmParseFailed(_))
++        ));
++    }
++
++    #[test]
++    fn a_missing_credential_is_refused_rather_than_sent_unauthenticated() {
++        let absent = |_: &str| None;
++        let blank = |_: &str| Some("   ".to_string());
++        let present = |_: &str| Some("k".to_string());
++
++        assert!(matches!(
++            resolve_api_key(&absent),
++            Err(ExtractError::EngineMisconfigured(_))
++        ));
++        assert!(matches!(
++            resolve_api_key(&blank),
++            Err(ExtractError::EngineMisconfigured(_))
++        ));
++        assert_eq!(resolve_api_key(&present).unwrap(), "k");
++    }
++
++    #[test]
++    fn the_credential_comes_from_a_named_environment_variable() {
++        assert_eq!(LLM_API_KEY_ENV, "TALLOW_LLM_API_KEY");
++        assert_eq!(Engine::Ollama.as_str(), "ollama");
++        assert_eq!(Engine::OpenAiCompatible.as_str(), "openai-compatible");
++    }
++}
++
+ // ---------------------------------------------------------------------------
+ // Tests
+ // ---------------------------------------------------------------------------
+@@ -2130,11 +2386,8 @@ mod tests {
+                 .map(|d| d.as_nanos())
+                 .unwrap_or(0)
+         ));
+-        let mut ex = LlmExtractor::with_config(
+-            "http://localhost:11434",
+-            "llama3.2",
+-            dir.to_str().unwrap(),
+-        );
++        let mut ex =
++            LlmExtractor::with_config("http://localhost:11434", "llama3.2", dir.to_str().unwrap());
+ 
+         // 3× schema.org/Product microdata (no JSON-LD) ⇒ "product_listing".
+         let html = r#"<html><body>
+@@ -2209,7 +2462,10 @@ mod tests {
+ 
+         // Two cache hits, zero regenerations: the constraint held.
+         let cached = ex.schema_cache.get(&key).expect("schema still cached");
+-        assert_eq!(cached.success_count, 2, "schema must be reused, not regenerated");
++        assert_eq!(
++            cached.success_count, 2,
++            "schema must be reused, not regenerated"
++        );
+         assert_eq!(cached.fail_count, 0);
+     }
+ 

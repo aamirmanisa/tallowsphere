@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/extraction-row.schema.json",
+  "title": "Tallow Extraction Row",
+  "description": "Normalized schema-defined extraction row contract for Phase 5 local/mock data-quality gates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "row_id",
+    "run_id",
+    "target_id",
+    "source_url",
+    "extraction_schema_id",
+    "extraction_schema_version",
+    "entity",
+    "row_index",
+    "extracted_at_utc",
+    "mode",
+    "status",
+    "row_confidence",
+    "fields",
+    "quality",
+    "non_claims"
+  ],
+  "properties": {
+    "schema_version": { "const": "tallow.extraction_row.v1" },
+    "row_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "target_id": { "type": "string", "minLength": 1 },
+    "source_url": { "type": "string", "minLength": 1 },
+    "extraction_schema_id": { "type": "string", "minLength": 1 },
+    "extraction_schema_version": { "const": "tallow.extraction_schema.v1" },
+    "entity": { "type": "string", "minLength": 1 },
+    "row_index": { "type": "integer", "minimum": 0 },
+    "extracted_at_utc": { "type": "string", "format": "date-time" },
+    "mode": { "type": "string", "enum": ["local_mock"] },
+    "status": { "type": "string", "enum": ["accepted", "quarantined"] },
+    "row_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "fields": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/field_cell" }
+    },
+    "quality": { "$ref": "#/$defs/quality" },
+    "non_claims": { "$ref": "#/$defs/non_claims" }
+  },
+  "$defs": {
+    "field_cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "type",
+        "required",
+        "confidence",
+        "null_reason",
+        "selector_kind",
+        "selector",
+        "degraded",
+        "source_evidence"
+      ],
+      "properties": {
+        "value": {
+          "type": ["string", "number", "integer", "boolean", "object", "array", "null"]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "integer", "boolean", "url", "email", "phone", "date", "datetime", "money", "array", "object"]
+        },
+        "required": { "type": "boolean" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "null_reason": {
+          "type": ["string", "null"],
+          "enum": ["missing", "not_applicable", "blocked", "parse_failed", "policy_redacted", "unknown", null]
+        },
+        "selector_kind": {
+          "type": ["string", "null"],
+          "enum": ["css", "xpath", "json_path", "regex", "meta", "ld_json", "literal", null]
+        },
+        "selector": { "type": ["string", "null"] },
+        "degraded": { "type": "boolean" },
+        "source_evidence": { "type": ["string", "null"], "maxLength": 256 }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_null_count", "selector_health", "drift_detected", "quarantine_reasons"],
+      "properties": {
+        "required_null_count": { "type": "integer", "minimum": 0 },
+        "selector_health": { "type": "number", "minimum": 0, "maximum": 1 },
+        "drift_detected": { "type": "boolean" },
+        "quarantine_reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "non_claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["live_scraping", "external_dataset", "production_ready"],
+      "properties": {
+        "live_scraping": { "const": false },
+        "external_dataset": { "const": false },
+        "production_ready": { "const": false }
+      }
+    }
+  }
+}

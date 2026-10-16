@@ -1,0 +1,93 @@
+[package]
+name = "tallow-crypto"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Cryptographic primitives for Tallow — PQC, symmetric, hashing, PAKE, ratchets"
+
+[features]
+default = []
+aegis = ["dep:aegis"]
+# Deliberately no "fips" feature: tallow-crypto is not in any FIPS validation
+# boundary. See SECURITY.md. FIPS 203/204/205 are used as algorithm standards
+# via third-party pure-Rust crates (fips203/204/205 below), not validated modules.
+
+[dependencies]
+# Post-Quantum KEM (FIPS 203)
+fips203 = { version = "0.4", default-features = false, features = ["ml-kem-1024", "default-rng"] }
+
+# Post-Quantum Signatures (FIPS 204, FIPS 205)
+fips204 = { version = "0.4", default-features = false, features = ["ml-dsa-87", "default-rng"] }
+fips205 = { version = "0.4", default-features = false, features = ["slh_dsa_sha2_256f", "default-rng"] }
+
+# Classical Key Exchange
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+curve25519-dalek = { version = "4", features = ["rand_core"] }
+
+# Classical Signatures
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
+# Symmetric Encryption.
+# AES-256-GCM bulk AEAD runs on libcrux-aesgcm (pure Rust, item 6.4). It replaces
+# RustCrypto's `aes-gcm` behind byte-identical entry points, so the wire format and
+# the published cipher are unchanged; `aes-gcm` is kept as a dev-dependency oracle.
+# Pinned exactly: 0.0.x carries no compatibility promise, and this crate's ARM AES
+# path is gated on the `+aes` target feature (see .cargo/config.toml).
+libcrux-aesgcm = "=0.0.8"
+chacha20poly1305 = "0.10"
+# RFC 3394 AES key wrap — seals the per-object DEK under the at-rest KEK
+# (W3 #141/#142 / P10-R06: random 24-B-nonce XChaCha20-Poly1305 under a
+# per-object DEK wrapped by the master KEK).
+aes-kw = { version = "0.2", features = ["alloc"] }
+aegis = { version = "0.6", optional = true }
+
+# Hashing & KDF
+blake3 = "1"
+sha3 = "0.10"
+sha2 = "0.10"
+argon2 = "0.5"
+hkdf = "0.12"
+
+# Key Safety
+zeroize = { version = "1", features = ["derive", "serde"] }
+secrecy = "0.10"
+subtle = "2"
+
+# Randomness
+rand = "0.8"
+getrandom = "0.2"
+rand_core = "0.6"
+# Renamed alias: rng.rs draws from the rand_core 0.10 generation (dalek 3.0 /
+# curve25519-dalek 5), whose fallible `TryRng` needs getrandom 0.4 — while the
+# plain `getrandom` name above stays pinned to 0.2 for this crate's older
+# consumers. rng.rs's own header documents the `getrandom04` key.
+getrandom04 = { package = "getrandom", version = "0.4", features = ["sys_rng"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+
+# Errors
+thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# wasm32 (browser kex consumer): getrandom 0.2 gates wasm32-unknown-unknown
+# behind the `js` feature — the canonical crates must be wasm-checkable.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+# Differential oracle for the AES-256-GCM backend swap (tests/aes_gcm_differential.rs):
+# the implementation libcrux replaced, kept so the byte-equivalence stays proven.
+aes-gcm = "0.10"
+proptest = "1"
+hex = "0.4"
+tokio = { version = "1", features = ["full", "test-util"] }
+serde_json = "1"
+
+[[bench]]
+name = "crypto_benchmarks"
+harness = false

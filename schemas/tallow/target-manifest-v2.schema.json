@@ -1,0 +1,477 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/target-manifest-v2.schema.json",
+  "title": "Tallow Target Manifest v2",
+  "description": "Canonical Phase 2 manifest contract. Replaces v1 string-only targets with first-class target objects while preserving explicit migration from v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "targets",
+    "policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "tallow.target_manifest.v2"
+    },
+    "manifest_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "description": {
+      "type": "string"
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/target"
+      }
+    },
+    "defaults": {
+      "$ref": "#/$defs/defaults"
+    },
+    "policy": {
+      "$ref": "#/$defs/policy"
+    },
+    "migration": {
+      "$ref": "#/$defs/migration"
+    },
+    "schedule": {
+      "$ref": "#/$defs/schedule"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://",
+      "minLength": 10
+    },
+    "headers": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "HEAD"
+      ]
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "none",
+            "json",
+            "form",
+            "text",
+            "bytes_ref"
+          ]
+        },
+        "value": {},
+        "content_type": {
+          "type": "string"
+        },
+        "redaction": {
+          "type": "string",
+          "enum": [
+            "none",
+            "hash",
+            "omit"
+          ]
+        }
+      }
+    },
+    "graphql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_type"
+      ],
+      "properties": {
+        "operation_type": {
+          "type": "string",
+          "enum": [
+            "query",
+            "mutation"
+          ]
+        },
+        "operation_name": {
+          "type": "string"
+        },
+        "query_ref": {
+          "type": "string"
+        },
+        "variables": {
+          "type": "object"
+        }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "retry_on_error_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "backoff_ms": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "browserFallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "never",
+            "reasoned",
+            "always"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "requires_javascript",
+              "http_failed",
+              "blocked_by_policy",
+              "extraction_failed",
+              "manual"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "max_fallbacks_per_domain": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "artifactPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capture_body": {
+          "type": "string",
+          "enum": [
+            "none",
+            "redacted",
+            "full"
+          ]
+        },
+        "screenshots": {
+          "type": "string",
+          "enum": [
+            "never",
+            "on_fallback_failure",
+            "always"
+          ]
+        },
+        "har": {
+          "type": "string",
+          "enum": [
+            "never",
+            "on_fallback_failure",
+            "always"
+          ]
+        },
+        "response_snippet_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "compliance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_authority",
+        "purpose",
+        "legal_basis",
+        "pii_policy",
+        "retention_days",
+        "robots_mode"
+      ],
+      "properties": {
+        "source_authority": {
+          "type": "string",
+          "enum": [
+            "public_web",
+            "owned_system",
+            "licensed_api",
+            "user_provided",
+            "unknown"
+          ]
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "legal_basis": {
+          "type": "string",
+          "enum": [
+            "legitimate_interest",
+            "contract",
+            "consent",
+            "public_task",
+            "research",
+            "unknown"
+          ]
+        },
+        "pii_policy": {
+          "type": "string",
+          "enum": [
+            "no_pii_expected",
+            "redact",
+            "allow_with_approval",
+            "block"
+          ]
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "robots_mode": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "advisory",
+            "off"
+          ]
+        },
+        "requires_approval": {
+          "type": "boolean"
+        },
+        "approval_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "url",
+        "method",
+        "compliance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "headers": {
+          "$ref": "#/$defs/headers"
+        },
+        "body": {
+          "$ref": "#/$defs/body"
+        },
+        "graphql": {
+          "$ref": "#/$defs/graphql"
+        },
+        "auth_ref": {
+          "type": "string",
+          "description": "Reference to a vault/secret entry; inline secrets are forbidden in v2 examples."
+        },
+        "extraction_schema_ref": {
+          "type": "string"
+        },
+        "browser_fallback": {
+          "$ref": "#/$defs/browserFallback"
+        },
+        "artifact_policy": {
+          "$ref": "#/$defs/artifactPolicy"
+        },
+        "compliance": {
+          "$ref": "#/$defs/compliance"
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "headers": {
+          "$ref": "#/$defs/headers"
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        },
+        "browser_fallback": {
+          "$ref": "#/$defs/browserFallback"
+        },
+        "artifact_policy": {
+          "$ref": "#/$defs/artifactPolicy"
+        }
+      }
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "url_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^https?://"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowlist",
+        "denylist",
+        "robots",
+        "rate_limits"
+      ],
+      "properties": {
+        "allowlist": {
+          "$ref": "#/$defs/selector"
+        },
+        "denylist": {
+          "$ref": "#/$defs/selector"
+        },
+        "robots": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "strict",
+                "advisory",
+                "off"
+              ]
+            }
+          }
+        },
+        "rate_limits": {
+          "type": "object"
+        },
+        "cost_budget": {
+          "type": "object"
+        },
+        "approval_mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "required_for_sensitive",
+            "always"
+          ]
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from_schema_versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "string_targets_default_method": {
+          "$ref": "#/$defs/method"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "cron",
+            "queue"
+          ]
+        },
+        "cron": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

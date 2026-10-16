@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tallow — stdlib/osint.tl</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0e1a;color:#e2e8f0;line-height:1.6;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:#0d1321;border-right:1px solid #1e293b;padding:24px 0;position:sticky;top:0;height:100vh;overflow-y:auto;flex-shrink:0}
+.sidebar h2{color:#60a5fa;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.1em;padding:0 16px 8px;border-bottom:1px solid #1e293b;margin-bottom:8px}
+.sidebar a{display:block;padding:4px 16px;color:#94a3b8;text-decoration:none;font-size:0.875rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar a:hover{color:#e2e8f0;background:#1e293b}
+.sidebar a.active{color:#60a5fa;background:#1e2d4a}
+.sidebar .section{margin-top:12px}
+.sidebar .section-title{color:#475569;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;padding:4px 16px}
+main{flex:1;max-width:860px;padding:40px 48px;min-width:0}
+h1{color:#60a5fa;font-size:1.75rem;margin-bottom:4px;word-break:break-word}
+.breadcrumb{color:#475569;font-size:0.85rem;margin-bottom:32px}
+.breadcrumb a{color:#60a5fa;text-decoration:none}
+h2{color:#a78bfa;font-size:1.1rem;border-bottom:1px solid #1e293b;padding-bottom:6px;margin:32px 0 16px}
+h3.item-name{color:#f472b6;font-size:1rem;margin:24px 0 8px;display:flex;align-items:center;gap:8px}
+.badge{font-size:0.65rem;padding:2px 7px;border-radius:12px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600}
+.badge-fn{background:#0f3a2e;color:#22c55e}
+.badge-struct{background:#1a2e4a;color:#60a5fa}
+.badge-enum{background:#2d1f4a;color:#a78bfa}
+.badge-trait{background:#3a1f1f;color:#f87171}
+.badge-const{background:#2a2510;color:#f59e0b}
+.badge-type{background:#1f2a3a;color:#38bdf8}
+.badge-impl{background:#1e293b;color:#94a3b8}
+pre.sig{background:#0d1321;padding:14px 18px;border-radius:8px;border-left:3px solid #3b82f6;overflow-x:auto;margin:0 0 10px;font-size:0.9rem}
+code{font-family:'Cascadia Code','Fira Code',monospace}
+.fn-sig{color:#22c55e}
+.type{color:#f59e0b}
+.param{color:#60a5fa}
+.doc{color:#94a3b8;font-style:italic;margin-bottom:12px;font-size:0.9rem}
+table{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:0.875rem}
+th{background:#0d1321;padding:8px 12px;text-align:left;color:#60a5fa;border-bottom:2px solid #1e293b;font-weight:600}
+td{padding:8px 12px;border-bottom:1px solid #1e293b;vertical-align:top}
+td:first-child{color:#e2e8f0;font-family:monospace}
+td:nth-child(2){color:#f59e0b;font-family:monospace}
+td:nth-child(3){color:#475569}
+ul.methods-list{margin:0 0 16px;padding:0}
+ul.methods-list li{list-style:none;font-family:monospace;font-size:0.85rem;color:#94a3b8;padding:3px 0;border-bottom:1px solid #0d1321}
+.annot{color:#818cf8;font-size:0.8rem;margin:2px 0}
+a{color:#60a5fa;text-decoration:none}
+a:hover{text-decoration:underline}
+.item-anchor{color:#1e293b;font-size:0.75rem;margin-left:4px}
+.item-anchor:hover{color:#60a5fa}
+</style>
+</head>
+<body>
+<nav class="sidebar"><h2><a href="index.html">Tallow API</a></h2><div class="section"><div class="section-title">stdlib</div><a href="stdlib-agent.html">stdlib/agent.tl</a><a href="stdlib-browser.html">stdlib/browser.tl</a><a href="stdlib-cli.html">stdlib/cli.tl</a><a href="stdlib-cloud.html">stdlib/cloud.tl</a><a href="stdlib-compress.html">stdlib/compress.tl</a><a href="stdlib-config.html">stdlib/config.tl</a><a href="stdlib-crypto.html">stdlib/crypto.tl</a><a href="stdlib-db.html">stdlib/db.tl</a><a href="stdlib-detection.html">stdlib/detection.tl</a><a href="stdlib-env.html">stdlib/env.tl</a><a href="stdlib-forensics.html">stdlib/forensics.tl</a><a href="stdlib-fs.html">stdlib/fs.tl</a><a href="stdlib-html.html">stdlib/html.tl</a><a href="stdlib-http.html">stdlib/http.tl</a><a href="stdlib-iot.html">stdlib/iot.tl</a><a href="stdlib-json.html">stdlib/json.tl</a><a href="stdlib-legal.html">stdlib/legal.tl</a><a href="stdlib-log.html">stdlib/log.tl</a><a href="stdlib-math.html">stdlib/math.tl</a><a href="stdlib-mime.html">stdlib/mime.tl</a><a href="stdlib-net.html">stdlib/net.tl</a><a href="stdlib-osint.html" class="active">stdlib/osint.tl</a><a href="stdlib-otel.html">stdlib/otel.tl</a><a href="stdlib-pec.html">stdlib/pec.tl</a><a href="stdlib-process.html">stdlib/process.tl</a><a href="stdlib-rand.html">stdlib/rand.tl</a><a href="stdlib-regex.html">stdlib/regex.tl</a><a href="stdlib-safety.html">stdlib/safety.tl</a><a href="stdlib-sync.html">stdlib/sync.tl</a><a href="stdlib-test.html">stdlib/test.tl</a><a href="stdlib-time.html">stdlib/time.tl</a><a href="stdlib-transfer.html">stdlib/transfer.tl</a><a href="stdlib-url.html">stdlib/url.tl</a></div></nav><main><h1>stdlib/osint.tl</h1><div class="breadcrumb"><a href="index.html">index</a> / stdlib / stdlib/osint.tl</div><p class="doc">No documented items found in this file.</p></main></body></html>

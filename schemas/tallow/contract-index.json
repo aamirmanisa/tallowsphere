@@ -1,0 +1,66 @@
+{
+  "schema_version": "tallow.contract_index.v1",
+  "generated_for_phase": "phase2-contract-consolidation",
+  "contracts": [
+    {
+      "name": "error_taxonomy_schema",
+      "version": "tallow.error_taxonomy.v1",
+      "path": "schemas/tallow/error-taxonomy.schema.json",
+      "kind": "schema"
+    },
+    {
+      "name": "error_taxonomy",
+      "version": "tallow.error_taxonomy.v1",
+      "path": "schemas/tallow/error-taxonomy.v1.json",
+      "kind": "canonical_instance"
+    },
+    {
+      "name": "extraction_schema",
+      "version": "tallow.extraction_schema.v1",
+      "path": "schemas/tallow/extraction-schema.schema.json",
+      "kind": "schema"
+    },
+    {
+      "name": "extraction_row",
+      "version": "tallow.extraction_row.v1",
+      "path": "schemas/tallow/extraction-row.schema.json",
+      "kind": "schema"
+    },
+    {
+      "name": "extraction_row_validation_report",
+      "version": "tallow.extraction_row_validation_report.v1",
+      "path": "schemas/tallow/extraction-row-validation-report.schema.json",
+      "kind": "schema"
+    },
+    {
+      "name": "target_manifest_v2",
+      "version": "tallow.target_manifest.v2",
+      "path": "schemas/tallow/target-manifest-v2.schema.json",
+      "kind": "schema"
+    },
+    {
+      "name": "artifact_manifest",
+      "version": "tallow.artifact_manifest.v1",
+      "path": "schemas/tallow/artifact-manifest.schema.json",
+      "kind": "schema"
+    },
+    {
+      "name": "compliance_gate_report",
+      "version": "tallow.compliance_gate_report.v1",
+      "path": "schemas/tallow/compliance-gate-report.schema.json",
+      "kind": "schema"
+    },
+    {
+      "name": "target_manifest_v2_example",
+      "version": "tallow.target_manifest.v2",
+      "path": "configs/tallow/targets.v2.example.json",
+      "kind": "example"
+    },
+    {
+      "name": "product_listing_extraction_example",
+      "version": "tallow.extraction_schema.v1",
+      "path": "schemas/tallow/examples/product-listing.extraction.schema.json",
+      "kind": "example"
+    }
+  ]
+}

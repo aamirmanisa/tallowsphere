@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tallow — stdlib/rand.tl</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0e1a;color:#e2e8f0;line-height:1.6;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:#0d1321;border-right:1px solid #1e293b;padding:24px 0;position:sticky;top:0;height:100vh;overflow-y:auto;flex-shrink:0}
+.sidebar h2{color:#60a5fa;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.1em;padding:0 16px 8px;border-bottom:1px solid #1e293b;margin-bottom:8px}
+.sidebar a{display:block;padding:4px 16px;color:#94a3b8;text-decoration:none;font-size:0.875rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar a:hover{color:#e2e8f0;background:#1e293b}
+.sidebar a.active{color:#60a5fa;background:#1e2d4a}
+.sidebar .section{margin-top:12px}
+.sidebar .section-title{color:#475569;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;padding:4px 16px}
+main{flex:1;max-width:860px;padding:40px 48px;min-width:0}
+h1{color:#60a5fa;font-size:1.75rem;margin-bottom:4px;word-break:break-word}
+.breadcrumb{color:#475569;font-size:0.85rem;margin-bottom:32px}
+.breadcrumb a{color:#60a5fa;text-decoration:none}
+h2{color:#a78bfa;font-size:1.1rem;border-bottom:1px solid #1e293b;padding-bottom:6px;margin:32px 0 16px}
+h3.item-name{color:#f472b6;font-size:1rem;margin:24px 0 8px;display:flex;align-items:center;gap:8px}
+.badge{font-size:0.65rem;padding:2px 7px;border-radius:12px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600}
+.badge-fn{background:#0f3a2e;color:#22c55e}
+.badge-struct{background:#1a2e4a;color:#60a5fa}
+.badge-enum{background:#2d1f4a;color:#a78bfa}
+.badge-trait{background:#3a1f1f;color:#f87171}
+.badge-const{background:#2a2510;color:#f59e0b}
+.badge-type{background:#1f2a3a;color:#38bdf8}
+.badge-impl{background:#1e293b;color:#94a3b8}
+pre.sig{background:#0d1321;padding:14px 18px;border-radius:8px;border-left:3px solid #3b82f6;overflow-x:auto;margin:0 0 10px;font-size:0.9rem}
+code{font-family:'Cascadia Code','Fira Code',monospace}
+.fn-sig{color:#22c55e}
+.type{color:#f59e0b}
+.param{color:#60a5fa}
+.doc{color:#94a3b8;font-style:italic;margin-bottom:12px;font-size:0.9rem}
+table{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:0.875rem}
+th{background:#0d1321;padding:8px 12px;text-align:left;color:#60a5fa;border-bottom:2px solid #1e293b;font-weight:600}
+td{padding:8px 12px;border-bottom:1px solid #1e293b;vertical-align:top}
+td:first-child{color:#e2e8f0;font-family:monospace}
+td:nth-child(2){color:#f59e0b;font-family:monospace}
+td:nth-child(3){color:#475569}
+ul.methods-list{margin:0 0 16px;padding:0}
+ul.methods-list li{list-style:none;font-family:monospace;font-size:0.85rem;color:#94a3b8;padding:3px 0;border-bottom:1px solid #0d1321}
+.annot{color:#818cf8;font-size:0.8rem;margin:2px 0}
+a{color:#60a5fa;text-decoration:none}
+a:hover{text-decoration:underline}
+.item-anchor{color:#1e293b;font-size:0.75rem;margin-left:4px}
+.item-anchor:hover{color:#60a5fa}
+</style>
+</head>
+<body>
+<nav class="sidebar"><h2><a href="index.html">Tallow API</a></h2><div class="section"><div class="section-title">stdlib</div><a href="stdlib-agent.html">stdlib/agent.tl</a><a href="stdlib-browser.html">stdlib/browser.tl</a><a href="stdlib-cli.html">stdlib/cli.tl</a><a href="stdlib-cloud.html">stdlib/cloud.tl</a><a href="stdlib-compress.html">stdlib/compress.tl</a><a href="stdlib-config.html">stdlib/config.tl</a><a href="stdlib-crypto.html">stdlib/crypto.tl</a><a href="stdlib-db.html">stdlib/db.tl</a><a href="stdlib-detection.html">stdlib/detection.tl</a><a href="stdlib-env.html">stdlib/env.tl</a><a href="stdlib-forensics.html">stdlib/forensics.tl</a><a href="stdlib-fs.html">stdlib/fs.tl</a><a href="stdlib-html.html">stdlib/html.tl</a><a href="stdlib-http.html">stdlib/http.tl</a><a href="stdlib-iot.html">stdlib/iot.tl</a><a href="stdlib-json.html">stdlib/json.tl</a><a href="stdlib-legal.html">stdlib/legal.tl</a><a href="stdlib-log.html">stdlib/log.tl</a><a href="stdlib-math.html">stdlib/math.tl</a><a href="stdlib-mime.html">stdlib/mime.tl</a><a href="stdlib-net.html">stdlib/net.tl</a><a href="stdlib-osint.html">stdlib/osint.tl</a><a href="stdlib-otel.html">stdlib/otel.tl</a><a href="stdlib-pec.html">stdlib/pec.tl</a><a href="stdlib-process.html">stdlib/process.tl</a><a href="stdlib-rand.html" class="active">stdlib/rand.tl</a><a href="stdlib-regex.html">stdlib/regex.tl</a><a href="stdlib-safety.html">stdlib/safety.tl</a><a href="stdlib-sync.html">stdlib/sync.tl</a><a href="stdlib-test.html">stdlib/test.tl</a><a href="stdlib-time.html">stdlib/time.tl</a><a href="stdlib-transfer.html">stdlib/transfer.tl</a><a href="stdlib-url.html">stdlib/url.tl</a></div></nav><main><h1>stdlib/rand.tl</h1><div class="breadcrumb"><a href="index.html">index</a> / stdlib / stdlib/rand.tl</div><h2>Contents</h2><ul style="list-style:none;columns:2;gap:24px;margin-bottom:24px"><li><a href="#fn-bytes">fn bytes</a></li><li><a href="#fn-u64">fn u64</a></li><li><a href="#fn-i64">fn i64</a></li><li><a href="#fn-f64">fn f64</a></li><li><a href="#fn-range">fn range</a></li><li><a href="#fn-token">fn token</a></li><li><a href="#fn-uuid">fn uuid</a></li><li><a href="#fn-shuffle">fn shuffle</a></li><li><a href="#fn-choice">fn choice</a></li><li><a href="#fn-sample">fn sample</a></li></ul><h3 class="item-name" id="fn-bytes"><span class="badge badge-fn">fn</span>bytes<a class="item-anchor" href="#fn-bytes">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>bytes</strong>(<span class="param">count</span>: <span class="type">usize</span>) -&gt; <span class="type">Bytes</span></code></pre><p class="doc">Generate cryptographically secure random bytes</p><h3 class="item-name" id="fn-u64"><span class="badge badge-fn">fn</span>u64<a class="item-anchor" href="#fn-u64">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>u64</strong>() -&gt; <span class="type">u64</span></code></pre><p class="doc">Generate random u64</p><h3 class="item-name" id="fn-i64"><span class="badge badge-fn">fn</span>i64<a class="item-anchor" href="#fn-i64">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>i64</strong>() -&gt; <span class="type">i64</span></code></pre><p class="doc">Generate random i64</p><h3 class="item-name" id="fn-f64"><span class="badge badge-fn">fn</span>f64<a class="item-anchor" href="#fn-f64">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>f64</strong>() -&gt; <span class="type">f64</span></code></pre><p class="doc">Generate random f64 in [0.0, 1.0)</p><h3 class="item-name" id="fn-range"><span class="badge badge-fn">fn</span>range<a class="item-anchor" href="#fn-range">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>range</strong>(<span class="param">min</span>: <span class="type">u64</span>, <span class="param">max</span>: <span class="type">u64</span>) -&gt; <span class="type">u64</span></code></pre><p class="doc">Generate random u64 in range [min, max)</p><h3 class="item-name" id="fn-token"><span class="badge badge-fn">fn</span>token<a class="item-anchor" href="#fn-token">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>token</strong>(<span class="param">length</span>: <span class="type">u32</span>) -&gt; <span class="type">String</span></code></pre><p class="doc">Generate URL-safe base64 token</p><h3 class="item-name" id="fn-uuid"><span class="badge badge-fn">fn</span>uuid<a class="item-anchor" href="#fn-uuid">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>uuid</strong>() -&gt; <span class="type">String</span></code></pre><p class="doc">Generate UUID v4</p><h3 class="item-name" id="fn-shuffle"><span class="badge badge-fn">fn</span>shuffle<a class="item-anchor" href="#fn-shuffle">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>shuffle&lt;T&gt;</strong>(<span class="param">items</span>: <span class="type">[]T</span>)</code></pre><p class="doc">Shuffle a slice in place</p><h3 class="item-name" id="fn-choice"><span class="badge badge-fn">fn</span>choice<a class="item-anchor" href="#fn-choice">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>choice&lt;T&gt;</strong>(<span class="param">items</span>: <span class="type">[]T</span>) -&gt; <span class="type">T?</span></code></pre><p class="doc">Pick random element from slice</p><h3 class="item-name" id="fn-sample"><span class="badge badge-fn">fn</span>sample<a class="item-anchor" href="#fn-sample">#</a></h3><pre class="sig"><code><span class="fn-sig">fn</span> <strong>sample&lt;T&gt;</strong>(<span class="param">items</span>: <span class="type">[]T</span>, <span class="param">n</span>: <span class="type">usize</span>) -&gt; <span class="type">[]T</span></code></pre><p class="doc">Pick n random elements without replacement</p></main></body></html>
