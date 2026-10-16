@@ -68,6 +68,47 @@ fn stealth_profile() -> String {
 /// be a second, independent copy of the logic that defaulted to a direct
 /// connection — i.e. an interpreter program that forgot to export `TALLOW_TOR`
 /// leaked the box IP while the compiled path did not.
+/// The host component of a URL, lowercased, with any port and userinfo removed.
+fn url_host(url: &str) -> String {
+    let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    };
+    host.to_ascii_lowercase()
+}
+
+/// True only when the host is a **literal** loopback IP (`127.0.0.0/8`, `::1`).
+///
+/// Deliberately narrowed to literals, because this is the predicate that also bypasses the
+/// egress proxy (see `build_agent_with`): a literal cannot resolve anywhere else, whereas a
+/// *name* — including `localhost` — is resolved through `/etc/hosts` or DNS, so treating one as
+/// "necessarily this machine" would make the bypass a leak waiting on a poisoned resolver. An
+/// IP literal is the only spelling that is loopback by construction.
+fn is_loopback_literal(url: &str) -> bool {
+    url_host(url)
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+/// True for a literal loopback IP or a loopback *name* (`localhost`, `*.localhost`).
+///
+/// Used to skip the browser-impersonation plane, where a name is safe to trust: the request
+/// still goes through the egress proxy in that path, so a misresolved name cannot leak. There
+/// is nothing to impersonate about talking to your own machine anyway, and the stealth path
+/// simply fails on loopback — the SOCKS hop answers `General SOCKS server failure`.
+fn is_loopback_target(url: &str) -> bool {
+    let host = url_host(url);
+    is_loopback_literal(url) || host == "localhost" || host.ends_with(".localhost")
+}
+
 pub fn detect_proxy_url() -> Option<String> {
     crate::runtime::fetch::egress_proxy_url()
 }
@@ -127,8 +168,14 @@ fn detect_proxy() -> Option<ureq::Proxy> {
     proxy_for_url(crate::runtime::fetch::egress_proxy_url_ureq())
 }
 
-/// Build an agent with standard per-phase timeouts and optional proxy.
-fn build_agent(timeout: Option<Duration>) -> ureq::Agent {
+/// Build an agent with standard per-phase timeouts, with or without the egress proxy.
+///
+/// `with_proxy` exists for exactly one caller shape: a target that is loopback *by construction*
+/// — an IP literal, see [`is_loopback_literal`]. Every other target keeps the proxy, because
+/// silently degrading to a direct connection is the leak the egress policy exists to prevent
+/// (invariant N3). A literal loopback target cannot leak: the packet never leaves the host, and
+/// no name resolution stands between the URL and the socket.
+fn build_agent_with(timeout: Option<Duration>, with_proxy: bool) -> ureq::Agent {
     let t = timeout.unwrap_or(Duration::from_secs(30));
     let mut builder = ureq::Agent::config_builder()
         .timeout_global(None)
@@ -141,14 +188,29 @@ fn build_agent(timeout: Option<Duration>) -> ureq::Agent {
         .timeout_recv_body(Some(t))
         .https_only(false);
 
-    if let Some(proxy) = detect_proxy() {
-        builder = builder.proxy(Some(proxy));
+    if with_proxy {
+        if let Some(proxy) = detect_proxy() {
+            builder = builder.proxy(Some(proxy));
+        }
     }
     builder.build().new_agent()
 }
 
+/// Build an agent with standard per-phase timeouts and the egress proxy.
+fn build_agent(timeout: Option<Duration>) -> ureq::Agent {
+    build_agent_with(timeout, true)
+}
+
 /// Shared agent for connection pooling and TLS session reuse.
 static SHARED_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| build_agent(None));
+
+/// The same agent without a proxy, for loopback literals only.
+///
+/// Proxied loopback cannot work at all here: the allowlist chokepoint answers SOCKS5 reply `0x02`
+/// — "connection not allowed by ruleset" — for `127.0.0.1`, which is what `http.get` against a
+/// loopback fixture was reporting. It also needs no anonymity plane, because there is nothing to
+/// anonymise about a request that never leaves the host.
+static DIRECT_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| build_agent_with(None, false));
 
 fn extract_headers(args: &[Value]) -> HashMap<String, String> {
     let mut headers = HashMap::new();
@@ -180,6 +242,23 @@ fn get_agent(timeout: Option<Duration>) -> ureq::Agent {
         Some(t) => build_agent(Some(t)),
         None => SHARED_AGENT.clone(),
     }
+}
+
+/// Build the agent for a specific URL: a loopback literal gets the proxy-free agent, everything
+/// else keeps the egress proxy.
+///
+/// The literal test is load-bearing. A name — `localhost` included — resolves through `/etc/hosts`
+/// or DNS, so letting one bypass the proxy would be a leak waiting on a poisoned resolver. An IP
+/// literal is loopback by construction and cannot resolve elsewhere, so only that spelling may take
+/// the proxy-free path.
+fn get_agent_for(url: &str, timeout: Option<Duration>) -> ureq::Agent {
+    if is_loopback_literal(url) {
+        return match timeout {
+            Some(t) => build_agent_with(Some(t), false),
+            None => DIRECT_AGENT.clone(),
+        };
+    }
+    get_agent(timeout)
 }
 
 // ── Governed fetch (rate-limit / backoff / retry) ────────────────────────────
@@ -466,25 +545,33 @@ pub fn unified_get(
     headers: &[(String, String)],
     _timeout: Option<Duration>,
 ) -> Result<(u16, Vec<u8>), String> {
+    // Same loopback rule as `http.get`: a local fixture has nothing to impersonate and the SOCKS
+    // hop refuses it outright, so it takes the direct path even when the stealth plane is on.
     #[cfg(feature = "stealth-http")]
     {
-        let proxy = detect_proxy_url();
-        let (status, body) =
-            super::stealth_http::get_blocking(&stealth_profile(), url, headers, proxy.as_deref())?;
-        Ok((status, body.into_bytes()))
-    }
-    #[cfg(not(feature = "stealth-http"))]
-    {
-        let agent = get_agent(_timeout);
-        let mut req = agent.get(url);
-        for (k, v) in headers {
-            req = req.header(k.as_str(), v.as_str());
+        if !is_loopback_target(url) {
+            let proxy = detect_proxy_url();
+            let (status, body) = super::stealth_http::get_blocking(
+                &stealth_profile(),
+                url,
+                headers,
+                proxy.as_deref(),
+            )?;
+            return Ok((status, body.into_bytes()));
         }
-        let resp = req.call().map_err(|e| format!("http.get: {e}"))?;
-        let status = resp.status().as_u16();
-        let body = resp.into_body().read_to_vec().unwrap_or_default();
-        Ok((status, body))
     }
+
+    // Direct path: loopback literals under `stealth-http`, and every target when the feature is
+    // off. `get_agent_for` keeps the egress proxy for anything that is not a loopback literal.
+    let agent = get_agent_for(url, _timeout);
+    let mut req = agent.get(url);
+    for (k, v) in headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    let resp = req.call().map_err(|e| format!("http.get: {e}"))?;
+    let status = resp.status().as_u16();
+    let body = resp.into_body().read_to_vec().unwrap_or_default();
+    Ok((status, body))
 }
 
 fn http_get(args: Vec<Value>) -> StdlibResult {
@@ -498,28 +585,37 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
 
     #[cfg(feature = "stealth-http")]
     {
-        // Browser-impersonated TLS (wreq/BoringSSL) — P1-1 anti-bot path.
-        let hdrs: Vec<(String, String)> =
-            headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        let started = Instant::now();
-        let proxy = detect_proxy_url();
-        match super::stealth_http::get_blocking(&stealth_profile(), &url, &hdrs, proxy.as_deref()) {
-            Ok((status, body)) => {
-                return Ok(build_response_value(
-                    status,
-                    body.into_bytes(),
-                    &url,
-                    vec![],
-                    elapsed_ms_since(started),
-                ));
-            }
-            Err(e) => {
-                return Ok(Value::Err(Box::new(Value::String(format!("http.get: {e}")))));
+        // Loopback is excluded: see `is_loopback_target`. A fixture on 127.0.0.1 has no anonymity
+        // plane to ride, and the SOCKS hop refuses it outright.
+        if !is_loopback_target(&url) {
+            // Browser-impersonated TLS (wreq/BoringSSL) — P1-1 anti-bot path.
+            let hdrs: Vec<(String, String)> =
+                headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let started = Instant::now();
+            let proxy = detect_proxy_url();
+            match super::stealth_http::get_blocking(
+                &stealth_profile(),
+                &url,
+                &hdrs,
+                proxy.as_deref(),
+            ) {
+                Ok((status, body)) => {
+                    return Ok(build_response_value(
+                        status,
+                        body.into_bytes(),
+                        &url,
+                        vec![],
+                        elapsed_ms_since(started),
+                    ));
+                }
+                Err(e) => {
+                    return Ok(Value::Err(Box::new(Value::String(format!("http.get: {e}")))));
+                }
             }
         }
     }
 
-    let agent = get_agent(timeout);
+    let agent = get_agent_for(&url, timeout);
 
     let mut req = agent.get(&url);
     for (k, v) in &headers {
@@ -601,34 +697,37 @@ fn http_post(args: Vec<Value>) -> StdlibResult {
 
     #[cfg(feature = "stealth-http")]
     {
-        // Browser-impersonated TLS (wreq/BoringSSL) — P1-1 anti-bot path.
-        let hdrs: Vec<(String, String)> =
-            headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        let started = Instant::now();
-        let proxy = detect_proxy_url();
-        match super::stealth_http::post_blocking(
-            &stealth_profile(),
-            &url,
-            &hdrs,
-            body.as_bytes(),
-            proxy.as_deref(),
-        ) {
-            Ok((status, resp_body)) => {
-                return Ok(build_response_value(
-                    status,
-                    resp_body.into_bytes(),
-                    &url,
-                    vec![],
-                    elapsed_ms_since(started),
-                ));
-            }
-            Err(e) => {
-                return Ok(Value::Err(Box::new(Value::String(format!("http.post: {e}")))));
+        // Loopback is excluded: see `is_loopback_target`.
+        if !is_loopback_target(&url) {
+            // Browser-impersonated TLS (wreq/BoringSSL) — P1-1 anti-bot path.
+            let hdrs: Vec<(String, String)> =
+                headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let started = Instant::now();
+            let proxy = detect_proxy_url();
+            match super::stealth_http::post_blocking(
+                &stealth_profile(),
+                &url,
+                &hdrs,
+                body.as_bytes(),
+                proxy.as_deref(),
+            ) {
+                Ok((status, resp_body)) => {
+                    return Ok(build_response_value(
+                        status,
+                        resp_body.into_bytes(),
+                        &url,
+                        vec![],
+                        elapsed_ms_since(started),
+                    ));
+                }
+                Err(e) => {
+                    return Ok(Value::Err(Box::new(Value::String(format!("http.post: {e}")))));
+                }
             }
         }
     }
 
-    let agent = get_agent(timeout);
+    let agent = get_agent_for(&url, timeout);
 
     let mut req = agent.post(&url);
     let mut has_ct = false;
@@ -671,7 +770,7 @@ fn http_request(method: &str, args: Vec<Value>) -> StdlibResult {
     let body = args.get(1).map(|v| v.as_string()).unwrap_or_default();
     let headers = extract_headers(&args[2..]);
     let timeout = extract_timeout(&args[2..]);
-    let agent = get_agent(timeout);
+    let agent = get_agent_for(&url, timeout);
 
     let method_lower = method.to_lowercase();
     let started = Instant::now();
