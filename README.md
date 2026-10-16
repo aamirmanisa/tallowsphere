@@ -171,10 +171,13 @@ cargo build --bin tallow
 cargo test -p tallow-locator
 ```
 
-Rust edition 2024. On the aarch64 development box, note two rules that cost real time: a plain `cargo` call
-inside an agent session fails (use a `systemd-run --scope` wrapper), and a full rebuild must be capped with
-`MemoryMax`, never `MemoryHigh` — a soft watermark below the peak stalls `rustc` at 0% CPU. Formatting the
-whole workspace hangs; format only the files you touched.
+Rust edition 2024. `rust-toolchain.toml` pins the compiler (1.98.1), so a plain `cargo` call works here
+unattended — verified with no wrapper, no `RUSTUP_TOOLCHAIN` and no `HOME`. Two environment rules still cost
+real time. First, **`rustup` on the development box has no default toolchain**, so a cargo call *outside* a tree
+that pins one fails with `rustup could not choose a version of cargo to run`; run inside a pinned tree (this
+one) or set the default once with `rustup default 1.98.1-aarch64-unknown-linux-gnu`. Second, a full rebuild
+must be capped with `MemoryMax`, never `MemoryHigh` — a soft watermark below the peak stalls `rustc` at 0% CPU.
+Formatting the whole workspace hangs; format only the files you touched.
 
 **Release artifacts use `--profile max`.** `[profile.release]` is tuned for the development loop
 (thin LTO, 16 codegen units, incremental); `[profile.max]` is fat LTO with `codegen-units=1`. Measured on
