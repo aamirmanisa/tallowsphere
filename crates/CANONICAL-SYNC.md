@@ -5,9 +5,21 @@
 **Provenance.** The four crates `tallow-crypto`, `tallow-net`, `tallow-protocol` and `tallow-svid`
 are authored **here, in Tallowsphere** (the Tallow language/runtime repository), and are **vendored
 into sendtallow** so that product can build and test standalone (CI, containers, contributors). This
-repository is canonical: edits land here first, the product syncs second. The product carries the
-same manifest and verifies its copies against it, so a `FAILED` line in either repository is the
-drift signal.
+repository is canonical: edits land here first, the product syncs second.
+
+**The product does not carry this manifest.** Measured 2026-10-16: the product's copy is a different
+generation (185 pins, dated 2026-09-21, naming a pairing between two other trees) and 34 of its pins
+fail against its own vendored files. The corrected model is: **this manifest is engine-side and
+authoritative**; the product's drift is measured by comparing its files against the pins here, not by
+trusting a manifest of its own. `scripts/sync-canonical-crates.sh` in this repository performs that
+sync, is manifest-driven, and is **non-destructive** — see the section below.
+
+**One known place where the product leads.** `tallow-protocol/src/wire/capabilities.rs` (249 lines,
+committed in the product as 1e85ac592 "bind the PQ capability record into the transcript") exists only
+in the product, where `kex.rs`, `wire/messages.rs`, `wire/mod.rs` and a relay test depend on it. Under
+the canonical-first policy this is a violation that must be resolved by porting it **up** to this
+repository; until that happens the sync script treats it as an explicit, named exception rather than
+deleting it. A `--delete` sync would remove live security code and break the product's build.
 
 The repositories are named, never pathed. sendtallow's remote is expected to move; a manifest that
 hard-codes a clone location turns a repository rename into a false drift report.

@@ -2,8 +2,10 @@
 # Regenerate crates/CANONICAL-SYNC.sha256 — the pin set for the vendored canonical crates.
 #
 # Canonical source of truth: THIS repository (Tallowsphere). The four crates below are
-# vendored into the sendtallow product repo so it can build standalone; both repos verify
-# their copies against this manifest, so a mismatch IS the drift signal.
+# vendored into the sendtallow product repo so it can build standalone. This manifest is
+# engine-side and authoritative; the product's drift is measured by comparing its files
+# against these pins (scripts/sync-canonical-crates.sh --check), not by trusting a manifest
+# of its own.
 #
 #   verify:      cd crates && sha256sum -c CANONICAL-SYNC.sha256
 #   regenerate:  scripts/gen-canonical-pins.sh

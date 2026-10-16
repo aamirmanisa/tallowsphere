@@ -245,6 +245,20 @@ jobs:
   # fails when a pinned file changed without the manifest being regenerated, which is how a
   # one-sided edit silently diverges between the two repositories.
   # Regenerate in the same change: scripts/gen-canonical-pins.sh
+  wire-conformance:
+    name: Wire conformance (room-id derivation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build the tallow binary
+        run: cargo build --bin tallow
+      - name: Rust crate matches the committed vectors
+        run: cargo test --test relay_room_id_conformance
+      - name: The language surface matches the crate, on both engines
+        # Checks agreement on accepted codes AND refusal on the rest: the strict-8 rule is part of
+        # the contract, so a code one side accepts and the other refuses is an interop break too.
+        run: bash scripts/relay_room_id_conformance.sh target/debug/tallow
+
   canonical-pins:
     name: Canonical pin gate
     runs-on: ubuntu-latest
@@ -252,3 +266,31 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify vendored canonical crate pins
         run: cd crates && sha256sum -c CANONICAL-SYNC.sha256
+      - name: The manifest is regenerable from the working tree
+        # Catches a manifest regenerated with different exclusions or flags than the committed one,
+        # which `sha256sum -c` alone cannot see: it only compares files to the manifest it is given.
+        run: |
+          cp crates/CANONICAL-SYNC.sha256 /tmp/committed.sha256
+          scripts/gen-canonical-pins.sh
+          if ! diff -u /tmp/committed.sha256 crates/CANONICAL-SYNC.sha256; then
+            echo "::error::the manifest does not match the tree — regenerate with scripts/gen-canonical-pins.sh"
+            exit 1
+          fi
+      - name: The manifest names repositories, never paths
+        # A hard-coded clone location turns a repo rename into a false drift report.
+        run: |
+          if grep -nE '^(/|~|[A-Za-z]:[\\/])|/home/|/Users/' crates/CANONICAL-SYNC.sha256; then
+            echo "::error::the manifest carries a filesystem path; it must name repositories, never locations"
+            exit 1
+          fi
+          echo "manifest carries no paths"
+      - name: Cross-tree drift report
+        # The product is a separate private repository, so this can only measure drift where it is
+        # checked out. It reports rather than fails when absent, instead of pretending to verify.
+        run: |
+          if [ -n "${TALLOW_PRODUCT_ROOT:-}" ]; then
+            bash scripts/sync-canonical-crates.sh --check
+          else
+            echo "TALLOW_PRODUCT_ROOT unset — cross-tree drift is measured where the product is checked out:"
+            echo "  TALLOW_PRODUCT_ROOT=/path/to/product bash scripts/sync-canonical-crates.sh --check"
+          fi

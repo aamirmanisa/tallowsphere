@@ -322,4 +322,6 @@ Deliberately kept, and why:
 - **Synthetic test hosts** (`a.com`, `evil.com`, `redirect.com`, `*.example`): test scaffolding.
 - **`crates/tallow-reader` and the `substack`/`market` modules**: their site constants are the
   modules' own data sources, not a curated target list.
-- **`docs/codex/smbdealhunter-scraper-spec.md`**: a spec for the operator's own product.
+- **`docs/codex/smbdealhunter-scraper-spec.md`**: removed on the operator's instruction (2026-10-16). It
+  documented the operator's own product rather than anything this tree provides, and would have
+  published a spec for an unreleased product alongside the engine.
