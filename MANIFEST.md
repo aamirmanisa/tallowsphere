@@ -173,6 +173,8 @@ Two files in `tests/*.py` are red for reasons the filter did not cause, and carr
 - `tests/test_docs_truth_maintenance.py` asserts `docs/TALLOW-CAPABILITIES.md` contains
   "Delta-Sync Flags (24)"; the document says 23 — **in the development tree as well** (line 243, both at
   HEAD and at the published revision `951218fd`). The test, not the document, is the stale side.
+  **RESOLVED 2026-10-16**: the assertion is corrected to 23 here and in its Rust twin
+  `tests/sec1_honesty_sweep.rs`, after re-counting the flags in `src/main.rs` (23 named, verified).
 - `tests/test_tl_script_inventory.py` requires `artifacts/tl-script-inventory.json` to list **exactly** this
   tree's non-ignored `.tl` files, and hard-codes five entries including `kroger_mega_scrape.tl` and
   `personal_database/ashraf_ali_business_inquiry/…legacy-http-batch.tl`. The upstream inventory has 474

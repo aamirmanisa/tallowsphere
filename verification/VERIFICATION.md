@@ -247,7 +247,10 @@ Stated because a verification record that only lists successes is a sales docume
 7. **Three Python test files are red for reasons carrying cannot fix, two of them in the development tree as
    well.** (a) `tests/test_docs_truth_maintenance.py` asserts `docs/TALLOW-CAPABILITIES.md` contains
    "Delta-Sync Flags (24)"; the document says 23 at line 243 — in the development tree too, at both HEAD and at
-   the published revision `951218fd`. The test is the stale side. (b) `tests/test_phase2_stdlib_surface_manifest.py`
+   the published revision `951218fd`. The test is the stale side. **RESOLVED 2026-10-16**: both that test and
+   its Rust twin `tests/sec1_honesty_sweep.rs` now assert 23, and the count was re-verified against the code
+   rather than the document — `src/main.rs`'s `DeltaSync` variant defines 23 named flags (25 `#[arg]` fields
+   including the two positional paths), exactly as the document's W2-08 count note says. (b) `tests/test_phase2_stdlib_surface_manifest.py`
    requires `stdlib/http.tl` to declare an `HttpRequest` struct and the runtime-dispatched functions
    `get/post/put/delete/batch/server/listen` at the top level; the file is identical here and upstream (49 lines,
    `native fn batch` plus `get`/`post`/`listen` as methods), so this assertion fails identically upstream — a

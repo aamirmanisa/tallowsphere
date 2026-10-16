@@ -239,8 +239,14 @@ mod docs_truth {
     #[test]
     fn delta_sync_flags_and_ops_docs_paths() {
         let caps = read("docs/TALLOW-CAPABILITIES.md");
-        assert!(caps.contains("Delta-Sync Flags (24)"));
+        // 23, not 24: `--vss` was removed in W2-08 (design D-C1) and both the count note and the
+        // enumeration in the document were updated for it. The code agrees — src/main.rs's
+        // `DeltaSync` variant defines 23 named flags (25 #[arg] fields with the two positionals).
+        // This assertion said 24 and had therefore been red wherever it ran, which is why a
+        // doc-truth check needs to be wired into a runner to mean anything.
+        assert!(caps.contains("Delta-Sync Flags (23)"));
         assert!(!caps.contains("Delta-Sync Flags (22)"));
+        assert!(!caps.contains("Delta-Sync Flags (24)"));
         for rel in [
             "docs/operations/quickstart.md",
             "docs/operations/operator-checklist.md",
