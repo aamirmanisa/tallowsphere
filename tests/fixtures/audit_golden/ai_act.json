@@ -43,6 +43,6 @@
     "regulation": "EU AI Act (Regulation 2024/1689)",
     "timestamp": "<ts>"
   },
-  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "disclaimer": "This output is compliance tooling — not legal advice and not a certification.",
   "schema": "tallow.audit.ai_act.v1"
 }

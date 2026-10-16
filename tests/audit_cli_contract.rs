@@ -63,7 +63,15 @@ fn run_audit(flags: &[&str], file: &str, json: bool) -> (i32, Option<serde_json:
     (exit_of(&out), value)
 }
 
+/// Version-bearing and time-bearing values are provenance stamps, not schema. They
+/// change on every release by design, so pinning them in a golden whose job is to
+/// catch *unintended* drift guarantees a false alarm at every version bump — and a
+/// false alarm teaches the reader to regenerate without looking, which is how a
+/// tripwire quietly stops working. The version and the content-hash tail are
+/// normalised exactly as timestamps already were.
 fn normalize(v: &mut serde_json::Value) {
+    let pkg_version = env!("CARGO_PKG_VERSION");
+    let tool_creator = format!("Tool: tallow-{pkg_version}");
     match v {
         serde_json::Value::Object(map) => {
             for (k, val) in map.iter_mut() {
@@ -76,8 +84,33 @@ fn normalize(v: &mut serde_json::Value) {
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(normalize),
         serde_json::Value::String(s) if is_rfc3339(s) => *s = "<ts>".to_string(),
+        // CycloneDX metadata.tools[].version carries the bare version string.
+        serde_json::Value::String(s) if s.as_str() == pkg_version => *s = "<ver>".to_string(),
+        // SPDX creationInfo.creators carries "Tool: tallow-<version>".
+        serde_json::Value::String(s) if s.as_str() == tool_creator.as_str() => {
+            *s = "Tool: tallow-<ver>".to_string()
+        }
+        // SPDX documentNamespace ends in a content hash, so it moves whenever any
+        // other field does. The identity is asserted separately
+        // (`spdx_namespace_names_the_project_host`); the variable tail is stamped.
+        serde_json::Value::String(s) if is_spdx_namespace(s) => *s = stamp_spdx_namespace(s),
         _ => {}
     }
+}
+
+fn is_spdx_namespace(s: &str) -> bool {
+    s.starts_with("https://") && s.contains("/spdx/")
+}
+
+/// `<scheme>://<host>/…/spdx/<name>/<version>/<hash>` → everything up to the name is
+/// kept verbatim, then the version and hash become placeholders.
+fn stamp_spdx_namespace(s: &str) -> String {
+    if let Some((head, _hash)) = s.rsplit_once('/') {
+        if let Some((head2, _ver)) = head.rsplit_once('/') {
+            return format!("{head2}/<ver>/<hash>");
+        }
+    }
+    s.to_string()
 }
 
 fn is_rfc3339(s: &str) -> bool {
@@ -214,11 +247,21 @@ fn json_carries_frozen_schema_and_disclaimer_keys() {
 #[test]
 fn json_matches_checked_in_goldens() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audit_golden");
+    // Regeneration is a documented command, not a manual JSON edit — the same shape
+    // as the room-id vector harness. Normalised output is what gets stored, so the
+    // fixture holds placeholders and never drifts with the version again.
+    let regenerate = std::env::var("REGENERATE_AUDIT_GOLDENS").is_ok();
     for (name, flags) in VARIANTS {
         let (_c, v) = run_audit(flags, VALID, true);
         let mut actual = v.expect("json output");
         normalize(&mut actual);
         let path = dir.join(format!("{name}.json"));
+        if regenerate {
+            let rendered = format!("{}\n", serde_json::to_string_pretty(&actual).unwrap());
+            std::fs::write(&path, rendered)
+                .unwrap_or_else(|e| panic!("write golden {}: {e}", path.display()));
+            continue;
+        }
         let golden: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("read golden {}: {e}", path.display())),
@@ -227,11 +270,48 @@ fn json_matches_checked_in_goldens() {
         assert_eq!(
             serde_json::to_string_pretty(&actual).unwrap(),
             serde_json::to_string_pretty(&golden).unwrap(),
-            "schema drift for audit variant `{name}` vs {} — regenerate goldens only for an \
-             intentional, spec'd schema change (cycle-02/08 §b)",
+            "schema drift for audit variant `{name}` vs {} — regenerate with \
+             REGENERATE_AUDIT_GOLDENS=1 only for an intentional, spec'd schema change \
+             (cycle-02/08 §b)",
             path.display()
         );
     }
+}
+
+/// Templating the namespace's hash must not erase the check on whose host it names.
+/// This is what keeps the project's own domain pinned after `normalize` stamps the
+/// variable tail: shape asserted live, bytes compared only up to the stamp.
+///
+/// Not every variant emits an SPDX block — the bare default report does not — so absent
+/// blocks are skipped. The trailing count guard exists so that a future change which
+/// stops emitting SPDX everywhere fails here instead of turning this test vacuous.
+#[test]
+fn spdx_namespace_names_the_project_host() {
+    let mut seen = 0;
+    for (name, flags) in VARIANTS {
+        let (_c, v) = run_audit(flags, VALID, true);
+        let v = v.expect("json output");
+        let Some(ns) = v
+            .get("spdx")
+            .and_then(|s| s.get("documentNamespace"))
+            .and_then(|n| n.as_str())
+        else {
+            continue;
+        };
+        seen += 1;
+        assert!(
+            ns.starts_with("https://github.com/aamirmanisa/tallowsphere/spdx/"),
+            "{name}: documentNamespace must name the project's own host and path, got `{ns}`"
+        );
+        assert!(
+            stamp_spdx_namespace(ns).ends_with("/<ver>/<hash>"),
+            "{name}: namespace must end in a name/version/hash triple, got `{ns}`"
+        );
+    }
+    assert!(
+        seen > 0,
+        "no audit variant emitted an SPDX documentNamespace — the host check above is vacuous"
+    );
 }
 
 // ── E-1-03 disclaimers in text mode must stay (regression) ──────────────────

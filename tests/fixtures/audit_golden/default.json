@@ -1,7 +1,7 @@
 {
   "annotated_functions": 1,
   "compliance_status": "COMPLIANT",
-  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "disclaimer": "This output is compliance tooling — not legal advice and not a certification.",
   "errors": 0,
   "file": "tests/fixtures/legal_valid.tl",
   "functions": [

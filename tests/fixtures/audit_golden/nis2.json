@@ -1,5 +1,5 @@
 {
-  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "disclaimer": "This output is compliance tooling — not legal advice and not a certification.",
   "nis2_report": {
     "art21_compliance": [
       {
@@ -18,12 +18,12 @@
         "status": "PASS"
       },
       {
-        "description": "No DORA incident logging found \u2014 add DoraCitIncident or dora_log_incident calls",
+        "description": "No DORA incident logging found — add DoraCitIncident or dora_log_incident calls",
         "measure": "Incident response",
         "status": "FAIL"
       }
     ],
-    "article": "Art.21 \u2014 Cybersecurity risk-management measures",
+    "article": "Art.21 — Cybersecurity risk-management measures",
     "crypto_inventory": {
       "acceptable": 0,
       "algorithms": [],
@@ -39,7 +39,7 @@
     "timestamp": "<ts>",
     "vulnerabilities": [],
     "vulnerability_feed": {
-      "error": "no advisory feed configured: set TALLOW_ADVISORY_FILE to a local JSON advisory feed file (schema tallow.advisory.feed.v1) \u2014 audit vulnerability verdicts cannot be derived without it",
+      "error": "no advisory feed configured: set TALLOW_ADVISORY_FILE to a local JSON advisory feed file (schema tallow.advisory.feed.v1) — audit vulnerability verdicts cannot be derived without it",
       "offline_fallback_warning": "",
       "path": "",
       "records": 0,
