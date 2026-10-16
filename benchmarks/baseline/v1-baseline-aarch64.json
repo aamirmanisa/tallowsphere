@@ -1,6 +1,6 @@
 {
   "schema": "tallow-bench/1",
-  "generated_at": "2026-10-16T14:19:43Z",
+  "generated_at": "2026-10-16T15:37:37Z",
   "binary": {
     "path": "/usr/local/bin/tallow",
     "sha256": "bfad86d432313d2b34970563321f25e2311e077afa2fe9b1a931377ad6ed352b",
@@ -16,9 +16,9 @@
     "cpu": "unknown",
     "cpus": 8,
     "loadavg": [
-      0.85,
-      0.51,
-      0.36
+      13.2,
+      9.8,
+      5.37
     ]
   },
   "params": {
@@ -31,245 +31,245 @@
     "files_ok": 51,
     "success_rate": 0.8793,
     "unresolved": 7,
-    "check_ms_median": 12.993,
-    "check_ms_min": 9.228,
-    "check_ms_p95": 16.587,
-    "check_ms_max": 22.889,
-    "throughput_files_per_s": 10.818,
-    "peak_rss_mb": 23.3
+    "check_ms_median": 13.674,
+    "check_ms_min": 9.15,
+    "check_ms_p95": 23.64,
+    "check_ms_max": 39.658,
+    "throughput_files_per_s": 70.897,
+    "peak_rss_mb": 22.7
   },
   "per_file": {
     "examples/agent_demo.tl": {
       "ok": false,
-      "median_ms": 13.641
+      "median_ms": 14.748
     },
     "examples/agent_memory_demo.tl": {
       "ok": false,
-      "median_ms": 13.842
+      "median_ms": 21.045
     },
     "examples/agent_valid.tl": {
       "ok": true,
-      "median_ms": 12.088
+      "median_ms": 13.327
     },
     "examples/bail_test.tl": {
       "ok": true,
-      "median_ms": 14.892
+      "median_ms": 12.239
     },
     "examples/browser_demo.tl": {
       "ok": true,
-      "median_ms": 13.517
+      "median_ms": 16.909
     },
     "examples/browser_full_demo.tl": {
       "ok": false,
-      "median_ms": 16.46
+      "median_ms": 19.734
     },
     "examples/browser_plugins_demo.tl": {
       "ok": false,
-      "median_ms": 13.666
+      "median_ms": 12.033
     },
     "examples/channels_demo.tl": {
       "ok": true,
-      "median_ms": 12.605
+      "median_ms": 12.441
     },
     "examples/closure_advanced.tl": {
       "ok": true,
-      "median_ms": 12.496
+      "median_ms": 12.345
     },
     "examples/closure_capture.tl": {
       "ok": true,
-      "median_ms": 12.888
+      "median_ms": 10.904
     },
     "examples/dealhunter.tl": {
       "ok": true,
-      "median_ms": 12.804
+      "median_ms": 20.311
     },
     "examples/dealhunter_pipeline.tl": {
       "ok": true,
-      "median_ms": 12.536
+      "median_ms": 10.417
     },
     "examples/enums.tl": {
       "ok": true,
-      "median_ms": 11.576
+      "median_ms": 13.938
     },
     "examples/error_handling.tl": {
       "ok": true,
-      "median_ms": 12.806
+      "median_ms": 14.852
     },
     "examples/financial_e2e_test.tl": {
       "ok": false,
-      "median_ms": 13.727
+      "median_ms": 13.759
     },
     "examples/fn_array_param.tl": {
       "ok": true,
-      "median_ms": 12.244
+      "median_ms": 12.456
     },
     "examples/full_demo.tl": {
       "ok": true,
-      "median_ms": 12.569
+      "median_ms": 16.852
     },
     "examples/hello_simple.tl": {
       "ok": true,
-      "median_ms": 12.464
+      "median_ms": 14.027
     },
     "examples/hof_chain.tl": {
       "ok": true,
-      "median_ms": 13.815
+      "median_ms": 10.802
     },
     "examples/hof_full.tl": {
       "ok": true,
-      "median_ms": 12.024
+      "median_ms": 10.556
     },
     "examples/hof_test.tl": {
       "ok": true,
-      "median_ms": 10.972
+      "median_ms": 14.668
     },
     "examples/if_let_test.tl": {
       "ok": true,
-      "median_ms": 13.531
+      "median_ms": 13.618
     },
     "examples/int_match_default.tl": {
       "ok": true,
-      "median_ms": 13.88
+      "median_ms": 11.903
     },
     "examples/integration_test.tl": {
       "ok": true,
-      "median_ms": 13.849
+      "median_ms": 15.3
     },
     "examples/interp_test.tl": {
       "ok": true,
-      "median_ms": 12.024
+      "median_ms": 9.711
     },
     "examples/interpolation.tl": {
       "ok": true,
-      "median_ms": 12.427
+      "median_ms": 17.125
     },
     "examples/ippool_demo.tl": {
       "ok": true,
-      "median_ms": 12.729
+      "median_ms": 10.756
     },
     "examples/legal_valid.tl": {
       "ok": true,
-      "median_ms": 12.907
+      "median_ms": 15.977
     },
     "examples/live_tor_test.tl": {
       "ok": true,
-      "median_ms": 13.355
+      "median_ms": 17.892
     },
     "examples/map_test.tl": {
       "ok": true,
-      "median_ms": 12.436
+      "median_ms": 17.106
     },
     "examples/match_test.tl": {
       "ok": true,
-      "median_ms": 12.356
+      "median_ms": 11.97
     },
     "examples/mega_test.tl": {
       "ok": true,
-      "median_ms": 14.735
+      "median_ms": 16.789
     },
     "examples/msurface_one.tl": {
       "ok": false,
-      "median_ms": 13.806
+      "median_ms": 14.694
     },
     "examples/negative_test.tl": {
       "ok": true,
-      "median_ms": 12.791
+      "median_ms": 10.703
     },
     "examples/phone_osint.tl": {
       "ok": true,
-      "median_ms": 13.558
+      "median_ms": 10.4
     },
     "examples/pqc_crypto.tl": {
       "ok": true,
-      "median_ms": 11.52
+      "median_ms": 11.799
     },
     "examples/privacy_valid.tl": {
       "ok": true,
-      "median_ms": 11.814
+      "median_ms": 14.724
     },
     "examples/public_source_get_batch.tl": {
       "ok": true,
-      "median_ms": 10.6
+      "median_ms": 11.618
     },
     "examples/question_mark_test.tl": {
       "ok": true,
-      "median_ms": 11.377
+      "median_ms": 11.748
     },
     "examples/recursive_test.tl": {
       "ok": true,
-      "median_ms": 11.211
+      "median_ms": 15.011
     },
     "examples/relay_room_auth_demo.tl": {
       "ok": true,
-      "median_ms": 14.09
+      "median_ms": 14.529
     },
     "examples/relay_room_bytes_demo.tl": {
       "ok": true,
-      "median_ms": 13.693
+      "median_ms": 18.112
     },
     "examples/relay_room_demo.tl": {
       "ok": true,
-      "median_ms": 12.918
+      "median_ms": 18.596
     },
     "examples/relay_room_multi_demo.tl": {
       "ok": true,
-      "median_ms": 13.76
+      "median_ms": 12.297
     },
     "examples/result_test.tl": {
       "ok": true,
-      "median_ms": 12.345
+      "median_ms": 15.992
     },
     "examples/scrape_speed_test.tl": {
       "ok": false,
-      "median_ms": 14.576
+      "median_ms": 17.935
     },
     "examples/self_host.tl": {
       "ok": true,
-      "median_ms": 16.872
+      "median_ms": 20.883
     },
     "examples/showcase.tl": {
       "ok": true,
-      "median_ms": 13.531
+      "median_ms": 15.832
     },
     "examples/sitescan_demo.tl": {
       "ok": true,
-      "median_ms": 11.391
+      "median_ms": 10.74
     },
     "examples/sqlite_demo.tl": {
       "ok": true,
-      "median_ms": 13.2
+      "median_ms": 10.373
     },
     "examples/stdlib_codegen_test.tl": {
       "ok": true,
-      "median_ms": 12.832
+      "median_ms": 12.919
     },
     "examples/string_compare_test.tl": {
       "ok": true,
-      "median_ms": 13.22
+      "median_ms": 14.187
     },
     "examples/string_ops.tl": {
       "ok": true,
-      "median_ms": 12.478
+      "median_ms": 14.884
     },
     "examples/struct_array.tl": {
       "ok": true,
-      "median_ms": 12.987
+      "median_ms": 17.249
     },
     "examples/structs.tl": {
       "ok": true,
-      "median_ms": 11.385
+      "median_ms": 11.272
     },
     "examples/test_dealhunter.tl": {
       "ok": true,
-      "median_ms": 14.1
+      "median_ms": 14.665
     },
     "examples/tor_single_test.tl": {
       "ok": true,
-      "median_ms": 13.056
+      "median_ms": 10.005
     },
     "examples/while_test.tl": {
       "ok": true,
-      "median_ms": 13.023
+      "median_ms": 10.411
     }
   }
 }
