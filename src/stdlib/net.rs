@@ -234,8 +234,12 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "udp_send" => Some(net_udp_send(args)),
         "udp_recv" => Some(net_udp_recv(args)),
         // ── Feature 4: Network anonymization — Tor and I2P primitives ──
-        // Simulation: returns typed structs with correct shape.
-        // Real Tor: SOCKS5 at 127.0.0.1:9050; real I2P: SAMv3 at 127.0.0.1:7656.
+        // These are NOT simulations, whatever an earlier version of this comment claimed.
+        // `tor_connect` performs a real SOCKS5 handshake (hostname resolved at the exit) and
+        // `tor_resolve` issues a real control-port RESOLVE; both fail loud rather than fabricating a
+        // value. The I2P pair refuses outright — "I2P is not supported in this build (no SAMv3 bridge
+        // implementation)" — precisely because returning a shape-correct struct would be a fake.
+        // Real Tor: SOCKS5 at 127.0.0.1:9050. Real I2P would be SAMv3 at 127.0.0.1:7656.
         "tor_connect"  => Some(tor_connect(args)),
         "tor_resolve"  => Some(tor_resolve(args)),
         "tor_new_circuit" => Some(anonymize_tor_new_circuit(args)),
