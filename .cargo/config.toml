@@ -14,6 +14,8 @@ incremental = false
 [target.x86_64-pc-windows-msvc]
 # Use faster linker on Windows (lld)
 # rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# x86_64 fast path — see the x86_64 section at the end of this file.
+rustflags = ["-C", "target-feature=+aes,+avx2,+pclmulqdq"]
 
 [env]
 # Maximize Rayon thread pool for SIMD parser
@@ -66,10 +68,46 @@ rustflags = ["-C", "target-feature=+aes", "--cfg", "aes_armv8"]
 # libcrux flag itself.
 # NOTE: `+aes` means the shipped binary requires the ARMv8 AES extension (mandatory
 # from ARMv8.2-A on; absent on some ARMv8.0 cores). That is a deliberate trade for
-# these targets, and it is a compatibility call — do not add it to x86_64 without
-# making that call too: RustCrypto's `aes` auto-detects AES-NI at runtime there.
+# these targets. The matching x86_64 call was made 2026-10-16 (sheet U-F12) — see
+# the x86_64 section at the end of this file. RustCrypto's `aes` does auto-detect
+# AES-NI at runtime on x86, but libcrux's x64 path needs the target feature, and
+# without it that path has the same silent cliff this flag exists to remove.
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+aes", "--cfg", "aes_armv8"]
 
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-feature=+aes", "--cfg", "aes_armv8"]
+
+# ── x86_64: the same cliff class, applied 2026-10-16 (sheet U-F12) ──────────────
+# The B7 audit (docs/CRYPTO-FASTPATH-AUDIT.md) found every x86_64 target carrying
+# NO flags, so libcrux's x64 AES path was compiled without the target features its
+# intrinsics require — the same silent-cliff class the aarch64 flag above prevents.
+# Mechanism, measured on aarch64 (98.7 MB/s without the flag, 909.3 MB/s with):
+# libcrux's AES/clmul wrappers are #[target_feature]-gated primitives, and a caller
+# compiled without the feature cannot inline them, so each round becomes a real
+# function call. The runtime check cannot save you — it reports the feature present
+# either way, which is what makes it silent.
+#
+#   +aes       AES-NI     -- libcrux's x64 path; RustCrypto `aes` auto-detects this
+#                            at runtime on x86, so it costs nothing there.
+#   +avx2      AVX2       -- libcrux's simd256 implementation (auto-enabled on x86_64).
+#   +pclmulqdq PCLMULQDQ  -- libcrux_platform::pmull_support() uses it for GHASH.
+#
+# No `--cfg aes_armv8` here: that is RustCrypto's ARM opt-in and means nothing on x86.
+#
+# COMPATIBILITY CALL — decided by the operator 2026-10-16, and it is the reason this
+# was reported rather than applied when the audit ran: with these features the
+# binaries REQUIRE AES-NI + AVX2 + PCLMULQDQ (Intel Haswell 2013+, AMD Excavator
+# 2015+). Older x86_64 will fault. `+` adds to the default feature set, so
+# `crt-static` and the baseline SSE2 defaults are preserved.
+#
+# `x86_64-unknown-linux-gnu` is included deliberately: CI and local x86 builds
+# otherwise measure a crypto path ~9x slower than the one that ships.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-feature=+aes,+avx2,+pclmulqdq"]
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+aes,+avx2,+pclmulqdq"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-feature=+aes,+avx2,+pclmulqdq"]
