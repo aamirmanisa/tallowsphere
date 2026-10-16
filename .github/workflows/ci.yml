@@ -345,3 +345,41 @@ jobs:
             echo "TALLOW_PRODUCT_ROOT unset — cross-tree drift is measured where the product is checked out:"
             echo "  TALLOW_PRODUCT_ROOT=/path/to/product bash scripts/sync-canonical-crates.sh --check"
           fi
+
+  # ── Performance regression gate (blocking) ─────────────────────────────────
+  # The jobs above gate composition; none measured speed (upgrade sheet §1). This is that missing
+  # gate: it runs the compiler/parser harness (benchmarks/) over examples/*.tl and blocks on the
+  # machine-independent metrics — success_rate and unresolved — plus wide target ranges on
+  # timing/memory. Two things it deliberately does NOT do on a shared runner:
+  #   * it does not compare against benchmarks/baseline/v1-baseline-aarch64.json — that baseline is
+  #     machine-specific and a GitHub runner is not comparable to it. The same-machine regression
+  #     comparison is a local/nightly step (command in benchmarks/README.md).
+  #   * it re-runs the gate's own --self-test, so a broken gate fails HERE rather than passing
+  #     silently everywhere else.
+  perf-regression:
+    name: Perf regression gate (compiler/parser)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Gate self-test (proves the gate fails on a seeded regression)
+        run: python3 scripts/no_regression_gate.py --self-test
+      - name: Build debug tallow
+        run: cargo build --locked --bin tallow
+      - name: Measure examples (compiler/parser)
+        run: >-
+          python3 benchmarks/run_compiler_parser.py --tallow target/debug/tallow
+          --corpus-glob 'examples/*.tl' --iters 3 --warmup 1 --out benchmarks/out/current.json
+      - name: Block on regression (target ranges)
+        run: >-
+          python3 scripts/no_regression_gate.py --targets benchmarks/targets/v1-targets.json
+          --current benchmarks/out/current.json --report perf-verdict.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: perf-verdict
+          path: perf-verdict.json

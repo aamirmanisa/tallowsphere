@@ -1,0 +1,48 @@
+{
+  "schema": "tallow-bench-targets/1",
+  "target": "v1",
+  "corpus_glob": "examples/*.tl",
+  "updated": "2026-10-16",
+  "why": "Targets are RANGES with a rationale, never a single pulled-from-air multiplier. Ranges are set so a red gate means a real regression: the machine-independent metrics (success_rate, unresolved) carry the hard budget, and the timing/memory ranges are wide enough to survive a different CI runner while still catching a catastrophic (multi-x) regression.",
+  "measured_baseline": {
+    "file": "benchmarks/baseline/v1-baseline-aarch64.json",
+    "binary": "/usr/local/bin/tallow (tallow 1.1.1, aarch64)",
+    "note": "Two back-to-back runs agreed exactly on success_rate/unresolved and within 2.4% on timing."
+  },
+  "metrics": {
+    "success_rate": {
+      "range": [0.85, 1.0],
+      "direction": "higher-is-better",
+      "rationale": "51 of 58 examples/*.tl type-check clean; the 7 that do not are intentionally non-checking. A drop below 0.85 is a parser/checker regression, not example churn. Machine-independent."
+    },
+    "unresolved": {
+      "range": [0, 12],
+      "direction": "lower-is-better",
+      "rationale": "Companion to success_rate (files that fail to check). Baseline 7; headroom to 12 before the range trips."
+    },
+    "check_ms_median": {
+      "range": [1.0, 60.0],
+      "direction": "lower-is-better",
+      "rationale": "Baseline 13.0 ms on aarch64/8-vCPU. The range guards a >4x regression; the precise budget lives in the gate (15%), because a shared CI runner cannot resolve 5%."
+    },
+    "check_ms_p95": {
+      "range": [1.0, 100.0],
+      "direction": "lower-is-better",
+      "rationale": "Baseline 16.6 ms. Same reasoning as the median."
+    },
+    "throughput_files_per_s": {
+      "range": [2.0, 200.0],
+      "direction": "higher-is-better",
+      "rationale": "Baseline 10.8 files/s single-threaded; range guards a >4x collapse."
+    },
+    "peak_rss_mb": {
+      "range": [5.0, 120.0],
+      "direction": "lower-is-better",
+      "rationale": "Baseline 23.3 MB. Range guards an order-of-magnitude memory regression."
+    }
+  },
+  "notes": [
+    "Corpus is examples/*.tl: real programs the checker is meant to accept. stdlib/*.tl is NOT the corpus — only 11 of 85 pass 'tallow check' standalone, because the stdlib decls use constructs the standalone checker does not parse (await, _, method-call syntax). That is recorded, not opened, and is a separate item.",
+    "The gate's machine-independent checks (success_rate, unresolved) block on any runner. The precise same-machine regression comparison runs where the machine is stable (this aarch64 box / a nightly lane), not on a shared CI runner."
+  ]
+}

@@ -15,6 +15,7 @@ desktop.ini
 
 # Temp/generated
 *.log
+benchmarks/out/
 gh_page1.json
 apps/tallowsync/concept-temp-*.html
 apps/tallowsync/concept-*.png
