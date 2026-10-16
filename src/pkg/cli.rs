@@ -188,20 +188,23 @@ pub fn pkg_remove(
     let registry = LocalRegistry::open(registry_path.to_path_buf(), cache.clone());
     let _resolved = resolve_and_link(project_dir, &registry, &cache)?;
 
-    // Remove from tallow_modules/ if present
+    // Remove from tallow_modules/ if present. `pkg_add` materialises a package as a real,
+    // non-empty directory, and the previous pair — remove_file then remove_dir, both with the
+    // result discarded — could not delete that: remove_file fails on a directory and remove_dir
+    // fails on a non-empty one. The package directory survived removal silently, which is what
+    // test_pkg_remove_deletes_dependency had been reporting. Failures now surface rather than
+    // leaving a tree half-removed.
     let modules_path = project_dir.join("tallow_modules").join(pkg_name);
-    if modules_path.exists() || modules_path.symlink_metadata().is_ok() {
-        #[cfg(windows)]
-        {
-            if modules_path.is_dir() {
-                let _ = fs::remove_dir(&modules_path);
-            }
-        }
-        #[cfg(unix)]
-        {
-            let _ = fs::remove_file(&modules_path);
-            let _ = fs::remove_dir(&modules_path);
-        }
+    if let Ok(meta) = fs::symlink_metadata(&modules_path) {
+        // symlink_metadata describes the link itself, so a symlink is removed as a file — which
+        // is what unix needs. On Windows a directory symlink would need remove_dir; that case is
+        // not reachable from pkg_add here, which materialises real directories.
+        let outcome = if meta.file_type().is_dir() {
+            fs::remove_dir_all(&modules_path)
+        } else {
+            fs::remove_file(&modules_path)
+        };
+        outcome.with_context(|| format!("failed to remove {}", modules_path.display()))?;
     }
 
     eprintln!("removed {}", pkg_name);
