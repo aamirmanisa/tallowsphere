@@ -1,0 +1,78 @@
+{
+  "_meta": {
+    "harness": "benchmarks/copy-engine/run_copy_bench.py",
+    "binary": "/usr/local/bin/tallow",
+    "binary_sha256": "bfad86d432313d2b34970563321f25e2311e077afa2fe9b1a931377ad6ed352b",
+    "dataset": "/root/.hermes/profiles/alden/cache/scratch/copybench/data-1g",
+    "dataset_sha256": "98c09ff41e1e7e583d43a7876010402343537259ea889ae42b4583afab2a9831",
+    "dataset_matches_manifest": true,
+    "dataset_bytes": 1073741824,
+    "kernel": "6.8.0-146-generic",
+    "cpu": "0xd0c",
+    "vcpus": 8,
+    "loadavg_1_5_15": [
+      "2.66",
+      "4.29",
+      "4.48"
+    ],
+    "date_utc": "2026-10-16T17:50:28+00:00",
+    "iters": 3,
+    "timing": "median wall over N runs, perf_counter around the child; peak RSS from a separate /usr/bin/time -f %M run of the largest file",
+    "cache_modes": "warm = source already in page cache (this measures MEMORY bandwidth and overstates disk throughput by roughly an order of magnitude); cold = source pages evicted with POSIX_FADV_DONTNEED before each timed run (surgical \u2014 not a global drop_caches). Only the cold row speaks to disk throughput; compare it to the documented 2.6 GB/s.",
+    "correctness": "a run counts only if sha256(dst) == sha256(src)"
+  },
+  "variants": {
+    "tallow copy (shipped) [warm]": {
+      "runs": 3,
+      "median_s": 0.8895,
+      "min_s": 0.8595,
+      "gbps": 1.207,
+      "peak_rss_kb": 20428,
+      "incorrect_copies": 0,
+      "bytes_per_run": 1073741824,
+      "cache": "warm",
+      "spawn_floor_ms_per_process": 9.732,
+      "processes_per_iteration": 4,
+      "gbps_excluding_spawn": 1.262
+    },
+    "coreutils cp [warm]": {
+      "runs": 3,
+      "median_s": 0.8327,
+      "min_s": 0.8146,
+      "gbps": 1.29,
+      "peak_rss_kb": 2048,
+      "incorrect_copies": 0,
+      "bytes_per_run": 1073741824,
+      "cache": "warm",
+      "spawn_floor_ms_per_process": 3.13,
+      "processes_per_iteration": 4,
+      "gbps_excluding_spawn": 1.309
+    },
+    "tallow copy (shipped) [cold]": {
+      "runs": 3,
+      "median_s": 2.5586,
+      "min_s": 2.5213,
+      "gbps": 0.42,
+      "peak_rss_kb": 20428,
+      "incorrect_copies": 0,
+      "bytes_per_run": 1073741824,
+      "cache": "cold",
+      "spawn_floor_ms_per_process": 9.732,
+      "processes_per_iteration": 4,
+      "gbps_excluding_spawn": 0.426
+    },
+    "coreutils cp [cold]": {
+      "runs": 3,
+      "median_s": 1.9201,
+      "min_s": 1.8516,
+      "gbps": 0.559,
+      "peak_rss_kb": 2048,
+      "incorrect_copies": 0,
+      "bytes_per_run": 1073741824,
+      "cache": "cold",
+      "spawn_floor_ms_per_process": 3.13,
+      "processes_per_iteration": 4,
+      "gbps_excluding_spawn": 0.563
+    }
+  }
+}
