@@ -1,0 +1,396 @@
+{
+  "_meta": {
+    "harness": "benchmarks/cross-language/run_bench.py",
+    "machine": {
+      "kernel": "6.8.0-146-generic",
+      "cpu": "0xd0c",
+      "vcpus": 8,
+      "loadavg_1_5_15": [
+        "8.00",
+        "5.00",
+        "3.75"
+      ],
+      "date_utc": "2026-10-16T17:37:11+00:00",
+      "host": "ubuntu-16gb-hel1-1"
+    },
+    "versions": {
+      "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "go": "go version go1.22.2 linux/arm64",
+      "python": "Python 3.14.7",
+      "ruby": "ruby 3.2.3 (2024-01-18 revision 52bb2ac0a6) [aarch64-linux-gnu]"
+    },
+    "iters": 3,
+    "spawn_floor_ms": 2.378,
+    "timing": "median wall ms around a Python subprocess (perf_counter); RSS via /usr/bin/time -f %M in a separate run; s_per_Munits normalises unequal unit budgets",
+    "tallow_row": "absent by design \u2014 this harness measures the C/Rust/Go/Python/Ruby kernels; Tallow runs .tl, and a projected column belongs in prose labelled [projected], never as a measured row"
+  },
+  "C -O3": {
+    "class": "compiled",
+    "workloads": {
+      "mandelbrot": {
+        "units": 10000000,
+        "median_ms": 654.975,
+        "min_ms": 649.375,
+        "n": 3,
+        "peak_rss_kb": 1280,
+        "s_per_Munits": 0.0655
+      },
+      "vec_sum": {
+        "units": 50000000,
+        "median_ms": 304.796,
+        "min_ms": 301.976,
+        "n": 3,
+        "peak_rss_kb": 391552,
+        "s_per_Munits": 0.0061
+      },
+      "alloc_churn": {
+        "units": 30000000,
+        "median_ms": 473.331,
+        "min_ms": 469.657,
+        "n": 3,
+        "peak_rss_kb": 1280,
+        "s_per_Munits": 0.0158
+      },
+      "str_build": {
+        "units": 6000000,
+        "median_ms": 452.819,
+        "min_ms": 434.181,
+        "n": 3,
+        "peak_rss_kb": 46976,
+        "s_per_Munits": 0.0755
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 1.379,
+        "min_ms": 1.168,
+        "n": 10,
+        "peak_rss_kb": 1280,
+        "s_per_Munits": 1378.5275,
+        "startup_corrected_ms": 0.0
+      }
+    }
+  },
+  "C -O3 -mcpu=native": {
+    "class": "compiled",
+    "workloads": {
+      "mandelbrot": {
+        "units": 10000000,
+        "median_ms": 721.604,
+        "min_ms": 674.617,
+        "n": 3,
+        "peak_rss_kb": 1280,
+        "s_per_Munits": 0.0722
+      },
+      "vec_sum": {
+        "units": 50000000,
+        "median_ms": 308.221,
+        "min_ms": 301.205,
+        "n": 3,
+        "peak_rss_kb": 391552,
+        "s_per_Munits": 0.0062
+      },
+      "alloc_churn": {
+        "units": 30000000,
+        "median_ms": 468.246,
+        "min_ms": 468.182,
+        "n": 3,
+        "peak_rss_kb": 1280,
+        "s_per_Munits": 0.0156
+      },
+      "str_build": {
+        "units": 6000000,
+        "median_ms": 438.232,
+        "min_ms": 433.471,
+        "n": 3,
+        "peak_rss_kb": 46976,
+        "s_per_Munits": 0.073
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 1.828,
+        "min_ms": 1.412,
+        "n": 10,
+        "peak_rss_kb": 1280,
+        "s_per_Munits": 1827.7365,
+        "startup_corrected_ms": 0.0
+      }
+    }
+  },
+  "Rust opt3": {
+    "class": "compiled",
+    "workloads": {
+      "mandelbrot": {
+        "units": 10000000,
+        "median_ms": 681.991,
+        "min_ms": 675.367,
+        "n": 3,
+        "peak_rss_kb": 1664,
+        "s_per_Munits": 0.0682
+      },
+      "vec_sum": {
+        "units": 50000000,
+        "median_ms": 349.031,
+        "min_ms": 348.825,
+        "n": 3,
+        "peak_rss_kb": 392320,
+        "s_per_Munits": 0.007
+      },
+      "alloc_churn": {
+        "units": 30000000,
+        "median_ms": 565.25,
+        "min_ms": 550.195,
+        "n": 3,
+        "peak_rss_kb": 1664,
+        "s_per_Munits": 0.0188
+      },
+      "str_build": {
+        "units": 6000000,
+        "median_ms": 226.236,
+        "min_ms": 220.849,
+        "n": 3,
+        "peak_rss_kb": 47488,
+        "s_per_Munits": 0.0377
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 1.603,
+        "min_ms": 1.324,
+        "n": 10,
+        "peak_rss_kb": 1664,
+        "s_per_Munits": 1602.5114,
+        "startup_corrected_ms": 0.0
+      }
+    }
+  },
+  "Rust fat LTO": {
+    "class": "compiled",
+    "workloads": {
+      "mandelbrot": {
+        "units": 10000000,
+        "median_ms": 720.173,
+        "min_ms": 718.36,
+        "n": 3,
+        "peak_rss_kb": 1536,
+        "s_per_Munits": 0.072
+      },
+      "vec_sum": {
+        "units": 50000000,
+        "median_ms": 378.093,
+        "min_ms": 346.1,
+        "n": 3,
+        "peak_rss_kb": 392064,
+        "s_per_Munits": 0.0076
+      },
+      "alloc_churn": {
+        "units": 30000000,
+        "median_ms": 501.25,
+        "min_ms": 496.007,
+        "n": 3,
+        "peak_rss_kb": 1536,
+        "s_per_Munits": 0.0167
+      },
+      "str_build": {
+        "units": 6000000,
+        "median_ms": 204.503,
+        "min_ms": 201.721,
+        "n": 3,
+        "peak_rss_kb": 47360,
+        "s_per_Munits": 0.0341
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 2.134,
+        "min_ms": 1.569,
+        "n": 10,
+        "peak_rss_kb": 1536,
+        "s_per_Munits": 2133.6621,
+        "startup_corrected_ms": 0.0
+      }
+    }
+  },
+  "Rust PGO+LTO": {
+    "class": "compiled",
+    "workloads": {
+      "mandelbrot": {
+        "units": 10000000,
+        "median_ms": 702.811,
+        "min_ms": 679.084,
+        "n": 3,
+        "peak_rss_kb": 1536,
+        "s_per_Munits": 0.0703
+      },
+      "vec_sum": {
+        "units": 50000000,
+        "median_ms": 368.667,
+        "min_ms": 365.109,
+        "n": 3,
+        "peak_rss_kb": 392064,
+        "s_per_Munits": 0.0074
+      },
+      "alloc_churn": {
+        "units": 30000000,
+        "median_ms": 492.704,
+        "min_ms": 491.583,
+        "n": 3,
+        "peak_rss_kb": 1536,
+        "s_per_Munits": 0.0164
+      },
+      "str_build": {
+        "units": 6000000,
+        "median_ms": 155.883,
+        "min_ms": 151.829,
+        "n": 3,
+        "peak_rss_kb": 47360,
+        "s_per_Munits": 0.026
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 1.665,
+        "min_ms": 1.407,
+        "n": 10,
+        "peak_rss_kb": 1536,
+        "s_per_Munits": 1664.9126,
+        "startup_corrected_ms": 0.0
+      }
+    }
+  },
+  "Go": {
+    "class": "compiled",
+    "workloads": {
+      "mandelbrot": {
+        "units": 10000000,
+        "median_ms": 684.381,
+        "min_ms": 663.815,
+        "n": 3,
+        "peak_rss_kb": 1664,
+        "s_per_Munits": 0.0684
+      },
+      "vec_sum": {
+        "units": 50000000,
+        "median_ms": 389.893,
+        "min_ms": 387.565,
+        "n": 3,
+        "peak_rss_kb": 392832,
+        "s_per_Munits": 0.0078
+      },
+      "alloc_churn": {
+        "units": 30000000,
+        "median_ms": 1975.226,
+        "min_ms": 1966.674,
+        "n": 3,
+        "peak_rss_kb": 9336,
+        "s_per_Munits": 0.0658
+      },
+      "str_build": {
+        "units": 6000000,
+        "median_ms": 898.795,
+        "min_ms": 881.857,
+        "n": 3,
+        "peak_rss_kb": 95616,
+        "s_per_Munits": 0.1498
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 2.938,
+        "min_ms": 2.474,
+        "n": 10,
+        "peak_rss_kb": 1664,
+        "s_per_Munits": 2938.3374,
+        "startup_corrected_ms": 0.56
+      }
+    }
+  },
+  "Python": {
+    "class": "scripting",
+    "workloads": {
+      "mandelbrot": {
+        "units": 400000,
+        "median_ms": 576.583,
+        "min_ms": 576.084,
+        "n": 3,
+        "peak_rss_kb": 13312,
+        "s_per_Munits": 1.4415
+      },
+      "vec_sum": {
+        "units": 2000000,
+        "median_ms": 390.869,
+        "min_ms": 380.556,
+        "n": 3,
+        "peak_rss_kb": 91776,
+        "s_per_Munits": 0.1954
+      },
+      "alloc_churn": {
+        "units": 2000000,
+        "median_ms": 465.719,
+        "min_ms": 461.068,
+        "n": 3,
+        "peak_rss_kb": 13312,
+        "s_per_Munits": 0.2329
+      },
+      "str_build": {
+        "units": 1000000,
+        "median_ms": 237.625,
+        "min_ms": 234.338,
+        "n": 3,
+        "peak_rss_kb": 81792,
+        "s_per_Munits": 0.2376
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 23.562,
+        "min_ms": 20.58,
+        "n": 10,
+        "peak_rss_kb": 13312,
+        "s_per_Munits": 23562.06,
+        "startup_corrected_ms": 21.184
+      }
+    }
+  },
+  "Ruby": {
+    "class": "scripting",
+    "workloads": {
+      "mandelbrot": {
+        "units": 400000,
+        "median_ms": 479.347,
+        "min_ms": 478.845,
+        "n": 3,
+        "peak_rss_kb": 14976,
+        "s_per_Munits": 1.1984
+      },
+      "vec_sum": {
+        "units": 2000000,
+        "median_ms": 428.642,
+        "min_ms": 405.277,
+        "n": 3,
+        "peak_rss_kb": 30592,
+        "s_per_Munits": 0.2143
+      },
+      "alloc_churn": {
+        "units": 2000000,
+        "median_ms": 629.887,
+        "min_ms": 625.914,
+        "n": 3,
+        "peak_rss_kb": 14976,
+        "s_per_Munits": 0.3149
+      },
+      "str_build": {
+        "units": 1000000,
+        "median_ms": 306.178,
+        "min_ms": 298.231,
+        "n": 3,
+        "peak_rss_kb": 21888,
+        "s_per_Munits": 0.3062
+      },
+      "startup": {
+        "units": 1,
+        "median_ms": 80.787,
+        "min_ms": 77.139,
+        "n": 10,
+        "peak_rss_kb": 14976,
+        "s_per_Munits": 80786.937,
+        "startup_corrected_ms": 78.409
+      }
+    }
+  }
+}
