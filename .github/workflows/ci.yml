@@ -75,12 +75,27 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     steps:
+      # fetch-depth: 0 -- attribution needs the base revision present in the clone
+      # so a failing test can be re-run against it; a shallow clone cannot reach
+      # the merge-base and every label would come back UNKNOWN.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo test --locked --lib -- --test-threads=2
+      - name: Test
+        run: |
+          set -o pipefail
+          cargo test --locked --lib -- --test-threads=2 2>&1 | tee "$RUNNER_TEMP/test.log"
+      # Every failing test is labelled pre-existing or caused by RUNNING it at the
+      # base revision (scripts/attribute_failure.py, docs/FAILURE-ATTRIBUTION.md).
+      # That costs a build of the base tree, on failure only -- the label is proven
+      # rather than guessed. The other two test jobs follow this shape.
+      - name: Attribute failures
+        if: failure()
+        run: python3 scripts/attribute_failure.py --log "$RUNNER_TEMP/test.log"
 
   test-windows:
     name: Test (Windows)
