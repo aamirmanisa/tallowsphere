@@ -315,6 +315,21 @@ enum Command {
         #[arg(long)]
         require_native: bool,
 
+        /// Run in the tree-walking interpreter instead of compiling natively.
+        /// This is the explicit scripting path. Native is the default and the
+        /// interpreter is otherwise only a FALLBACK when the native build is
+        /// unavailable; asking for it directly is the difference between an
+        /// engine that was chosen and one that was silently substituted.
+        /// Interpreter throughput is far below native — see docs/RUN-ENGINES.md
+        /// for the measured startup of both, and the fallback's throughput cost.
+        ///
+        /// Conflicts with --require-native: asking for the interpreter while also
+        /// asking to refuse it is a contradiction, and accepting both would
+        /// silently ignore one of them (which is how this pair behaved before the
+        /// conflict was declared).
+        #[arg(long, conflicts_with = "require_native")]
+        interpret: bool,
+
         /// Run under kernel confinement (Landlock): reads limited to system
         /// dirs + CWD + the program's dir, writes limited to the temp dir.
         /// A Landlock failure refuses the run instead of executing
@@ -10409,6 +10424,7 @@ fn real_main() -> anyhow::Result<()> {
                     target,
                     contracts,
                     require_native,
+                    interpret,
                     script,
                     sandbox,
                     ..
@@ -10488,7 +10504,7 @@ fn real_main() -> anyhow::Result<()> {
                         .as_ref()
                         .and_then(|t| tallow::codegen::TargetConfig::from_target_str(t).ok())
                         .unwrap_or_else(tallow::codegen::TargetConfig::host);
-                    if !is_cross {
+                    if !is_cross && !*interpret {
                         let n_source_dir = file.parent().map(|p| p.display().to_string());
                         match tallow::codegen::CodeGen::compile_with_target_and_source_dir(
                             &program,
@@ -10544,6 +10560,16 @@ fn real_main() -> anyhow::Result<()> {
                                 eprintln!("* native build unavailable ({e}); running in the interpreter");
                             }
                         }
+                    }
+
+                    if *interpret {
+                        // Engine marker for the EXPLICIT scripting path. Never suppressed
+                        // by -q, for the same reason the fallback marker is not (E-2-02
+                        // §5): a caller reading stdout + rc must be able to tell which
+                        // engine actually ran rather than infer it from the ABSENCE of a
+                        // warning — an absence is indistinguishable from an old binary,
+                        // a suppressed diagnostic, or a run that never reached here.
+                        eprintln!("* running in the interpreter (--interpret)");
                     }
 
                     // Execute via tree-walking interpreter
