@@ -494,6 +494,11 @@ enum Command {
     Lsp,
     /// Print version information
     Version,
+    /// MCP client: consume a third-party MCP server's tools
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
     /// Browser management commands
     Browser {
         #[command(subcommand)]
@@ -1578,6 +1583,36 @@ enum WorkspaceAction {
         /// Arguments to pass to tallow (e.g. build src/main.tl)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpAction {
+    /// List the tools a third-party MCP server advertises
+    Tools {
+        /// Server command and its arguments, after `--`
+        ///
+        /// Example: tallow mcp tools -- /root/.caveman/bin/caveman-mcp
+        #[arg(required = true, last = true, num_args = 1..)]
+        server: Vec<String>,
+    },
+    /// Call a tool on a third-party MCP server
+    Call {
+        /// Tool name, exactly as `tallow mcp tools` reported it
+        #[arg(long)]
+        tool: String,
+        /// Tool argument as KEY=VALUE; VALUE is parsed as JSON when it parses, else as a string
+        #[arg(long = "arg", value_name = "KEY=VALUE")]
+        args: Vec<String>,
+        /// Tool argument as KEY=VALUE, always passed as a STRING (never JSON-parsed)
+        ///
+        /// Needed when the value is itself JSON text: --arg-str 'input={"a":1}'.
+        /// Applied after --arg, so it wins for a repeated key.
+        #[arg(long = "arg-str", value_name = "KEY=VALUE")]
+        str_args: Vec<String>,
+        /// Server command and its arguments, after `--`
+        #[arg(required = true, last = true, num_args = 1..)]
+        server: Vec<String>,
     },
 }
 
@@ -7197,6 +7232,79 @@ fn real_main() -> anyhow::Result<()> {
                 }
             }
         }
+        Command::Mcp { ref action } => match action {
+            McpAction::Tools { server } => {
+                let (program, rest) = server.split_first().expect("clap requires at least one");
+                match tallow::mcp::McpClient::connect(program, rest) {
+                    Ok(mut client) => match client.list_tools() {
+                        Ok(tools) => {
+                            // The tool list is DATA (pipe it); only the summary goes to stderr.
+                            println!(
+                                "# {} {} (MCP {})",
+                                client.server_name(),
+                                client.server_version(),
+                                client.protocol_version()
+                            );
+                            for t in &tools {
+                                let first = t.description.lines().next().unwrap_or("");
+                                println!("{}\t{}", t.name, first);
+                            }
+                            eprintln!("{} tool(s)", tools.len());
+                        }
+                        Err(e) => {
+                            eprintln!("Error listing MCP tools: {e}");
+                            std::process::exit(exit_codes::IO_ERROR);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Error connecting to MCP server: {e}");
+                        std::process::exit(exit_codes::IO_ERROR);
+                    }
+                }
+            }
+            McpAction::Call { tool, args, str_args, server } => {
+                let (program, rest) = server.split_first().expect("clap requires at least one");
+                let mut arguments = serde_json::Map::new();
+                // --arg-str is applied second so it wins for a repeated key: an explicit
+                // "this is a string" beats an inference.
+                for (kv, force_string) in args
+                    .iter()
+                    .map(|kv| (kv, false))
+                    .chain(str_args.iter().map(|kv| (kv, true)))
+                {
+                    match kv.split_once('=') {
+                        Some((k, v)) => {
+                            let value = if force_string {
+                                serde_json::Value::String(v.to_string())
+                            } else {
+                                serde_json::from_str(v)
+                                    .unwrap_or_else(|_| serde_json::Value::String(v.to_string()))
+                            };
+                            arguments.insert(k.to_string(), value);
+                        }
+                        None => {
+                            eprintln!("Error: --arg expects KEY=VALUE, got '{kv}'");
+                            std::process::exit(exit_codes::USAGE_ERROR);
+                        }
+                    }
+                }
+                match tallow::mcp::McpClient::connect(program, rest) {
+                    Ok(mut client) => {
+                        match client.call_tool(tool, serde_json::Value::Object(arguments)) {
+                            Ok(text) => println!("{text}"),
+                            Err(e) => {
+                                eprintln!("Error calling MCP tool '{tool}': {e}");
+                                std::process::exit(exit_codes::IO_ERROR);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error connecting to MCP server: {e}");
+                        std::process::exit(exit_codes::IO_ERROR);
+                    }
+                }
+            }
+        },
         Command::Browser { ref action } => {
             match action {
                 BrowserAction::Install { full } => {

@@ -106,6 +106,7 @@ pub mod link_chain;
 pub mod logging;
 pub mod lsp;
 pub mod marking_flow;
+pub mod mcp;
 pub mod merkle_audit;
 pub mod metadata_min;
 pub mod mode_diversity;
