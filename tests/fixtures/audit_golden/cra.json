@@ -3,7 +3,7 @@
     "annex_i_compliance": [
       {
         "check": "Security by default",
-        "description": "Product-level hardening (stack canaries, CET, secure defaults in shipped artifacts) cannot be verified from a source audit \u2014 assess the built product separately",
+        "description": "Product-level hardening (stack canaries, CET, secure defaults in shipped artifacts) cannot be verified from a source audit — assess the built product separately",
         "evidence": "none",
         "status": "UNKNOWN"
       },
@@ -15,13 +15,13 @@
       },
       {
         "check": "Update capability",
-        "description": "No Cargo.lock/tallow.lock found \u2014 cannot demonstrate update tracking",
+        "description": "No Cargo.lock/tallow.lock found — cannot demonstrate update tracking",
         "evidence": "sbom",
         "status": "FAIL"
       },
       {
         "check": "Vulnerability handling",
-        "description": "No advisory feed applied (unavailable) \u2014 set TALLOW_ADVISORY_FILE to a local JSON advisory feed: no advisory feed configured: set TALLOW_ADVISORY_FILE to a local JSON advisory feed file (schema tallow.advisory.feed.v1) \u2014 audit vulnerability verdicts cannot be derived without it",
+        "description": "No advisory feed applied (unavailable) — set TALLOW_ADVISORY_FILE to a local JSON advisory feed: no advisory feed configured: set TALLOW_ADVISORY_FILE to a local JSON advisory feed file (schema tallow.advisory.feed.v1) — audit vulnerability verdicts cannot be derived without it",
         "evidence": "feed",
         "status": "FAIL"
       },
@@ -40,7 +40,7 @@
     "vulnerabilities": [],
     "vulnerabilities_count": 0,
     "vulnerability_feed": {
-      "error": "no advisory feed configured: set TALLOW_ADVISORY_FILE to a local JSON advisory feed file (schema tallow.advisory.feed.v1) \u2014 audit vulnerability verdicts cannot be derived without it",
+      "error": "no advisory feed configured: set TALLOW_ADVISORY_FILE to a local JSON advisory feed file (schema tallow.advisory.feed.v1) — audit vulnerability verdicts cannot be derived without it",
       "offline_fallback_warning": "",
       "path": "",
       "records": 0,
@@ -74,7 +74,7 @@
         {
           "name": "tallow",
           "vendor": "tallow-lang",
-          "version": "0.4.0"
+          "version": "<ver>"
         }
       ]
     },
@@ -82,19 +82,19 @@
     "version": 1,
     "vulnerabilities": []
   },
-  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "disclaimer": "This output is compliance tooling — not legal advice and not a certification.",
   "schema": "tallow.audit.cra.v1",
   "spdx": {
     "SPDXID": "SPDXRef-DOCUMENT",
     "creationInfo": {
       "created": "<ts>",
       "creators": [
-        "Tool: tallow-0.4.0"
+        "Tool: tallow-<ver>"
       ],
       "licenseListVersion": "3.22"
     },
     "dataLicense": "CC0-1.0",
-    "documentNamespace": "https://github.com/aamirmanisa/tallowsphere/spdx/unknown/0.0.0/378c8773776de077",
+    "documentNamespace": "https://github.com/aamirmanisa/tallowsphere/spdx/unknown/<ver>/<hash>",
     "name": "unknown-0.0.0",
     "packages": [],
     "spdxVersion": "SPDX-2.3"

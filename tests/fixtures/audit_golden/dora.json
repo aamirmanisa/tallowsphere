@@ -1,5 +1,5 @@
 {
-  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "disclaimer": "This output is compliance tooling — not legal advice and not a certification.",
   "dora_report": {
     "art17_ict_risk_management": {
       "description": "ICT risk management annotations present on network functions",
@@ -7,7 +7,7 @@
       "status": "PASS"
     },
     "art19_incident_reporting": {
-      "description": "DoraCitIncident not found in program \u2014 incident logging not configured",
+      "description": "DoraCitIncident not found in program — incident logging not configured",
       "dora_cit_incident_used": false,
       "status": "FAIL"
     },
