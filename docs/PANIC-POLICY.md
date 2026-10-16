@@ -42,32 +42,43 @@ panic=unwind  ->  RESULT CAUGHT -- in-process isolation works
                   exit 0
 ```
 
-The tree contains **7 `catch_unwind` call sites** whose surrounding comments promise containment:
+The tree contains **7 `catch_unwind` call sites in `src/`** whose surrounding comments promise containment.
+**6 are on shipped code paths; 1 is inside a unit test** — a split I had wrong when this document was first
+written (it said 7 shipped), corrected while annotating them:
 
 | file | sites | lines |
 |---|---|---|
-| `src/main.rs` | 2 | 16892, 16912 — probe/report runs described as "thread + catch_unwind + hard timeout" |
-| `src/interp.rs` | 5 | 3616, 4645, 4796, 32312, 42810 — "prevent panic propagation", "Execute child in catch_unwind for crash isolation" |
+| `src/main.rs` | 2 | 16892, 16912 — probe/report runs described as "thread + catch_unwind + hard timeout". Both shipped. |
+| `src/interp.rs` | 5 | 3616, 4645, 4796, 32312 shipped — "prevent panic propagation", "Execute child in catch_unwind for crash isolation". **42810 is inside the unit test `secret_type_cannot_be_printed`.** |
 
 **They do nothing in release.** They work in dev and in `cargo test`, because both use `unwind` — which is
-exactly why the in-tree test `spawn_agent_crash_isolation_via_catch_unwind` (`src/interp.rs:46465`) passes
-while the guarantee it describes is absent from everything that ships. A test that runs under a profile the
-artifact is not built with does not test the artifact.
+exactly why two in-tree tests pass while the guarantee they describe is absent from everything that ships:
+`spawn_agent_crash_isolation_via_catch_unwind` (`src/interp.rs`) and `guarded_probe_contains_panics`
+(`src/main.rs`, which asserts `run_guarded_probe(|| panic!("boom")) == Panicked`). A test that runs under a
+profile the artifact is not built with does not test the artifact.
+
+**Annotated in place — decision taken 2026-10-16: keep `abort`, correct the comments.** All 7 sites and both
+tests now carry a short note stating the dev/test-only scope and pointing here, so the next reader cannot take
+them for a release guarantee. The change is **comment-only** and was verified as such: every added line in the
+diff is a comment, and the gate's call-site counts are unchanged.
 
 (`tests/fuzz_safety.rs` also mentions `catch_unwind`; it is a test, not shipped code, so it is out of scope.)
 
-## Open decision
+## Decision
 
-Two coherent options. This changes how every artifact is built, so it is an operator call, not a quiet edit:
+**Taken 2026-10-16: option (a) — keep `abort`, correct the comments.** The isolation that matters is already
+provided at process granularity by the supervisor, verified above; the defect was the comments reading as a
+release guarantee. The next best option was real but worse here:
 
-- **(a) Keep `abort` and correct the comments — recommended.** The isolation that matters is already
-  provided at process granularity by the supervisor, verified above. The defect is that the comments read as
-  a release guarantee; the mechanical fix is to state "dev/test only" at those 7 sites.
+- ~~**(a) Keep `abort` and correct the comments — recommended.**~~ **DONE.** The isolation that matters is
+  already provided at process granularity by the supervisor, verified above. The defect was that the comments
+  read as a release guarantee; the mechanical fix was to state "dev/test only" at those 7 sites.
 - **(b) Build the binaries that isolate with `panic = "unwind"`.** Buys real in-process containment for the
   interpreter's agent-spawn path and the probe/report paths, at the cost of unwind tables and the fail-fast
-  stance — and it contradicts the size/speed trade the release profiles make deliberately.
+  stance — and it contradicts the size/speed trade the release profiles make deliberately. **Not taken.**
 
-Until one is chosen, the honest reading is (a)'s consequence: **the catches are inert in shipped artifacts.**
+The honest reading, and the shipped behaviour, is (a)'s consequence: **the catches are inert in shipped
+artifacts.**
 
 ## Drift gate
 

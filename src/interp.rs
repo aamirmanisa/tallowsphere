@@ -3612,7 +3612,10 @@ impl Interpreter {
                         })
                         .collect();
 
-                    // Wrapped in catch_unwind to prevent panic propagation
+                    // Wrapped in catch_unwind to prevent panic propagation.
+                    // INERT in release: shipped profiles set panic="abort", so the
+                    // process aborts before this catch can return. Dev/test only
+                    // (unwind) — see docs/PANIC-POLICY.md.
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         // Create a temporary interpreter just for this goroutine
                         let mut thread_interp = Interpreter::new();
@@ -4641,7 +4644,10 @@ impl Interpreter {
                     call_env.define(param.name.clone(), val);
                 }
 
-                // Execute child in catch_unwind for crash isolation
+                // Execute child in catch_unwind for crash isolation.
+                // INERT in release: shipped profiles set panic="abort", so a panicking
+                // child aborts the process rather than being isolated here. Dev/test
+                // only (unwind) — see docs/PANIC-POLICY.md.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     self.exec_block(&child_func.body, &mut call_env)
                 }));
@@ -4793,6 +4799,8 @@ impl Interpreter {
                         .iter()
                         .map(|b| crate::agent_comm::channel_bytes_to_value(b).unwrap_or(Value::Nil))
                         .collect();
+                    // Crash isolation for this task — INERT in release (panic="abort");
+                    // dev/test only. See docs/PANIC-POLICY.md.
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         // Fresh per-task interpreter sharing the AST core.
                         let mut ti = Interpreter::new();
@@ -32309,6 +32317,9 @@ impl Interpreter {
             task_env.define(p.clone(), args.get(i).cloned().unwrap_or(Value::Nil));
         }
 
+        // Crash isolation for this task — INERT in release (panic="abort"); the
+        // restore below is what still matters there. Dev/test only. See
+        // docs/PANIC-POLICY.md.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.exec_block(&body, &mut task_env)
         }));
@@ -46463,6 +46474,10 @@ world
 
     #[test]
     fn spawn_agent_crash_isolation_via_catch_unwind() {
+        // NOTE (docs/PANIC-POLICY.md): this asserts containment that holds under the
+        // TEST profile (unwind) ONLY. Shipped profiles set panic="abort", where the
+        // process aborts before any catch can return — so this test does not describe
+        // the artifact it appears to protect.
         // Test that catch_unwind path works at the Rust level
         // We verify the interpreter returns Err for a child error, parent continues
         let (_, output) = run(r#"@agent_task(
