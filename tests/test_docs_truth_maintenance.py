@@ -130,7 +130,9 @@ class DocsTruthMaintenanceTests(unittest.TestCase):
 
     def test_delta_sync_flag_count_relabeled(self) -> None:
         caps = self.read("docs/TALLOW-CAPABILITIES.md")
-        self.assertIn("Delta-Sync Flags (24)", caps)
+        # 23: `--vss` was removed in W2-08 (design D-C1), and src/main.rs's `DeltaSync` variant
+        # defines 23 named flags. This expected 24 and was red wherever it ran.
+        self.assertIn("Delta-Sync Flags (23)", caps)
         self.assertNotIn("Delta-Sync Flags (22)", caps)
 
     def test_operations_docs_have_no_stale_workspace_paths(self) -> None:
