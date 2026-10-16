@@ -149,14 +149,29 @@ and supported tree-wide by the 0-of-142 unwired result. `crypto.tl` is the belt-
 the body as well, so a future dispatch regression there is loud rather than silent. Worth noting as the
 *stronger* of the two conventions, not as a defect in the other 354.
 
-### Still open — flagged, not claimed
+### Closed — the last two items, settled by reading their handlers
 
-- **DHT semantics**: the handlers exist; whether `dht_create`/`dht_announce`/`dht_lookup` compute real values or
-  return shape-only structs is the one question the comments ("simulated DHT store") leave open. One read of
-  `transfer.rs`'s `dht_*` bodies settles it.
-- **OTel transport**: `interp.rs`'s own comments say metrics are *"recorded in-process only; call
-  OtelExporter.export()"* — so recording is real and whether `export()` transmits or also only records is
-  untested.
+- **The DHT is a real in-process implementation, not shape-only.** `dht_create` (`transfer.rs:983`) derives a
+  BLAKE3 node id and binds a **real UDP socket** (`std::net::UdpSocket::bind`, non-blocking, 100 ms read
+  timeout, registered in `DHT_SOCKETS`); `dht_announce` stores locally and then **sends `ANNOUNCE\t<key>\t<val>`
+  to every peer over that socket**, reporting `udp_peers_notified` and `replicas = 1 + sent_to`; `dht_lookup`
+  reads the local store first and returns `source: "local"`, otherwise sends `LOOKUP\t<key>` and waits for a
+  reply. The bind-failure fallback is **not** silent: the node carries an explicit `mode` field (`"udp"` or
+  `"memory"`, line 1006), so a caller can tell which it got. "Simulated Kademlia" is accurate about what is
+  *missing* (no iterative routing or peer discovery; `routing_table_size` is a constant 20) and says nothing
+  false about the rest, which is real.
+- **OTel export transmits, and is built to refuse rather than lose data.** `"OtelExporter.export"`
+  (`interp.rs:24711`) requires a data argument and **rejects an empty endpoint outright** — *"requires an
+  endpoint — set OTEL_EXPORTER_OTLP_ENDPOINT … before calling OtelExporter.create()"* — with the source comment
+  *"so the caller gets an explicit signal rather than silently losing telemetry."* For `otlp` it serialises to
+  OTLP JSON and POSTs to `<endpoint>/v1/traces` or `/v1/metrics`; for `prometheus` it serialises exposition
+  text for the caller to serve.
+
+**Verdict on the brief: all eight items are settled, and none is a stub, a fake or a silent simulation.** Each
+is real code, a loud refusal, or a limitation disclosed in the module header — and in three cases (TPM, Tor,
+DHT) a **stale comment understated working code** rather than overstating absent code, which is the same defect
+class as a fake read backwards: it would send the next auditor hunting for something that isn't there.
+
 
 
 
