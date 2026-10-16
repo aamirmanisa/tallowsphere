@@ -1,0 +1,20 @@
+[package]
+name = "tallow-advisory"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Tallow advisory v1 — read-only, human-gated anomaly detection over jobs/mesh (checklist 3.6)"
+
+[[bin]]
+name = "tallow-advisory"
+path = "src/bin/tallow-advisory.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+tallow-registry = { path = "../tallow-registry" }
+
+[dev-dependencies]
+hex = "0.4"

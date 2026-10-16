@@ -1,0 +1,15 @@
+NOTICE — license composition of this repository
+
+Portions of this repository are licensed under the MIT License — including the
+canonical `tallow*` crates and vendored third-party components.
+
+The Tallow CLI product workspace (`Tallow/`) is distributed under
+AGPL-3.0-or-later. MIT-licensed components included in that workspace remain
+under the MIT terms; the combined distribution is offered under
+AGPL-3.0-or-later, whose §13 permits combination with GPLv3-licensed components.
+
+The repository-root Cargo workspace declares `license = "MIT"` (`Cargo.toml:6`);
+the files that declaration covers are stated in `LICENSE`. Component directories
+that carry their own LICENSE/NOTICE file (under `vendor/`, `node_modules/`,
+`firecrawl-self-hosted/`, `hermes-agent/`, and similar) are licensed by those
+files, not by this notice.

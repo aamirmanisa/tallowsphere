@@ -1,0 +1,60 @@
+{
+  "schema_version": "tallow.request_plan.v1",
+  "manifest_id": "example-browser-fallback-manual-gate-local-fixture",
+  "request_count": 1,
+  "requests": [
+    {
+      "index": 0,
+      "target_id": "fixture_manual_browser_gate",
+      "url": "https://example.invalid/challenge",
+      "method": "GET",
+      "headers": {
+        "Accept": "text/html",
+        "User-Agent": "TallowExamples/1.0 local-fixture"
+      },
+      "browser_fallback": {
+        "mode": "reasoned",
+        "reasons": [
+          "requires_javascript_or_challenge_classification"
+        ],
+        "transport": "websocket_cdp",
+        "budget": {
+          "max_pages": 1,
+          "max_seconds": 15
+        },
+        "challenge_policy": "classify_and_stop"
+      },
+      "artifact_policy": {
+        "capture_body": "none",
+        "response_snippet_bytes": 0,
+        "screenshots": "never",
+        "har": "never",
+        "dom": "never"
+      },
+      "compliance": {
+        "source_authority": "local_fixture_public_web",
+        "purpose": "release_example_browser_fallback_manual_gate",
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "requires_approval": false
+      }
+    }
+  ],
+  "legacy_http_batch": {
+    "compatible": false,
+    "blocked_reasons": [
+      "fixture_manual_browser_gate: browser_fallback.reasoned cannot be represented in legacy http.batch TL",
+      "fixture_manual_browser_gate: artifact_policy cannot be represented in legacy http.batch TL"
+    ],
+    "headers": {
+      "Accept": "text/html",
+      "User-Agent": "TallowExamples/1.0 local-fixture"
+    },
+    "target_urls": [
+      "https://example.invalid/challenge"
+    ]
+  },
+  "status_boundary": "Release example: manual browser fallback gate only. Browser execution, stealth, CAPTCHA solving, challenge bypass, screenshots, HAR, DOM capture, external network, secrets, and production compliance are not claimed."
+}

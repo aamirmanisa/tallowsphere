@@ -1,0 +1,1929 @@
+<!DOCTYPE html>
+<!-- Docs truth label (2026-09-13): design-artifact mockup — NOT shipped documentation.
+     Headline figures and taglines (scale / latency / anti-detection claims) are illustrative
+     concept copy, not verified capability claims. Status: docs/TALLOW-CAPABILITIES.md ·
+     research/tallow-v1/cycle-02/03-claims-register.md (R-B1 / R-C3). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tallow</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/*
+  TALLOW SEARCH ENGINE — PRESET LEVELS
+
+  DNA: LoveFrom (custom serif, #fafafa, nothing else)
+      + Apple.com (hero sections, scroll reveal, frosted nav)
+      + Hermes (orange accent, floating images, 50%+ whitespace)
+      + Celine (size polarization: 11px or 72px, nothing between)
+      + Apple Configurator (spec chooser, level selector)
+
+  Rule: If you can remove it and the page still works, remove it.
+*/
+
+:root {
+  --white: #FAFAF8;
+  --black: #1D1D1F;
+  --gray: #86868B;
+  --light: #D2D2D7;
+  --faint: #F5F5F7;
+  --line: rgba(0,0,0,0.06);
+  --blue: #0066CC;
+  --green: #28A745;
+  --red: #D73A49;
+  --amber: #C47F17;
+
+  --serif: 'DM Serif Display', Georgia, 'Times New Roman', serif;
+  --sans: 'Outfit', -apple-system, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1.0);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--sans);
+  background: var(--white);
+  color: var(--black);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: rgba(0,102,204,0.12); }
+
+
+/* =======================================
+   SCENE 1 — THE LANDING
+   ======================================= */
+
+.scene-landing {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.brand {
+  font-family: var(--serif);
+  font-size: clamp(2.5rem, 5vw, 3.5rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--black);
+  margin-bottom: 48px;
+  opacity: 0;
+  animation: breatheIn 1.2s var(--ease) 0.2s forwards;
+}
+
+@keyframes breatheIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.input-wrap {
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  opacity: 0;
+  animation: breatheIn 1s var(--ease) 0.6s forwards;
+}
+
+.input {
+  width: 100%;
+  height: 54px;
+  padding: 0 20px;
+  font-size: 17px;
+  font-family: var(--sans);
+  font-weight: 400;
+  color: var(--black);
+  background: #FFFFFF;
+  border: 1.5px solid var(--light);
+  border-radius: 16px;
+  outline: none;
+  transition: border-color 0.5s var(--ease), box-shadow 0.5s var(--ease);
+  letter-spacing: -0.01em;
+}
+
+.input::placeholder { color: var(--light); font-weight: 300; }
+
+.input:focus {
+  border-color: var(--black);
+  box-shadow: 0 0 0 4px rgba(0,0,0,0.03);
+}
+
+.input-hint {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 13px;
+  font-weight: 300;
+  color: var(--light);
+  letter-spacing: 0.01em;
+  opacity: 0;
+  animation: breatheIn 0.8s var(--ease) 1s forwards;
+}
+
+.input-hint kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray);
+  background: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.accent-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--line) 20%, var(--line) 80%, transparent 100%);
+}
+
+.landing-foot {
+  position: absolute;
+  bottom: 24px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--light);
+  font-family: var(--mono);
+  letter-spacing: 0.03em;
+  opacity: 0;
+  animation: breatheIn 0.6s var(--ease) 1.4s forwards;
+}
+
+
+/* =======================================
+   SCENE 2 — RESULTS
+   ======================================= */
+
+.scene-results {
+  min-height: 100vh;
+  background: var(--white);
+}
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  padding: 0 clamp(24px, 5vw, 80px);
+  gap: 24px;
+  background: rgba(250,250,248,0.78);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--line);
+}
+
+.nav-brand {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--black);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.nav-field {
+  flex: 1;
+  max-width: 420px;
+  height: 34px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-family: var(--sans);
+  font-weight: 400;
+  color: var(--black);
+  background: var(--faint);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  outline: none;
+  transition: all 0.3s var(--ease);
+}
+
+.nav-field:focus { background: #fff; border-color: var(--light); }
+.nav-field::placeholder { color: var(--light); }
+
+.nav-right {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.nav-btn {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--sans);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s var(--ease);
+  letter-spacing: -0.003em;
+}
+
+.nav-btn-ghost {
+  color: var(--gray);
+  background: none;
+  border: 1px solid var(--line);
+}
+
+.nav-btn-ghost:hover { color: var(--black); border-color: var(--light); }
+
+.nav-btn-dark {
+  color: #fff;
+  background: var(--black);
+  border: none;
+}
+
+.nav-btn-dark:hover { background: #333; }
+
+.results-wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px clamp(24px, 5vw, 40px);
+}
+
+.results-meta {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--light);
+  font-family: var(--mono);
+  margin-bottom: 40px;
+  letter-spacing: 0.02em;
+}
+
+.results-meta b { color: var(--gray); font-weight: 500; }
+
+.r {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  padding: 32px 0;
+  border-bottom: 1px solid var(--line);
+  align-items: start;
+}
+
+.r:last-of-type { border-bottom: none; }
+
+.r-store {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.r-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+}
+
+.r-store-name {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gray);
+}
+
+.r-title {
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  color: var(--black);
+  margin-bottom: 8px;
+}
+
+.r-desc {
+  font-size: 14px;
+  font-weight: 300;
+  line-height: 1.6;
+  color: var(--gray);
+  max-width: 50ch;
+}
+
+.r-desc strong { font-weight: 500; color: var(--black); }
+
+.r-pills {
+  display: flex;
+  gap: 5px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--mono);
+  padding: 3px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+.p-green { background: rgba(40,167,69,0.08); color: var(--green); }
+.p-gray { background: var(--faint); color: var(--gray); }
+.p-amber { background: rgba(196,127,23,0.08); color: var(--amber); }
+.p-blue { background: rgba(0,102,204,0.06); color: var(--blue); }
+
+.r-price-col {
+  text-align: right;
+  padding-top: 28px;
+}
+
+.r-price {
+  font-family: var(--mono);
+  font-size: 28px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.r-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--light);
+  margin-top: 2px;
+}
+
+.price-low { color: var(--green); }
+.price-mid { color: var(--black); }
+.price-high { color: var(--red); }
+
+.r-secure {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--light);
+}
+
+.r-secure svg { width: 10px; height: 10px; }
+
+
+/* =======================================
+   SCENE 3 — LEVEL SELECTOR
+   Apple configurator DNA.
+   Horizontal 5-step rail with expanding detail.
+   ======================================= */
+
+.scene-levels {
+  background: var(--white);
+  padding: clamp(60px, 8vw, 100px) clamp(24px, 5vw, 80px);
+  border-top: 1px solid var(--line);
+}
+
+.levels-inner {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.levels-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--light);
+  margin-bottom: 12px;
+}
+
+.levels-heading {
+  font-family: var(--serif);
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--black);
+  margin-bottom: 8px;
+}
+
+.levels-sub {
+  font-size: 15px;
+  font-weight: 300;
+  color: var(--gray);
+  margin-bottom: 56px;
+  max-width: 45ch;
+  line-height: 1.6;
+}
+
+/* The rail — Apple spec chooser */
+.level-rail {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 0;
+  margin-bottom: 48px;
+}
+
+/* Connecting line behind the dots */
+.level-rail::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 24px;
+  right: 24px;
+  height: 1px;
+  background: var(--light);
+}
+
+.level-stop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The dot */
+.level-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid var(--light);
+  background: var(--white);
+  transition: all 0.4s var(--ease);
+  margin-bottom: 12px;
+  position: relative;
+}
+
+.level-stop:hover .level-dot {
+  border-color: var(--gray);
+}
+
+.level-stop.active .level-dot {
+  border-color: var(--black);
+  background: var(--black);
+}
+
+/* Inner dot for active state */
+.level-stop.active .level-dot::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--white);
+  transform: translate(-50%, -50%);
+}
+
+/* Progress fill on the rail */
+.level-rail-fill {
+  position: absolute;
+  top: 7px;
+  left: 24px;
+  height: 1px;
+  background: var(--black);
+  transition: width 0.5s var(--ease);
+  z-index: 0;
+}
+
+.level-code {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--light);
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+  transition: color 0.3s var(--ease);
+}
+
+.level-stop:hover .level-code { color: var(--gray); }
+.level-stop.active .level-code { color: var(--black); }
+
+.level-name {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--gray);
+  transition: color 0.3s var(--ease);
+}
+
+.level-stop.active .level-name {
+  color: var(--black);
+  font-weight: 500;
+}
+
+
+/* ── EXPANDED DETAIL PANEL ──
+   Appears below the selected level.
+   Two-column: data fields + summary stats.
+*/
+
+.level-detail {
+  border-top: 1px solid var(--line);
+  padding-top: 40px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: breatheIn 0.5s var(--ease) forwards;
+}
+
+.level-detail-left {}
+
+.level-detail-site {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--black);
+  margin-bottom: 4px;
+}
+
+.level-detail-level {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--gray);
+  letter-spacing: 0.02em;
+  margin-bottom: 24px;
+}
+
+/* Field checklist */
+.field-list {
+  list-style: none;
+}
+
+.field-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1;
+  border-bottom: 1px solid var(--line);
+}
+
+.field-item:last-child { border-bottom: none; }
+
+/* Included field */
+.field-item.included {
+  color: var(--black);
+}
+
+.field-item.included .field-check {
+  color: var(--green);
+}
+
+/* Higher-level field */
+.field-item.higher {
+  color: var(--light);
+}
+
+.field-item.higher .field-check {
+  visibility: hidden;
+}
+
+.field-check {
+  width: 16px;
+  flex-shrink: 0;
+  font-size: 14px;
+  text-align: center;
+}
+
+.field-label {
+  flex: 1;
+}
+
+.field-level-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--light);
+  letter-spacing: 0.02em;
+}
+
+/* Right column — stats */
+.level-detail-right {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.detail-stat {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-stat:last-child { border-bottom: none; }
+
+.detail-stat-label {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--light);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.detail-stat-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--black);
+}
+
+.detail-stat-value.small {
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.detail-stat-note {
+  font-size: 12px;
+  font-weight: 300;
+  color: var(--gray);
+  margin-top: 4px;
+}
+
+/* Level description */
+.level-desc-block {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.level-desc-text {
+  font-size: 14px;
+  font-weight: 300;
+  color: var(--gray);
+  line-height: 1.6;
+}
+
+.level-desc-text strong {
+  font-weight: 500;
+  color: var(--black);
+}
+
+
+/* =======================================
+   SCENE 4 — SITE ANALYSIS (dark)
+   ======================================= */
+
+.scene-analysis {
+  background: var(--black);
+  color: #F5F5F7;
+  padding: clamp(60px, 10vw, 120px) clamp(24px, 5vw, 80px);
+}
+
+.analysis-inner {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.analysis-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gray);
+  margin-bottom: 12px;
+}
+
+.analysis-domain {
+  font-family: var(--serif);
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin-bottom: 8px;
+}
+
+.analysis-status {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--green);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.analysis-status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+/* Selected level indicator inside analysis */
+.analysis-level-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.6);
+  margin-bottom: 48px;
+  letter-spacing: 0.02em;
+}
+
+.analysis-level-badge strong {
+  color: #F5F5F7;
+  font-weight: 500;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 40px;
+}
+
+.metric {
+  padding: 28px 32px;
+  border-right: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.metric:nth-child(3n) { border-right: none; }
+.metric:nth-last-child(-n+3) { border-bottom: none; }
+
+.metric-label {
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.metric-value {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.dot-bar {
+  width: 20px; height: 5px;
+  border-radius: 2.5px;
+  background: rgba(255,255,255,0.1);
+}
+
+.dot-bar.on { background: var(--amber); }
+
+.pipeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 24px 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.pipeline-label {
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 20px;
+  flex-shrink: 0;
+}
+
+.pipeline-flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+}
+
+.pipeline-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 400;
+  color: rgba(255,255,255,0.5);
+}
+
+.pipeline-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+}
+
+.pipeline-sep {
+  width: 20px;
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 0 8px;
+}
+
+.rec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.rec-text {
+  font-size: 15px;
+  font-weight: 300;
+  color: rgba(255,255,255,0.6);
+}
+
+.rec-text strong {
+  color: #F5F5F7;
+  font-weight: 500;
+}
+
+.rec-btn {
+  height: 40px;
+  padding: 0 24px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: var(--sans);
+  background: #F5F5F7;
+  color: var(--black);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s var(--ease);
+  letter-spacing: -0.01em;
+}
+
+.rec-btn:hover { background: #fff; transform: scale(1.02); }
+
+
+/* =======================================
+   SCENE 5 — SITE PRESET GRID
+   Apple product grid. Each card is a site.
+   ======================================= */
+
+.scene-presets {
+  background: var(--faint);
+  padding: clamp(60px, 10vw, 120px) clamp(24px, 5vw, 80px);
+}
+
+.presets-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.presets-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--light);
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.presets-heading {
+  font-family: var(--serif);
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  text-align: center;
+  color: var(--black);
+  margin-bottom: 8px;
+}
+
+.presets-sub {
+  font-size: 15px;
+  font-weight: 300;
+  color: var(--gray);
+  text-align: center;
+  margin-bottom: 56px;
+  line-height: 1.6;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 48px;
+}
+
+.preset-card {
+  background: #FFFFFF;
+  padding: 32px 28px;
+  cursor: pointer;
+  transition: background 0.3s var(--ease);
+  position: relative;
+}
+
+.preset-card:hover {
+  background: var(--white);
+}
+
+.preset-card.selected {
+  background: var(--white);
+}
+
+/* Selected indicator — subtle top accent */
+.preset-card.selected::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 28px;
+  right: 28px;
+  height: 2px;
+  background: var(--black);
+  border-radius: 0 0 1px 1px;
+}
+
+.preset-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.preset-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.preset-site-name {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--black);
+  letter-spacing: -0.01em;
+}
+
+.preset-level {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--gray);
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+
+.preset-desc {
+  font-size: 13px;
+  font-weight: 300;
+  color: var(--gray);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.preset-stat {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--light);
+  letter-spacing: 0.01em;
+}
+
+.preset-stat b {
+  color: var(--black);
+  font-weight: 500;
+}
+
+/* Mini level selector inside each card */
+.preset-mini-rail {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.preset-mini-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--light);
+  background: transparent;
+  transition: all 0.3s var(--ease);
+  cursor: pointer;
+}
+
+.preset-mini-dot:hover {
+  border-color: var(--gray);
+}
+
+.preset-mini-dot.active {
+  border-color: var(--black);
+  background: var(--black);
+}
+
+.preset-mini-sep {
+  width: 8px;
+  height: 1px;
+  background: var(--line);
+}
+
+.preset-mini-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--light);
+  margin-left: auto;
+  letter-spacing: 0.02em;
+}
+
+
+/* =======================================
+   SCENE 6 — CAPABILITIES
+   ======================================= */
+
+.scene-caps {
+  background: var(--white);
+  padding: clamp(60px, 10vw, 120px) clamp(24px, 5vw, 80px);
+}
+
+.caps-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.caps-heading {
+  font-family: var(--serif);
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  text-align: center;
+  margin-bottom: 56px;
+  color: var(--black);
+}
+
+.caps-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+}
+
+.cap {
+  text-align: center;
+  padding: 32px 16px;
+  border-right: 1px solid var(--line);
+}
+
+.cap:last-child { border-right: none; }
+
+.cap-num {
+  font-family: var(--serif);
+  font-size: 48px;
+  font-weight: 400;
+  color: var(--black);
+  line-height: 1;
+  margin-bottom: 8px;
+}
+
+.cap-label {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--gray);
+  line-height: 1.4;
+}
+
+.caps-export {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 48px;
+}
+
+.export-chip {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--mono);
+  color: var(--gray);
+  background: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  letter-spacing: 0.02em;
+  transition: all 0.3s var(--ease);
+  cursor: default;
+}
+
+.export-chip:hover {
+  color: var(--black);
+  border-color: var(--light);
+  transform: translateY(-2px);
+}
+
+
+/* =======================================
+   FOOTER
+   ======================================= */
+
+.footer {
+  text-align: center;
+  padding: 40px 24px;
+  font-size: 11px;
+  color: var(--light);
+  font-family: var(--mono);
+  letter-spacing: 0.03em;
+  border-top: 1px solid var(--line);
+}
+
+
+/* =======================================
+   RESPONSIVE
+   ======================================= */
+
+@media (max-width: 768px) {
+  .preset-grid { grid-template-columns: 1fr; }
+  .preset-card.selected::after { left: 0; right: 0; }
+  .level-detail { grid-template-columns: 1fr; gap: 32px; }
+}
+
+@media (max-width: 640px) {
+  .r { grid-template-columns: 1fr; gap: 12px; }
+  .r-price-col { text-align: left; padding-top: 0; }
+  .r-price { font-size: 22px; }
+  .r-secure { justify-content: flex-start; }
+  .metrics { grid-template-columns: 1fr; }
+  .metric { border-right: none !important; }
+  .caps-grid { grid-template-columns: repeat(2, 1fr); }
+  .cap { border-bottom: 1px solid var(--line); }
+  .cap:nth-child(even) { border-right: none; }
+  .pipeline-flow { flex-wrap: wrap; gap: 4px; }
+  .pipeline-sep { display: none; }
+  .caps-export { flex-wrap: wrap; }
+  .nav-brand { display: none; }
+  .level-rail { gap: 4px; }
+  .level-name { font-size: 11px; }
+  .level-code { font-size: 10px; }
+}
+</style>
+</head>
+<body>
+<div id="docs-truth-banner" style="position:relative;z-index:2147483647;background:#111827;color:#f9fafb;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:5px 12px;letter-spacing:0.02em;margin:0;border:0">Docs truth label: design-artifact mockup — illustrative concept copy, not shipped documentation or a verified capability claim.</div>
+
+<!-- =======================================
+     SCENE 1 — THE LANDING
+     ======================================= -->
+
+<section class="scene-landing">
+  <h1 class="brand">Tallow</h1>
+
+  <div class="input-wrap">
+    <input class="input" type="text" placeholder="Search, or enter a URL" autofocus />
+    <p class="input-hint">Press <kbd>/</kbd> to search &nbsp;&middot;&nbsp; <kbd>Cmd</kbd> <kbd>K</kbd> for commands</p>
+  </div>
+
+  <div class="accent-line"></div>
+  <div class="landing-foot">encrypted &middot; adaptive &middot; undetectable</div>
+<!-- claim label: "undetectable" tagline is illustrative mockup copy — no configuration guarantees evasion (claims register R-B1: raises cost, no guarantee). -->
+</section>
+
+
+<!-- =======================================
+     SCENE 2 — SEARCH RESULTS
+     ======================================= -->
+
+<section class="scene-results">
+  <nav class="nav">
+    <a class="nav-brand" href="#">Tallow</a>
+    <input class="nav-field" type="text" value="shop-a.example/grocery" />
+    <div class="nav-right">
+      <button class="nav-btn nav-btn-ghost">Filter</button>
+      <button class="nav-btn nav-btn-ghost">Export</button>
+      <button class="nav-btn nav-btn-dark">New</button>
+    </div>
+  </nav>
+
+  <div class="results-wrap">
+    <p class="results-meta"><b>48,291</b> products &middot; <b>12</b> categories &middot; 1.2s &middot; encrypted</p>
+
+    <!-- Walmart -->
+    <div class="r">
+      <div>
+        <div class="r-store"><span class="r-dot" style="background:#0071CE"></span><span class="r-store-name">Walmart</span></div>
+        <div class="r-title">Grocery &mdash; Full Catalog</div>
+        <div class="r-desc">Complete product listing including prices, nutrition, images, and availability. <strong>48,291</strong> items across all departments.</div>
+        <div class="r-pills">
+          <span class="pill p-green">Extractable</span>
+          <span class="pill p-amber">PerimeterX</span>
+          <span class="pill p-gray">48K items</span>
+        </div>
+      </div>
+      <div class="r-price-col">
+        <div class="r-price price-mid" style="font-size:18px; color:var(--gray)">L3</div>
+        <div class="r-unit">recommended</div>
+        <div class="r-secure"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg> 5-layer</div>
+      </div>
+    </div>
+
+    <!-- Zillow -->
+    <div class="r">
+      <div>
+        <div class="r-store"><span class="r-dot" style="background:#006AFF"></span><span class="r-store-name">Zillow</span></div>
+        <div class="r-title">Houston Metro &mdash; Active Listings</div>
+        <div class="r-desc">Residential properties with Zestimate, tax history, and agent info. <strong>12,847</strong> active listings in 77406 area.</div>
+        <div class="r-pills">
+          <span class="pill p-green">Extractable</span>
+          <span class="pill p-amber">Akamai</span>
+          <span class="pill p-gray">13K listings</span>
+        </div>
+      </div>
+      <div class="r-price-col">
+        <div class="r-price price-mid" style="font-size:18px; color:var(--gray)">L2</div>
+        <div class="r-unit">recommended</div>
+        <div class="r-secure"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg> 5-layer</div>
+      </div>
+    </div>
+
+    <!-- TradingView -->
+    <div class="r">
+      <div>
+        <div class="r-store"><span class="r-dot" style="background:#2962FF"></span><span class="r-store-name">TradingView</span></div>
+        <div class="r-title">Market Data &mdash; US Equities</div>
+        <div class="r-desc">Real-time quotes, technicals, and screener data. <strong>8,412</strong> symbols with full OHLCV history.</div>
+        <div class="r-pills">
+          <span class="pill p-green">Extractable</span>
+          <span class="pill p-blue">WebSocket</span>
+          <span class="pill p-gray">8K symbols</span>
+        </div>
+      </div>
+      <div class="r-price-col">
+        <div class="r-price price-mid" style="font-size:18px; color:var(--gray)">L1</div>
+        <div class="r-unit">recommended</div>
+        <div class="r-secure"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 00-4 4v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm2 6H6V5a2 2 0 114 0v2z"/></svg> 5-layer</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- =======================================
+     SCENE 3 — LEVEL SELECTOR
+     Apple configurator. Choose your depth.
+     ======================================= -->
+
+<section class="scene-levels" id="levels">
+  <div class="levels-inner">
+    <div class="levels-eyebrow">Extraction Depth</div>
+    <h2 class="levels-heading">Choose your level.</h2>
+    <p class="levels-sub">Each level adds more data fields, more processing, and more time. Choose what you need.</p>
+
+    <!-- The Rail -->
+    <div class="level-rail" id="levelRail">
+      <div class="level-rail-fill" id="railFill"></div>
+
+      <div class="level-stop" data-level="1" onclick="selectLevel(1)">
+        <div class="level-dot"></div>
+        <div class="level-code">L1</div>
+        <div class="level-name">Scout</div>
+      </div>
+
+      <div class="level-stop" data-level="2" onclick="selectLevel(2)">
+        <div class="level-dot"></div>
+        <div class="level-code">L2</div>
+        <div class="level-name">Standard</div>
+      </div>
+
+      <div class="level-stop active" data-level="3" onclick="selectLevel(3)">
+        <div class="level-dot"></div>
+        <div class="level-code">L3</div>
+        <div class="level-name">Deep</div>
+      </div>
+
+      <div class="level-stop" data-level="4" onclick="selectLevel(4)">
+        <div class="level-dot"></div>
+        <div class="level-code">L4</div>
+        <div class="level-name">Full</div>
+      </div>
+
+      <div class="level-stop" data-level="5" onclick="selectLevel(5)">
+        <div class="level-dot"></div>
+        <div class="level-code">L5</div>
+        <div class="level-name">Maximum</div>
+      </div>
+    </div>
+
+    <!-- Expanded detail for selected level -->
+    <div class="level-detail" id="levelDetail">
+      <div class="level-detail-left">
+        <div class="level-detail-site" id="detailSite">shop-a.example</div>
+        <div class="level-detail-level" id="detailLevel">L3 DEEP</div>
+
+        <ul class="field-list" id="fieldList">
+          <!-- Populated by JS -->
+        </ul>
+      </div>
+
+      <div class="level-detail-right">
+        <div class="level-desc-block">
+          <div class="level-desc-text" id="levelDescText">
+            <strong>Deep extraction</strong> captures structured product data with full pricing, nutrition labels, and category taxonomy. Uses browser automation with residential proxy rotation.
+          </div>
+        </div>
+
+        <div class="detail-stat">
+          <div class="detail-stat-label">Items</div>
+          <div class="detail-stat-value" id="detailItems">48,291</div>
+          <div class="detail-stat-note" id="detailItemsNote">across 12 categories</div>
+        </div>
+
+        <div class="detail-stat">
+          <div class="detail-stat-label">Estimated Time</div>
+          <div class="detail-stat-value" id="detailTime">~18 min</div>
+          <div class="detail-stat-note" id="detailTimeNote">at 2 req/s with rotation</div>
+        </div>
+
+        <div class="detail-stat">
+          <div class="detail-stat-label">Method</div>
+          <div class="detail-stat-value small" id="detailMethod">Full browser + cookie farm</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- =======================================
+     SCENE 4 — SITE ANALYSIS (dark)
+     Now shows selected level config.
+     ======================================= -->
+
+<section class="scene-analysis">
+  <div class="analysis-inner">
+    <div class="analysis-eyebrow">Site Analysis</div>
+    <div class="analysis-domain">shop-a.example</div>
+    <div class="analysis-status"><span class="analysis-status-dot"></span> Analyzed in 1.2 seconds</div>
+    <div class="analysis-level-badge">Extraction level: <strong>L3 Deep</strong> &nbsp;&middot;&nbsp; 48K products &nbsp;&middot;&nbsp; ~18 min</div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-label">Protection</div>
+        <div class="metric-value" style="color:#C47F17">PerimeterX</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Difficulty</div>
+        <div class="dots">
+          <div class="dot-bar on"></div>
+          <div class="dot-bar on"></div>
+          <div class="dot-bar on"></div>
+          <div class="dot-bar on"></div>
+          <div class="dot-bar"></div>
+        </div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Confidence</div>
+        <div class="metric-value">94.7%</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">TLS Profile</div>
+        <div class="metric-value">Chrome 136</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Rate Limit</div>
+        <div class="metric-value">~2 req/s</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Cookie</div>
+        <div class="metric-value">_px3 &middot; 15 min</div>
+      </div>
+    </div>
+
+    <div class="pipeline">
+      <span class="pipeline-label">Encryption</span>
+      <div class="pipeline-flow">
+        <div class="pipeline-node"><span class="pipeline-dot" style="background:#5AC8FA"></span> BLAKE3</div>
+        <div class="pipeline-sep"></div>
+        <div class="pipeline-node"><span class="pipeline-dot" style="background:#AF52DE"></span> Argon2id</div>
+        <div class="pipeline-sep"></div>
+        <div class="pipeline-node"><span class="pipeline-dot" style="background:#FF9500"></span> AES-256</div>
+        <div class="pipeline-sep"></div>
+        <div class="pipeline-node"><span class="pipeline-dot" style="background:#FF3B30"></span> XChaCha20</div>
+        <div class="pipeline-sep"></div>
+        <div class="pipeline-node"><span class="pipeline-dot" style="background:#34C759"></span> ML-KEM</div>
+      </div>
+    </div>
+
+    <div class="rec">
+      <span class="rec-text">Use <strong>full browser</strong> with <strong>residential proxy</strong> and <strong>cookie farm</strong></span>
+      <button class="rec-btn">Start extraction</button>
+    </div>
+  </div>
+</section>
+
+
+<!-- =======================================
+     SCENE 5 — SITE PRESET GRID
+     Popular sites with per-card level selectors.
+     ======================================= -->
+
+<section class="scene-presets">
+  <div class="presets-inner">
+    <div class="presets-eyebrow">Presets</div>
+    <h2 class="presets-heading">Popular sites, pre-configured.</h2>
+    <p class="presets-sub">Each site has a recommended level. Adjust to extract more or less.</p>
+
+    <div class="preset-grid">
+
+      <!-- Walmart -->
+      <div class="preset-card selected" data-preset="walmart">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#0071CE"></span>
+          <span class="preset-site-name">Walmart</span>
+        </div>
+        <div class="preset-level">L3 DEEP</div>
+        <div class="preset-desc">Full grocery catalog with prices, nutrition facts, and stock levels.</div>
+        <div class="preset-stat"><b>48,291</b> products &middot; ~18 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot" onclick="setPreset('walmart',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('walmart',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot active" onclick="setPreset('walmart',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('walmart',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('walmart',5)"></span>
+          <span class="preset-mini-label">L3</span>
+        </div>
+      </div>
+
+      <!-- Zillow -->
+      <div class="preset-card" data-preset="zillow">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#006AFF"></span>
+          <span class="preset-site-name">Zillow</span>
+        </div>
+        <div class="preset-level">L2 STANDARD</div>
+        <div class="preset-desc">Active listings with price, beds, baths, sqft, and Zestimate.</div>
+        <div class="preset-stat"><b>12,847</b> listings &middot; ~8 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot" onclick="setPreset('zillow',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot active" onclick="setPreset('zillow',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('zillow',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('zillow',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('zillow',5)"></span>
+          <span class="preset-mini-label">L2</span>
+        </div>
+      </div>
+
+      <!-- TradingView -->
+      <div class="preset-card" data-preset="tradingview">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#2962FF"></span>
+          <span class="preset-site-name">TradingView</span>
+        </div>
+        <div class="preset-level">L1 SCOUT</div>
+        <div class="preset-desc">Symbol list with latest price, volume, and basic technicals.</div>
+        <div class="preset-stat"><b>8,412</b> symbols &middot; ~2 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot active" onclick="setPreset('tradingview',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('tradingview',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('tradingview',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('tradingview',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('tradingview',5)"></span>
+          <span class="preset-mini-label">L1</span>
+        </div>
+      </div>
+
+      <!-- Amazon -->
+      <div class="preset-card" data-preset="amazon">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#FF9900"></span>
+          <span class="preset-site-name">Amazon</span>
+        </div>
+        <div class="preset-level">L4 FULL</div>
+        <div class="preset-desc">Product listings with reviews, seller data, BSR, and price history.</div>
+        <div class="preset-stat"><b>125K</b> products &middot; ~45 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot" onclick="setPreset('amazon',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('amazon',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('amazon',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot active" onclick="setPreset('amazon',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('amazon',5)"></span>
+          <span class="preset-mini-label">L4</span>
+        </div>
+      </div>
+
+      <!-- H-E-B -->
+      <div class="preset-card" data-preset="heb">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#E31837"></span>
+          <span class="preset-site-name">H-E-B</span>
+        </div>
+        <div class="preset-level">L2 STANDARD</div>
+        <div class="preset-desc">Full grocery via mobile API. Prices, nutrition, categories. No browser needed.</div>
+        <div class="preset-stat"><b>44,000</b> products &middot; ~6 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot" onclick="setPreset('heb',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot active" onclick="setPreset('heb',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('heb',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('heb',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('heb',5)"></span>
+          <span class="preset-mini-label">L2</span>
+        </div>
+      </div>
+
+      <!-- Kroger -->
+      <div class="preset-card" data-preset="kroger">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#003B73"></span>
+          <span class="preset-site-name">Kroger</span>
+        </div>
+        <div class="preset-level">L2 STANDARD</div>
+        <div class="preset-desc">Products with pricing, nutrition, and Simple Truth organic line.</div>
+        <div class="preset-stat"><b>4,548</b> products &middot; ~3 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot" onclick="setPreset('kroger',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot active" onclick="setPreset('kroger',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('kroger',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('kroger',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('kroger',5)"></span>
+          <span class="preset-mini-label">L2</span>
+        </div>
+      </div>
+
+      <!-- Target -->
+      <div class="preset-card" data-preset="target">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#CC0000"></span>
+          <span class="preset-site-name">Target</span>
+        </div>
+        <div class="preset-level">L1 SCOUT</div>
+        <div class="preset-desc">Redsky API. Grocery catalog with prices and basic nutrition. No auth.</div>
+        <div class="preset-stat"><b>23,000</b> items &middot; ~4 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot active" onclick="setPreset('target',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('target',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('target',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('target',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('target',5)"></span>
+          <span class="preset-mini-label">L1</span>
+        </div>
+      </div>
+
+      <!-- Costco -->
+      <div class="preset-card" data-preset="costco">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#E31837"></span>
+          <span class="preset-site-name">Costco</span>
+        </div>
+        <div class="preset-level">L3 DEEP</div>
+        <div class="preset-desc">Warehouse pricing with unit costs, member-only deals, and stock status.</div>
+        <div class="preset-stat"><b>6,200</b> items &middot; ~12 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot" onclick="setPreset('costco',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('costco',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot active" onclick="setPreset('costco',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('costco',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('costco',5)"></span>
+          <span class="preset-mini-label">L3</span>
+        </div>
+      </div>
+
+      <!-- LinkedIn -->
+      <div class="preset-card" data-preset="linkedin">
+        <div class="preset-header">
+          <span class="preset-dot" style="background:#0A66C2"></span>
+          <span class="preset-site-name">LinkedIn</span>
+        </div>
+        <div class="preset-level">L5 MAXIMUM</div>
+        <div class="preset-desc">Public profiles, company pages, job postings. Full anti-detection suite.</div>
+        <div class="preset-stat"><b>50K</b> profiles &middot; ~90 min</div>
+        <div class="preset-mini-rail">
+          <span class="preset-mini-dot" onclick="setPreset('linkedin',1)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('linkedin',2)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('linkedin',3)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot" onclick="setPreset('linkedin',4)"></span>
+          <span class="preset-mini-sep"></span>
+          <span class="preset-mini-dot active" onclick="setPreset('linkedin',5)"></span>
+          <span class="preset-mini-label">L5</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+
+<!-- =======================================
+     SCENE 6 — CAPABILITIES
+     ======================================= -->
+
+<section class="scene-caps">
+  <div class="caps-inner">
+    <h2 class="caps-heading">Built different.</h2>
+
+    <div class="caps-grid">
+      <div class="cap">
+        <div class="cap-num">125</div>
+        <div class="cap-label">Engine<br>modules</div>
+      </div>
+      <div class="cap">
+        <div class="cap-num">28</div>
+        <div class="cap-label">Stealth<br>vectors</div>
+      </div>
+      <div class="cap">
+        <div class="cap-num">17</div>
+        <div class="cap-label">Vendor<br>detection</div>
+      </div>
+      <div class="cap">
+        <div class="cap-num">209</div>
+        <div class="cap-label">ASN<br>database</div>
+      </div>
+    </div>
+
+    <div class="caps-export">
+      <div class="export-chip">CSV</div>
+      <div class="export-chip">XLSX</div>
+      <div class="export-chip">PDF</div>
+      <div class="export-chip">DOCX</div>
+      <div class="export-chip">PPTX</div>
+      <div class="export-chip">JSON</div>
+    </div>
+  </div>
+</section>
+
+
+<footer class="footer">
+  tallow v0.4 &middot; encrypted &middot; adaptive &middot; undetectable
+<!-- claim label: "undetectable" tagline is illustrative mockup copy — no configuration guarantees evasion (claims register R-B1: raises cost, no guarantee). -->
+</footer>
+
+
+<!-- =======================================
+     INTERACTIVE LOGIC
+     Level selector + preset card state.
+     ======================================= -->
+
+<script>
+// Level data definitions
+const levelData = {
+  1: {
+    name: 'Scout',
+    code: 'L1',
+    desc: '<strong>Scout</strong> performs a fast surface scan. Grabs titles, prices, and URLs only. No browser needed -- pure HTTP with stealth headers.',
+    items: '~12,000',
+    itemsNote: 'titles + prices only',
+    time: '~2 min',
+    timeNote: 'direct HTTP, no rendering',
+    method: 'HTTP fetch + stealth headers',
+    fields: [
+      { name: 'Product name', included: true },
+      { name: 'Price', included: true },
+      { name: 'URL / SKU', included: true },
+      { name: 'Category', included: false, level: 'L2' },
+      { name: 'Description', included: false, level: 'L2' },
+      { name: 'Images', included: false, level: 'L2' },
+      { name: 'Nutrition facts', included: false, level: 'L3' },
+      { name: 'Stock / availability', included: false, level: 'L3' },
+      { name: 'Reviews + ratings', included: false, level: 'L4' },
+      { name: 'Price history', included: false, level: 'L4' },
+      { name: 'Seller / vendor data', included: false, level: 'L5' },
+      { name: 'Related products', included: false, level: 'L5' },
+    ]
+  },
+  2: {
+    name: 'Standard',
+    code: 'L2',
+    desc: '<strong>Standard extraction</strong> adds descriptions, images, and category data. Uses lightweight browser with basic fingerprint rotation.',
+    items: '32,400',
+    itemsNote: 'with descriptions + images',
+    time: '~8 min',
+    timeNote: 'lightweight browser mode',
+    method: 'Headless browser + proxy pool',
+    fields: [
+      { name: 'Product name', included: true },
+      { name: 'Price', included: true },
+      { name: 'URL / SKU', included: true },
+      { name: 'Category', included: true },
+      { name: 'Description', included: true },
+      { name: 'Images', included: true },
+      { name: 'Nutrition facts', included: false, level: 'L3' },
+      { name: 'Stock / availability', included: false, level: 'L3' },
+      { name: 'Reviews + ratings', included: false, level: 'L4' },
+      { name: 'Price history', included: false, level: 'L4' },
+      { name: 'Seller / vendor data', included: false, level: 'L5' },
+      { name: 'Related products', included: false, level: 'L5' },
+    ]
+  },
+  3: {
+    name: 'Deep',
+    code: 'L3',
+    desc: '<strong>Deep extraction</strong> captures structured product data with full pricing, nutrition labels, and category taxonomy. Uses browser automation with residential proxy rotation.',
+    items: '48,291',
+    itemsNote: 'across 12 categories',
+    time: '~18 min',
+    timeNote: 'at 2 req/s with rotation',
+    method: 'Full browser + cookie farm',
+    fields: [
+      { name: 'Product name', included: true },
+      { name: 'Price', included: true },
+      { name: 'URL / SKU', included: true },
+      { name: 'Category', included: true },
+      { name: 'Description', included: true },
+      { name: 'Images', included: true },
+      { name: 'Nutrition facts', included: true },
+      { name: 'Stock / availability', included: true },
+      { name: 'Reviews + ratings', included: false, level: 'L4' },
+      { name: 'Price history', included: false, level: 'L4' },
+      { name: 'Seller / vendor data', included: false, level: 'L5' },
+      { name: 'Related products', included: false, level: 'L5' },
+    ]
+  },
+  4: {
+    name: 'Full',
+    code: 'L4',
+    desc: '<strong>Full extraction</strong> adds historical data, customer reviews, and ratings. Multiple passes with session persistence and distributed cookie farming.',
+    items: '48,291',
+    itemsNote: '+ 240K reviews + 90-day price history',
+    time: '~45 min',
+    timeNote: 'multi-pass with session persistence',
+    method: 'Distributed browser farm',
+    fields: [
+      { name: 'Product name', included: true },
+      { name: 'Price', included: true },
+      { name: 'URL / SKU', included: true },
+      { name: 'Category', included: true },
+      { name: 'Description', included: true },
+      { name: 'Images', included: true },
+      { name: 'Nutrition facts', included: true },
+      { name: 'Stock / availability', included: true },
+      { name: 'Reviews + ratings', included: true },
+      { name: 'Price history', included: true },
+      { name: 'Seller / vendor data', included: false, level: 'L5' },
+      { name: 'Related products', included: false, level: 'L5' },
+    ]
+  },
+  5: {
+    name: 'Maximum',
+    code: 'L5',
+    desc: '<strong>Maximum extraction</strong> captures everything. Seller intelligence, cross-references, related products, and full graph traversal. Requires maximum stealth.',
+    items: '48,291',
+    itemsNote: '+ sellers + related graph + full history',
+    time: '~90 min',
+    timeNote: 'full anti-detection suite active',
+    method: 'Multi-node + DPDK bypass',
+<!-- claim label: preset "method" strings (e.g. DPDK bypass, maximum stealth) describe concept copy — DPDK is a stub; stealth raises cost, no guarantee (R-P3/R-B1). -->
+    fields: [
+      { name: 'Product name', included: true },
+      { name: 'Price', included: true },
+      { name: 'URL / SKU', included: true },
+      { name: 'Category', included: true },
+      { name: 'Description', included: true },
+      { name: 'Images', included: true },
+      { name: 'Nutrition facts', included: true },
+      { name: 'Stock / availability', included: true },
+      { name: 'Reviews + ratings', included: true },
+      { name: 'Price history', included: true },
+      { name: 'Seller / vendor data', included: true },
+      { name: 'Related products', included: true },
+    ]
+  }
+};
+
+let currentLevel = 3;
+
+function selectLevel(level) {
+  currentLevel = level;
+
+  // Update rail stops
+  document.querySelectorAll('.level-stop').forEach(stop => {
+    const l = parseInt(stop.dataset.level);
+    stop.classList.toggle('active', l <= level);
+  });
+
+  // Only the selected one gets the filled dot style, others just get the active class for the line
+  document.querySelectorAll('.level-stop').forEach(stop => {
+    const l = parseInt(stop.dataset.level);
+    if (l < level) {
+      stop.classList.add('active');
+    } else if (l === level) {
+      stop.classList.add('active');
+    } else {
+      stop.classList.remove('active');
+    }
+  });
+
+  // Update rail fill
+  const rail = document.getElementById('levelRail');
+  const fill = document.getElementById('railFill');
+  const totalWidth = rail.offsetWidth - 48; // subtract padding
+  const fillWidth = ((level - 1) / 4) * totalWidth;
+  fill.style.width = fillWidth + 'px';
+
+  // Update detail panel
+  const data = levelData[level];
+
+  document.getElementById('detailLevel').textContent = data.code + ' ' + data.name.toUpperCase();
+  document.getElementById('levelDescText').innerHTML = data.desc;
+  document.getElementById('detailItems').textContent = data.items;
+  document.getElementById('detailItemsNote').textContent = data.itemsNote;
+  document.getElementById('detailTime').textContent = data.time;
+  document.getElementById('detailTimeNote').textContent = data.timeNote;
+  document.getElementById('detailMethod').textContent = data.method;
+
+  // Update field list
+  const fieldList = document.getElementById('fieldList');
+  fieldList.innerHTML = data.fields.map(f => {
+    if (f.included) {
+      return `<li class="field-item included">
+        <span class="field-check">\u2713</span>
+        <span class="field-label">${f.name}</span>
+      </li>`;
+    } else {
+      return `<li class="field-item higher">
+        <span class="field-check">\u2713</span>
+        <span class="field-label">${f.name}</span>
+        <span class="field-level-tag">${f.level}</span>
+      </li>`;
+    }
+  }).join('');
+
+  // Re-trigger animation
+  const detail = document.getElementById('levelDetail');
+  detail.style.animation = 'none';
+  detail.offsetHeight; // force reflow
+  detail.style.animation = 'breatheIn 0.5s var(--ease) forwards';
+}
+
+function setPreset(site, level) {
+  const card = document.querySelector(`[data-preset="${site}"]`);
+  if (!card) return;
+
+  const levelNames = { 1: 'SCOUT', 2: 'STANDARD', 3: 'DEEP', 4: 'FULL', 5: 'MAXIMUM' };
+  const levelCodes = { 1: 'L1', 2: 'L2', 3: 'L3', 4: 'L4', 5: 'L5' };
+
+  // Update the dots
+  const dots = card.querySelectorAll('.preset-mini-dot');
+  dots.forEach((dot, i) => {
+    dot.classList.toggle('active', i === level - 1);
+  });
+
+  // Update label
+  card.querySelector('.preset-mini-label').textContent = levelCodes[level];
+  card.querySelector('.preset-level').textContent = levelCodes[level] + ' ' + levelNames[level];
+}
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', () => {
+  selectLevel(3);
+});
+</script>
+
+</body>
+</html>

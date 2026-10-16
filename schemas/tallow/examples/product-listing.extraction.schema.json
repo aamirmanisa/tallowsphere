@@ -1,0 +1,111 @@
+{
+  "schema_version": "tallow.extraction_schema.v1",
+  "schema_id": "example.product_listing.v1",
+  "entity": "product_listing",
+  "description": "Example schema-first extraction contract for product listings.",
+  "fields": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "selectors": [
+        {
+          "kind": "css",
+          "value": ".product .name",
+          "priority": 0,
+          "confidence_hint": 0.9
+        },
+        {
+          "kind": "json_path",
+          "value": "$.products[*].name",
+          "priority": 1
+        }
+      ],
+      "coercion": [
+        "trim",
+        "normalize_whitespace"
+      ],
+      "null_reasons": [
+        "missing",
+        "parse_failed",
+        "unknown"
+      ],
+      "min_confidence": 0.8,
+      "source_evidence": true
+    },
+    {
+      "name": "price",
+      "type": "money",
+      "required": false,
+      "selectors": [
+        {
+          "kind": "css",
+          "value": ".product .price",
+          "priority": 0
+        },
+        {
+          "kind": "json_path",
+          "value": "$.products[*].price",
+          "priority": 1
+        }
+      ],
+      "coercion": [
+        "trim",
+        "parse_money"
+      ],
+      "null_reasons": [
+        "missing",
+        "not_applicable",
+        "parse_failed"
+      ],
+      "min_confidence": 0.75,
+      "source_evidence": true
+    },
+    {
+      "name": "url",
+      "type": "url",
+      "required": false,
+      "selectors": [
+        {
+          "kind": "css",
+          "value": ".product a",
+          "attribute": "href",
+          "priority": 0
+        },
+        {
+          "kind": "json_path",
+          "value": "$.products[*].url",
+          "priority": 1
+        }
+      ],
+      "coercion": [
+        "parse_url"
+      ],
+      "null_reasons": [
+        "missing",
+        "parse_failed"
+      ],
+      "min_confidence": 0.7,
+      "source_evidence": true
+    }
+  ],
+  "pagination": {
+    "mode": "link",
+    "max_pages": 3
+  },
+  "drift": {
+    "selector_health_min": 0.8,
+    "sample_on_failure": true,
+    "alert_after_consecutive_failures": 3
+  },
+  "quality": {
+    "min_row_confidence": 0.75,
+    "quarantine_below_confidence": 0.55,
+    "max_null_required_fields": 0
+  },
+  "quarantine": {
+    "enabled": true,
+    "path_template": "artifacts/quarantine/{run_id}/{target_id}.jsonl",
+    "include_source_snippet": true
+  }
+}

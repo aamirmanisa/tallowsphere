@@ -1,0 +1,81 @@
+{
+  "schema_version": "tallow.target_manifest.v2",
+  "manifest_id": "example-request-plan-get-only-local-fixture",
+  "defaults": {
+    "headers": {
+      "Accept": "application/json",
+      "User-Agent": "TallowExamples/1.0 local-fixture"
+    },
+    "browser_fallback": {
+      "mode": "never"
+    },
+    "artifact_policy": {
+      "capture_body": "redacted",
+      "response_snippet_bytes": 512,
+      "screenshots": "never",
+      "har": "never",
+      "dom": "never"
+    }
+  },
+  "targets": [
+    {
+      "id": "fixture_status",
+      "url": "https://example.invalid/status?case=get-only",
+      "method": "GET",
+      "headers": {
+        "X-Example": "get-only-status"
+      },
+      "compliance": {
+        "source_authority": "local_fixture_public_web",
+        "purpose": "release_example_request_plan_get_only",
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "requires_approval": false
+      }
+    },
+    {
+      "id": "fixture_products_json",
+      "url": "https://example.invalid/api/products",
+      "method": "GET",
+      "headers": {
+        "X-Example": "get-only-products"
+      },
+      "compliance": {
+        "source_authority": "local_fixture_public_web",
+        "purpose": "release_example_request_plan_get_only",
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "requires_approval": false
+      }
+    }
+  ],
+  "policy": {
+    "allowlist": {
+      "domains": [
+        "example.invalid"
+      ],
+      "url_patterns": [
+        "https://example.invalid/*"
+      ]
+    },
+    "denylist": {
+      "domains": [],
+      "url_patterns": []
+    },
+    "robots": {
+      "mode": "strict"
+    },
+    "rate_limits": {
+      "per_domain": {
+        "example.invalid": {
+          "requests_per_minute": 60,
+          "concurrent": 1
+        }
+      }
+    }
+  }
+}

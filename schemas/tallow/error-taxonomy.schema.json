@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/error-taxonomy.schema.json",
+  "title": "Tallow Canonical Error Taxonomy",
+  "description": "Schema for the Phase 2 canonical cross-layer error taxonomy document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "error_kinds",
+    "error_object"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "tallow.error_taxonomy.v1"
+    },
+    "error_kinds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/errorKind"
+      },
+      "uniqueItems": true
+    },
+    "error_object": {
+      "$ref": "#/$defs/errorObjectContract"
+    }
+  },
+  "$defs": {
+    "errorKindName": {
+      "type": "string",
+      "enum": [
+        "none",
+        "transport",
+        "dns",
+        "tls",
+        "timeout",
+        "http_4xx",
+        "auth",
+        "rate_limited",
+        "http_5xx",
+        "robots_policy",
+        "browser",
+        "extraction",
+        "validation",
+        "body_too_large",
+        "storage",
+        "internal",
+        "unknown"
+      ]
+    },
+    "errorKind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "description",
+        "retryable",
+        "replayable",
+        "policy_escalation"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/errorKindName"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "replayable": {
+          "type": "boolean"
+        },
+        "policy_escalation": {
+          "type": "boolean"
+        },
+        "legacy_aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "maps_to_row_error_kind_v1": {
+          "type": "string",
+          "enum": [
+            "none",
+            "transport",
+            "server",
+            "rate_limited",
+            "auth",
+            "other"
+          ]
+        }
+      }
+    },
+    "errorObjectContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "required_fields"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "tallow.error_object.v1"
+        },
+        "required_fields": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "kind"
+            },
+            {
+              "const": "message"
+            },
+            {
+              "const": "retryable"
+            },
+            {
+              "const": "policy_blocked"
+            },
+            {
+              "const": "source_target_id"
+            },
+            {
+              "const": "url"
+            },
+            {
+              "const": "phase"
+            }
+          ],
+          "items": false,
+          "minItems": 7,
+          "maxItems": 7
+        }
+      }
+    },
+    "emittedErrorObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message",
+        "retryable",
+        "policy_blocked",
+        "source_target_id",
+        "url",
+        "phase"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/errorKindName"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "policy_blocked": {
+          "type": "boolean"
+        },
+        "source_target_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

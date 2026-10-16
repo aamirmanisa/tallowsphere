@@ -1,0 +1,7 @@
+# cargo-fuzz 0.13.2 canonical template: generated corpora/artifacts stay untracked.
+# Bulk corpus/ is machine-generated — do NOT commit (curate minimized seeds deliberately
+# if deterministic CI replay is ever wanted). See lane-M evidence 2026-09-27.
+target
+corpus
+artifacts
+coverage

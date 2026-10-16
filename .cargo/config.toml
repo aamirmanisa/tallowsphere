@@ -1,0 +1,69 @@
+# Maximum parallel build configuration for Tallow
+# 8 CPU cores detected — use all of them
+
+[build]
+# Use all CPU cores for compilation
+jobs = 8
+# V1 F-phase hardening (2026-09-14): incremental off — avoids the known
+# incremental-cache churn class (ENOENT on dep-graph/query-cache under
+# concurrent or large builds) AND guarantees run-twice acceptance parity:
+# the --twice pass-2 child (env -i) cannot inherit a shell-level
+# CARGO_INCREMENTAL, but .cargo/config applies to both passes.
+incremental = false
+
+[target.x86_64-pc-windows-msvc]
+# Use faster linker on Windows (lld)
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[env]
+# Maximize Rayon thread pool for SIMD parser
+RAYON_NUM_THREADS = "8"
+# Recursive-trace interpreter: each user-level recursive call expands into deep
+# native recursion in the VM, which overflows the default 2MB test-thread stack
+# (e.g. interp::tests::binary_search_recursive). 8MB is ample for the deepest
+# tested recursion and avoids the stack-overflow SIGABRT under parallel load.
+RUST_MIN_STACK = "8388608"
+
+[registries.crates-io]
+protocol = "sparse"
+
+# AES hardware acceleration on the production aarch64 target (item 6.4).
+# libcrux-aesgcm selects its ARMv8 AES path from the *target feature*, not from its own
+# `simd128` feature: without this it silently assembles the bitsliced fallback, measured
+# at 111 MB/s against 973 MB/s with it (a ~9x cliff). This is the flag that makes the
+# installed /usr/local/bin/tallow fast, so it is load-bearing, not a tuning knob.
+# CAREFUL: exporting RUSTFLAGS makes cargo ignore this table entirely.
+[target.aarch64-unknown-linux-gnu]
+# Two flags, two different AES implementations in this tree — both are needed.
+#
+#   -C target-feature=+aes : libcrux-aesgcm selects its ARMv8 AES path from the *target
+#     feature*, not from its own `simd128` feature (that buys ~3%; this buys 8.8x).
+#     Without it the crate silently assembles its bitsliced fallback (111 MB/s vs 973).
+#
+#   --cfg aes_armv8 : the OTHER AES implementation here — RustCrypto's `aes` 0.8, used
+#     directly by the CLI/TUI's own code (144 sites under src/: stdlib/crypto.rs,
+#     interp.rs, stdlib/transfer.rs + transfer_net.rs, vault/{share,pqc,sync,db,
+#     import_export}.rs, runtime/transfer_ffi.rs, ...) — is inert unless this cfg is set,
+#     so those sites also run a bitsliced fallback by default. This is RustCrypto's own
+#     documented opt-in; it needs `+aes` alongside it. Both backends emit identical
+#     bytes, so this is a speed change only.
+#
+# CAREFUL: exporting RUSTFLAGS makes cargo ignore this table entirely.
+rustflags = ["-C", "target-feature=+aes", "--cfg", "aes_armv8"]
+
+# The same two flags for the other aarch64 targets this project actually ships.
+# Nixe's release.yml publishes aarch64-unknown-linux-musl and aarch64-apple-darwin
+# (tallow-linux-aarch64-musl.tar.gz, tallow-macos-aarch64.tar.gz) and does NOT export
+# RUSTFLAGS, so this table is the only thing that reaches those builds. A [target.*]
+# section naming only the gnu triple would leave both shipped ARM artifacts on the
+# bitsliced fallback with no visible symptom — the same silent-cliff class as the
+# libcrux flag itself.
+# NOTE: `+aes` means the shipped binary requires the ARMv8 AES extension (mandatory
+# from ARMv8.2-A on; absent on some ARMv8.0 cores). That is a deliberate trade for
+# these targets, and it is a compatibility call — do not add it to x86_64 without
+# making that call too: RustCrypto's `aes` auto-detects AES-NI at runtime there.
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+aes", "--cfg", "aes_armv8"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-feature=+aes", "--cfg", "aes_armv8"]

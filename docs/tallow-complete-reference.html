@@ -1,0 +1,1996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tallow — Complete Language Reference</title>
+<style>
+@page { size: A4; margin: 20mm; }
+@media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0a0e1a; color: #e2e8f0; line-height: 1.7; }
+.container { max-width: 1000px; margin: 0 auto; padding: 40px 30px; }
+
+/* Cover */
+.cover { text-align: center; padding: 120px 0 80px; border-bottom: 2px solid #1e293b; margin-bottom: 60px; }
+.cover h1 { font-size: 3.5em; font-weight: 800; background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }
+.cover .subtitle { font-size: 1.4em; color: #94a3b8; margin-bottom: 30px; }
+.cover .tagline { font-size: 1.1em; color: #64748b; margin-bottom: 20px; font-style: italic; }
+.cover .version { display: inline-block; background: #1e293b; padding: 8px 20px; border-radius: 20px; color: #60a5fa; font-family: monospace; }
+
+/* Section Headers */
+h2 { font-size: 2em; margin: 60px 0 20px; padding-bottom: 10px; border-bottom: 2px solid #1e3a5f; color: #60a5fa; }
+h3 { font-size: 1.4em; margin: 35px 0 15px; color: #a78bfa; }
+h4 { font-size: 1.1em; margin: 20px 0 10px; color: #f472b6; }
+
+/* Code blocks */
+pre { background: #1e293b; border-radius: 10px; padding: 20px; margin: 15px 0; overflow-x: auto; border-left: 4px solid #3b82f6; font-size: 0.9em; }
+code { font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; }
+pre code { color: #e2e8f0; }
+.kw { color: #60a5fa; font-weight: 500; }
+.str { color: #22c55e; }
+.type { color: #a78bfa; font-weight: 500; }
+.comment { color: #64748b; font-style: italic; }
+
+/* Inline code */
+p code, li code, td code { background: #1e293b; padding: 2px 8px; border-radius: 4px; color: #f472b6; font-size: 0.88em; }
+
+/* Cards */
+.card { background: linear-gradient(135deg, #1e293b, #0f172a); border-radius: 12px; padding: 24px; margin: 20px 0; border: 1px solid #334155; }
+.card.highlight { border-color: #3b82f6; border-left: 4px solid #60a5fa; }
+.card.note { border-color: #f59e0b; border-left: 4px solid #f59e0b; background: linear-gradient(135deg, #1e293b, #1a1500); }
+.card.success { border-color: #22c55e; border-left: 4px solid #22c55e; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th { background: #1e293b; padding: 12px 16px; text-align: left; color: #60a5fa; font-weight: 600; border-bottom: 2px solid #334155; }
+td { padding: 10px 16px; border-bottom: 1px solid #1e293b; }
+tr:hover { background: #1e293b30; }
+
+/* Tags */
+.tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600; margin-right: 6px; margin-bottom: 6px; }
+.tag.new { background: #1e3a8a; color: #93c5fd; }
+.tag.feature { background: #581c87; color: #d8b4fe; }
+.tag.security { background: #7c2d12; color: #fdba74; }
+
+/* Lists */
+ul, ol { padding-left: 24px; margin: 10px 0; }
+li { margin: 6px 0; }
+li::marker { color: #60a5fa; }
+
+/* Divider */
+.divider { height: 2px; background: linear-gradient(90deg, transparent, #334155, transparent); margin: 50px 0; }
+
+/* TOC */
+.toc { background: #1e293b; border-radius: 12px; padding: 30px; margin: 30px 0; border: 1px solid #334155; }
+.toc h3 { margin-top: 0; color: #e2e8f0; }
+.toc ol { counter-reset: toc; list-style: none; padding: 0; }
+.toc li { counter-increment: toc; padding: 6px 0; border-bottom: 1px solid #0f172a; }
+.toc li:last-child { border-bottom: none; }
+.toc li::before { content: counter(toc) ". "; color: #60a5fa; font-weight: 600; }
+.toc a { color: #cbd5e1; text-decoration: none; }
+.toc a:hover { color: #60a5fa; }
+
+/* Feature grid */
+.feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+@media (max-width: 768px) { .feature-grid { grid-template-columns: 1fr; } }
+.feature-item { background: #1e293b; border-radius: 8px; padding: 16px; border-left: 3px solid #3b82f6; }
+.feature-item h5 { color: #60a5fa; margin-bottom: 8px; font-size: 1em; }
+.feature-item p { color: #94a3b8; font-size: 0.9em; }
+
+/* Page break */
+.page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- COVER PAGE -->
+<div class="cover">
+<h1>TALLOW</h1>
+<div class="subtitle">Complete Language Reference</div>
+<div class="tagline">Privacy-first systems programming language</div>
+<div class="version">v0.4.0 — March 2026</div>
+<p><strong>Illegal operations don't compile. Legal ones are fast by default.</strong></p>
+</div>
+
+<!-- TABLE OF CONTENTS -->
+<div class="toc">
+<h3>Table of Contents</h3>
+<ol>
+<li><a href="#intro">Introduction to Tallow</a></li>
+<li><a href="#why">Why Tallow Exists</a></li>
+<li><a href="#features">Core Features & Five Pillars</a></li>
+<li><a href="#install">Installation</a></li>
+<li><a href="#hello">Your First Program</a></li>
+<li><a href="#vars">Variables & Mutability</a></li>
+<li><a href="#types">Primitive & Collection Types</a></li>
+<li><a href="#privacy">Privacy Type Qualifiers</a></li>
+<li><a href="#functions">Functions & Closures</a></li>
+<li><a href="#control">Control Flow</a></li>
+<li><a href="#strings">String Interpolation</a></li>
+<li><a href="#structs">Structs & Methods</a></li>
+<li><a href="#enums">Enums</a></li>
+<li><a href="#generics">Generics</a></li>
+<li><a href="#errors">Error Handling</a></li>
+<li><a href="#legal">@legal Annotation System</a></li>
+<li><a href="#crypto">Cryptography Primitives</a></li>
+<li><a href="#fetch">Networking & fetch</a></li>
+<li><a href="#ippool">IPPool & Concurrent Requests</a></li>
+<li><a href="#agents">Agent Task System</a></li>
+<li><a href="#stdlib">Standard Library Overview</a></li>
+<li><a href="#http">HTTP Module</a></li>
+<li><a href="#logging">Logging Module</a></li>
+<li><a href="#crypto-module">Crypto Module</a></li>
+<li><a href="#toml">tallow.toml Manifest</a></li>
+<li><a href="#cli">CLI Commands</a></li>
+<li><a href="#compiler">Compiler Architecture</a></li>
+<li><a href="#glossary">Glossary</a></li>
+<li><a href="#examples">Complete Code Examples</a></li>
+</ol>
+</div>
+
+<div class="divider"></div>
+
+<!-- SECTION 1 -->
+<h2 id="intro">Introduction to Tallow</h2>
+
+<p><strong>Tallow</strong> (pronounced /nɪks/ — rhymes with "fix") is a privacy-first systems programming language that enforces legal compliance and cryptographic security at compile time, not runtime.</p>
+
+<div class="card highlight">
+<h4>The One-Sentence Pitch</h4>
+<p>Tallow is a systems programming language where privacy, legal compliance, and post-quantum cryptography are enforced at compile time — not bolted on after.</p>
+</div>
+
+<h3>Etymology</h3>
+<ul>
+<li><strong>Tallow</strong> (German): a water nymph that appears, then vanishes — perfect privacy metaphor</li>
+<li><strong>To nix</strong>: to cancel, erase, void — zero data retention</li>
+<li><strong>The river Styx</strong>: what crosses over doesn't come back</li>
+</ul>
+
+<h3>Core Philosophy</h3>
+<p>Every existing language treats privacy as a library problem. Developers import `crypto`, add GDPR compliance as a post-launch checklist, and implement IP rotation via fragile third-party proxies.</p>
+
+<p>Tallow makes this <strong>wrong by default impossible</strong>.</p>
+
+<div class="divider"></div>
+
+<!-- SECTION 2 -->
+<h2 id="why">Why Tallow Exists</h2>
+
+<h3>The Problem</h3>
+<ul>
+<li><strong>GDPR fines in 2025:</strong> €2.3 billion (+38% YoY)</li>
+<li><strong>Privacy-enhancing tech market:</strong> $3-4.4B (2024) → $28B (2030)</li>
+<li><strong>NIST PQC deadline:</strong> RSA/ECC deprecated by 2030, disallowed by 2035</li>
+<li><strong>Web scraping compliance:</strong> described as "minefield" — every data point has legal strings</li>
+</ul>
+
+<h3>What Rust, Go, Mojo, Carbon, and Jule Don't Do</h3>
+
+<table>
+<tr>
+<th>Feature</th>
+<th>Rust</th>
+<th>Mojo</th>
+<th>Go</th>
+<th>Carbon</th>
+<th>Jule</th>
+<th>Tallow</th>
+</tr>
+<tr>
+<td>Memory safety</td>
+<td>✅</td>
+<td>✅</td>
+<td>Partial</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Systems performance</td>
+<td>✅</td>
+<td>✅</td>
+<td>Partial</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>PQC crypto default</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td><strong>✅</strong></td>
+</tr>
+<tr>
+<td>Legal compliance in compiler</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td><strong>✅</strong></td>
+</tr>
+<tr>
+<td>Built-in IP rotation at scale</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td><strong>✅</strong></td>
+</tr>
+<tr>
+<td>Agent-task boundaries</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td><strong>✅</strong></td>
+</tr>
+<tr>
+<td>GDPR/CCPA audit trail</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td><strong>✅</strong></td>
+</tr>
+</table>
+
+<div class="divider"></div>
+
+<!-- SECTION 3 -->
+<h2 id="features">Core Features — Five Pillars</h2>
+
+<h3>Pillar 1: Extreme Performance</h3>
+<ul>
+<li>Target &mdash; not yet verified: microsecond HTTP requests, &lt;1ms script startup (unmeasured; the default HTTP path is a synchronous client with Tor egress and a 250&nbsp;ms/host politeness delay)</li>
+<li>io_uring backend (Linux 5.1+) for async I/O &mdash; partial: optional feature, off by default; single-op file I/O only (no network path)</li>
+<li>DPDK option for kernel bypass (10M+ connections) &mdash; target-only: stub backend only (<code>StubDpdkBackend</code>); no userspace TCP stack exists</li>
+<li>SIMD string processing &mdash; target-only (no SIMD tokenizer in tree); Arena allocators &mdash; target-only (not implemented); zero GC &mdash; true (no tracing collector)</li>
+<li>Constant folding in codegen (no <code>comptime</code> language feature)</li>
+</ul>
+
+<table>
+<tr>
+<th>Operation</th>
+<th>Python + uv</th>
+<th>Tallow Target</th>
+<th>Method</th>
+</tr>
+<tr>
+<td>Script startup</td>
+<td>80ms</td>
+<td>&lt;1ms</td>
+<td>Target &mdash; unmeasured; compiled binary only (<code>tallow run</code> may build or run interpreted)</td>
+</tr>
+<tr>
+<td>HTTP fetch (1 req)</td>
+<td>~2ms</td>
+<td>~50µs</td>
+<td>Target &mdash; not achievable as designed (synchronous client; Tor default egress + 250&nbsp;ms/host delay; no connection pooling)</td>
+</tr>
+<tr>
+<td>Parse 10K HTML pages</td>
+<td>~8s</td>
+<td>~40ms</td>
+<td>Target &mdash; no SIMD tokenizer in tree; scraper/html5ever DOM path</td>
+</tr>
+<tr>
+<td>Encrypt 1GB</td>
+<td>~12s</td>
+<td>~200ms</td>
+<td>AES hardware acceleration (AES-NI on x86; ARMv8 crypto extensions on ARM)</td>
+</tr>
+<tr>
+<td>100K concurrent reqs</td>
+<td>❌</td>
+<td>Target-only</td>
+<td>Not implemented &mdash; io_uring off by default; no userspace TCP stack</td>
+</tr>
+</table>
+
+<h3>Pillar 2: Privacy by Default</h3>
+<ul>
+<li><code>private</code> and <code>secret</code> type qualifiers — compiler-tracked</li>
+<li>Private types: cannot be logged raw, sent unencrypted, or stored without retention</li>
+<li>Secret types: all of private PLUS zero-wiped from memory on scope exit</li>
+<li><code>.redact()</code>, <code>.hash()</code>, <code>.mask()</code> methods on private types</li>
+</ul>
+
+<h3>Pillar 3: Legal Compliance in Compiler</h3>
+<ul>
+<li><code>@legal</code> annotation required on all network-touching functions</li>
+<li>Compiler-generated audit logs &mdash; partial: auto-emission today is plain <code>[AUDIT] fn=&hellip; basis=&hellip; purpose=&hellip;</code> text lines from the self-hosted compiler; native codegen only declares the FFI; structured JSONL is opt-in (<code>tallow.legal.log_audit</code>)</li>
+<li>Legal basis maps directly to GDPR Article 6</li>
+<li>Jurisdiction-aware: auto-detects and applies relevant law</li>
+<li><code>tallow audit</code> generates source-level compliance evidence (engineering-process evidence, not court evidence by itself; not a certification)</li>
+</ul>
+
+<h3>Pillar 4: Post-Quantum Cryptography Default</h3>
+<ul>
+<li>ML-KEM-768 for key exchange (NIST PQC standard) &mdash; the <code>.tl</code>/stdlib and vault default; the <code>tallow-crypto</code> Rust crate ships ML-KEM-1024 (parameter-set divergence tracked as an open item)</li>
+<li>ML-DSA for signatures &mdash; ML-DSA-65 on the <code>.tl</code>/stdlib surface; the crate ships ML-DSA-87</li>
+<li>Argon2id for password hashing</li>
+<li>All classical algorithms available but not default</li>
+<li>Hybrid mode (classical + PQC) available for transition period</li>
+</ul>
+
+<h3>Pillar 5: Unlimited IP Connections</h3>
+<ul>
+<li><code>IPPool</code> is a first-class language primitive</li>
+<li>Scales from 10K (epoll) &rarr; 1M (io_uring, feature-gated) &mdash; 10M+ (DPDK) is target-only (stub backend)</li>
+<li>Distributed mode: multiple nodes appear as single pool</li>
+<li>Auto-tunes kernel parameters at runtime (restored on exit)</li>
+<li>Per-request IP rotation built in</li>
+</ul>
+
+<div class="divider"></div>
+
+<!-- SECTION 4 -->
+<h2 id="install">Installation</h2>
+
+<h3>Windows (PowerShell)</h3>
+<pre><code><span class="kw">iwr</span> https://github.com/tallow-lang/tallow/releases/download/v0.4.0/tallow-windows-x86_64.zip -OutFile tallow.zip
+<span class="kw">Expand-Archive</span> tallow.zip -DestinationPath <span class="str">$env:ProgramFiles\Tallow</span>
+$env:PATH += <span class="str">";$env:ProgramFiles\Tallow"</span></code></pre>
+
+<h3>Linux / macOS (Bash)</h3>
+<pre><code><span class="kw">curl</span> -L https://github.com/tallow-lang/tallow/releases/download/v0.4.0/tallow-linux-x86_64-musl.tar.gz | tar xz
+<span class="kw">sudo mv</span> tallow /usr/local/bin/</code></pre>
+
+<h3>Verify Installation</h3>
+<pre><code><span class="kw">tallow</span> version</code></pre>
+
+<p><em>Note: archive names follow <code>.github/workflows/release.yml</code> (5 targets: linux x86_64/aarch64 musl, macOS x86_64/aarch64, Windows x86_64). No release has been published from this checkout yet; installers fail closed until the release signing key is pinned.</em></p>
+
+<div class="divider"></div>
+
+<!-- SECTION 5 -->
+<h2 id="hello">Your First Program</h2>
+
+<h3>Create hello.tl</h3>
+<pre><code><span class="kw">fn</span> main() {
+    <span class="kw">print</span>(<span class="str">"Hello, Tallow!"</span>)
+}</code></pre>
+
+<h3>Run It</h3>
+<pre><code><span class="kw">tallow run</span> hello.tl</code></pre>
+
+<p>Output: <code>Hello, Tallow!</code></p>
+
+<h3>Or Build It</h3>
+<pre><code><span class="kw">tallow build</span> hello.tl</code></pre>
+
+<p>Creates a standalone executable with zero dependencies. Copy it anywhere and it just works.</p>
+
+<div class="divider"></div>
+
+<!-- SECTION 6 -->
+<h2 id="vars">Variables & Mutability</h2>
+
+<h3>Immutable by Default (let)</h3>
+<pre><code><span class="kw">let</span> name = <span class="str">"tallow"</span>
+<span class="kw">let</span> age = <span class="str">25</span>
+<span class="kw">let</span> rate = <span class="str">2.5</span></code></pre>
+
+<p>Use <code>let</code> for everything by default. The compiler infers the type.</p>
+
+<h3>Mutable Variables (var)</h3>
+<pre><code><span class="kw">var</span> count = <span class="str">0</span>
+count = count + <span class="str">1</span>
+<span class="kw">print</span>(count)</code></pre>
+
+<p>Use <code>var</code> only when reassignment is necessary.</p>
+
+<h3>Constants</h3>
+<pre><code><span class="kw">const</span> MAX_CONNECTIONS = <span class="str">100_000</span>
+<span class="kw">const</span> VERSION = <span class="str">"0.4.0"</span></code></pre>
+
+<p>Constants are evaluated at compile time.</p>
+
+<h3>Type Annotations</h3>
+<pre><code><span class="kw">let</span> port: u16 = <span class="str">8080</span>
+<span class="kw">let</span> timeout: i32 = <span class="str">30</span>
+<span class="kw">let</span> rate: f64 = <span class="str">2.5</span>
+<span class="kw">let</span> active: bool = <span class="str">true</span></code></pre>
+
+<p>Type annotations are optional but recommended for clarity.</p>
+
+<h3>Number Literals</h3>
+<pre><code><span class="kw">let</span> big = <span class="str">100_000_000</span>   <span class="comment">// underscore separators for readability</span>
+<span class="kw">let</span> hex = <span class="str">0xff</span>           <span class="comment">// hexadecimal</span>
+<span class="kw">let</span> binary = <span class="str">0b1010</span>      <span class="comment">// binary</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 7 -->
+<h2 id="types">Primitive & Collection Types</h2>
+
+<h3>Primitive Types</h3>
+
+<table>
+<tr>
+<th>Category</th>
+<th>Types</th>
+</tr>
+<tr>
+<td>Signed integers</td>
+<td><code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>isize</code></td>
+</tr>
+<tr>
+<td>Unsigned integers</td>
+<td><code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code>, <code>usize</code></td>
+</tr>
+<tr>
+<td>Floating point</td>
+<td><code>f32</code>, <code>f64</code></td>
+</tr>
+<tr>
+<td>Other</td>
+<td><code>bool</code>, <code>char</code>, <code>String</code>, <code>Bytes</code></td>
+</tr>
+</table>
+
+<h3>Collection Types</h3>
+<pre><code><span class="comment">// Arrays (dynamic)</span>
+<span class="kw">let</span> numbers = [<span class="str">1</span>, <span class="str">2</span>, <span class="str">3</span>]
+
+<span class="comment">// Fixed-size arrays</span>
+<span class="kw">let</span> fixed: [<span class="str">3</span>]i32 = [<span class="str">1</span>, <span class="str">2</span>, <span class="str">3</span>]
+
+<span class="comment">// Maps (hash tables)</span>
+<span class="kw">let</span> config = {
+    <span class="str">"host"</span>: <span class="str">"localhost"</span>,
+    <span class="str">"port"</span>: <span class="str">"8080"</span>
+}
+
+<span class="comment">// Generics</span>
+<span class="type">Map&lt;String, i32&gt;</span>
+<span class="type">Set&lt;String&gt;</span>
+<span class="type">Queue&lt;T&gt;</span>
+<span class="type">Chan&lt;T&gt;</span></code></pre>
+
+<h3>Result and Option Types</h3>
+<pre><code><span class="comment">// Result: Ok(T) or Err(String)</span>
+<span class="type">Result&lt;Data&gt;</span>
+
+<span class="comment">// Option: Some(T) or None (also written T?)</span>
+<span class="type">Option&lt;String&gt;</span>
+<span class="type">String?</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 8 -->
+<h2 id="privacy">Privacy Type Qualifiers</h2>
+
+<div class="card highlight">
+<h4>Core Concept</h4>
+<p>Tallow uses the type system to track privacy-sensitive data. The compiler rejects dangerous operations at compile time, not after deployment.</p>
+</div>
+
+<h3>Built-in Private Types</h3>
+
+<p><code>private</code> types represent GDPR personal data. They cannot be:</p>
+<ul>
+<li>Logged raw (must use <code>.redact()</code> or <code>.hash()</code>)</li>
+<li>Sent unencrypted</li>
+<li>Stored without a retention limit</li>
+</ul>
+
+<pre><code><span class="type">type Email</span> = <span class="kw">private</span> String
+<span class="type">type Phone</span> = <span class="kw">private</span> String
+<span class="type">type Name</span> = <span class="kw">private</span> String
+<span class="type">type Location</span> = <span class="kw">private</span> (f64, f64)</code></pre>
+
+<h3>Built-in Secret Types</h3>
+
+<p><code>secret</code> types represent credentials and keys. All privacy rules PLUS:</p>
+<ul>
+<li>Zero-wiped from memory on scope exit</li>
+<li>Never appears in error messages</li>
+<li>Cannot be serialized to disk or network</li>
+</ul>
+
+<pre><code><span class="type">type Password</span> = <span class="kw">secret</span> String
+<span class="type">type APIKey</span> = <span class="kw">secret</span> String
+<span class="type">type Token</span> = <span class="kw">secret</span> String
+<span class="type">type PrivateKey</span> = <span class="kw">secret</span> Bytes</code></pre>
+
+<h3>Working with Private Types</h3>
+<pre><code><span class="kw">let</span> email = <span class="str">"alice@example.com"</span> <span class="kw">as</span> Email
+
+<span class="comment">// ❌ COMPILER ERROR: Cannot log email directly</span>
+<span class="kw">print</span>(email)
+
+<span class="comment">// ✅ CORRECT: Use a safe method</span>
+<span class="kw">print</span>(email.redact())   <span class="comment">// "a***@***.com"</span>
+<span class="kw">print</span>(email.hash())     <span class="comment">// SHA256 hex digest</span>
+<span class="kw">print</span>(email.mask())     <span class="comment">// "****@example.com"</span></code></pre>
+
+<h3>Defining Custom Private Types</h3>
+<pre><code><span class="type">type SSN</span> = <span class="kw">private</span> String
+<span class="type">type CreditCard</span> = <span class="kw">private</span> String
+
+<span class="comment">// Now SSN and CreditCard get all privacy protections automatically</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 9 -->
+<h2 id="functions">Functions & Closures</h2>
+
+<h3>Basic Function</h3>
+<pre><code><span class="kw">fn</span> add(a: i32, b: i32) <span class="kw">-></span> i32 {
+    a + b
+}</code></pre>
+
+<p>Functions use implicit returns (no <code>return</code> keyword needed for the last expression).</p>
+
+<h3>Multiple Return Values</h3>
+<pre><code><span class="kw">fn</span> parse(raw: Bytes) <span class="kw">-></span> (Data, Error?) {
+    <span class="comment">// returns a tuple</span>
+}
+
+<span class="kw">let</span> (data, err) = parse(raw)</code></pre>
+
+<h3>Functions Returning Nothing</h3>
+<pre><code><span class="kw">fn</span> print_hello() {
+    <span class="kw">print</span>(<span class="str">"hello"</span>)
+    <span class="comment">// implicitly returns ()</span>
+}</code></pre>
+
+<h3>Closures</h3>
+<pre><code><span class="kw">let</span> double = { x: i32 <span class="kw">-></span> x * <span class="str">2</span> }
+<span class="kw">let</span> result = double(<span class="str">5</span>)  <span class="comment">// 10</span></code></pre>
+
+<h3>Higher-Order Functions</h3>
+<pre><code><span class="kw">fn</span> apply(f: <span class="kw">fn</span>(i32) <span class="kw">-></span> i32, x: i32) <span class="kw">-></span> i32 {
+    f(x)
+}</code></pre>
+
+<h3>Anonymous Closures with map/filter</h3>
+<pre><code><span class="kw">let</span> nums = [<span class="str">1</span>, <span class="str">2</span>, <span class="str">3</span>]
+<span class="kw">let</span> doubled = nums.map { x <span class="kw">-></span> x * <span class="str">2</span> }
+<span class="kw">let</span> evens = nums.filter { x <span class="kw">-></span> x % <span class="str">2</span> == <span class="str">0</span> }</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 10 -->
+<h2 id="control">Control Flow</h2>
+
+<h3>if/else</h3>
+<pre><code><span class="kw">if</span> count > <span class="str">10</span> {
+    <span class="kw">print</span>(<span class="str">"big"</span>)
+} <span class="kw">else if</span> count > <span class="str">5</span> {
+    <span class="kw">print</span>(<span class="str">"medium"</span>)
+} <span class="kw">else</span> {
+    <span class="kw">print</span>(<span class="str">"small"</span>)
+}</code></pre>
+
+<h3>match (Exhaustive Pattern Matching)</h3>
+<pre><code><span class="kw">match</span> status {
+    <span class="str">200</span> <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"ok"</span>)
+    <span class="str">404</span> <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"not found"</span>)
+    <span class="str">500</span> <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"error"</span>)
+    _   <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"unknown"</span>)
+}</code></pre>
+
+<h3>match on Result</h3>
+<pre><code><span class="kw">let</span> value = divide(<span class="str">10.0</span>, <span class="str">2.0</span>) <span class="kw">match</span> {
+    Ok(v)  <span class="kw">-></span> v
+    Err(msg) <span class="kw">-></span> { <span class="kw">print</span>(<span class="str">"error: {msg}"</span>); <span class="str">0.0</span> }
+}</code></pre>
+
+<h3>for Loops</h3>
+<pre><code><span class="comment">// Range</span>
+<span class="kw">for</span> i <span class="kw">in</span> <span class="str">0..10</span> {
+    <span class="kw">print</span>(i)
+}
+
+<span class="comment">// Collections</span>
+<span class="kw">let</span> items = [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]
+<span class="kw">for</span> item <span class="kw">in</span> items {
+    <span class="kw">print</span>(item)
+}</code></pre>
+
+<h3>while Loops</h3>
+<pre><code><span class="kw">var</span> count = <span class="str">0</span>
+<span class="kw">while</span> count < <span class="str">5</span> {
+    count = count + <span class="str">1</span>
+}</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 11 -->
+<h2 id="strings">String Interpolation</h2>
+
+<pre><code><span class="kw">let</span> name = <span class="str">"world"</span>
+<span class="kw">let</span> msg = <span class="str">"hello {name}"</span>           <span class="comment">// "hello world"</span>
+
+<span class="kw">let</span> domain = <span class="str">"example.com"</span>
+<span class="kw">let</span> url = <span class="str">"https://{domain}/api"</span>
+
+<span class="kw">let</span> items_count = <span class="str">42</span>
+<span class="kw">let</span> log = <span class="str">"fetched {items_count} items in {elapsed}ms"</span></code></pre>
+
+<p>Strings use curly braces for interpolation. Expressions inside braces are evaluated at runtime.</p>
+
+<div class="divider"></div>
+
+<!-- SECTION 12 -->
+<h2 id="structs">Structs & Methods</h2>
+
+<h3>Defining a Struct</h3>
+<pre><code><span class="kw">struct</span> Config {
+    host:     String,
+    port:     u16,
+    timeout:  Duration,
+    max_conn: u32 = <span class="str">1000</span>    <span class="comment">// default value</span>
+}</code></pre>
+
+<h3>Creating an Instance</h3>
+<pre><code><span class="kw">let</span> cfg = Config {
+    host:    <span class="str">"localhost"</span>,
+    port:    <span class="str">8080</span>,
+    timeout: <span class="str">30</span>.seconds
+}</code></pre>
+
+<h3>Methods (impl block)</h3>
+<pre><code><span class="kw">impl</span> Config {
+    <span class="kw">fn</span> url(self) <span class="kw">-></span> String {
+        <span class="str">"http://{self.host}:{self.port}"</span>
+    }
+
+    <span class="kw">fn</span> with_port(self, port: u16) <span class="kw">-></span> Config {
+        Config { ...self, port: port }
+    }
+}</code></pre>
+
+<h3>Using Methods</h3>
+<pre><code><span class="kw">let</span> cfg = Config { ... }
+<span class="kw">print</span>(cfg.url())
+<span class="kw">let</span> cfg2 = cfg.with_port(<span class="str">9000</span>)</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 13 -->
+<h2 id="enums">Enums</h2>
+
+<h3>Simple Enums</h3>
+<pre><code><span class="kw">enum</span> Status {
+    Active,
+    Inactive,
+    Pending
+}</code></pre>
+
+<h3>Enums with Data</h3>
+<pre><code><span class="kw">enum</span> Status {
+    Active,
+    Inactive,
+    Pending(reason: String)
+}
+
+<span class="kw">let</span> s = Status.Pending(reason: <span class="str">"awaiting review"</span>)</code></pre>
+
+<h3>Pattern Matching on Enums</h3>
+<pre><code><span class="kw">match</span> s {
+    Status.Active          <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"active"</span>)
+    Status.Inactive        <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"inactive"</span>)
+    Status.Pending(reason) <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"pending: {reason}"</span>)
+}</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 14 -->
+<h2 id="generics">Generics</h2>
+
+<h3>Generic Functions</h3>
+<pre><code><span class="kw">fn</span> first&lt;T&gt;(items: []T) <span class="kw">-></span> T? {
+    <span class="kw">if</span> items.len == <span class="str">0</span> { <span class="kw">return</span> nil }
+    items[<span class="str">0</span>]
+}</code></pre>
+
+<h3>Generic Structs</h3>
+<pre><code><span class="kw">struct</span> Cache&lt;K, V&gt; {
+    data: Map&lt;K, V&gt;
+}
+
+<span class="kw">impl</span> &lt;K, V&gt; Cache&lt;K, V&gt; {
+    <span class="kw">fn</span> get(self, key: K) <span class="kw">-></span> V? {
+        self.data[key]
+    }
+
+    <span class="kw">fn</span> set(self, key: K, val: V) {
+        self.data[key] = val
+    }
+}</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 15 -->
+<h2 id="errors">Error Handling</h2>
+
+<h3>Result Type</h3>
+<pre><code><span class="kw">fn</span> divide(a: f64, b: f64) <span class="kw">-></span> Result&lt;f64&gt; {
+    <span class="kw">if</span> b == <span class="str">0.0</span> { <span class="kw">return</span> Err(<span class="str">"division by zero"</span>) }
+    Ok(a / b)
+}</code></pre>
+
+<h3>The ? Operator (Error Propagation)</h3>
+<pre><code><span class="kw">fn</span> process(path: String) <span class="kw">-></span> Result&lt;Data&gt; {
+    <span class="kw">let</span> raw   = read_file(path)?   <span class="comment">// ? propagates error upward</span>
+    <span class="kw">let</span> parsed = parse(raw)?
+    <span class="kw">let</span> valid  = validate(parsed)?
+    Ok(valid)
+}</code></pre>
+
+<h3>bail (Early Return)</h3>
+<pre><code><span class="kw">fn</span> validate(data: Bytes) <span class="kw">-></span> Result&lt;String&gt; {
+    <span class="kw">if</span> data.len == <span class="str">0</span> { <span class="kw">bail</span> <span class="str">"empty input"</span> }
+    <span class="kw">if</span> data.len > <span class="str">1_000_000</span> { <span class="kw">bail</span> <span class="str">"too large"</span> }
+    Ok(data.decode())
+}</code></pre>
+
+<h3>Matching on Results</h3>
+<pre><code><span class="kw">let</span> result = divide(<span class="str">10.0</span>, <span class="str">2.0</span>)
+
+<span class="kw">match</span> result {
+    Ok(v)    <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"result: {v}"</span>)
+    Err(msg) <span class="kw">-></span> <span class="kw">print</span>(<span class="str">"error: {msg}"</span>)
+}</code></pre>
+
+<h3>unwrap_or (Provide Default)</h3>
+<pre><code><span class="kw">let</span> value = compute(x, y).unwrap_or(<span class="str">0.0</span>)
+<span class="kw">let</span> value = compute(x, y).unwrap_or_else { err <span class="kw">-></span> <span class="kw">log</span>(err); <span class="str">0.0</span> }</code></pre>
+
+<h3>Collecting Results</h3>
+<pre><code><span class="kw">let</span> results: []Result&lt;Data&gt; = urls.map { url <span class="kw">-></span> fetch(url) }
+<span class="kw">let</span> ok_only = results.filter_ok()             <span class="comment">// drop errors</span>
+<span class="kw">let</span> all_ok  = results.collect_ok()?          <span class="comment">// fail if any error</span>
+<span class="kw">let</span> (ok, err) = results.partition_result() <span class="comment">// split into two lists</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 16 -->
+<h2 id="legal">The @legal Annotation System</h2>
+
+<div class="card highlight">
+<h4>Core Rule</h4>
+<p>Any function that makes network requests, stores data, or returns private types <strong>must</strong> have a <code>@legal</code> annotation. The compiler rejects it otherwise.</p>
+</div>
+
+<h3>Full Annotation Syntax</h3>
+<pre><code><span class="kw">@legal</span>(
+    <span class="comment">// REQUIRED</span>
+    basis: <span class="str">.public_data</span>,              <span class="comment">// legal basis (see below)</span>
+    purpose: <span class="str">"competitive research"</span>,   <span class="comment">// what you're doing</span>
+
+    <span class="comment">// CONDITIONAL (required if personal_data: true)</span>
+    personal_data: <span class="str">false</span>,
+
+    <span class="comment">// OPTIONAL</span>
+    jurisdiction:   [<span class="str">.us</span>, <span class="str">.eu</span>, <span class="str">.uk</span>],
+    retain_for:     <span class="str">30.days</span>,
+    robots_txt:     <span class="str">.respect</span>,
+    rate_limit:     <span class="str">2.per_second</span>,
+    lia_completed:  <span class="str">true</span>,
+    consent_ref:    <span class="str">"consent-v2"</span>,
+    dpa_ref:        <span class="str">"dpa-2024-03"</span>
+)</code></pre>
+
+<h3>Legal Basis Values (GDPR Article 6)</h3>
+
+<table>
+<tr>
+<th>Basis</th>
+<th>Use Case</th>
+<th>Notes</th>
+</tr>
+<tr>
+<td><code>.public_data</code></td>
+<td>Publicly available data</td>
+<td>Price lists, published articles, public APIs</td>
+</tr>
+<tr>
+<td><code>.consent</code></td>
+<td>User explicitly agreed</td>
+<td>Requires <code>consent_ref</code></td>
+</tr>
+<tr>
+<td><code>.legitimate_interest</code></td>
+<td>Your business interest outweighs user privacy</td>
+<td>Requires <code>lia_completed: true</code></td>
+</tr>
+<tr>
+<td><code>.research</code></td>
+<td>Academic, journalistic, or public interest research</td>
+<td>Applies to news organizations</td>
+</tr>
+<tr>
+<td><code>.contract</code></td>
+<td>Necessary to fulfill a contract</td>
+<td>Only with explicit contractual relationship</td>
+</tr>
+<tr>
+<td><code>.vital_interests</code></td>
+<td>Emergency situations</td>
+<td>Rarely applicable</td>
+</tr>
+<tr>
+<td><code>.legal_obligation</code></td>
+<td>Required by law</td>
+<td>Law enforcement, court orders</td>
+</tr>
+</table>
+
+<h3>Jurisdiction Values</h3>
+
+<table>
+<tr>
+<th>Jurisdiction</th>
+<th>Law</th>
+</tr>
+<tr>
+<td><code>.us</code></td>
+<td>CCPA, CFAA</td>
+</tr>
+<tr>
+<td><code>.eu</code></td>
+<td>GDPR</td>
+</tr>
+<tr>
+<td><code>.uk</code></td>
+<td>UK GDPR</td>
+</tr>
+<tr>
+<td><code>.ca</code></td>
+<td>PIPEDA</td>
+</tr>
+<tr>
+<td><code>.au</code></td>
+<td>Privacy Act 1988</td>
+</tr>
+<tr>
+<td><code>.br</code></td>
+<td>LGPD</td>
+</tr>
+<tr>
+<td><code>.jp</code></td>
+<td>APPI</td>
+</tr>
+<tr>
+<td><code>.sg</code></td>
+<td>PDPA</td>
+</tr>
+<tr>
+<td><code>.cn</code></td>
+<td>PIPL (strict restrictions)</td>
+</tr>
+<tr>
+<td><code>.global</code></td>
+<td>Most restrictive of all applicable laws</td>
+</tr>
+</table>
+
+<p><em>Note: compile-time passes exist for GDPR/CRA/NIS2/DORA/AI Act (per-pass maturity varies). CCPA, PIPEDA, LGPD, APPI and PIPL are target-only &mdash; jurisdiction values with no compiler enforcement (verified 2026-09-12).</em></p>
+
+<h3>Compiler-Generated Audit Log</h3>
+
+<p>Partial &mdash; the sample below is illustrative, not native-toolchain output. Auto-emission today is plain <code>[AUDIT]</code> text lines from the self-hosted compiler; structured JSONL logging is opt-in via <code>tallow.legal.log_audit</code>.</p>
+
+<pre><code>{
+  <span class="str">"timestamp"</span>: <span class="str">"2026-03-01T14:23:11Z"</span>,
+  <span class="str">"function"</span>: <span class="str">"scrape_prices"</span>,
+  <span class="str">"legal_basis"</span>: <span class="str">"public_data"</span>,
+  <span class="str">"purpose"</span>: <span class="str">"competitive price monitoring"</span>,
+  <span class="str">"personal_data"</span>: false,
+  <span class="str">"jurisdiction"</span>: [<span class="str">"us"</span>, <span class="str">"eu"</span>],
+  <span class="str">"robots_txt"</span>: <span class="str">"respected"</span>,
+  <span class="str">"rate_limit"</span>: <span class="str">"2/sec"</span>,
+  <span class="str">"retain_until"</span>: <span class="str">"2026-03-31"</span>,
+  <span class="str">"records_processed"</span>: <span class="str">4821</span>,
+  <span class="str">"compliance_status"</span>: <span class="str">"COMPLIANT"</span>,
+  <span class="str">"tallow_version"</span>: <span class="str">"0.4.0"</span>
+}</code></pre>
+
+<h3>Compile-Time Violations (Examples)</h3>
+<pre><code><span class="comment">// ❌ COMPILE ERROR: missing @legal</span>
+<span class="kw">fn</span> fetch_data(url: String) <span class="kw">-></span> Result&lt;Data&gt; {
+    fetch(url)?
+}
+
+<span class="comment">// ❌ COMPILE ERROR: personal_data: true but no retain_for</span>
+<span class="kw">@legal</span>(basis: <span class="str">.consent</span>, personal_data: <span class="str">true</span>)
+<span class="kw">fn</span> collect_emails() <span class="kw">-></span> []Email {
+    <span class="comment">// requires retain_for field</span>
+}
+
+<span class="comment">// ❌ COMPILE ERROR: retain_for: .forever violates GDPR</span>
+<span class="kw">@legal</span>(basis: <span class="str">.consent</span>, personal_data: <span class="str">true</span>, retain_for: <span class="str">.forever</span>)
+<span class="kw">fn</span> store_emails() { }</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 17 -->
+<h2 id="crypto">Cryptography Primitives</h2>
+
+<h3>Design Philosophy</h3>
+
+<p>Crypto is a <strong>method on the type</strong>, not an imported library function.</p>
+
+<pre><code><span class="comment">// NOT this (library approach):</span>
+<span class="kw">import</span> tallow.crypto
+<span class="kw">let</span> sealed = crypto.encrypt(secret, algo: <span class="str">.aes_256</span>)
+
+<span class="comment">// THIS (Tallow approach):</span>
+<span class="kw">let</span> sealed = secret.encrypt()        <span class="comment">// method on String</span></code></pre>
+
+<h3>Encryption</h3>
+<pre><code><span class="kw">let</span> data = <span class="str">"sensitive information"</span>
+
+<span class="comment">// Default: ML-KEM-768 (NIST PQC standard)</span>
+<span class="kw">let</span> sealed = data.encrypt()
+
+<span class="comment">// Explicit algorithm</span>
+<span class="kw">let</span> sealed = data.encrypt(algo: <span class="str">.ml_kem_768</span>)
+<span class="kw">let</span> sealed = data.encrypt(algo: <span class="str">.aes_256_gcm</span>)
+<span class="kw">let</span> sealed = data.encrypt(algo: <span class="str">.chacha20_poly</span>)
+<span class="kw">let</span> sealed = data.encrypt(algo: <span class="str">.hybrid</span>)  <span class="comment">// X25519 + ML-KEM</span>
+
+<span class="comment">// With key</span>
+<span class="kw">let</span> sealed = data.encrypt(key: keypair.public)
+
+<span class="comment">// Decrypt</span>
+<span class="kw">let</span> plain = sealed.decrypt(key: keypair.private)?</code></pre>
+
+<h3>Hashing</h3>
+<pre><code><span class="comment">// Password hashing — Argon2id (memory-hard, secure)</span>
+<span class="kw">let</span> password = <span class="str">"user-password"</span> <span class="kw">as</span> Password
+<span class="kw">let</span> hash = password.hash()
+
+<span class="comment">// Verify (constant-time)</span>
+<span class="kw">let</span> ok = password.verify(stored_hash)
+
+<span class="comment">// Data integrity hashing — BLAKE3 default</span>
+<span class="kw">let</span> digest = data.hash()
+<span class="kw">let</span> digest = data.hash(algo: <span class="str">.blake3</span>)
+<span class="kw">let</span> digest = data.hash(algo: <span class="str">.sha3_256</span>)
+<span class="kw">let</span> digest = data.hash(algo: <span class="str">.sha2_256</span>)</code></pre>
+
+<h3>Key Generation</h3>
+<pre><code><span class="comment">// Asymmetric keypair</span>
+<span class="kw">let</span> keypair = KeyPair.generate()         <span class="comment">// ML-KEM-768 default</span>
+<span class="kw">let</span> keypair = KeyPair.generate(algo: <span class="str">.ml_kem_768</span>)
+<span class="kw">let</span> keypair = KeyPair.generate(algo: <span class="str">.ed25519</span>)
+<span class="kw">let</span> keypair = KeyPair.generate(algo: <span class="str">.x25519</span>)
+
+<span class="comment">// Symmetric key</span>
+<span class="kw">let</span> key = SymKey.generate()              <span class="comment">// 256-bit default</span>
+<span class="kw">let</span> key = SymKey.generate(bits: <span class="str">256</span>)
+
+<span class="comment">// From seed (deterministic)</span>
+<span class="kw">let</span> keypair = KeyPair.from_seed(seed_bytes)
+
+<span class="comment">// Key serialization</span>
+<span class="kw">let</span> pem = keypair.public.to_pem()
+<span class="kw">let</span> der = keypair.private.to_der()
+<span class="kw">let</span> kp2 = KeyPair.from_pem(pem_string)?</code></pre>
+
+<h3>Signing</h3>
+<pre><code><span class="kw">let</span> keypair = KeyPair.generate(algo: <span class="str">.ml_dsa</span>)  <span class="comment">// PQC signing</span>
+
+<span class="kw">let</span> signature = keypair.sign(data)
+<span class="kw">let</span> valid     = keypair.verify(data, signature)</code></pre>
+
+<h3>TLS / Secure Connections</h3>
+<pre><code><span class="comment">// Default: TLS 1.3 with PQC hybrid</span>
+<span class="kw">let</span> conn = TLSConn.connect(<span class="str">"example.com:443"</span>)
+
+<span class="comment">// Explicit config</span>
+<span class="kw">let</span> conn = TLSConn.connect(<span class="str">"example.com:443"</span>,
+    min_version: <span class="str">.tls13</span>,
+    key_exchange: <span class="str">.hybrid</span>,      <span class="comment">// X25519 + ML-KEM default</span>
+    verify_cert:  true
+)
+
+<span class="comment">// mTLS</span>
+<span class="kw">let</span> conn = TLSConn.connect(<span class="str">"example.com:443"</span>,
+    client_cert: my_cert,
+    client_key:  my_key
+)</code></pre>
+
+<h3>Random</h3>
+<pre><code><span class="kw">let</span> bytes  = Random.bytes(<span class="str">32</span>)         <span class="comment">// cryptographically secure</span>
+<span class="kw">let</span> int    = Random.u64()
+<span class="kw">let</span> token  = Random.token(length: <span class="str">32</span>) <span class="comment">// URL-safe base64</span>
+<span class="kw">let</span> uuid   = Random.uuid()            <span class="comment">// UUIDv4</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 18 -->
+<h2 id="fetch">Networking & fetch</h2>
+
+<h3>The fetch Builtin</h3>
+<pre><code><span class="comment">// Simple fetch</span>
+<span class="kw">let</span> resp = fetch(<span class="str">"https://example.com"</span>)
+
+<span class="comment">// With options</span>
+<span class="kw">let</span> resp = fetch(<span class="str">"https://example.com"</span>,
+    method:    <span class="str">.GET</span>,
+    timeout:   <span class="str">10.seconds</span>,
+    headers:   {<span class="str">"User-Agent"</span>: <span class="str">"tallow/0.4"</span>},
+    body:      nil,
+    rotate_ip: true,
+    follow_redirects: true,
+    max_redirects: <span class="str">5</span>
+)</code></pre>
+
+<h3>Response Type</h3>
+<pre><code>resp.status    <span class="comment">// u16 — 200, 404, etc.</span>
+resp.body      <span class="comment">// Bytes</span>
+resp.text()    <span class="comment">// String (UTF-8 decoded)</span>
+resp.json&lt;T&gt;() <span class="comment">// Result&lt;T&gt; — parsed JSON</span>
+resp.headers   <span class="comment">// Map&lt;String, String&gt;</span>
+resp.url       <span class="comment">// final URL after redirects</span>
+resp.time_ms   <span class="comment">// request duration</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 19 -->
+<h2 id="ippool">IPPool & Concurrent Requests</h2>
+
+<h3>IPPool Configuration</h3>
+<pre><code><span class="comment">// Auto-scaling pool</span>
+<span class="kw">let</span> pool = IPPool {
+    size:     <span class="str">.auto</span>,            <span class="comment">// runtime determines</span>
+    rotation: <span class="str">.per_request</span>,     <span class="comment">// new IP every request</span>
+    protocol: <span class="str">.socks5</span>           <span class="comment">// .socks5 | .http | .https</span>
+}
+
+<span class="comment">// Fixed size</span>
+<span class="kw">let</span> pool = IPPool {
+    size:     <span class="str">10_000</span>,
+    rotation: <span class="str">.per_request</span>
+}
+
+<span class="comment">// High-performance (kernel bypass)</span>
+<span class="kw">let</span> pool = IPPool {
+    size:    <span class="str">100_000</span>,
+    backend: <span class="str">.dpdk</span>,             <span class="comment">// DPDK kernel bypass — Linux only</span>
+    rotation: <span class="str">.per_request</span>
+}
+
+<span class="comment">// With proxy list</span>
+<span class="kw">let</span> pool = IPPool.from_file(<span class="str">"proxies.txt"</span>)
+<span class="kw">let</span> pool = IPPool.from_list(proxy_urls)
+
+<span class="comment">// Distributed (multiple nodes)</span>
+<span class="kw">let</span> pool = IPPool.distributed(
+    nodes:             [<span class="str">"10.0.0.1"</span>, <span class="str">"10.0.0.2"</span>],
+    total_connections: <span class="str">.unlimited</span>,
+    coordination:      <span class="str">.gossip</span>
+)</code></pre>
+
+<h3>Concurrent Requests (pool.map)</h3>
+<pre><code><span class="comment">// Map over URLs — all run concurrently</span>
+<span class="kw">let</span> results = pool.map(urls) { url <span class="kw">-></span>
+    fetch(url, timeout: <span class="str">5.seconds</span>)
+}
+
+<span class="comment">// With error handling</span>
+<span class="kw">let</span> results = pool.map(urls) { url <span class="kw">-></span>
+    fetch(url)?
+}
+
+<span class="comment">// Filter and transform</span>
+<span class="kw">let</span> prices = pool.map(urls) { url <span class="kw">-></span>
+    <span class="kw">let</span> resp = fetch(url)?
+    parse_price(resp.body)?
+}
+.filter_ok()
+.flatten
+
+<span class="comment">// Controlled concurrency</span>
+<span class="kw">let</span> results = pool.map(urls,
+    concurrency: <span class="str">100</span>,
+    delay:       <span class="str">100.ms</span>
+) { url <span class="kw">-></span> fetch(url) }
+
+<span class="comment">// Rate-limited</span>
+<span class="kw">let</span> results = pool.map_ratelimited(urls,
+    rate: <span class="str">10.per_second</span>
+) { url <span class="kw">-></span> fetch(url) }</code></pre>
+
+<h3>Connection Scaling Reference</h3>
+
+<table>
+<tr>
+<th>Pool Size</th>
+<th>RAM Required</th>
+<th>Backend</th>
+<th>Use Case</th>
+</tr>
+<tr>
+<td>10K</td>
+<td>20MB</td>
+<td>epoll</td>
+<td>Standard workloads</td>
+</tr>
+<tr>
+<td>100K</td>
+<td>200MB</td>
+<td>io_uring (off by default)</td>
+<td>High-throughput scraping</td>
+</tr>
+<tr>
+<td>1M</td>
+<td>2GB</td>
+<td>io_uring + tuned kernel</td>
+<td>Enterprise data collection</td>
+</tr>
+<tr>
+<td>10M+</td>
+<td>20GB</td>
+<td>DPDK (stub &mdash; target-only)</td>
+<td>Maximum scale (not implemented)</td>
+</tr>
+<tr>
+<td>Unlimited</td>
+<td>Distributed</td>
+<td>Multi-node (dormant &mdash; target-only)</td>
+<td>No ceiling (not implemented)</td>
+</tr>
+</table>
+
+<div class="divider"></div>
+
+<!-- SECTION 20 -->
+<h2 id="agents">Agent Task System</h2>
+
+<h3>What is @agent_task?</h3>
+
+<p><code>@agent_task</code> declares a function as an autonomous unit with compiler-enforced permission boundaries. Agents cannot exceed their declared permissions — not at runtime, at compile time.</p>
+
+<h3>Full Syntax</h3>
+<pre><code><span class="kw">@agent_task</span>(
+    id:           task_id,
+    timeout:      <span class="str">60.seconds</span>,
+    max_requests: <span class="str">1000</span>,
+    can_write:    false,        <span class="comment">// cannot write to filesystem</span>
+    can_store:    false,        <span class="comment">// cannot write to database</span>
+    can_spawn:    false,        <span class="comment">// cannot spawn child agents</span>
+    memory_limit: <span class="str">512.mb</span>
+)
+<span class="kw">@legal</span>(basis: <span class="str">.public_data</span>, purpose: <span class="str">"market research"</span>)
+<span class="kw">async fn</span> research_prices(query: String) <span class="kw">-></span> EncryptedResult {
+    <span class="kw">let</span> urls  = discover_urls(query)
+    <span class="kw">let</span> pages = pool.map(urls) { url <span class="kw">-></span> fetch(url) }
+    <span class="kw">let</span> data  = extract_prices(pages)
+    data.encrypt()
+}</code></pre>
+
+<h3>Available Permissions</h3>
+
+<table>
+<tr>
+<th>Permission</th>
+<th>Type</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+<tr>
+<td><code>can_write</code></td>
+<td>bool</td>
+<td>false</td>
+<td>filesystem write access</td>
+</tr>
+<tr>
+<td><code>can_read</code></td>
+<td>bool</td>
+<td>true</td>
+<td>filesystem read access (own workspace)</td>
+</tr>
+<tr>
+<td><code>can_store</code></td>
+<td>bool</td>
+<td>false</td>
+<td>database write access</td>
+</tr>
+<tr>
+<td><code>can_query</code></td>
+<td>bool</td>
+<td>true</td>
+<td>database read access</td>
+</tr>
+<tr>
+<td><code>can_spawn</code></td>
+<td>bool</td>
+<td>false</td>
+<td>spawn child agents</td>
+</tr>
+<tr>
+<td><code>can_network</code></td>
+<td>bool</td>
+<td>true</td>
+<td>make network requests</td>
+</tr>
+<tr>
+<td><code>can_execute</code></td>
+<td>bool</td>
+<td>false</td>
+<td>execute shell commands (dangerous)</td>
+</tr>
+<tr>
+<td><code>memory_limit</code></td>
+<td>Bytes</td>
+<td>none</td>
+<td>max memory consumption</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td>Duration</td>
+<td>none</td>
+<td>hard timeout — agent is killed after</td>
+</tr>
+<tr>
+<td><code>max_requests</code></td>
+<td>u32</td>
+<td>none</td>
+<td>max outbound HTTP requests</td>
+</tr>
+</table>
+
+<h3>Calling Agents</h3>
+<pre><code><span class="comment">// Async call</span>
+<span class="kw">let</span> result = research_prices(<span class="str">"gpu prices 2026"</span>).await
+
+<span class="comment">// With timeout override</span>
+<span class="kw">let</span> result = research_prices(<span class="str">"query"</span>).await(timeout: <span class="str">30.seconds</span>)
+
+<span class="comment">// Fire and forget</span>
+research_prices(<span class="str">"query"</span>).spawn()
+
+<span class="comment">// Collect multiple</span>
+<span class="kw">let</span> results = [
+    research_prices(<span class="str">"topic-a"</span>),
+    research_prices(<span class="str">"topic-b"</span>),
+    research_prices(<span class="str">"topic-c"</span>)
+].await_all()</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 21 -->
+<h2 id="stdlib">Standard Library Overview</h2>
+
+<table>
+<tr>
+<th>Module</th>
+<th>Purpose</th>
+</tr>
+<tr>
+<td><code>tallow.http</code></td>
+<td>HTTP client/server (fetch, server routing)</td>
+</tr>
+<tr>
+<td><code>tallow.html</code></td>
+<td>HTML parsing, CSS selectors, DOM traversal</td>
+</tr>
+<tr>
+<td><code>tallow.crypto</code></td>
+<td>All cryptographic primitives (encryption, hashing, keys)</td>
+</tr>
+<tr>
+<td><code>tallow.net</code></td>
+<td>IPPool, sockets, DNS, TLS connections</td>
+</tr>
+<tr>
+<td><code>tallow.fs</code></td>
+<td>Filesystem operations (read, write, delete)</td>
+</tr>
+<tr>
+<td><code>tallow.db</code></td>
+<td>Database connections (PostgreSQL, SQLite, Redis)</td>
+</tr>
+<tr>
+<td><code>tallow.json</code></td>
+<td>JSON parse/serialize</td>
+</tr>
+<tr>
+<td><code>tallow.legal</code></td>
+<td>@legal runtime + audit log generation</td>
+</tr>
+<tr>
+<td><code>tallow.agent</code></td>
+<td>Agent task runtime</td>
+</tr>
+<tr>
+<td><code>tallow.time</code></td>
+<td>Time, duration, timezone, formatting</td>
+</tr>
+<tr>
+<td><code>tallow.log</code></td>
+<td>Structured logging (privacy-aware)</td>
+</tr>
+<tr>
+<td><code>tallow.env</code></td>
+<td>Environment variables</td>
+</tr>
+<tr>
+<td><code>tallow.process</code></td>
+<td>Process management</td>
+</tr>
+<tr>
+<td><code>tallow.sync</code></td>
+<td>Channels, mutexes, atomics</td>
+</tr>
+<tr>
+<td><code>tallow.test</code></td>
+<td>Testing framework</td>
+</tr>
+<tr>
+<td><code>tallow.fmt</code></td>
+<td>String formatting</td>
+</tr>
+<tr>
+<td><code>tallow.math</code></td>
+<td>Math utilities</td>
+</tr>
+<tr>
+<td><code>tallow.rand</code></td>
+<td>CSPRNG</td>
+</tr>
+<tr>
+<td><code>tallow.regex</code></td>
+<td>Regular expressions</td>
+</tr>
+<tr>
+<td><code>tallow.url</code></td>
+<td>URL parsing/manipulation</td>
+</tr>
+<tr>
+<td><code>tallow.cli</code></td>
+<td>CLI argument parsing</td>
+</tr>
+<tr>
+<td><code>tallow.config</code></td>
+<td>Config file parsing (TOML/YAML/JSON)</td>
+</tr>
+<tr>
+<td><code>tallow.compress</code></td>
+<td>gzip/zstd/brotli compression</td>
+</tr>
+<tr>
+<td><code>tallow.mime</code></td>
+<td>MIME type detection</td>
+</tr>
+<tr>
+<td><code>tallow.browser</code></td>
+<td>Browser automation (headless Chrome/Firefox)</td>
+</tr>
+<tr>
+<td><code>tallow.transfer</code></td>
+<td>File transfer with QUIC, encryption, delta-sync</td>
+</tr>
+</table>
+
+<div class="divider"></div>
+
+<!-- SECTION 22 -->
+<h2 id="http">tallow.http Module</h2>
+
+<h3>HTTP Client</h3>
+<pre><code><span class="kw">import</span> tallow.http
+
+<span class="kw">let</span> client = http.Client {
+    timeout:    <span class="str">30.seconds</span>,
+    user_agent: <span class="str">"tallow/0.4"</span>,
+    follow_redirects: true
+}
+
+<span class="kw">let</span> resp = client.get(<span class="str">"https://example.com"</span>)?
+<span class="kw">let</span> resp = client.post(<span class="str">"https://api.example.com/data"</span>,
+    body: data.to_json(),
+    headers: {<span class="str">"Content-Type"</span>: <span class="str">"application/json"</span>}
+)?</code></pre>
+
+<h3>HTTP Server</h3>
+<pre><code><span class="kw">let</span> server = http.Server { port: <span class="str">8080</span> }
+
+server.get(<span class="str">"/"</span>) { req <span class="kw">-></span>
+    http.Response.ok(<span class="str">"hello from tallow"</span>)
+}
+
+server.post(<span class="str">"/"</span>) { req <span class="kw">-></span>
+    <span class="kw">let</span> body = req.json&lt;InputData&gt;()?
+    <span class="kw">let</span> result = process(body)
+    http.Response.json(result)
+}
+
+server.listen()</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 23 -->
+<h2 id="logging">tallow.log Module</h2>
+
+<h3>Privacy-Aware Logging</h3>
+<pre><code><span class="kw">import</span> tallow.log
+
+<span class="comment">// Automatically redacts private types</span>
+log.info(<span class="str">"processing user {email}"</span>)         <span class="comment">// logs "processing user e***@***.com"</span>
+log.info(<span class="str">"processing user {email.redact()}"</span>) <span class="comment">// explicit redact</span>
+log.info(<span class="str">"processing user {email.hash()}"</span>)   <span class="comment">// logs hash</span></code></pre>
+
+<h3>Structured Logging</h3>
+<pre><code>log.info(<span class="str">"request complete"</span>,
+    status:   resp.status,
+    duration: elapsed,
+    url:      url           <span class="comment">// URL is not private</span>
+)</code></pre>
+
+<h3>Log Levels</h3>
+<pre><code>log.debug(<span class="str">"detail: {data}"</span>)
+log.info(<span class="str">"started processing"</span>)
+log.warn(<span class="str">"rate limit approaching: {count}/{max}"</span>)
+log.error(<span class="str">"failed to connect: {err}"</span>)
+log.fatal(<span class="str">"unrecoverable: {err}"</span>)  <span class="comment">// exits after logging</span></code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 24 -->
+<h2 id="crypto-module">tallow.crypto Module</h2>
+
+<p>Complete cryptographic operations. See <a href="#crypto">Cryptography Primitives</a> above for full reference.</p>
+
+<h3>Quick Reference</h3>
+
+<table>
+<tr>
+<th>Operation</th>
+<th>Default</th>
+<th>Example</th>
+</tr>
+<tr>
+<td>Key exchange</td>
+<td>ML-KEM-768</td>
+<td><code>let kp = KeyPair.generate()</code></td>
+</tr>
+<tr>
+<td>Signing</td>
+<td>ML-DSA</td>
+<td><code>let sig = keypair.sign(data)</code></td>
+</tr>
+<tr>
+<td>Hashing (data)</td>
+<td>BLAKE3</td>
+<td><code>let digest = data.hash()</code></td>
+</tr>
+<tr>
+<td>Hashing (password)</td>
+<td>Argon2id</td>
+<td><code>let h = password.hash()</code></td>
+</tr>
+<tr>
+<td>Encryption</td>
+<td>ML-KEM-768</td>
+<td><code>let sealed = data.encrypt()</code></td>
+</tr>
+<tr>
+<td>TLS</td>
+<td>TLS 1.3 + hybrid</td>
+<td><code>let conn = TLSConn.connect(url)</code></td>
+</tr>
+</table>
+
+<div class="divider"></div>
+
+<!-- SECTION 25 -->
+<h2 id="toml">tallow.toml Manifest</h2>
+
+<h3>Complete tallow.toml Format</h3>
+<pre><code>[package]
+name    = <span class="str">"my-scraper"</span>
+version = <span class="str">"0.1.0"</span>
+author  = <span class="str">"Your Name"</span>
+license = <span class="str">"MIT"</span>
+
+[dependencies]
+tallow-html   = <span class="str">"0.3"</span>
+tallow-db     = <span class="str">"0.2"</span>
+
+[legal]
+default_jurisdiction = [<span class="str">"us"</span>, <span class="str">"eu"</span>]
+default_robots_txt   = <span class="str">"respect"</span>
+audit_log_path       = <span class="str">"logs/audit"</span>
+
+[build]
+target   = <span class="str">"x86_64-linux"</span>
+optimize = <span class="str">"release"</span>            <span class="comment"># debug | release | size</span>
+
+[runtime]
+ip_pool_size    = <span class="str">10000</span>
+log_level       = <span class="str">"info"</span>
+audit_enabled   = true</code></pre>
+
+<div class="divider"></div>
+
+<!-- SECTION 26 -->
+<h2 id="cli">CLI Commands Reference</h2>
+
+<h3>Project Management</h3>
+
+<table>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+<tr>
+<td><code>tallow new</code></td>
+<td>Create new project</td>
+<td><code>tallow new my-project</code></td>
+</tr>
+<tr>
+<td><code>tallow init</code></td>
+<td>Initialize Tallow in current directory</td>
+<td><code>tallow init</code></td>
+</tr>
+</table>
+
+<h3>Building & Running</h3>
+
+<table>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+<tr>
+<td><code>tallow run</code></td>
+<td>Build and execute (development)</td>
+<td><code>tallow run myfile.tl</code></td>
+</tr>
+<tr>
+<td><code>tallow build</code></td>
+<td>Compile to executable</td>
+<td><code>tallow build --release</code></td>
+</tr>
+<tr>
+<td><code>tallow check</code></td>
+<td>Type-check without compiling</td>
+<td><code>tallow check</code></td>
+</tr>
+</table>
+
+<h3>Code Quality</h3>
+
+<table>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+<tr>
+<td><code>tallow fmt</code></td>
+<td>Format code (opinionated)</td>
+<td><code>tallow fmt src/</code></td>
+</tr>
+<tr>
+<td><code>tallow lint</code></td>
+<td>Static analysis and warnings</td>
+<td><code>tallow lint</code></td>
+</tr>
+<tr>
+<td><code>tallow test</code></td>
+<td>Run all tests</td>
+<td><code>tallow test --filter "http"</code></td>
+</tr>
+</table>
+
+<h3>Compliance & Audit</h3>
+
+<table>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+<tr>
+<td><code>tallow audit</code></td>
+<td>Generate compliance report</td>
+<td><code>tallow audit --jurisdiction eu</code></td>
+</tr>
+</table>
+
+<h3>Dependencies</h3>
+
+<table>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+<tr>
+<td><code>tallow add</code></td>
+<td>Add a dependency</td>
+<td><code>tallow add tallow-html@0.3</code></td>
+</tr>
+<tr>
+<td><code>tallow remove</code></td>
+<td>Remove a dependency</td>
+<td><code>tallow remove tallow-html</code></td>
+</tr>
+<tr>
+<td><code>tallow update</code></td>
+<td>Update all dependencies</td>
+<td><code>tallow update</code></td>
+</tr>
+</table>
+
+<h3>Documentation & Tools</h3>
+
+<table>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+<tr>
+<td><code>tallow doc</code></td>
+<td>Generate documentation from comments</td>
+<td><code>tallow doc</code></td>
+</tr>
+<tr>
+<td><code>tallow help</code></td>
+<td>Show help for any command</td>
+<td><code>tallow help build</code></td>
+</tr>
+<tr>
+<td><code>tallow repl</code></td>
+<td>Interactive read-eval-print loop</td>
+<td><code>tallow repl</code></td>
+</tr>
+<tr>
+<td><code>tallow lsp</code></td>
+<td>Start LSP server for editor integration</td>
+<td><code>tallow lsp</code></td>
+</tr>
+<tr>
+<td><code>tallow version</code></td>
+<td>Show compiler version</td>
+<td><code>tallow version</code></td>
+</tr>
+</table>
+
+<div class="divider"></div>
+
+<!-- SECTION 27 -->
+<h2 id="compiler">Compiler Architecture</h2>
+
+<h3>Compilation Pipeline</h3>
+
+<pre><code>Source (.tl)
+    ↓
+Lexer → Token stream
+    ↓
+Parser → AST
+    ↓
+Type checker
+  ├── Privacy type flow analysis
+  ├── @legal annotation validation
+  ├── @agent_task permission verification
+  └── Secret type scope tracking
+    ↓
+Policy/safety passes (@legal validation, privacy flow, agent boundaries)
+    ↓
+IR generation
+    ↓
+LLVM optimization passes
+    ↓
+Native binary / WASM</code></pre>
+
+<h3>The @legal Compiler Pass</h3>
+
+<ol>
+<li>Collect all functions touching network/storage</li>
+<li>For each: verify <code>@legal</code> annotation present</li>
+<li>Validate legal basis is appropriate for return types</li>
+<li>Validate retention periods (no .forever for personal data)</li>
+<li>Generate audit log schema for each annotated function</li>
+<li>Emit audit log calls into IR (runs at runtime, zero overhead)</li>
+</ol>
+
+<h3>The Privacy Type Pass</h3>
+
+<ol>
+<li>Walk entire AST tracking <code>private</code> and <code>secret</code> type values</li>
+<li>At each usage site, verify:
+  <ul>
+  <li>Not passed to print/log without .redact() or .hash()</li>
+  <li>Not serialized without explicit consent</li>
+  <li>Not returned from functions with wrong @legal basis</li>
+  </ul>
+</li>
+<li>For <code>secret</code> types additionally:
+  <ul>
+  <li>Insert zero-wipe at end of every scope containing secret value</li>
+  <li>Block all serialization paths at IR level</li>
+  <li>Verify never appears in string interpolation without explicit method</li>
+  </ul>
+</li>
+</ol>
+
+<h3>Supported Targets</h3>
+
+<table>
+<tr>
+<th>Target</th>
+<th>Status</th>
+</tr>
+<tr>
+<td>Linux x86-64</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Linux ARM64</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>macOS ARM64</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>macOS x86-64</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>WebAssembly (WASI)</td>
+<td>Beta</td>
+</tr>
+<tr>
+<td>Windows x64</td>
+<td>Beta</td>
+</tr>
+</table>
+
+<div class="divider"></div>
+
+<!-- SECTION 28 -->
+<h2 id="glossary">Glossary</h2>
+
+<table>
+<tr>
+<th>Term</th>
+<th>Definition</th>
+</tr>
+<tr>
+<td><code>@legal</code></td>
+<td>Compile-time annotation declaring legal basis for data operations. Required for all network and storage functions.</td>
+</tr>
+<tr>
+<td><code>@agent_task</code></td>
+<td>Declares an autonomous function with compiler-enforced permission boundaries.</td>
+</tr>
+<tr>
+<td><code>private</code></td>
+<td>Type qualifier for GDPR personal data. Compiler-tracked, cannot be logged raw or sent unencrypted.</td>
+</tr>
+<tr>
+<td><code>secret</code></td>
+<td>Type qualifier for credentials and keys. All privacy rules PLUS zero-wiped from memory, never serialized.</td>
+</tr>
+<tr>
+<td><code>IPPool</code></td>
+<td>First-class language primitive for managing concurrent IP connections. Scales from 10K (epoll); 1M via feature-gated io_uring; 10M+ (DPDK) is target-only.</td>
+</tr>
+<tr>
+<td><code>bail</code></td>
+<td>Early return with error from a Result function.</td>
+</tr>
+<tr>
+<td><code>?</code> operator</td>
+<td>Propagate Result error up the call stack. Used in functions returning Result.</td>
+</tr>
+<tr>
+<td><code>.redact()</code></td>
+<td>Method on private types that returns a safe-to-log version (e.g., "a***@***.com").</td>
+</tr>
+<tr>
+<td>PQC</td>
+<td>Post-quantum cryptography. Defaults are per-layer: ML-KEM-768 / ML-DSA-65 on the <code>.tl</code>/stdlib (+ vault) surfaces; the Rust <code>tallow-crypto</code> crate ships ML-KEM-1024 / ML-DSA-87 (divergence tracked as an open item).</td>
+</tr>
+<tr>
+<td><code>tallow audit</code></td>
+<td>CLI command generating legal compliance report for all @legal-annotated functions.</td>
+</tr>
+<tr>
+<td>comptime</td>
+<td>Term used in older docs; not a Tallow language feature. Compile-time work is limited to constant folding in codegen.</td>
+</tr>
+<tr>
+<td>io_uring</td>
+<td>Linux kernel interface for async I/O. Optional feature (off by default), file I/O only, single-op submissions today.</td>
+</tr>
+<tr>
+<td>DPDK</td>
+<td>Data Plane Development Kit &mdash; target-only: a stub backend exists; no kernel-bypass networking is implemented.</td>
+</tr>
+</table>
+
+<div class="page-break"></div>
+
+<!-- SECTION 29 -->
+<h2 id="examples">Complete Code Examples</h2>
+
+<h3>Example 1: Compliant Price Scraper</h3>
+<pre><code><span class="kw">@legal</span>(
+    basis:        <span class="str">.public_data</span>,
+    jurisdiction: [<span class="str">.us</span>, <span class="str">.eu</span>],
+    personal_data: false,
+    purpose:      <span class="str">"competitive price monitoring"</span>,
+    retain_for:   <span class="str">7.days</span>,
+    robots_txt:   <span class="str">.respect</span>,
+    rate_limit:   <span class="str">2.per_second</span>
+)
+<span class="kw">fn</span> scrape_competitors(domains: []String) <span class="kw">-></span> Result&lt;[]Price&gt; {
+    <span class="kw">let</span> pool = IPPool {
+        size:     <span class="str">10_000</span>,
+        rotation: <span class="str">.per_request</span>
+    }
+
+    <span class="kw">let</span> urls = domains.map { d <span class="kw">-></span> <span class="str">"https://{d}/products"</span> }
+
+    <span class="kw">let</span> pages = pool.map(urls,
+        concurrency: <span class="str">50</span>,
+        delay: <span class="str">500.ms</span>
+    ) { url <span class="kw">-></span>
+        fetch(url, timeout: <span class="str">5.seconds</span>)?
+    }?
+
+    <span class="kw">let</span> prices = pages
+        .filter  { p <span class="kw">-></span> p.status == <span class="str">200</span> }
+        .map     { p <span class="kw">-></span> parse_prices(p.body)? }
+        .flatten
+
+    Ok(prices)
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> domains = [
+        <span class="str">"competitor-a.com"</span>,
+        <span class="str">"competitor-b.com"</span>,
+        <span class="str">"competitor-c.com"</span>
+    ]
+
+    <span class="kw">match</span> scrape_competitors(domains) {
+        Ok(p) <span class="kw">-></span> {
+            p.each { price <span class="kw">-></span>
+                log.info(<span class="str">"price: {price}"</span>)
+            }
+        }
+        Err(e) <span class="kw">-></span> {
+            log.error(<span class="str">"scrape failed: {e}"</span>)
+            exit(<span class="str">1</span>)
+        }
+    }
+}</code></pre>
+
+<h3>Example 2: Privacy-Safe User Processing</h3>
+<pre><code><span class="kw">struct</span> User {
+    id:    u64,
+    email: Email,       <span class="comment">// private type — GDPR personal data</span>
+    name:  Name,        <span class="comment">// private type</span>
+    token: Token,       <span class="comment">// secret type — never logs, never serializes</span>
+}
+
+<span class="kw">@legal</span>(
+    basis:        <span class="str">.contract</span>,
+    personal_data: true,
+    jurisdiction: [<span class="str">.eu</span>],
+    purpose:      <span class="str">"user account management"</span>,
+    retain_for:   <span class="str">365.days</span>
+)
+<span class="kw">fn</span> create_user(email: Email, name: Name, password: Password) <span class="kw">-></span> Result&lt;User&gt; {
+    <span class="kw">let</span> hashed = password.hash()     <span class="comment">// Argon2id</span>
+
+    <span class="kw">let</span> user = User {
+        id:    db.next_id(),
+        email: email,
+        name:  name,
+        token: Random.token(length: <span class="str">32</span>) <span class="kw">as</span> Token
+    }
+
+    db.users.insert(user)?
+    Ok(user)
+}
+
+<span class="kw">fn</span> log_activity(user: User, action: String) {
+    <span class="comment">// Compiler enforces: email and name cannot be logged raw</span>
+    log.info(<span class="str">"user {user.id} performed {action}"</span>)
+}
+
+<span class="kw">fn</span> send_welcome(user: User) <span class="kw">-></span> Result&lt;()&gt; {
+    <span class="kw">let</span> link = <span class="str">"https://app.example.com/verify?id={user.id}"</span>
+
+    tallow.email.send(
+        to:      user.email,
+        subject: <span class="str">"Welcome {user.name}"</span>,
+        body:    <span class="str">"Click to verify: {link}"</span>
+    )
+}</code></pre>
+
+<h3>Example 3: Autonomous Research Agent</h3>
+<pre><code><span class="kw">@agent_task</span>(
+    id:           <span class="str">"research"</span>,
+    timeout:      <span class="str">2.minutes</span>,
+    max_requests: <span class="str">500</span>,
+    can_write:    false,
+    can_store:    false,
+    memory_limit: <span class="str">256.mb</span>
+)
+<span class="kw">@legal</span>(
+    basis:        <span class="str">.research</span>,
+    personal_data: false,
+    purpose:      <span class="str">"public market intelligence"</span>,
+    retain_for:   <span class="str">90.days</span>
+)
+<span class="kw">async fn</span> research_market(sector: String) <span class="kw">-></span> Result&lt;EncryptedReport&gt; {
+    <span class="kw">let</span> pool = IPPool { size: <span class="str">1000</span>, rotation: <span class="str">.per_request</span> }
+
+    <span class="comment">// Discover sources</span>
+    <span class="kw">let</span> query_urls = build_queries(sector)
+    <span class="kw">let</span> sources = pool.map(query_urls) { url <span class="kw">-></span>
+        fetch(url, timeout: <span class="str">5.seconds</span>)?
+    }?
+
+    <span class="comment">// Extract data</span>
+    <span class="kw">let</span> articles = sources
+        .filter { r <span class="kw">-></span> r.status == <span class="str">200</span> }
+        .map    { r <span class="kw">-></span> extract_articles(r.body)? }
+        .flatten
+
+    <span class="comment">// Encrypt and return</span>
+    <span class="kw">let</span> report = Report {
+        sector:   sector,
+        articles: articles,
+        count:    articles.len,
+        generated: now()
+    }
+
+    Ok(report.to_json().encrypt())
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> sectors = [<span class="str">"semiconductors"</span>, <span class="str">"AI infrastructure"</span>]
+
+    <span class="kw">let</span> reports = sectors.parallel_map { sector <span class="kw">-></span>
+        research_market(sector).await
+    }
+
+    reports.each_ok { encrypted <span class="kw">-></span>
+        <span class="kw">let</span> report = encrypted.decrypt(key: config.master_key)?
+        save_report(report)
+    }
+}</code></pre>
+
+<div class="divider"></div>
+
+<!-- FOOTER -->
+<div style="text-align: center; padding: 40px 0; border-top: 2px solid #1e293b; color: #64748b; margin-top: 60px;">
+<p><strong>Tallow v0.4.0 — Complete Language Reference</strong></p>
+<p>Privacy-first systems language</p>
+<p style="font-size: 0.85em; margin-top: 20px;">March 2026 — Compiled for PDF printing. Use Ctrl+P to preserve styling.</p>
+<p style="font-size: 0.8em; margin-top: 30px;">For browser automation details, see <a href="browser-reference.html" style="color: #60a5fa;">browser-reference.html</a></p>
+<p style="font-size: 0.8em;">For file transfer details, see <a href="transfer-reference.html" style="color: #60a5fa;">transfer-reference.html</a></p>
+</div>
+
+</div>
+</body>
+</html>

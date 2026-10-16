@@ -1,0 +1,114 @@
+[package]
+name = "tallow-crypto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+# Needed by fuzz_x25519_dh (constructs a peer PublicKey from raw bytes).
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+# Needed by fuzz_handshake_signed (decodes wire Messages).
+postcard = { version = "1.1", features = ["use-std"] }
+# Needed by fuzz_decode_msg (builds the framing buffer handed to the codec).
+bytes = "1"
+
+[dependencies.tallow-crypto]
+path = ".."
+
+# Needed by fuzz_handshake_signed (the v5 HandshakeSigned frame lives here),
+# fuzz_verify_signed_frame (the handshake POLICY paths) and fuzz_decode_msg
+# (the framing codec). The codec module (`wire::codec`) is gated behind
+# `full`, so `full` is required despite the extra optional deps — leaving it
+# out is what made the framing layer unfuzzable.
+[dependencies.tallow-protocol]
+path = "../../tallow-protocol"
+default-features = false
+features = ["wasm", "full"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+# ─────────────────────────────────────────────────────────────
+# Fuzz targets covering critical crypto attack surfaces
+# ─────────────────────────────────────────────────────────────
+
+[[bin]]
+name = "fuzz_aes_gcm"
+path = "fuzz_targets/fuzz_aes_gcm.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_hkdf"
+path = "fuzz_targets/fuzz_hkdf.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_ed25519_verify"
+path = "fuzz_targets/fuzz_ed25519_verify.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_x25519_dh"
+path = "fuzz_targets/fuzz_x25519_dh.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_file_chunk"
+path = "fuzz_targets/fuzz_file_chunk.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_nonce_gen"
+path = "fuzz_targets/fuzz_nonce_gen.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mlkem_decaps"
+path = "fuzz_targets/fuzz_mlkem_decaps.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_hybrid_decaps"
+path = "fuzz_targets/fuzz_hybrid_decaps.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_chunk_scoped"
+path = "fuzz_targets/fuzz_chunk_scoped.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mldsa_verify"
+path = "fuzz_targets/fuzz_mldsa_verify.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_slhdsa_verify"
+path = "fuzz_targets/fuzz_slhdsa_verify.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cpace_finish"
+path = "fuzz_targets/fuzz_cpace_finish.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_handshake_signed"
+path = "fuzz_targets/fuzz_handshake_signed.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_decode_msg"
+path = "fuzz_targets/fuzz_decode_msg.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_verify_signed_frame"
+path = "fuzz_targets/fuzz_verify_signed_frame.rs"
+doc = false

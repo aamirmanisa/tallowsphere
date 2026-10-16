@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/targets.schema.json",
+  "title": "Tallow Targets Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "targets"
+  ],
+  "properties": {
+    "targets": {
+      "type": "array",
+      "description": "Absolute HTTP/HTTPS target URLs to probe in the primary wave.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/url"
+      }
+    },
+    "headers": {
+      "$ref": "#/$defs/headers"
+    },
+    "auth": {
+      "$ref": "#/$defs/auth"
+    },
+    "retry": {
+      "$ref": "#/$defs/retryPolicy"
+    },
+    "per_domain": {
+      "type": "object",
+      "description": "Optional overrides keyed by hostname (for example: vendor.example).",
+      "propertyNames": {
+        "$ref": "#/$defs/hostname"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/domainOverride"
+      }
+    },
+    "policy": {
+      "$ref": "#/$defs/policy"
+    }
+  },
+  "$defs": {
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://",
+      "minLength": 10
+    },
+    "hostname": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9.-]+$"
+    },
+    "headers": {
+      "type": "object",
+      "description": "HTTP request headers.",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "auth": {
+      "type": "object",
+      "description": "Optional auth descriptor. Keep secrets out of source control in real usage.",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "bearer",
+            "basic",
+            "api_key",
+            "custom_headers"
+          ]
+        },
+        "bearer_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "password": {
+          "type": "string",
+          "minLength": 1
+        },
+        "api_key_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "api_key_value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headers": {
+          "$ref": "#/$defs/headers"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "bearer"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "bearer_token"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "basic"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "username",
+              "password"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "api_key"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "api_key_name",
+              "api_key_value"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "custom_headers"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "headers"
+            ]
+          }
+        }
+      ]
+    },
+    "retryPolicy": {
+      "type": "object",
+      "description": "Retry and wave behavior for transient errors.",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3
+        },
+        "wave_concurrency": {
+          "type": "array",
+          "description": "Per-wave parallelism. Maps cleanly to l1/l2/l3 concurrency in current scripts.",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
+          },
+          "minItems": 1,
+          "maxItems": 6
+        },
+        "retry_on_status": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          },
+          "uniqueItems": true
+        },
+        "retry_on_transport_errors": {
+          "type": "boolean",
+          "default": true
+        },
+        "backoff_ms": {
+          "type": "array",
+          "description": "Delay per retry wave. Length should normally be max_attempts - 1.",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600000
+          },
+          "minItems": 1,
+          "maxItems": 10
+        }
+      }
+    },
+    "domainOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "headers": {
+          "$ref": "#/$defs/headers"
+        },
+        "auth": {
+          "$ref": "#/$defs/auth"
+        },
+        "retry": {
+          "$ref": "#/$defs/retryPolicy"
+        },
+        "extra_targets": {
+          "type": "array",
+          "description": "Additional URLs for this domain only.",
+          "items": {
+            "$ref": "#/$defs/url"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "Governed target policy validated by scripts/policy_manifest_validate.ps1.",
+      "additionalProperties": false,
+      "required": [
+        "allowlist",
+        "denylist",
+        "robots",
+        "rate_limits"
+      ],
+      "properties": {
+        "allowlist": {
+          "$ref": "#/$defs/policySelectorRequired"
+        },
+        "denylist": {
+          "$ref": "#/$defs/policySelector"
+        },
+        "robots": {
+          "$ref": "#/$defs/robotsPolicy"
+        },
+        "rate_limits": {
+          "$ref": "#/$defs/rateLimitPolicy"
+        }
+      }
+    },
+    "policySelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "domains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/domainPattern"
+          },
+          "uniqueItems": true
+        },
+        "url_patterns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/urlPattern"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "policySelectorRequired": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/policySelector"
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "domains"
+              ],
+              "properties": {
+                "domains": {
+                  "minItems": 1
+                }
+              }
+            },
+            {
+              "required": [
+                "url_patterns"
+              ],
+              "properties": {
+                "url_patterns": {
+                  "minItems": 1
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "domainPattern": {
+      "type": "string",
+      "description": "Hostname or wildcard hostname such as *.example.com.",
+      "pattern": "^(\\*\\.)?([a-zA-Z0-9-]+\\.)+[a-zA-Z0-9-]+$"
+    },
+    "urlPattern": {
+      "type": "string",
+      "description": "HTTP(S) URL pattern. Wildcard characters are interpreted by the policy validator.",
+      "pattern": "^https?://"
+    },
+    "robotsPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "advisory",
+            "off"
+          ]
+        }
+      }
+    },
+    "rateLimitPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "per_domain",
+        "per_ip_pool"
+      ],
+      "properties": {
+        "per_domain": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "anyOf": [
+              {
+                "const": "default"
+              },
+              {
+                "$ref": "#/$defs/domainPattern"
+              }
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/rateLimit"
+          }
+        },
+        "per_ip_pool": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/rateLimit"
+          }
+        }
+      }
+    },
+    "rateLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "requests_per_second"
+          ]
+        },
+        {
+          "required": [
+            "requests_per_minute"
+          ]
+        },
+        {
+          "required": [
+            "concurrent"
+          ]
+        }
+      ],
+      "properties": {
+        "requests_per_second": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "requests_per_minute": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "burst": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "concurrent": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cooldown_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

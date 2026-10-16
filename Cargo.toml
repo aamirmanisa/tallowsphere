@@ -1,0 +1,370 @@
+[package]
+name = "tallow"
+version = "1.1.1"
+edition = "2024"
+description = "The Tallow programming language — privacy-first systems language"
+license = "MIT"
+repository = "https://github.com/tallow-lang/tallow"
+keywords = ["language", "compiler", "privacy", "systems"]
+categories = ["compilers", "development-tools"]
+
+[lib]
+name = "tallow"
+path = "src/lib.rs"
+crate-type = ["lib", "staticlib"]
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+anyhow = "1"
+thiserror = "2"
+ureq = { version = "3", features = ["socks-proxy", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "socks"] }
+wreq = { version = "=6.0.0-rc.31", features = ["json", "cookies", "socks"], optional = true }
+wreq-util = { version = "=3.0.0-rc.14", optional = true }
+sha2 = "0.10"
+sha3 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+rand = "0.9"
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+rusqlite = { version = "0.34", features = ["bundled"] }
+ml-kem = "0.2"
+kem = "0.3.0-pre.0"
+rand_core_06 = { package = "rand_core", version = "0.6", features = ["getrandom"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+futures-util = "0.3"
+zip = "2"
+dirs = "5"
+# Logging standard (T-127/R-6.3): `tracing` facade + subscriber. Versions are
+# the exact ones already pinned in Cargo.lock (0.1.44 / 0.3.23) so `--offline`
+# builds resolve without network.
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+texting_robots = "0.2"
+url = "2"
+chrono = "0.4"
+png = "0.17"
+sha1 = "0.10"
+ctrlc = "3"
+regex = "1.12"
+blake3 = "1.8"
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+bcrypt = "0.16"
+scrypt = "0.11"
+ed25519-dalek = { version = "2.2", features = ["rand_core"] }
+landlock = "0.4"
+curve25519-dalek = { version = "4.1", features = ["rand_core"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+flate2 = "1.1"
+zstd = "0.13"
+brotli = "7.0"
+semver = "1.0"
+pubgrub = "0.3"
+tar = "0.4"
+tempfile = "3.26"
+toml = "1.0"
+toml_edit = "0.25"
+quinn = "0.11"
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+http_types = { package = "http", version = "1" }
+hickory-resolver = { version = "0.26", features = ["https-ring"] }
+rustls = { version = "0.23", features = ["ring"] }
+webpki-roots = "1"
+pcap = { version = "2.2", optional = true }
+bytes = "1"
+lopdf = { version = "0.44", default-features = false, features = ["rayon"] }
+kamadak-exif = "0.5"
+uuid = { version = "1", features = ["v4"] }
+notify = "8"
+scraper = "0.22"
+ml-dsa = "0.1"
+aes-gcm-siv = "0.11"
+hkdf = "0.12"
+aes-kw = { version = "0.2", features = ["alloc"] }
+pbkdf2 = "0.12"
+spake2 = "0.4"
+snow = "0.10"
+rcgen = "0.13"
+reed-solomon-simd = "3.0"
+indicatif = "0.18"
+memmap2 = "0.9"
+lz4_flex = "0.11"
+filetime = "0.2"
+rayon = "1.10"
+memchr = "2"
+urlencoding = "2"
+csv = "1.3"
+# FIX13: stdlib registration — heston.rs (Heston characteristic function) and
+# spotify.rs (APK modding pipeline) were honest-marked in FIX12 because these
+# crates were missing. Both versions already exist in Cargo.lock as transitive
+# deps; promoting them to direct deps resolves at the locked versions.
+num_complex = { version = "0.4", package = "num-complex" }
+walkdir = "2"
+
+# Optional storage adapters (feature-gated, default OFF — see [features]):
+#   parquet-storage -> real Arrow/Parquet columnar `ParquetBackend`
+#   s3-storage      -> real S3/MinIO object-store `S3Backend` via `object_store`
+arrow = { version = "59", optional = true }
+parquet = { version = "59", optional = true }
+object_store = { version = "0.14", features = ["aws"], optional = true }
+
+# Post-Quantum Crypto — real PQClean C implementations.
+# W5 decision C (2026-09-26): the legacy family (SLH-DSA/SPHINCS+, Falcon,
+# FrodoKEM, Classic McEliece) is optional behind the non-default `pq-legacy`
+# feature — the frozen PQClean wrappers carry audit findings and have zero
+# in-tree callers; ML-KEM/ML-DSA remain the default PQ paths. Feature OFF =
+# the 12 stdlib entry points return honest "not enabled" errors (no silent
+# fallback), and no PQClean C is compiled or linked.
+pqcrypto-traits = { version = "0.3", optional = true }
+pqcrypto-sphincsplus = { version = "0.7", optional = true }
+pqcrypto-falcon = { version = "0.4", optional = true }
+pqcrypto-frodo = { version = "0.4", optional = true }
+pqcrypto-classicmceliece = { version = "0.2", optional = true }
+
+# BLS signatures (Supranational C/asm library)
+blst = "0.3"
+# RSA blind signatures (RFC 9474): `src/blind_sig.rs` needs modular exponentiation, modular inverse
+# and RSA key generation. Deliberately NOT the `openssl` crate — this crate publishes
+# aarch64-unknown-linux-musl and aarch64-apple-darwin artifacts, and a native OpenSSL dependency
+# would need vendored OpenSSL for both. num-bigint is already in this tree's lockfile.
+num-bigint = "0.4"
+
+# Chinese national standards (OSCCA)
+sm3 = "0.4"
+sm4 = "0.5"
+
+# Russian national standards (GOST)
+streebog = "0.10"
+kuznyechik = "0.8"
+
+# Block cipher modes
+cbc = "0.1"
+fast_rsync = "0.2.0"
+io-uring = { version = "0.7", optional = true }
+libc = "0.2"
+tallow-net = { path = "crates/tallow-net", default-features = false, features = ["onion"] }
+# Relay-v1 client (E2E-encrypted live-pair transfer, design cycle-02/09 §3.1):
+# used by the CLI relay_send/relay_receive path in src/stdlib/transfer_net.rs.
+# Default feature "full" gates transfer::relay; its optional deps are already
+# direct root deps, so no new external crate is pulled in.
+tallow-protocol = { path = "crates/tallow-protocol" }
+# Pin + registry-verify arc: peer pin store + receipts ledger primitives
+# consumed by the `tallow pin` CLI (crates/tallow-registry).
+tallow-registry = { path = "crates/tallow-registry" }
+# Stage 3 / Slice 2: postcard join/room frames for the stdlib relay_room module
+postcard = { version = "1.1", features = ["use-std"] }
+# SVID rotation/drill continuation (R-08 batch-2 cluster C — #54/#120/#205):
+# `tallow-svid` supplies the T/2 rotation driver, node pinning + revocation
+# lists; the Ed25519 signer family for migration receipts arrives via
+# `tallow-crypto` (root dep added by the sibling W2-03/§P-2 lane above).
+tallow-svid = { path = "crates/tallow-svid" }
+# W3 #141/#142 (P10-R06/R-6): the vault at-rest container (.twv v3) seals and
+# opens through the crate's XChaCha20-Poly1305 object helper, so the at-rest
+# pattern has exactly one implementation (`crates/tallow-crypto/src/symmetric/
+# xchacha20.rs`). Already in the root graph transitively via tallow-net, so the
+# build cost is nil (this is the W2-03 §OPEN P-2 line, consumed now that an
+# in-lane consumer exists).
+tallow-crypto = { path = "crates/tallow-crypto" }
+# tallow-daemon is a workspace member (binary crate, not a library dependency)
+mimalloc = { version = "0.1", default-features = false }
+simd-json = "0.14"
+dashmap = "6"
+crossbeam = { version = "0.8", features = ["crossbeam-channel"] }
+fastbloom = "0.14"
+bumpalo = { version = "3", features = ["collections"] }
+zeroize = { version = "1", features = ["derive"] }
+secrecy = "0.10"
+# Optional Redis client for the distributed queue backend (`RedisQueueBackend`).
+# Default OFF: a stock build stays dependency-light and CI (which has no Redis
+# server) never pulls it in. Enable with `--features redis-backend`.
+redis = { version = "0.27", optional = true, features = ["tokio-comp"] }
+
+# ── REAL network-layer backends (feature-gated) ──────────────────────────────
+# These replace the previous SIMULATED implementations in src/stdlib/net.rs.
+# Each is optional so a stock build stays dependency-light; enabling the
+# feature pulls in the real implementation. When the feature is OFF, the
+# corresponding stdlib functions return an HONEST error rather than faking
+# success (they never pretend a tunnel/circuit exists when one does not).
+#
+# WireGuard tunnel (--features wireguard): the WireGuard handshake is the
+# Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s pattern, implemented with the `snow`
+# Noise-protocol crate already required by src/stdlib/crypto.rs. (The
+# `boringtun` crate cannot be added: it pins x25519-dalek =2.0.0-rc.3 ->
+# curve25519-dalek =4.0.0-rc.3, which hard-conflicts with the existing
+# `snow`/`crypto.rs` requirement of curve25519-dalek 4.1.x — see FIX3 report.)
+#
+# Real HTTP/2 gRPC server/client via tonic + h2 (--features grpc)
+tonic = { version = "0.12", optional = true, default-features = false, features = ["transport", "channel"] }
+h2 = { version = "0.4", optional = true }
+# Real Tor circuit — provided by the daemon-based TorManager/TorPool (src/tor/).
+# Embedded `arti-client` is intentionally NOT declared here: tor-dirmgr's
+# libsqlite3-sys 0.34 conflicts with the crate's rusqlite 0.34 (libsqlite3-sys
+# 0.32) on the native `links="sqlite3"` lib. See the `tor` feature note.
+# Real SOPS-over-TLS not required; transports use QUIC/WebRTC scaffolding above.
+# AEGIS (W2-11, E-2-01 §1(c)/§3 recommendation — narrower gate applied):
+# the crate policy is "AEGIS optional at most — feature-gated, never a default
+# AEAD". This dependency was previously linked UNCONDITIONALLY (the finding
+# E-2-01 recorded); it is now optional behind the non-default `aegis` feature.
+# With the feature OFF (default builds) the stdlib entry points
+# (crypto.encrypt_aegis / crypto.decrypt_aegis, src/stdlib/crypto.rs) compile to
+# honest "not enabled" errors and no AEGIS code is linked. Gated here rather
+# than relocated into crates/tallow-crypto because the root crate has no
+# tallow-crypto dependency yet (W2-02 §OPEN P-2); relocation — and then deleting
+# AEGIS_OUTSIDE_ALLOWLIST in scripts/crypto-inventory.py — remains the recorded
+# long-term option.
+aegis = { version = "0.6", optional = true, default-features = false, features = ["std", "pure-rust"] }
+poly1305 = "0.8"
+universal-hash = "0.5"
+sp800-185 = { version = "0.2", features = ["parallelhash"] }
+sm2 = "0.13"
+cryptoki = { version = "0.12" }
+
+# Real Cranelift JIT backend (feature-gated, default OFF — see [features]):
+#   jit -> cranelift-codegen/frontend/jit/module + target-lexicon.
+# These replace no existing dependency; they are purely additive and only
+# pulled in when `--features jit` is requested. Versions pinned to 0.111
+# (cranelift-codegen 0.111.12) which is vendored in the local cargo cache.
+cranelift-codegen = { version = "0.111", optional = true }
+cranelift-frontend = { version = "0.111", optional = true }
+cranelift-jit = { version = "0.111", optional = true }
+cranelift-module = { version = "0.111", optional = true }
+target-lexicon = { version = "0.12", optional = true }
+
+[features]
+# `stealth-http` is enabled BY DEFAULT so a stock build uses the real
+# wreq/BoringSSL ClientHello impersonation instead of falling back to the
+# ureq/rustls path (whose rustls ClientHello is flagged by Akamai/Cloudflare).
+# To force the pure-rustls fallback, build with --no-default-features.
+# NOTE: enabling this requires `cmake` (BoringSSL via boring-sys2).
+default = ["stealth-http"]
+packet-capture = ["dep:pcap"]
+# Wired gate (T-113): when enabled, the QUIC transfer client in
+# src/stdlib/transfer_net.rs skips server-cert verification (self-signed
+# dev/LAN certs). HARDENED IS NOW THE DEFAULT (W5 decision D, 2026-09-27):
+# default builds require CA-validated certificates (webpki roots); enable
+# this feature explicitly only for local/LAN self-signed dev peers. Peer
+# pinning/TOFU remains the close-out arc.
+dangerous_skip_verify = []
+# Real WireGuard (noise) tunnel — implemented via `snow` (see src/stdlib/net.rs)
+# instead of `boringtun` (which conflicts with curve25519-dalek 4.1 via
+# x25519-dalek 2.0.0-rc.3 — see note above). Kept as a feature flag for API
+# compatibility; the noise-protocol tunnel is active under this feature.
+wireguard = []
+# Real HTTP/2 gRPC server/client via tonic + h2 — replaces simulated gRPC.
+grpc = ["dep:tonic", "dep:h2"]
+# Real Tor circuit via arti-client — replaces the simulated 3-hop circuit.
+# NOTE: `arti-client 0.41` (embedded Tor) is currently disabled because its
+# `tor-dirmgr` pulls libsqlite3-sys 0.34, which hard-conflicts with the crate's
+# `rusqlite 0.34 -> libsqlite3-sys 0.32` on the native `links="sqlite3"` lib.
+# Real Tor routing still works via the daemon-based TorManager/TorPool
+# (src/tor/), which talks to a system tor daemon. Re-enable arti-client only
+# after aligning rusqlite's libsqlite3-sys with tor-dirmgr's requirement.
+tor = []
+# io_uring (W2-12 qualifiers, cycle-02/06 §3.4 — labels landed, no default-enable):
+# opt-in EXPERIMENTAL file-I/O backend — single-operation submit, file I/O only,
+# NOT the network path (fetch stays ureq/tokio). Never default-enabled: default
+# builds use the tokio/std path. Post-V1 spike gate before any default flip:
+# multi-op batch + copy-engine routing must show >=1.5x on the 80K-small-file
+# copy class vs the std path, per the benchmark protocol — spec filed at
+# research/tallow-v1/exec/W2-12-io-uring-spike-spec.md.
+io-uring-backend = ["dep:io-uring"]
+# AEGIS (W2-11): optional at most — never a default AEAD. OFF by default; when
+# enabled, the real `aegis` crate + the crypto.encrypt_aegis /
+# crypto.decrypt_aegis stdlib paths compile in (src/stdlib/crypto.rs). Feature
+# OFF = honest "not enabled" errors, no AEGIS code linked.
+aegis = ["dep:aegis"]
+# W5 decision C (2026-09-26): legacy PQClean family — SLH-DSA (SPHINCS+),
+# Falcon, FrodoKEM, Classic McEliece — optional, OFF by default. When enabled
+# the 12 crypto.*_slhdsa/_falcon/_frodo/_mceliece stdlib paths compile in
+# (src/stdlib/crypto.rs); OFF they return honest "not enabled" errors.
+pq-legacy = ["dep:pqcrypto-traits", "dep:pqcrypto-sphincsplus", "dep:pqcrypto-falcon", "dep:pqcrypto-frodo", "dep:pqcrypto-classicmceliece"]
+stealth-http = ["dep:wreq", "dep:wreq-util"]
+# Enables the real `h2` HTTP/2 client in `src/browser/http2_fingerprint.rs`
+# that emits browser-accurate SETTINGS frames, pseudo-header ordering, and
+# the connection WINDOW_UPDATE delta. OFF by default so the ureq HTTP/1.1
+# path used by the interpreter/runtime stays byte-for-byte unchanged.
+http2-fingerprint = ["dep:h2"]
+# Real columnar (Arrow/Parquet) storage backend in `src/browser/storage.rs`.
+# When OFF (default), `ParquetBackend` remains the zero-dep JSON-lines stand-in.
+parquet-storage = ["dep:parquet", "dep:arrow"]
+# Real S3/MinIO object-store backend via `object_store` (supports S3/MinIO +
+# the local filesystem). When OFF (default), `S3Backend` is a config stub.
+s3-storage = ["dep:object_store"]
+# Enables the Redis-backed distributed job queue (`RedisQueueBackend` in
+# src/browser/job_queue.rs). Requires a reachable Redis server; see
+# deploy/redis-backend.md for how to run a distributed Tallow cluster.
+redis-backend = ["dep:redis"]
+# `real-ml`: NOT SHIPPED. There is no candle-based loader in this build, so
+# enabling it cannot yield a real model — `EmbeddingEngine::new` returns a
+# documented `MlError` rather than silently falling back to the mock (a silent
+# fallback would let callers believe they got semantic embeddings when they did
+# not). Declared so the `#[cfg(feature = "real-ml")]` sites are legal — they
+# previously emitted `unexpected_cfgs` warnings for a feature Cargo did not
+# define — and so `--features real-ml` is an honest, testable switch.
+real-ml = []
+# Real Cranelift JIT backend (`src/codegen_cranelift.rs` + `src/jit.rs`).
+# OFF by default so a stock build stays dependency-light. When enabled, the
+# tracing JIT hooks the interpreter to hot-compile basic blocks to native
+# code via Cranelift 0.111. The JIT path only activates at runtime when the
+# `TALLOW_JIT` env var is set (default OFF), so behavior is unchanged unless
+# explicitly opted in. Cranelift 0.111 + target-lexicon 0.12 are vendored in
+# the local cargo cache and resolve offline.
+jit = [
+    "dep:cranelift-codegen",
+    "dep:cranelift-frontend",
+    "dep:cranelift-jit",
+    "dep:cranelift-module",
+    "dep:target-lexicon",
+]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Security", "Win32_System_IO", "Win32_System_Ioctl"] }
+
+[target.'cfg(unix)'.dependencies]
+xattr = "1.4"
+
+[dev-dependencies]
+insta = "1"
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "reliability_bench"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+codegen-units = 16    # Parallel compilation — 16 units instead of 1
+incremental = true    # Cache between builds — only recompile changed code
+panic = "abort"
+
+# Max optimization profile (use with: cargo build --profile max)
+[profile.max]
+inherits = "release"
+codegen-units = 1     # Single unit for max speed binary
+lto = "fat"           # Full LTO for smallest/fastest binary
+incremental = false
+
+[workspace]
+members = [
+    "crates/tallow-crypto",
+    "crates/tallow-net",
+    "crates/tallow-protocol",
+    "crates/tallow-daemon",
+    "crates/tallow-reader",
+    "crates/tallow-copy-engine",
+    "crates/tallow-svid",
+    "crates/tallow-admission",
+    "crates/tallow-registry",
+    "crates/tallow-jobs",
+    "crates/tallow-locator",
+    "crates/tallow-advisory",
+]

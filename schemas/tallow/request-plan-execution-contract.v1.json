@@ -1,0 +1,82 @@
+{
+  "artifact_capture": {
+    "body_capture_modes": [
+      "none",
+      "redacted"
+    ],
+    "manifest_schema": "tallow.artifact_manifest.v1",
+    "redacted_body_suffix": "response.body.redacted.txt"
+  },
+  "body_limits": {
+    "max_response_bytes_default": 1048576
+  },
+  "compliance_gate": {
+    "default_network_scope": "local",
+    "local_network_allowed_hosts": [
+      "127.0.0.1",
+      "localhost",
+      "::1"
+    ],
+    "live_execution_default": "preflight_only"
+  },
+  "error_kinds": [
+    "none",
+    "transport",
+    "timeout",
+    "http_4xx",
+    "auth",
+    "rate_limited",
+    "http_5xx",
+    "validation",
+    "body_too_large",
+    "unknown"
+  ],
+  "headers": {
+    "hop_by_hop_names": [
+      "connection",
+      "host",
+      "content-length",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade"
+    ],
+    "sensitive_names": [
+      "authorization",
+      "cookie",
+      "set-cookie",
+      "proxy-authorization",
+      "x-api-key",
+      "api-key",
+      "apikey",
+      "x-auth-token",
+      "x-csrf-token"
+    ]
+  },
+  "legacy_tl": {
+    "batch_method": "GET",
+    "compatible_methods": [
+      "GET"
+    ],
+    "max_batch_concurrency": 16,
+    "max_batch_urls": 256,
+    "transport": "http.batch"
+  },
+  "retry": {
+    "max_attempts": 10,
+    "retryable_error_kinds": [
+      "http_5xx",
+      "rate_limited",
+      "timeout",
+      "transport"
+    ]
+  },
+  "schema_version": "tallow.request_plan_execution_contract.v1",
+  "supported_methods": [
+    "GET",
+    "POST"
+  ],
+  "version": "request-plan-execution-core-v1"
+}

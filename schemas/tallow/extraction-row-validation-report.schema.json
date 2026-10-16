@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/extraction-row-validation-report.schema.json",
+  "title": "Tallow Extraction Row Validation Report",
+  "description": "Machine-readable validation report for Phase 5 local/mock extraction rows.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at_utc",
+    "passed",
+    "rows_total",
+    "rows_valid",
+    "rows_quarantined",
+    "hard_error_count",
+    "error_counts",
+    "null_reason_counts",
+    "confidence_summary",
+    "selector_health_summary",
+    "drift_summary",
+    "checked_paths",
+    "non_claims"
+  ],
+  "properties": {
+    "schema_version": { "const": "tallow.extraction_row_validation_report.v1" },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "passed": { "type": "boolean" },
+    "rows_total": { "type": "integer", "minimum": 0 },
+    "rows_valid": { "type": "integer", "minimum": 0 },
+    "rows_quarantined": { "type": "integer", "minimum": 0 },
+    "hard_error_count": { "type": "integer", "minimum": 0 },
+    "error_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+    "null_reason_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+    "confidence_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "mean"],
+      "properties": {
+        "min": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "max": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "mean": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "selector_health_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "mean"],
+      "properties": {
+        "min": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "max": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "mean": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "drift_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rows_with_drift"],
+      "properties": {
+        "rows_with_drift": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "checked_paths": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "non_claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["live_scraping", "external_dataset", "production_ready"],
+      "properties": {
+        "live_scraping": { "const": false },
+        "external_dataset": { "const": false },
+        "production_ready": { "const": false }
+      }
+    },
+    "violations": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  }
+}

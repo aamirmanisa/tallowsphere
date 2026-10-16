@@ -1,0 +1,72 @@
+{
+  "schema_version": "tallow.request_plan.v1",
+  "manifest_id": "example-request-plan-post-graphql-local-fixture",
+  "request_count": 1,
+  "requests": [
+    {
+      "index": 0,
+      "target_id": "fixture_graphql_products",
+      "url": "https://example.invalid/graphql",
+      "method": "POST",
+      "headers": {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "TallowExamples/1.0 local-fixture"
+      },
+      "body": {
+        "kind": "json",
+        "content_type": "application/json",
+        "redaction": "hash",
+        "value": {
+          "query": "query Products($limit:Int!){ products(limit:$limit){ name } }",
+          "variables": {
+            "limit": 2
+          }
+        }
+      },
+      "graphql": {
+        "operation_type": "query",
+        "operation_name": "Products",
+        "variables": {
+          "limit": 2
+        }
+      },
+      "browser_fallback": {
+        "mode": "never"
+      },
+      "artifact_policy": {
+        "capture_body": "redacted",
+        "response_snippet_bytes": 512,
+        "screenshots": "never",
+        "har": "never",
+        "dom": "never"
+      },
+      "compliance": {
+        "source_authority": "local_fixture_public_web",
+        "purpose": "release_example_request_plan_post_graphql",
+        "legal_basis": "legitimate_interest",
+        "pii_policy": "no_pii_expected",
+        "retention_days": 1,
+        "robots_mode": "strict",
+        "requires_approval": false
+      }
+    }
+  ],
+  "legacy_http_batch": {
+    "compatible": false,
+    "blocked_reasons": [
+      "fixture_graphql_products: method POST cannot be represented in legacy http.batch TL",
+      "fixture_graphql_products: body cannot be represented in legacy http.batch TL",
+      "fixture_graphql_products: graphql metadata cannot be represented in legacy http.batch TL",
+      "fixture_graphql_products: artifact_policy cannot be represented in legacy http.batch TL"
+    ],
+    "headers": {
+      "Accept": "application/json",
+      "User-Agent": "TallowExamples/1.0 local-fixture"
+    },
+    "target_urls": [
+      "https://example.invalid/graphql"
+    ]
+  },
+  "status_boundary": "Release example: local/mock POST GraphQL query execution only. GraphQL mutations, query_ref resolution, external network, secrets, browser fallback, and production compliance are not claimed."
+}

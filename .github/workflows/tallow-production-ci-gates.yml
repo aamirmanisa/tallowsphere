@@ -1,0 +1,63 @@
+name: Tallow Production CI Gates
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "schemas/tallow/**"
+      - "configs/tallow/**"
+      - "docs/benchmarks/**"
+      - ".github/workflows/tallow-production-ci-gates.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "schemas/tallow/**"
+      - "configs/tallow/**"
+      - "docs/benchmarks/**"
+      - ".github/workflows/tallow-production-ci-gates.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: "8388608"
+  TALLOW_RUN_BROWSER_LIVE_TESTS: "0"
+  TALLOW_RUN_LIVE_BENCHMARKS: "0"
+  FIRECRAWL_DISABLED: "1"
+
+jobs:
+  tallow-production-ci-gates:
+    name: Tallow production CI gates (offline/fail-closed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Show Python version
+        run: python3 --version
+      - name: Matrix self-check
+        run: python3 scripts/tallow_production_ci_gates.py --check-workflow .github/workflows/tallow-production-ci-gates.yml
+      - name: Run required P2-005/P2-006 gates
+        run: python3 scripts/tallow_production_ci_gates.py --run
+      # Deterministic verifier subset: B6.4.3 replay determinism + B3.2.2/B3.2.3
+      # fault suite. Both scripts self-detect the repo root, contain no absolute
+      # paths, no CI secrets, and no artifacts/ dependencies — safe on a clean
+      # checkout. NOTE: the repo currently has NO git remote, so CI is latent;
+      # the same commands are runnable locally from the repo root (or any cwd).
+      # The artifacts/impl batch-verifier chain stays out of scope (deferred).
+      - name: Deterministic verifier subset (replay_determinism + fault_suite)
+        run: |
+          bash scripts/replay_determinism.sh
+          bash scripts/fault_suite.sh

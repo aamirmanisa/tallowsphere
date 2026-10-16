@@ -1,0 +1,561 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nixe.local/schemas/tallow/compliance-gate-report.schema.json",
+  "title": "Tallow Compliance Gate Report",
+  "description": "Local/no-secret Phase 9 compliance gate proof report. It records policy, fake/local vault reference, redaction scan, retention dry-run, and non-claim evidence without live scraping or real secret material.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at_utc",
+    "passed",
+    "mode",
+    "network_scope",
+    "target_manifest",
+    "summary",
+    "legal",
+    "production_gate",
+    "gates",
+    "violations",
+    "warnings",
+    "vault",
+    "redaction",
+    "retention",
+    "non_claims"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "tallow.compliance_gate_report.v1"
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "local_no_secret_proof"
+      ]
+    },
+    "network_scope": {
+      "type": "string",
+      "enum": [
+        "local",
+        "live"
+      ]
+    },
+    "target_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "schema_version",
+        "manifest_id",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "manifest_id": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targets_total",
+        "targets_with_auth_ref",
+        "violations_count",
+        "warnings_count",
+        "redaction_findings_total",
+        "retention_plans_total"
+      ],
+      "properties": {
+        "targets_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "targets_with_auth_ref": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "violations_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "redaction_findings_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retention_plans_total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/gate"
+      }
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resolver",
+        "references_total",
+        "references",
+        "no_secret_material_resolved",
+        "secret_material_serialized",
+        "real_vault_contacted"
+      ],
+      "properties": {
+        "resolver": {
+          "type": "string",
+          "enum": [
+            "fake_local_reference_only"
+          ]
+        },
+        "references_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/vault_reference"
+          }
+        },
+        "no_secret_material_resolved": {
+          "type": "boolean"
+        },
+        "secret_material_serialized": {
+          "type": "boolean"
+        },
+        "real_vault_contacted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scanner",
+        "paths_scanned",
+        "findings_total",
+        "findings",
+        "raw_values_emitted"
+      ],
+      "properties": {
+        "scanner": {
+          "type": "string"
+        },
+        "paths_scanned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "findings_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/redaction_finding"
+          }
+        },
+        "raw_values_emitted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dry_run",
+        "requested_action",
+        "destructive_action_performed",
+        "plans"
+      ],
+      "properties": {
+        "dry_run": {
+          "type": "boolean"
+        },
+        "requested_action": {
+          "type": "string",
+          "enum": [
+            "dry-run",
+            "purge"
+          ]
+        },
+        "destructive_action_performed": {
+          "type": "boolean"
+        },
+        "plans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/retention_plan"
+          }
+        }
+      }
+    },
+    "non_claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "no_live_external_scraping",
+        "no_real_secret_material",
+        "no_real_vault_configuration",
+        "no_destructive_retention_purge",
+        "no_production_compliance_readiness"
+      ],
+      "properties": {
+        "no_live_external_scraping": {
+          "type": "boolean"
+        },
+        "no_real_secret_material": {
+          "type": "boolean"
+        },
+        "no_real_vault_configuration": {
+          "type": "boolean"
+        },
+        "no_destructive_retention_purge": {
+          "type": "boolean"
+        },
+        "no_production_compliance_readiness": {
+          "type": "boolean"
+        }
+      }
+    },
+    "production_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approval_id",
+        "legal_metadata_status",
+        "redaction_status",
+        "retention_status",
+        "accepted_for_live_preflight",
+        "accepted_for_live_execution",
+        "network_io_performed",
+        "destructive_retention_performed"
+      ],
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "legal_metadata_status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "redaction_status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "retention_status": {
+          "type": "string",
+          "enum": [
+            "dry_run_only",
+            "blocked_destructive"
+          ]
+        },
+        "accepted_for_live_preflight": {
+          "type": "boolean"
+        },
+        "accepted_for_live_execution": {
+          "type": "boolean"
+        },
+        "network_io_performed": {
+          "type": "boolean"
+        },
+        "destructive_retention_performed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "legal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targets"
+      ],
+      "properties": {
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/legal_target"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "passed"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "path",
+        "message",
+        "error"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "error": {
+          "$ref": "#/$defs/emitted_error_object"
+        }
+      }
+    },
+    "vault_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_id",
+        "scheme",
+        "provider_id",
+        "reference_hash",
+        "status",
+        "resolution_status",
+        "secret_material_resolved",
+        "secret_material_serialized",
+        "auth_ref_serialized",
+        "real_vault_contacted"
+      ],
+      "properties": {
+        "target_id": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "provider_id": {
+          "type": "string"
+        },
+        "reference_hash": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "resolution_status": {
+          "type": "string"
+        },
+        "secret_material_resolved": {
+          "type": "boolean"
+        },
+        "secret_material_serialized": {
+          "type": "boolean"
+        },
+        "auth_ref_serialized": {
+          "type": "boolean"
+        },
+        "real_vault_contacted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "redaction_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path",
+        "line",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "retention_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_id",
+        "retention_days",
+        "delete_after_utc",
+        "action"
+      ],
+      "properties": {
+        "target_id": {
+          "type": "string"
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "delete_after_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "action": {
+          "type": "string"
+        }
+      }
+    },
+    "legal_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_id",
+        "source_authority",
+        "purpose",
+        "legal_basis",
+        "pii_policy",
+        "retention_days",
+        "robots_mode"
+      ],
+      "properties": {
+        "target_id": {
+          "type": "string"
+        },
+        "source_authority": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "legal_basis": {
+          "type": "string"
+        },
+        "pii_policy": {
+          "type": "string"
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "robots_mode": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "advisory",
+            "off"
+          ]
+        }
+      }
+    },
+    "emitted_error_object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message",
+        "retryable",
+        "policy_blocked",
+        "source_target_id",
+        "url",
+        "phase"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "policy_blocked": {
+          "type": "boolean"
+        },
+        "source_target_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

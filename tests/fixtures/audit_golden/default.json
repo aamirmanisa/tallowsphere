@@ -1,0 +1,25 @@
+{
+  "annotated_functions": 1,
+  "compliance_status": "COMPLIANT",
+  "disclaimer": "This output is compliance tooling \u2014 not legal advice and not a certification.",
+  "errors": 0,
+  "file": "tests/fixtures/legal_valid.tl",
+  "functions": [
+    {
+      "browser_operations": [],
+      "function": "fetch_data",
+      "is_agent": false,
+      "is_network": true,
+      "jurisdiction": [],
+      "legal_basis": "public_data",
+      "personal_data": false,
+      "purpose": "test"
+    }
+  ],
+  "network_functions": 1,
+  "schema": "tallow.audit.default.v1",
+  "tallow_version": "<ver>",
+  "timestamp": "<ts>",
+  "total_functions": 1,
+  "warnings": 0
+}

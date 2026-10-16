@@ -1,0 +1,109 @@
+{
+  "schema_version": "tallow.phase10.fixture_corpus.v1",
+  "corpus_id": "phase10-local-fixture-v1",
+  "manifest_version": "phase10-local-fixture-v1",
+  "protocol_version": "1.0-local-offline",
+  "measurement_scope": "local_fixture_only",
+  "description": "Tiny offline Phase 10 corpus for protocol/tooling validation only. It is not a live benchmark corpus.",
+  "non_claims": {
+    "no_live_external_scraping": true,
+    "no_firecrawl_service_startup": true,
+    "no_paid_api": true,
+    "no_real_secrets": true,
+    "no_performance_claim": true,
+    "no_production_readiness_claim": true
+  },
+  "targets": [
+    {
+      "target_id": "static-product-001",
+      "url": "fixture://phase10/static-product-001",
+      "category": "static",
+      "target_class": "easy",
+      "expected_content_type": "text/html",
+      "validation_rule_id": "product_card_v1",
+      "fixture": {
+        "body": "<html><body><article><h1>Example Widget</h1><span class=\"price\">$12.34</span><span class=\"availability\">in_stock</span></article></body></html>",
+        "expected_fields": {
+          "title": "Example Widget",
+          "price": "$12.34",
+          "availability": "in_stock"
+        }
+      },
+      "provider_outputs": {
+        "tallow-local": {
+          "extracted_fields": {
+            "title": "Example Widget",
+            "price": "$12.34",
+            "availability": "in_stock"
+          }
+        },
+        "firecrawl-mock": {
+          "extracted_fields": {
+            "title": "Example Widget",
+            "price": "$12.34",
+            "availability": "in_stock"
+          }
+        }
+      }
+    },
+    {
+      "target_id": "graphql-product-001",
+      "url": "fixture://phase10/graphql-product-001",
+      "category": "graphql",
+      "target_class": "medium",
+      "expected_content_type": "application/json",
+      "validation_rule_id": "graphql_product_v1",
+      "fixture": {
+        "body": "{\"data\":{\"product\":{\"id\":\"sku-001\",\"title\":\"Example Widget\",\"price\":\"$12.34\"}}}",
+        "expected_fields": {
+          "id": "sku-001",
+          "title": "Example Widget",
+          "price": "$12.34"
+        }
+      },
+      "provider_outputs": {
+        "tallow-local": {
+          "extracted_fields": {
+            "id": "sku-001",
+            "title": "Example Widget",
+            "price": "$12.34"
+          }
+        },
+        "firecrawl-mock": {
+          "extracted_fields": {
+            "id": "sku-001",
+            "title": "Example Widget",
+            "price": "$12.34"
+          }
+        }
+      }
+    },
+    {
+      "target_id": "validation-fail-001",
+      "url": "fixture://phase10/validation-fail-001",
+      "category": "static",
+      "target_class": "hard",
+      "expected_content_type": "text/html",
+      "validation_rule_id": "required_price_v1",
+      "fixture": {
+        "body": "<html><body><article><h1>Incomplete Widget</h1><span class=\"availability\">unknown</span></article></body></html>",
+        "expected_fields": {
+          "title": "Incomplete Widget",
+          "price": "$99.99"
+        }
+      },
+      "provider_outputs": {
+        "tallow-local": {
+          "extracted_fields": {
+            "title": "Incomplete Widget"
+          }
+        },
+        "firecrawl-mock": {
+          "extracted_fields": {
+            "title": "Incomplete Widget"
+          }
+        }
+      }
+    }
+  ]
+}

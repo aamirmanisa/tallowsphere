@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tallow-lang.org/schemas/retailer-config.schema.json",
+  "title": "Tallow Retailer Configuration",
+  "description": "Per-retailer scraping configuration for the Tallow deals engine.",
+  "type": "object",
+  "required": ["name", "base_url"],
+  "properties": {
+    "name": { "type": "string", "description": "Retailer identifier (e.g. amazon, walmart)" },
+    "base_url": { "type": "string", "format": "uri", "description": "Base URL for the retailer" },
+    "deals_page_url": { "type": "string", "description": "URL for the main deals/clearance page" },
+    "clearance_page_url": { "type": "string", "description": "URL for in-store clearance page" },
+    "product_selector": { "type": "string", "description": "CSS selector or HTML marker for product cards" },
+    "price_selector": { "type": "string", "description": "CSS selector or regex for price element" },
+    "title_selector": { "type": "string", "description": "CSS selector for product title" },
+    "image_selector": { "type": "string", "description": "CSS selector for product image" },
+    "was_price_selector": { "type": "string", "description": "CSS selector for original/strikethrough price" },
+    "stock_selector": { "type": "string", "description": "CSS selector or text marker for stock status" },
+    "sku_pattern": { "type": "string", "description": "Regex pattern for SKU/product ID extraction from URLs" },
+    "api_endpoints": {
+      "type": "object",
+      "description": "Known API endpoints for this retailer",
+      "additionalProperties": { "type": "string" }
+    },
+    "rate_limit_ms": { "type": "integer", "minimum": 0, "description": "Minimum ms between requests" },
+    "requires_browser": { "type": "boolean", "description": "Whether this retailer requires browser rendering" }
+  }
+}

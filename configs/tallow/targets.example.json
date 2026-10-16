@@ -1,0 +1,108 @@
+{
+  "targets": [
+    "https://vendor.example/graphql",
+    "https://vendor.example/api/graphql",
+    "https://vendor.example/graphql",
+    "https://vendor.example/",
+    "https://vendor.example/robots.txt"
+  ],
+  "headers": {
+    "Accept": "application/json, text/plain, */*",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://vendor.example/"
+  },
+  "retry": {
+    "max_attempts": 3,
+    "wave_concurrency": [
+      200,
+      80,
+      30
+    ],
+    "retry_on_status": [
+      408,
+      429,
+      500,
+      502,
+      503,
+      504
+    ],
+    "retry_on_transport_errors": true,
+    "backoff_ms": [
+      250,
+      1000
+    ]
+  },
+  "per_domain": {
+    "vendor.example": {
+      "headers": {
+        "Origin": "https://vendor.example"
+      },
+      "retry": {
+        "wave_concurrency": [
+          120,
+          40,
+          20
+        ]
+      }
+    },
+    "vendor.example": {
+      "retry": {
+        "wave_concurrency": [
+          100,
+          40,
+          20
+        ]
+      }
+    }
+  },
+  "policy": {
+    "allowlist": {
+      "domains": [
+        "vendor.example",
+        "*.vendor.example"
+      ],
+      "url_patterns": [
+        "https://*.vendor.example/*"
+      ]
+    },
+    "denylist": {
+      "url_patterns": [
+        "https://*.vendor.example/admin/*",
+        "https://*.vendor.example/private/*"
+      ]
+    },
+    "robots": {
+      "mode": "advisory"
+    },
+    "rate_limits": {
+      "per_domain": {
+        "vendor.example": {
+          "requests_per_minute": 120,
+          "burst": 20,
+          "concurrent": 20,
+          "cooldown_ms": 250
+        },
+        "vendor.example": {
+          "requests_per_minute": 100,
+          "burst": 20,
+          "concurrent": 16,
+          "cooldown_ms": 250
+        },
+        "vendor.example": {
+          "requests_per_minute": 60,
+          "burst": 10,
+          "concurrent": 8,
+          "cooldown_ms": 500
+        }
+      },
+      "per_ip_pool": {
+        "default": {
+          "requests_per_minute": 500,
+          "burst": 80,
+          "concurrent": 50,
+          "cooldown_ms": 100
+        }
+      }
+    }
+  }
+}
