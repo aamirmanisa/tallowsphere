@@ -178,7 +178,12 @@ def main() -> int:
         "check_ms_min": round(all_ms[0], 3),
         "check_ms_p95": round(all_ms[min(n - 1, int(round(0.95 * (n - 1))))], 3),
         "check_ms_max": round(all_ms[-1], 3),
-        "throughput_files_per_s": round(len(files) / (sum(all_ms) / 1000.0), 3) if all_ms else 0.0,
+        # files per SINGLE pass — normalised by the per-file medians so the figure
+        # does not vary with --iters (a sum over all samples would: that is the
+        # 2026-10-16 defect this replaces).
+        "throughput_files_per_s": round(
+            len(files) / (sum(v["median_ms"] for v in per_file.values()) / 1000.0), 3
+        ) if per_file else 0.0,
         "peak_rss_mb": peak_rss_mb(binp, files[0]),
     }
 

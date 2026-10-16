@@ -1,0 +1,48 @@
+{
+  "schema": "tallow-profile-ab/1",
+  "date": "2026-10-16",
+  "question": "Should [profile.max] (fat LTO, codegen-units=1) be the release default? (sheet U-C10)",
+  "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+  "host": "aarch64, 8 vCPU, kernel 6.8.0-146-generic",
+  "corpus": {"glob": "examples/*.tl", "files": 58, "sha256_prefix": "9218374662ea",
+             "note": "51/58 type-check clean under both binaries — behaviour is identical"},
+  "caveat": "Both builds ran under CARGO_BUILD_JOBS=2 inside a MemoryMax=8G scope (the box's memory-safe recipe), not the repository's configured jobs=8. Absolute build times are inflated and the max/release build-time ratio may shift at 8 jobs. Size and functional behaviour are unaffected.",
+  "profiles": {
+    "release": {
+      "settings": "thin LTO, codegen-units=16, incremental, strip",
+      "build_wall_s": 1707.6,
+      "binary_mb": 46.0,
+      "binary_bytes": 46008464,
+      "metrics": {"success_rate": 0.8793, "unresolved": 7, "check_ms_median": 12.836,
+                  "check_ms_p95": 24.099, "throughput_files_per_s": 74.195, "peak_rss_mb": 22.6}
+    },
+    "max": {
+      "settings": "fat LTO, codegen-units=1, no incremental, strip",
+      "build_wall_s": 1893.0,
+      "binary_mb": 36.6,
+      "binary_bytes": 36636688,
+      "metrics": {"success_rate": 0.8793, "unresolved": 7, "check_ms_median": 12.813,
+                  "check_ms_p95": 22.211, "throughput_files_per_s": 74.134, "peak_rss_mb": 20.7}
+    }
+  },
+  "delta_max_vs_release": {
+    "build_wall": "+10.9%",
+    "binary_size": "-20.4%",
+    "check_ms_median": "-0.2%  (NOT a win)",
+    "throughput_files_per_s": "-0.1%  (NOT a win)",
+    "peak_rss_mb": "-8.4%",
+    "success_rate": "identical",
+    "unresolved": "identical"
+  },
+  "superseded_first_pass": {
+    "note": "The first pass reported max at 10.225 ms vs release 12.699 ms median (-19.5%) and 30.0 vs 25.7 files/s. THAT DID NOT REPRODUCE on a re-run and is recorded here as a measurement-conditions artifact, not a result. It also used the pre-fix throughput metric, which was --iters-dependent.",
+    "max_median_ms": 10.225,
+    "release_median_ms": 12.699
+  },
+  "verdict": {
+    "reproducible_wins": ["binary size -20.4%", "peak RSS ~-8%"],
+    "reproducible_cost": ["release build ~+11% wall (under a 2-job cap)"],
+    "not_supported": ["any runtime/latency improvement"],
+    "decision": "Ship released artifacts with `--profile max` (smaller binary, less RSS). Keep [profile.release] as the dev-iteration profile so ordinary builds are not slowed. Do NOT claim a runtime win — the measurement does not support one."
+  }
+}

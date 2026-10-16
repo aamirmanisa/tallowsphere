@@ -28,8 +28,11 @@ REPO = Path(__file__).resolve().parents[1]
 SUCCESS_RATE_MAX_DROP_PP = 1.0   # max success-rate drop, in percentage points
 UNRESOLVED_MAX_INCREASE = 0      # max unresolved-count increase
 # The rest are timing/memory budgets. Run-to-run noise measured on the reference
-# box is ~2.4% on the median; 15-20% leaves ~6-8x headroom so a red gate means a
-# real regression, not scheduler jitter.
+# box is ~8% on the median (four runs, 2026-10-16); 15-20% leaves ~2x headroom so a
+# red gate means a real regression, not scheduler jitter.
+# `check_ms_p95` is deliberately NOT gated (see compare()): across those same four
+# runs it spans 16.5-24.1 ms (~46%), so any budget tight enough to be useful would
+# fire on noise. It stays a reported metric; the median carries the latency signal.
 LATENCY_MAX_INCREASE_PCT = 15.0
 THROUGHPUT_MAX_DROP_PCT = 15.0
 RSS_MAX_INCREASE_PCT = 20.0
@@ -73,7 +76,6 @@ def compare(baseline: dict, current: dict) -> list[str]:
             fails.append(f"unresolved increased by {inc} (> {UNRESOLVED_MAX_INCREASE} budget)")
 
     for key, pct, direction in (("check_ms_median", LATENCY_MAX_INCREASE_PCT, "up"),
-                                ("check_ms_p95", LATENCY_MAX_INCREASE_PCT, "up"),
                                 ("throughput_files_per_s", THROUGHPUT_MAX_DROP_PCT, "down"),
                                 ("peak_rss_mb", RSS_MAX_INCREASE_PCT, "up")):
         bv, cv = b.get(key), c.get(key)
@@ -129,7 +131,6 @@ def self_test() -> int:
         "success_rate -2.0 pp":       {"success_rate": BASE["success_rate"] - 0.02},
         "unresolved +1":              {"unresolved": BASE["unresolved"] + 1},
         "check_ms_median +30%":       {"check_ms_median": BASE["check_ms_median"] * 1.30},
-        "check_ms_p95 +30%":          {"check_ms_p95": BASE["check_ms_p95"] * 1.30},
         "throughput -30%":            {"throughput_files_per_s": BASE["throughput_files_per_s"] * 0.70},
         "peak_rss_mb +50%":           {"peak_rss_mb": BASE["peak_rss_mb"] * 1.50},
     }

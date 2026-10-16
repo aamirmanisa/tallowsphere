@@ -170,6 +170,18 @@ inside an agent session fails (use a `systemd-run --scope` wrapper), and a full 
 `MemoryMax`, never `MemoryHigh` — a soft watermark below the peak stalls `rustc` at 0% CPU. Formatting the
 whole workspace hangs; format only the files you touched.
 
+**Release artifacts use `--profile max`.** `[profile.release]` is tuned for the development loop
+(thin LTO, 16 codegen units, incremental); `[profile.max]` is fat LTO with `codegen-units=1`. Measured on
+this box, 2026-10-16 — `benchmarks/baseline/profile-ab-2026-10-16.json`:
+
+```bash
+cargo build --profile max --bin tallow     # ship this: 20.4% smaller (36.6 vs 46.0 MB), ~8% less RSS
+cargo build --bin tallow                   # iterate with this
+```
+
+`--profile max` costs ~11% more build wall time and has **no measurable runtime benefit** (median 12.81
+vs 12.84 ms). Do not claim a speed win for it — the measurement does not support one.
+
 ## The egress plane
 
 This repository is the scraper. The plane that makes its traffic anonymous is a separate repository,

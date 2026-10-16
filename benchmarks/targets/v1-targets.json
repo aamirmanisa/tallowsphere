@@ -7,7 +7,7 @@
   "measured_baseline": {
     "file": "benchmarks/baseline/v1-baseline-aarch64.json",
     "binary": "/usr/local/bin/tallow (tallow 1.1.1, aarch64)",
-    "note": "Two back-to-back runs agreed exactly on success_rate/unresolved and within 2.4% on timing."
+    "note": "Four runs (2026-10-16): success_rate/unresolved identical every time; the median spreads ~8%, so the gate's 15% budget leaves ~2x headroom. p95 spreads ~46% and is therefore reported, not gated."
   },
   "metrics": {
     "success_rate": {
@@ -28,12 +28,12 @@
     "check_ms_p95": {
       "range": [1.0, 100.0],
       "direction": "lower-is-better",
-      "rationale": "Baseline 16.6 ms. Same reasoning as the median."
+      "rationale": "REPORTED, NOT GATED. Across four runs it spans 16.5-24.1 ms (~46%), so no budget tight enough to be useful is meaningful on this box. The range guards only an order-of-magnitude collapse."
     },
     "throughput_files_per_s": {
       "range": [2.0, 200.0],
       "direction": "higher-is-better",
-      "rationale": "Baseline 10.8 files/s single-threaded; range guards a >4x collapse."
+      "rationale": "Files per SINGLE pass (iteration-independent; the pre-2026-10-16 formula divided by all samples and varied with --iters). Baseline ~71-74 files/s single-threaded; range guards a >4x collapse."
     },
     "peak_rss_mb": {
       "range": [5.0, 120.0],
