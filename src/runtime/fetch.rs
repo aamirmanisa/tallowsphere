@@ -327,6 +327,12 @@ pub extern "C" fn tallow_fetch(url: *const c_char) -> *mut c_void {
             return std::ptr::null_mut();
         }
     };
+    // Scope gate first: deny-by-default, and a refusal costs nothing because it
+    // happens before the delay and before the request is built.
+    if let Err(r) = crate::scope::require(url_str, "GET") {
+        set_last_error(format!("{} — {}", r.code(), r.explain()));
+        return std::ptr::null_mut();
+    }
     // Baseline politeness delay (`TALLOW_FETCH_DELAY_MS`, default 250 ms per
     // host) shared with the stdlib egress client.
     crate::runtime::egress_http::rate_limit_wait(url_str);
@@ -386,6 +392,12 @@ pub extern "C" fn tallow_fetch_method(
             return std::ptr::null_mut();
         }
     };
+    // Scope gate: the method decides which grant applies, so it is consulted
+    // with the real method rather than defaulted to GET.
+    if let Err(r) = crate::scope::require(url_str, &method_str) {
+        set_last_error(format!("{} — {}", r.code(), r.explain()));
+        return std::ptr::null_mut();
+    }
     // Baseline politeness delay, same limiter as `fetch(url)` and the stdlib
     // egress client.
     crate::runtime::egress_http::rate_limit_wait(url_str);
@@ -581,6 +593,15 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
         }
     };
 
+    // Scope gate for the batch path (deny-by-default, same register).
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        return result_box(
+            1,
+            string_to_cstr(&format!("http.batch[{url}]: {} — {}", r.code(), r.explain()))
+                as *mut c_void,
+            VTYPE_STRING,
+        );
+    }
     // Baseline politeness delay, same limiter as `tallow_fetch` (per host).
     crate::runtime::egress_http::rate_limit_wait(&url);
     crate::runtime::egress_http::note_missing_ech_on_direct_egress(&url);

@@ -10,6 +10,7 @@ pub mod plan_cmd;
 pub mod rmdb_cmd;
 pub mod sandbox_cmd;
 pub mod schema_cmd;
+pub mod scope_cmd;
 pub mod secrets_cmd;
 pub mod sluice_cmd;
 pub mod verify_ledger_cmd;

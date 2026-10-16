@@ -1,0 +1,95 @@
+# Tallowsphere — outbound authorization register
+#
+# Read by the scope gate (`src/scope.rs`). Deny-by-default: a host that is not
+# listed here is refused before a socket is opened, exactly as the isolated
+# scrape sandbox refuses an unlisted host before a circuit is built
+# (/etc/scrape-isolated/scrape.yaml -> targets.allowlist).
+#
+# The doctrine this register implements is the project's own
+# (docs/opsec/stealth-scanning-statement-of-intent.md, directives 1-2):
+# confirm scope and authorization before anything else; read-only, public-data
+# collection; no authentication surfaces, no credentials.
+#
+# That last clause is not enforced here — it is enforced in the type system.
+# `Basis` (src/scope.rs) has no value for credential-gated work, and
+# authenticated paths (/login, /account, /admin, /api/keys, ...) are refused on
+# every basis. Editing this file cannot unlock either.
+#
+# ---------------------------------------------------------------------------
+# Adding a target. Every entry needs all four of: host, basis, granted_by,
+# granted_at. `expires_at` is strongly preferred; an entry without one is
+# listed explicitly by `tallow scope list` as unbounded.
+#
+#   [[authorized]]
+#   host = "shop.example"              # exact host, or "*.example" for
+#                                      # subdomains of a domain you own.
+#                                      # "*.example" does NOT cover the apex.
+#   basis = "written-consent"          # ownership | written-consent |
+#                                      # self-hosted | public-read-only
+#   granted_by = "name or role"        # not "everyone"
+#   granted_at = "2026-10-16"
+#   expires_at = "2027-10-16"          # ISO date; lapses the day after
+#   evidence = "docs/consent/foo.txt"  # REQUIRED for written-consent:
+#                                      # an assertion is not a grant
+#   methods = ["GET", "HEAD"]          # default; read-only unless justified
+#   notes = "why this is in scope"
+#
+# Written-consent entries are refused without `evidence`. Ownership entries are
+# refused if the grant has expired. Nothing else enables a target: absence of an
+# entry, an unreadable register, or a malformed register all refuse every host.
+# ---------------------------------------------------------------------------
+
+# Loopback — the workspace's own infrastructure. Self-hosted by definition.
+[[authorized]]
+host = "127.0.0.1"
+basis = "self-hosted"
+granted_by = "operator (workspace default)"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "loopback interface on this host"
+methods = ["GET", "HEAD"]
+notes = "local development and health checks"
+
+[[authorized]]
+host = "localhost"
+basis = "self-hosted"
+granted_by = "operator (workspace default)"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "loopback interface on this host"
+methods = ["GET", "HEAD"]
+notes = "local development and health checks"
+
+# IANA-reserved documentation domain (RFC 2606): published for exactly this
+# purpose, no authentication, no personal data.
+[[authorized]]
+host = "example.com"
+basis = "public-read-only"
+granted_by = "RFC 2606 reservation"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "RFC 2606 — reserved for documentation and testing"
+methods = ["GET", "HEAD"]
+notes = "test fixture target"
+
+[[authorized]]
+host = "www.example.com"
+basis = "public-read-only"
+granted_by = "RFC 2606 reservation"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "RFC 2606 — reserved for documentation and testing"
+methods = ["GET", "HEAD"]
+notes = "test fixture target"
+
+# Public egress-check service: reports the source IP a target would see, which
+# is how an anonymity claim gets measured rather than asserted. No authentication.
+[[authorized]]
+host = "check.torproject.org"
+basis = "public-read-only"
+granted_by = "published public service"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "https://check.torproject.org — public, unauthenticated"
+methods = ["GET", "HEAD"]
+notes = "egress-plane proof (see toregress); the target sees a Tor exit, never the box IP"

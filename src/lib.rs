@@ -149,6 +149,7 @@ pub mod sandbox_runtime;
 pub mod sast_pass;
 pub mod sbom;
 pub mod scenario_matrix;
+pub mod scope;
 pub mod sentinel_lifecycle;
 pub mod shred;
 pub mod shred_ledger;
