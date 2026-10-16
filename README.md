@@ -5,7 +5,13 @@ tier and everything it needs — its native bindings in the compiler, HAR captur
 and the CLI verbs that drive them — carried in the source tree at the revision where that work completed.
 
 **Revision under this README:** `7364aa59` — the base tree `03bc941b` plus the 27-commit series in
-`patches/`, already applied in this history.
+`patches/`, already applied in this history. (Tree HEAD has since moved; the quantitative claims below
+were re-verified 2026-10-16 and two stale ones corrected — see the labels.)
+
+**How to read the numbers here.** Each quantitative claim carries a label: **[measured]** = reproduced
+from a command in this tree at that revision; **[partial]** = measured for part of the claim only;
+**[target-only]** = a goal, not a measurement. A number without a label is prose, not something you can
+hold us to.
 
 > The SHAs here differ from the ones in the development history because this tree was filtered for
 > publication. The mapping, and what was filtered out, is in [`MANIFEST.md`](MANIFEST.md).
@@ -88,11 +94,11 @@ anonymous scraper without the other.
 
 ## The browser system
 
-`src/browser/` is the other half of this engine — **138 files, 101,790 LOC** of production Chrome
-control over CDP: stealth/anti-detection profiles, CAPTCHA handling, behavioural cadence, a
+`src/browser/` is the other half of this engine — **138 files, 101,790 LOC** [measured] of production
+Chrome control over CDP: stealth/anti-detection profiles, CAPTCHA handling, behavioural cadence, a
 distributed pool — behind both a CLI and the `.tl` surface in `stdlib/browser.tl` (`Browser`,
-`Page`, `Element`, `Crawler`, `Captcha`…). 163 device profiles, 15 TOML config files, 8 CAPTCHA
-types.
+`Page`, `Element`, `Crawler`, `Captcha`…). 163 device profiles [measured], 15 embedded TOML config
+files [measured], 11 CAPTCHA types [measured].
 
 ```bash
 tallow browser install        # download a compatible Chromium build (~150 MB)
@@ -149,7 +155,7 @@ language-level question rather than quietly patched.
 | `patches/` | the 27-commit series, already applied in this history and kept for review |
 | `verification/` | what was measured, by which command, at which revision |
 | `README.tallow-upstream.md` | the tree's original README, kept rather than overwritten |
-| `.github/workflows/ci.yml` | the gates that can pass in this tree — six jobs the development tree has are deliberately not carried, with reasons in `MANIFEST.md` |
+| `.github/workflows/ci.yml` | the gates that can pass in this tree — three jobs the development tree has are deliberately not carried (`vet`, `claims-ledger`, `fmt`), with reasons in `MANIFEST.md` |
 
 ## The tree it lives in
 
