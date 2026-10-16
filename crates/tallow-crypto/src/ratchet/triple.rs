@@ -25,6 +25,18 @@
 //! framing has no space for the exchange and that work is tracked with the
 //! header/counter finding (ATK-4-5). Do not claim PQ for sessions driven
 //! through the header path.
+//!
+//! Phase 5 item 3: that "same message boundary" was a CALLER CONTRACT, and a
+//! one-message skew broke it silently — a single pending slot meant the next
+//! completed exchange overwrote an undrained secret, so the two peers applied
+//! different mix sequences and their root keys never converged again. The
+//! sparse ratchet now holds completed secrets in chain-epoch order
+//! (`SparsePqRatchet::take_pending_mix` drains oldest-first), so the mix
+//! sequence is derived from each secret's epoch tag rather than from the
+//! caller's timing: a skew delays the mixes, it cannot reorder or silently
+//! drop one. A capacity bound still exists and a drop is COUNTED
+//! (`TripleRatchet::dropped_pq_mixes`), because a dropped mix means the
+//! sessions diverge and PQ must not be claimed for them.
 
 use crate::error::Result;
 use crate::kem::mlkem::{Ciphertext, PublicKey};
@@ -116,6 +128,43 @@ impl TripleRatchet {
     /// Kept for backward compatibility with existing callers.
     pub fn decrypt_message(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
         self.double_ratchet.decrypt_message(ciphertext)
+    }
+
+    /// Decrypt the frame the sender labelled with `declared` — the position it
+    /// says it used (v9: `ChatTextV9.sequence`).
+    ///
+    /// This is the entry point a transport should use when the frame carries
+    /// its own position: a frame that arrives after a gap (a dropped frame, or
+    /// two swapped in flight) decrypts at its own position through the skipped
+    /// key cache, and the receive direction survives. A peer that does not label
+    /// its frames is still placed positionally, so adopting this entry point
+    /// does not refuse an unlabelled peer. See
+    /// [`DoubleRatchet::decrypt_message_labeled`] for why the label cannot be
+    /// trusted, and why it does not need to be.
+    pub fn decrypt_message_labeled(&mut self, ciphertext: &[u8], declared: u64) -> Result<Vec<u8>> {
+        self.double_ratchet
+            .decrypt_message_labeled(ciphertext, declared)
+    }
+
+    /// Decrypt at an explicit ratchet position, with no positional fallback.
+    pub fn decrypt_message_at(&mut self, ciphertext: &[u8], message_num: u64) -> Result<Vec<u8>> {
+        self.double_ratchet
+            .decrypt_message_at(ciphertext, message_num)
+    }
+
+    /// The ratchet position our next outgoing chat frame will use.
+    ///
+    /// A transport that labels frames (v9 `sequence`) must take the label from
+    /// HERE, not from a counter of its own: a label that is not the ratchet's
+    /// position is a label the peer cannot use.
+    pub fn send_sequence(&self) -> u64 {
+        self.double_ratchet.send_sequence()
+    }
+
+    /// The ratchet position we expect next from the peer (see
+    /// [`DoubleRatchet::recv_sequence`]).
+    pub fn recv_sequence(&self) -> u64 {
+        self.double_ratchet.recv_sequence()
     }
 
     /// Encrypt with header framing and direction-aware key rotation.
@@ -248,9 +297,15 @@ impl TripleRatchet {
     /// ATK-4-4: only a *completed* KEM exchange secret (drained from the
     /// sparse ratchet) is mixed into the double ratchet's root key; emitting
     /// a keypair no longer re-mixes the original shared secret.
+    ///
+    /// Phase 5 item 3: every completed-exchange secret waiting is drained here,
+    /// OLDEST CHAIN EPOCH FIRST. The sparse ratchet holds them in production
+    /// order, so a caller that is a boundary late applies the same sequence of
+    /// mixes as its peer instead of dropping the older secret — the drain order
+    /// is derived from each secret's epoch tag, not from the caller's timing.
     pub fn step_pq(&mut self) -> Result<Option<PublicKey>> {
         let pk = self.sparse_pq_ratchet.step()?;
-        if let Some(mut pq_secret) = self.sparse_pq_ratchet.take_pending_mix() {
+        while let Some(mut pq_secret) = self.sparse_pq_ratchet.take_pending_mix() {
             // Fresh PQ secret from a completed ML-KEM exchange.
             self.double_ratchet.mix_pq_secret(&pq_secret);
             pq_secret.zeroize();
@@ -262,8 +317,17 @@ impl TripleRatchet {
     ///
     /// Any PQ rekey public key is discarded — use `step_pq` when the
     /// transport can transmit it.
+    ///
+    /// Discarding it is only safe because the keypair is retired with it
+    /// ([`TripleRatchet::abandon_rekey_key`]): no ciphertext can ever arrive for
+    /// a public key that was never transmitted, and a keypair left in the
+    /// retention queue would shift every later ciphertext onto the wrong key
+    /// (see `SparsePqRatchet::process_ciphertext`). Callers that *can* transmit
+    /// must use `step_pq` and either send the key or retire it.
     pub fn step(&mut self) -> Result<()> {
-        self.step_pq()?;
+        if let Some(discarded) = self.step_pq()? {
+            self.abandon_rekey_key(&discarded);
+        }
         Ok(())
     }
 
@@ -301,6 +365,71 @@ impl TripleRatchet {
     /// it reports `false` there and no PQ forward secrecy may be claimed.
     pub fn is_pq_active(&self) -> bool {
         self.sparse_pq_ratchet.pq_established()
+    }
+
+    /// Completed-exchange PQ secrets still waiting to be mixed into the root key.
+    ///
+    /// A non-zero value after `step_pq` means a secret arrived after this
+    /// boundary's drain; the queue holds it (in epoch order) for the next one.
+    pub fn pending_pq_mixes(&self) -> usize {
+        self.sparse_pq_ratchet.pending_mix_count()
+    }
+
+    /// The chain epoch of the oldest pending PQ mix, if one is waiting.
+    pub fn pending_pq_mix_epoch(&self) -> Option<u64> {
+        self.sparse_pq_ratchet.pending_mix_epoch()
+    }
+
+    /// Completed-exchange PQ secrets DROPPED because the pending queue was full.
+    ///
+    /// Phase 5 item 3: this is the honest signal that the two root keys no longer
+    /// carry the same mix sequence. It must be zero for a session whose PQ forward
+    /// secrecy is claimed; a non-zero value means the session diverged and the
+    /// caller must not claim PQ for it.
+    pub fn dropped_pq_mixes(&self) -> u64 {
+        self.sparse_pq_ratchet.dropped_pending_mixes()
+    }
+
+    /// Rekey keypairs this session is still holding for their ciphertext.
+    ///
+    /// The owner emits a rekey public key at every boundary and keeps the
+    /// keypair until the matching ciphertext comes back, so more than one can be
+    /// outstanding at a time (a rekey exchange is a round trip). `step_pq`'s
+    /// returned key is the NEWEST of these; `oldest_outstanding_rekey_key` is
+    /// the one a returning ciphertext belongs to.
+    pub fn retained_rekey_keypairs(&self) -> usize {
+        self.sparse_pq_ratchet.retained_keypair_count()
+    }
+
+    /// The public key of the OLDEST outstanding rekey keypair, if any — the one
+    /// a returning ciphertext is expected to be for.
+    pub fn oldest_outstanding_rekey_key(&self) -> Option<&PublicKey> {
+        self.sparse_pq_ratchet.oldest_outstanding_rekey_key()
+    }
+
+    /// Retire the keypair for a rekey public key that was never transmitted.
+    ///
+    /// Call this when a rekey public key handed out by `step_pq` cannot be sent
+    /// after all (its outgoing record was superseded before the next send). No
+    /// ciphertext can arrive for a key that never left, and a keypair left in
+    /// the retention queue would shift every later ciphertext onto the wrong
+    /// key. Returns whether a keypair was retired.
+    pub fn abandon_rekey_key(&mut self, pk: &PublicKey) -> bool {
+        self.sparse_pq_ratchet.abandon_rekey_key(pk)
+    }
+
+    /// Rekey keypairs retired because their public key never reached the peer.
+    pub fn abandoned_rekeys(&self) -> u64 {
+        self.sparse_pq_ratchet.abandoned_rekeys()
+    }
+
+    /// Rekey keypairs discarded because the retention bound was reached.
+    ///
+    /// Non-zero means an opened exchange can no longer be completed, so the mix
+    /// sequence cannot be symmetric with the peer's and PQ forward secrecy must
+    /// not be claimed for the session.
+    pub fn dropped_rekey_keypairs(&self) -> u64 {
+        self.sparse_pq_ratchet.dropped_keypairs()
     }
 }
 
@@ -547,6 +676,111 @@ mod tests {
         // wiring (not just the flag) must preserve the lockstep drain order.
         assert!(owner.is_pq_active());
         assert!(peer.is_pq_active());
+    }
+
+    /// Phase 5 item 3 — the one-message drain skew, reproduced.
+    ///
+    /// Two ML-KEM exchanges complete; the owner drains after each one, the peer
+    /// is a boundary behind and drains late, once. Correct behaviour: the peer
+    /// applies BOTH completed secrets, in the order they completed, so its root
+    /// key converges with the owner's and a message sent after the skew still
+    /// decrypts.
+    ///
+    /// This is the caller-contract hazard the card names: `take_pending_mix`
+    /// kept ONE slot, so the second exchange overwrote the peer's undrained
+    /// first secret with no error and no signal, and the two root keys never
+    /// converged again.
+    ///
+    /// Boundary advances that emit a rekey key the caller does NOT transmit go
+    /// through `step()` (which retires that keypair) rather than `step_pq()`:
+    /// a key that never left can never be answered, and a keypair left in the
+    /// retention queue would shift the pairing of every later ciphertext —
+    /// `SparsePqRatchet::process_ciphertext` documents why the queue cannot know
+    /// the difference on its own.
+    #[test]
+    fn test_drain_skew_must_not_lose_a_completed_mix() {
+        let shared = [0x5Au8; 32];
+        let mut owner = TripleRatchet::init(&shared, 1);
+        let mut peer = TripleRatchet::init_responder(&shared, 1);
+
+        // Exchange 1: the owner rekeys, the peer answers.
+        let pk1 = owner.step_pq().unwrap().expect("owner rekey 1");
+        peer.step().unwrap(); // peer advances once (lockstep; nothing transmitted)
+        let ct1 = peer.encapsulate_pq(&pk1).unwrap(); // peer: pending mix #1
+        owner.process_pq_ciphertext(&ct1).unwrap(); // owner: pending mix #1
+        owner.step().unwrap(); // owner drains #1
+
+        // Exchange 2 completes on the peer BEFORE it has drained anything.
+        let pk2 = owner.step_pq().unwrap().expect("owner rekey 2");
+        let ct2 = peer.encapsulate_pq(&pk2).unwrap(); // peer: pending mix #2
+        owner.process_pq_ciphertext(&ct2).unwrap(); // owner: pending mix #2
+        owner.step().unwrap(); // owner drains #2
+
+        // The peer finally drains — a boundary late.
+        peer.step().unwrap();
+
+        // Both completed secrets were carried, none was dropped, and the queue
+        // is empty after the drain.
+        assert_eq!(peer.pending_pq_mixes(), 0, "the backlog must be drained");
+        assert_eq!(
+            peer.dropped_pq_mixes(),
+            0,
+            "no completed mix may be dropped"
+        );
+        assert_eq!(owner.dropped_pq_mixes(), 0);
+
+        // Convergence: a message sent after the skew still decrypts on the peer.
+        let ct = owner.encrypt_message(b"after the skewed drain").unwrap();
+        assert_eq!(
+            peer.decrypt_message(&ct)
+                .expect("the peer must have applied both completed mixes, in order"),
+            b"after the skewed drain"
+        );
+    }
+
+    /// The recovery property through the TripleRatchet, with a completed PQ mix
+    /// already in the root key: a frame the relay drops costs that frame, and
+    /// the frames after it still decrypt.
+    #[test]
+    fn test_dropped_frame_recovers_across_a_pq_mix() {
+        let shared = [0x3Cu8; 32];
+        let mut alice = TripleRatchet::init(&shared, 1);
+        let mut bob = TripleRatchet::init_responder(&shared, 1);
+
+        // Complete one ML-KEM exchange so the root key carries a real PQ mix
+        // before the disturbance — recovery must survive the chain-key change.
+        let pk = alice.step_pq().unwrap().expect("alice rekeys at interval 1");
+        bob.step_pq().unwrap();
+        let ct = bob.encapsulate_pq(&pk).unwrap();
+        alice.process_pq_ciphertext(&ct).unwrap();
+        alice.step_pq().unwrap(); // drain alice's secret into the root key
+        bob.step_pq().unwrap(); // drain bob's
+        assert!(alice.is_pq_active() && bob.is_pq_active());
+
+        // Three frames from alice at positions 0, 1, 2 — the middle one is
+        // dropped in flight.
+        let c0 = alice.encrypt_message(b"before").unwrap();
+        let c1 = alice.encrypt_message(b"dropped").unwrap();
+        let c2 = alice.encrypt_message(b"after").unwrap();
+
+        assert_eq!(bob.decrypt_message_labeled(&c0, 0).unwrap(), b"before");
+        assert_eq!(
+            bob.decrypt_message_labeled(&c2, 2).unwrap(),
+            b"after",
+            "the direction must survive a dropped frame"
+        );
+        // The dropped frame is still placeable if it turns up late: its key was
+        // cached when the gap was stepped over.
+        assert_eq!(bob.decrypt_message_labeled(&c1, 1).unwrap(), b"dropped");
+
+        // And the conversation continues from there.
+        let c3 = alice.encrypt_message(b"still alive").unwrap();
+        assert_eq!(bob.decrypt_message_labeled(&c3, 3).unwrap(), b"still alive");
+
+        // The label a transport must put on the frame is the ratchet's own
+        // position, not a counter of the transport's own choosing.
+        assert_eq!(alice.send_sequence(), 4);
+        assert_eq!(bob.recv_sequence(), 4);
     }
 
     #[test]

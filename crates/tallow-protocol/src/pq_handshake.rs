@@ -425,6 +425,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (selected_kem, cpace_public, kem_public_key, nonce),
             other => panic!("expected HandshakeResponse, got {other:?}"),
         };

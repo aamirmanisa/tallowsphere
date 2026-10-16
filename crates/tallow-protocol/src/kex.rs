@@ -26,6 +26,7 @@
 //! Alarm (peers that predate v5 proceed unsigned but loudly — see
 //! `crate::pq_handshake::PqAuthAlarm`).
 
+use crate::wire::capabilities::{capability_record, CapabilityLatch, CAPABILITY_BINDING_VERSION};
 use crate::wire::Message;
 use crate::{ProtocolError, Result};
 use subtle::ConstantTimeEq;
@@ -39,7 +40,7 @@ use tallow_crypto::hash::domain;
 /// History: v6 = wire flow credits (A9); v7 = version+mode transcript binding
 /// (security review 2026-09-23, crypto hack report Attack 1); v8 = the declared
 /// suite code joins the binding (checklist 5.2).
-pub const KEX_PROTOCOL_VERSION: u32 = 8;
+pub const KEX_PROTOCOL_VERSION: u32 = 9;
 
 /// Lowest protocol version whose canonical handshake binds `protocol_version`
 /// into the transcript (security review 2026-09-23, crypto hack report
@@ -143,6 +144,63 @@ pub const NO_ZSTD_CHUNK_FLAG: u8 = 0x08;
 /// flag stays clear and the credit path never engages (the CLI is built from
 /// this crate and must not declare 6 before it handles `Credit` frames).
 pub const FLOW_CREDIT_FLAG: u8 = 0x04;
+
+/// **NOT YET IMPLEMENTED — nothing sets this today, and the value below is a
+/// fail-closed placeholder.** See the UNASSIGNED note at the constant.
+///
+/// Intended meaning once a carrier exists: set by a v9 receiver when the initiator
+/// declared `protocol_version >= 9`, signalling the receiver can drive browser chat
+/// on the **ratcheting** session (`RatchetSession::encryptChat`/`decryptChat`)
+/// rather than the static-key `ChatSession`.
+///
+/// The initiator reads this echo and engages the ratcheting chat path **only**
+/// when it is set. When it is clear, chat runs on the static-key path as it does
+/// today — a **disclosed downgrade, never a silent one**: chat keeps working, and
+/// nothing may claim post-quantum forward secrecy for it (`isPqActive()` stays
+/// false, and the site's copy already states the browser chat limitation).
+///
+/// Deliberately NOT a refusal. An earlier draft of this flag required the
+/// initiator to refuse ratchet chat when the echo was absent; that is wrong, and
+/// the v6 precedent says so — `FLOW_CREDIT_FLAG`'s peer negotiation *"negotiate
+/// down and stay on the legacy per-chunk-ack path"* for mixed sessions. Refusing
+/// would break chat outright between a v9 and a v8 peer for no security gain,
+/// because the downgrade is disclosed either way. The defect this flag guards
+/// against is a downgrade that still *implies* PQ, not a downgrade as such.
+///
+/// The declared `protocol_version` **cannot** serve as this gate, which is the
+/// whole reason a flag is needed: `MIN_ACCEPTED_INIT_VERSION` is 4, so an older
+/// receiver accepts a v9 handshake without complaint and would happily run chat
+/// on the old framing.
+///
+/// No new downgrade surface: `protocol_version` and the suite code are already
+/// bound into the transcript (v7+/v8+), so a MITM that rewrites v9 down to
+/// suppress this echo fails the handshake rather than forcing the AES path.
+/// A peer that suppresses the echo can only cost itself PQ chat, and that is
+/// disclosed by the status flag rather than hidden.
+/// **UNASSIGNED — the value is a deliberate fail-closed placeholder, not a bit.**
+///
+/// `selected_kem` is a FULL carrier and cannot hold this flag:
+///   - bits 0–1 carry the KEM discriminant (values 0..=2, so discriminant 2 already
+///     sets bit 1 = `0x02` — the low bits were never free);
+///   - bits 2–7 are taken by SCOPED_TRANSFER (`0x80`), CANONICAL_KEX (`0x40`),
+///     PQ_AUTH (`0x20`), DEFLATE_CHUNK (`0x10`), NO_ZSTD_CHUNK (`0x08`) and
+///     FLOW_CREDIT (`0x04`).
+///
+/// So the v9 chat capability needs a DIFFERENT carrier — an open decision, listed
+/// here rather than guessed at.
+///
+/// This constant previously read `0x02` and that was a real defect, not a
+/// placeholder: `0x02` is the discriminant's bit 1, so `selected_kem & 0x02` is set
+/// for essentially every v4+ peer (canonical KEX selects discriminant 2). Anything
+/// reading it would have engaged the ratchet against receivers that do not support
+/// it while claiming post-quantum forward secrecy. A cross-version echo test that
+/// asserted the ACK follows the DECLARED version is what caught it — the test failed
+/// at `declared v4` with the bit already set.
+///
+/// `0x00` fails closed: OR-ing it is a no-op and reading it is always clear, so no
+/// peer can be mistaken for a v9 chat peer and nothing may claim PQ forward secrecy
+/// on this flag's strength. Replace it only together with the carrier decision.
+pub const PQ_CHAT_FLAG: u8 = 0x00;
 
 /// Role byte signed by the handshake initiator in `HandshakeSigned`.
 pub const PQ_AUTH_ROLE_SENDER: u8 = 1;
@@ -461,6 +519,93 @@ fn derive_handshake_session_key(
     Ok(key)
 }
 
+/// The capability bits a v9 responder advertises in `HandshakeResponseV9`.
+///
+/// **Single source of truth for the v9 chat gate.** Three things read it, and all three
+/// must move together or the peers disagree about whether to ratchet:
+///
+///   1. the responder's emit (`process_init`) — what the initiator is TOLD;
+///   2. `WasmReceiverHandshake::advertisedCapabilityBits()` — what the responder itself
+///      reads back, so its own gate cannot drift from what it advertised;
+///   3. the initiator's gate, via the bits it received.
+///
+/// **SET — this IS the swap, engaged 2026-10-14.** It was `0` while the ratcheting chat
+/// session existed on the site but could not be constructed. It can now, and the ordering
+/// constraint was honoured rather than assumed: a relay that carries `ChatTextV9`
+/// (ordinal 78) was deployed FIRST, because on the single-room path the inner frame goes
+/// out top-level and a relay built from mainline drops it silently.
+///
+/// Flipping it is ONE line by design, and that one line is the whole engagement: it opens
+/// the gate here (the advertisement), at `advertisedCapabilityBits()` (what the responder
+/// reads back about itself), and therefore on the site's responder path — plus the
+/// initiator's gate via the bits it received. There is no second place for the value to
+/// live and drift from this one.
+///
+/// Still guarded on the client side beyond this bit: a multi-peer broadcast room stays on
+/// the static-key envelope, because the ratchet is pairwise and one frame cannot serve a
+/// room. See docs/security/blackbox/09-V9-SWAP-PLAN.md.
+pub const RESPONDER_CAPABILITY_BITS: u8 = crate::wire::messages::CAP_PQ_CHAT;
+
+/// Derive the browser-chat **ratchet seed** from the same handshake secrets.
+///
+/// v9: browser chat moves onto a bidirectional `RatchetSession` instead of the two
+/// unidirectional static-key `ChatSession`s. That session needs ONE shared secret,
+/// and the existing per-direction subkeys cannot serve — they are direction-bound,
+/// so the two peers do not hold the same value.
+///
+/// This is derived from the IDENTICAL IKM as the session key (see
+/// [`derive_handshake_session_key`]) under a DIFFERENT domain label. Two properties
+/// follow, and both are load-bearing:
+///
+///   1. **Identical on both peers.** The IKM is built from material both sides hold
+///      (KEM secret, PAKE secret, the ciphertext, the ephemeral public key and the
+///      transcript), so no new round trip and no new agreement is needed.
+///   2. **Domain-separated from the session key.** Distinct labels mean the ratchet
+///      seed is not recoverable from the session key or vice versa, so putting chat
+///      on the ratchet cannot weaken the AEAD key that still protects everything
+///      else on the connection.
+///
+/// Label choice is a NEW v1 (`tallow.chat.ratchet_seed.v1`), not a reuse of the
+/// existing `DOMAIN_RATCHET*` labels: those domain-separate the ratchet's OWN send
+/// and receive chains, one layer down. Using them here would collapse two distinct
+/// separations into one.
+///
+/// Note this does NOT move any existing vector: the session-key derivation is
+/// untouched, and a new label produces a new value without changing old ones.
+pub fn derive_handshake_ratchet_seed(
+    kem_shared_secret: &[u8; 32],
+    pake_secret: &[u8; 32],
+    kem_ciphertext: &[u8],
+    x25519_eph_pub: &[u8; 32],
+    transcript_hash: &[u8; 32],
+) -> Result<[u8; 32]> {
+    use zeroize::Zeroize;
+
+    // Deliberately the same IKM construction as the session key so both peers agree
+    // without any additional exchange; only the label differs.
+    let ct_binding = tallow_crypto::hash::blake3::hash(kem_ciphertext);
+    let mut ikm = [0u8; 160];
+    ikm[..32].copy_from_slice(kem_shared_secret);
+    ikm[32..64].copy_from_slice(pake_secret);
+    ikm[64..96].copy_from_slice(&ct_binding);
+    ikm[96..128].copy_from_slice(x25519_eph_pub);
+    ikm[128..160].copy_from_slice(transcript_hash);
+
+    let derived = tallow_crypto::kdf::hkdf::derive(
+        transcript_hash,
+        &ikm,
+        domain::DOMAIN_CHAT_RATCHET_SEED.as_bytes(),
+        32,
+    )
+    .map_err(|e| ProtocolError::HandshakeFailed(format!("HKDF derivation failed: {}", e)))?;
+
+    ikm.zeroize();
+
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&derived);
+    Ok(seed)
+}
+
 // ---------------------------------------------------------------------------
 // SenderHandshake
 // ---------------------------------------------------------------------------
@@ -476,6 +621,11 @@ pub struct SenderHandshake {
     transcript: HandshakeTranscript,
     /// Cached session key for receiver confirmation verification
     session_key_bytes: Option<[u8; 32]>,
+    /// v9: the shared browser-chat ratchet seed, derived during the handshake from
+    /// the same IKM as the session key under a distinct domain label. `None` until
+    /// `process_response`. Both peers compute the same value, which is what lets
+    /// chat move onto a bidirectional ratchet with no extra round trip.
+    ratchet_seed: Option<[u8; 32]>,
     /// Cached transcript hash for confirmation verification
     transcript_hash: Option<[u8; 32]>,
     /// Whether the receiver signalled scoped transfer keys (v3+)
@@ -496,6 +646,18 @@ pub struct SenderHandshake {
     peer_flow_credit: bool,
     /// Verified peer identity id, set by `verify_signed_frame`
     peer_identity: Option<[u8; 32]>,
+    /// The protocol version THIS side declared in `HandshakeInit`.
+    ///
+    /// Needed by `process_response`: the capability record is bound into the
+    /// transcript once the declared version reaches
+    /// [`CAPABILITY_BINDING_VERSION`], and the gate must read the DECLARED
+    /// version (what the responder saw) rather than the local constant, or the
+    /// two sides could bind different transcripts.
+    declared_version: u32,
+    /// The peer's PQ capability byte, latched from the FIRST handshake response
+    /// and fixed for the session ([`CapabilityLatch`]). A later statement that
+    /// disagrees is refused rather than absorbed.
+    peer_capabilities: CapabilityLatch,
 }
 
 impl SenderHandshake {
@@ -514,6 +676,7 @@ impl SenderHandshake {
             cpace_state: None,
             transcript: HandshakeTranscript::new(),
             session_key_bytes: None,
+            ratchet_seed: None,
             transcript_hash: None,
             scoped_transfer_keys: false,
             pq_auth: false,
@@ -521,6 +684,8 @@ impl SenderHandshake {
             peer_no_zstd_chunks: false,
             peer_flow_credit: false,
             peer_identity: None,
+            declared_version: 0,
+            peer_capabilities: CapabilityLatch::new(),
         }
     }
 
@@ -569,6 +734,10 @@ impl SenderHandshake {
         self.transcript.append(&cpace_public);
         self.transcript.append(&self.nonce);
 
+        // Remember what we declared: `process_response` needs it to decide
+        // whether the PQ capability record joins the transcript.
+        self.declared_version = protocol_version;
+
         // v7+ (security review 2026-09-23, Attack 1): bind the declared
         // version + mode into the transcript so a wire rewrite diverges the
         // session keys/confirmations instead of silently downgrading.
@@ -602,6 +771,17 @@ impl SenderHandshake {
     /// Completes CPace, encapsulates to the receiver's KEM public key,
     /// derives the session key, and computes the sender confirmation tag.
     ///
+    /// **Capability-blind.** This entry point is not handed the peer's PQ
+    /// capability byte, so it cannot bind it into the transcript. It is correct
+    /// for every peer that declared a version below
+    /// [`CAPABILITY_BINDING_VERSION`] — and it REFUSES one that declared at or
+    /// above it, because there the transcript must carry the capability record
+    /// and proceeding without it would silently derive unbound keys. Use
+    /// [`Self::process_response_with_capabilities`] for those peers; the
+    /// capability byte travels in `HandshakeResponseV9::capability_bits` and
+    /// `Message::handshake_response_parts` already returns it beside the fields
+    /// this call needs.
+    ///
     /// # Arguments
     ///
     /// * `selected_kem` - KEM discriminant; high bit = receiver's scoped-transfer flag (v3+)
@@ -614,6 +794,58 @@ impl SenderHandshake {
         cpace_public: &[u8; 32],
         kem_public_key: &[u8],
         nonce: &[u8; 16],
+    ) -> Result<(Message, SessionKey)> {
+        self.process_response_inner(selected_kem, cpace_public, kem_public_key, nonce, None)
+    }
+
+    /// Like [`Self::process_response`], but WITH the peer's PQ capability byte.
+    ///
+    /// Phase 5 item 2: once the peer declared [`CAPABILITY_BINDING_VERSION`] or
+    /// above, that byte joins the handshake transcript, so clearing or altering
+    /// it in flight diverges the transcript hash and therefore the session key,
+    /// the ratchet seed and both key confirmation tags — the handshake fails
+    /// instead of downgrading silently. The value passed here must be the one
+    /// that actually ARRIVED (`HandshakeResponseV9::capability_bits`, or `0` for
+    /// the older shape that carries no capability byte at all), never a local
+    /// constant: binding our own value would prove nothing about the peer.
+    ///
+    /// The value is also LATCHED ([`CapabilityLatch`]): the first response fixes
+    /// the session's capability state, and a later statement that disagrees is
+    /// refused.
+    pub fn process_response_with_capabilities(
+        &mut self,
+        selected_kem: u8,
+        cpace_public: &[u8; 32],
+        kem_public_key: &[u8],
+        nonce: &[u8; 16],
+        capability_bits: u8,
+    ) -> Result<(Message, SessionKey)> {
+        self.process_response_inner(
+            selected_kem,
+            cpace_public,
+            kem_public_key,
+            nonce,
+            Some(capability_bits),
+        )
+    }
+
+    /// The peer's latched PQ capability bits, once a response has been processed.
+    ///
+    /// `Some(0)` means the peer disclosed "no PQ capabilities" (either it sent the
+    /// older response shape, or it cleared the byte); `None` means no response has
+    /// been processed, or it was processed through the capability-blind entry
+    /// point, which is not handed the byte at all.
+    pub fn peer_capability_bits(&self) -> Option<u8> {
+        self.peer_capabilities.bits()
+    }
+
+    fn process_response_inner(
+        &mut self,
+        selected_kem: u8,
+        cpace_public: &[u8; 32],
+        kem_public_key: &[u8],
+        nonce: &[u8; 16],
+        capability_bits: Option<u8>,
     ) -> Result<(Message, SessionKey)> {
         // Take CPace state (consumes it -- can't call again)
         let cpace_state =
@@ -642,6 +874,33 @@ impl SenderHandshake {
         self.transcript.append(cpace_public);
         self.transcript.append(nonce);
         self.transcript.append(kem_public_key);
+
+        // Phase 5 item 2 — bind the PQ capability record, in the SAME position the
+        // responder wrote it (immediately after its serialized KEM public key,
+        // before the KEM ciphertext). From `CAPABILITY_BINDING_VERSION` on, the
+        // value must be the one that ARRIVED: clearing or altering the byte in
+        // flight then diverges this transcript hash from the responder's, so the
+        // session key, the ratchet seed and both confirmation tags diverge and the
+        // handshake fails — a DISCLOSED downgrade (the older response shape, which
+        // carries no byte) stays completable, a stripped one does not.
+        if self.declared_version >= CAPABILITY_BINDING_VERSION {
+            let bits = capability_bits.ok_or_else(|| {
+                ProtocolError::InvalidMessage(format!(
+                    "declared protocol_version {} binds the PQ capability record, but this \
+                     process_response call was not given the peer's capability byte; use \
+                     SenderHandshake::process_response_with_capabilities",
+                    self.declared_version
+                ))
+            })?;
+            self.transcript.append(&capability_record(bits));
+        }
+
+        // Latch the peer's capability on the FIRST message: the value is fixed for
+        // the session, and a later statement that disagrees is refused rather than
+        // absorbed. (Absent byte = a disclosed "no capabilities", never a refusal.)
+        if let Some(bits) = capability_bits {
+            self.peer_capabilities.observe_first(bits);
+        }
 
         // Deserialize the receiver's KEM public key
         let pk: tallow_crypto::kem::hybrid::PublicKey = postcard::from_bytes(kem_public_key)
@@ -677,6 +936,24 @@ impl SenderHandshake {
             &x25519_eph_pub,
             &transcript_hash,
         )?;
+
+        // v9: the shared chat ratchet seed, from the SAME IKM under a distinct
+        // domain label — so both peers compute it with no extra round trip, and it
+        // cannot be derived from the session key (or vice versa).
+        //
+        // Derived HERE — immediately after the session key — and deliberately NOT
+        // further down: this function zeroizes `pake_secret` a few lines below, so a
+        // seed derived after that point would be computed from an all-zero PAKE
+        // secret ON THIS SIDE ONLY. The two peers would then hold silently different
+        // seeds while every key-confirmation and session-key assertion still passed.
+        // That is exactly what happened first time; the both-peers test caught it.
+        self.ratchet_seed = Some(derive_handshake_ratchet_seed(
+            kem_shared_secret.expose_secret(),
+            &pake_secret,
+            &kem_ciphertext,
+            &x25519_eph_pub,
+            &transcript_hash,
+        )?);
 
         // Compute sender confirmation tag
         let confirmation = compute_confirmation(
@@ -761,6 +1038,17 @@ impl SenderHandshake {
     /// legacy fixed window.
     pub fn flow_credit(&self) -> bool {
         self.peer_flow_credit
+    }
+
+    /// The shared browser-chat ratchet seed (v9).
+    ///
+    /// `None` before [`Self::process_response`]. Both peers derive the SAME value
+    /// from material they already hold, which is what lets chat move onto a
+    /// bidirectional `RatchetSession` with no additional round trip. It is
+    /// domain-separated from the session key, so using it for chat cannot weaken the
+    /// AEAD key that protects everything else on the connection.
+    pub fn ratchet_seed(&self) -> Option<&[u8; 32]> {
+        self.ratchet_seed.as_ref()
     }
 
     /// Whether the peer's `HandshakeSigned` frame has been verified.
@@ -912,6 +1200,11 @@ pub struct ReceiverHandshake {
     /// this receiver emits (0 for the CLI; the browser sets its chunk-dialect
     /// bits — see `DEFLATE_CHUNK_FLAG` / `NO_ZSTD_CHUNK_FLAG`).
     response_caps: u8,
+    /// v9: the shared browser-chat ratchet seed, derived during `process_kem`
+    /// from the same IKM as the session key under a distinct domain label. `None`
+    /// until then. Both peers compute the SAME value, which is what lets chat
+    /// move onto a bidirectional ratchet with no extra round trip.
+    ratchet_seed: Option<[u8; 32]>,
     /// Verified peer identity id, set by `verify_signed_frame`
     peer_identity: Option<[u8; 32]>,
 }
@@ -936,6 +1229,7 @@ impl ReceiverHandshake {
             scoped_transfer_keys: false,
             pq_auth: false,
             response_caps: 0,
+            ratchet_seed: None,
             peer_identity: None,
         }
     }
@@ -1068,29 +1362,62 @@ impl ReceiverHandshake {
         // Append serialized pk to transcript
         self.transcript.append(&kem_public_key);
 
-        Ok(Message::HandshakeResponse {
-            selected_kem: selected_kem
-                | if self.scoped_transfer_keys {
-                    SCOPED_TRANSFER_FLAG
-                } else {
-                    0
-                }
-                | if protocol_version >= 4 {
-                    CANONICAL_KEX_FLAG
-                } else {
-                    0
-                }
-                | if self.pq_auth { PQ_AUTH_FLAG } else { 0 }
-                | if protocol_version >= 6 {
-                    FLOW_CREDIT_FLAG
-                } else {
-                    0
-                }
-                | self.response_caps,
-            cpace_public: resp_cpace_public,
-            kem_public_key,
-            nonce: self.nonce,
-        })
+        // Phase 5 item 2 — the PQ capability record joins the transcript here, on
+        // the responder side, in the position the initiator mirrors: right after
+        // this responder's serialized KEM public key and before the KEM
+        // ciphertext. From `CAPABILITY_BINDING_VERSION` on, the value bound is the
+        // one this responder is about to ADVERTISE, so a middleman that clears or
+        // alters it in flight makes the two transcript hashes disagree and the
+        // handshake fails instead of downgrading silently. Gated on the DECLARED
+        // version (the same value the initiator gated on), so a pre-binding peer
+        // keeps the transcript it already speaks, byte for byte.
+        if protocol_version >= CAPABILITY_BINDING_VERSION {
+            self.transcript
+                .append(&capability_record(RESPONDER_CAPABILITY_BITS));
+        }
+
+        // A peer that declared >= 9 gets the v9 response shape, which carries a
+        // whole capability byte. The `selected_kem` flag budget is fully spoken for
+        // (bits 0-1 = KEM discriminant, bits 2-7 = six flags), so a new capability
+        // has nowhere to go in that byte — see doc 08.
+        let selected_kem = selected_kem
+            | if self.scoped_transfer_keys {
+                SCOPED_TRANSFER_FLAG
+            } else {
+                0
+            }
+            | if protocol_version >= 4 {
+                CANONICAL_KEX_FLAG
+            } else {
+                0
+            }
+            | if self.pq_auth { PQ_AUTH_FLAG } else { 0 }
+            | if protocol_version >= 6 {
+                FLOW_CREDIT_FLAG
+            } else {
+                0
+            }
+            | self.response_caps;
+
+        if protocol_version >= 9 {
+            Ok(Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public: resp_cpace_public,
+                kem_public_key,
+                nonce: self.nonce,
+                // Single-sourced from `RESPONDER_CAPABILITY_BITS`, which the responder
+                // itself reads back via `advertisedCapabilityBits()`. Flipping that ONE
+                // constant opens the gate here and on the site together — see its doc.
+                capability_bits: RESPONDER_CAPABILITY_BITS,
+            })
+        } else {
+            Ok(Message::HandshakeResponse {
+                selected_kem,
+                cpace_public: resp_cpace_public,
+                kem_public_key,
+                nonce: self.nonce,
+            })
+        }
     }
 
     /// Process the HandshakeKem and generate HandshakeComplete (step 3-4).
@@ -1159,6 +1486,18 @@ impl ReceiverHandshake {
             &transcript_hash,
         )?;
 
+        // v9: the same shared chat ratchet seed the initiator computes — same
+        // IKM, same distinct label — so both peers agree on it with no
+        // additional exchange. Stored so the caller can reach it via
+        // `ratchet_seed()`; the session swap is what will consume it.
+        self.ratchet_seed = Some(derive_handshake_ratchet_seed(
+            kem_shared_secret.expose_secret(),
+            &pake_secret,
+            kem_ciphertext,
+            &x25519_eph_pub,
+            &transcript_hash,
+        )?);
+
         // Verify sender's confirmation tag (constant-time)
         let expected_sender_confirmation = compute_confirmation(
             &session_key_bytes,
@@ -1192,6 +1531,16 @@ impl ReceiverHandshake {
     /// Whether PQ authentication was negotiated (`PQ_AUTH_FLAG`; v5+).
     pub fn pq_auth(&self) -> bool {
         self.pq_auth
+    }
+
+    /// The shared browser-chat ratchet seed (v9).
+    ///
+    /// `None` before [`Self::process_kem`]. Both peers derive the SAME value from
+    /// material they already hold, so chat can move onto a bidirectional
+    /// `RatchetSession` with no additional round trip, and the seed is
+    /// domain-separated from the session key.
+    pub fn ratchet_seed(&self) -> Option<&[u8; 32]> {
+        self.ratchet_seed.as_ref()
     }
 
     /// Whether the peer's `HandshakeSigned` frame has been verified.
@@ -1300,6 +1649,9 @@ impl Drop for ReceiverHandshake {
         if let Some(ref mut hash) = self.transcript_hash {
             hash.zeroize();
         }
+        if let Some(ref mut seed) = self.ratchet_seed {
+            seed.zeroize();
+        }
     }
 }
 
@@ -1372,6 +1724,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (*selected_kem, *cpace_public, kem_public_key.clone(), *nonce),
             _ => panic!("expected HandshakeResponse"),
         };
@@ -1437,6 +1796,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (*selected_kem, *cpace_public, kem_public_key.clone(), *nonce),
             _ => panic!("expected HandshakeResponse"),
         };
@@ -1473,6 +1839,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (*selected_kem, *cpace_public, kem_public_key.clone(), *nonce),
             _ => panic!("expected HandshakeResponse"),
         };
@@ -1510,7 +1883,8 @@ mod tests {
             .process_init(3, tallow_crypto::suite_code(), &caps, &cpace_pub, &init_nonce)
             .unwrap();
         let selected_kem = match resp {
-            Message::HandshakeResponse { selected_kem, .. } => selected_kem,
+            Message::HandshakeResponse { selected_kem, .. }
+            | Message::HandshakeResponseV9 { selected_kem, .. } => selected_kem,
             _ => panic!("expected HandshakeResponse"),
         };
         assert_eq!(selected_kem & SCOPED_TRANSFER_FLAG, SCOPED_TRANSFER_FLAG);
@@ -1559,6 +1933,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (selected_kem, cpace_public, kem_public_key, nonce),
             _ => panic!("expected HandshakeResponse"),
         };
@@ -1622,6 +2003,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (*selected_kem, *cpace_public, kem_public_key.clone(), *nonce),
             _ => panic!("expected HandshakeResponse"),
         };
@@ -1703,6 +2091,339 @@ mod tests {
     // KEM Handshake Tests
     // -----------------------------------------------------------------------
 
+    /// Cross-generation interop: a v9 build must still complete a handshake with a
+    /// peer that declares an OLDER version.
+    ///
+    /// This is the property that makes the v9 bump deployable without a
+    /// simultaneous upgrade. The transcript binds the DECLARED version
+    /// (`TRANSCRIPT_BINDING_VERSION`), not each side's own local constant, so a v8
+    /// peer and a v9 peer agree on one transcript and derive the same keys. It is
+    /// also why `init_with_version` exists: a build declares the version it is
+    /// willing to be bound to, and mixed generations negotiate down — the same
+    /// mechanism the v6 flow-credit rollout used.
+    ///
+    /// Backwards compatibility is NOT legacy debt here, and this test is the
+    /// reason: `MIN_ACCEPTED_INIT_VERSION` is 4 by design, and the ladder is pinned
+    /// against the published page by `scripts/wire-version-claim-check.py`. The loop
+    /// is derived from the constants rather than hardcoded, so a future version bump
+    /// extends the proof instead of breaking it.
+    ///
+    /// (The paragraph above belongs to `test_cross_generation_handshake_derives_identical_keys`,
+    /// which follows this test; the two doc blocks sit adjacent because this test was inserted
+    /// between that doc and its function. Left labelled rather than silently merged.)
+    ///
+    /// The property the entire v9 chat ratchet rests on: after a REAL handshake, both
+    /// peers hold the SAME ratchet seed — and it is not the session key.
+    ///
+    /// The derivation test above proves the function is deterministic. This one proves
+    /// the handshake actually CALLS it, on both sides, and that the two sides agree.
+    /// Without it the derivation could be perfectly correct and still never exercised
+    /// in a way that matters — the failure mode that let the `0x02` collision through,
+    /// where a green build was not evidence of a correct wire.
+    ///
+    /// Asserts three things:
+    ///   1. both sides derive a seed at all (neither accessor is None);
+    ///   2. the two seeds are EQUAL — the whole point, since one bidirectional ratchet
+    ///      needs one shared secret;
+    ///   3. the seed is NOT the session key — domain separation, so moving chat onto
+    ///      the ratchet cannot hand anyone the AEAD key.
+    #[test]
+    fn test_both_peers_derive_the_same_ratchet_seed() {
+        let code = "shared-ratchet-seed";
+        let room_id = crate::room::code::derive_room_id(code);
+
+        let mut sender = SenderHandshake::new(code, &room_id);
+        let mut receiver = ReceiverHandshake::new(code, &room_id);
+
+        let init_msg = sender.init().unwrap();
+        let (pv, suite_code, caps, cpace_pub, snonce) = match init_msg {
+            Message::HandshakeInit {
+                protocol_version,
+                suite_code,
+                kem_capabilities,
+                cpace_public,
+                nonce,
+            } => (
+                protocol_version,
+                suite_code,
+                kem_capabilities,
+                cpace_public,
+                nonce,
+            ),
+            _ => panic!("Expected HandshakeInit"),
+        };
+
+        let resp_msg = receiver
+            .process_init(pv, suite_code, &caps, &cpace_pub, &snonce)
+            .unwrap();
+        let (selected_kem, resp_cpace, resp_kem_pk, resp_nonce) = match resp_msg {
+            Message::HandshakeResponse {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
+            } => (selected_kem, cpace_public, kem_public_key, nonce),
+            _ => panic!("Expected HandshakeResponse"),
+        };
+
+        let (kem_msg, sender_key) = sender
+            .process_response(selected_kem, &resp_cpace, &resp_kem_pk, &resp_nonce)
+            .unwrap();
+
+        let (kem_ciphertext, sender_confirmation) = match kem_msg {
+            Message::HandshakeKem {
+                kem_ciphertext,
+                confirmation,
+            } => (kem_ciphertext, confirmation),
+            _ => panic!("Expected HandshakeKem"),
+        };
+
+        let (complete_msg, receiver_key) = receiver
+            .process_kem(&kem_ciphertext, &sender_confirmation)
+            .unwrap();
+        let receiver_confirmation = match complete_msg {
+            Message::HandshakeComplete { confirmation } => confirmation,
+            _ => panic!("Expected HandshakeComplete"),
+        };
+        sender
+            .verify_receiver_confirmation(&receiver_confirmation)
+            .unwrap();
+
+        // (1) Both sides computed a seed — the accessors must actually be populated.
+        let sender_seed = sender
+            .ratchet_seed()
+            .expect("the initiator must derive a seed during process_response");
+        let receiver_seed = receiver
+            .ratchet_seed()
+            .expect("the responder must derive a seed during process_kem");
+
+        // The session keys must still agree — the seed work changed no existing path.
+        // Asserted FIRST so a failure is unambiguous about which value diverged:
+        // agreeing keys with differing seeds isolates the cause to the seed's own
+        // inputs, not to the handshake.
+        assert_eq!(&sender_key.as_bytes()[..], &receiver_key.as_bytes()[..]);
+
+        // (2) They AGREE. This is what one bidirectional ratchet needs, and it is
+        // what makes the capability worth advertising at all.
+        assert_eq!(
+            sender_seed, receiver_seed,
+            "both peers must derive the SAME ratchet seed\n  initiator: {:02x?}\n  responder: {:02x?}",
+            sender_seed, receiver_seed
+        );
+
+        // (3) The seed is NOT the session key. If the two derivations ever collapsed
+        // onto one label this fails — and chat would be ratcheting on the key that
+        // protects everything else on the connection.
+        assert_ne!(
+            &sender_seed[..],
+            &sender_key.as_bytes()[..],
+            "the ratchet seed must be domain-separated from the session key"
+        );
+    }
+
+    #[test]
+    fn test_cross_generation_handshake_derives_identical_keys() {
+        for declared in MIN_ACCEPTED_INIT_VERSION..=crate::wire::PROTOCOL_VERSION {
+            let code = format!("cross-generation-{declared}");
+            let room_id = crate::room::code::derive_room_id(&code);
+
+            let mut sender = SenderHandshake::new(&code, &room_id);
+            let mut receiver = ReceiverHandshake::new(&code, &room_id);
+
+            // The "older build" declares the version it speaks.
+            let init_msg = sender.init_with_version(declared).unwrap();
+            let (pv, suite_code, caps, cpace_pub, snonce) = match init_msg {
+                Message::HandshakeInit {
+                    protocol_version,
+                    suite_code,
+                    kem_capabilities,
+                    cpace_public,
+                    nonce,
+                } => (
+                    protocol_version,
+                    suite_code,
+                    kem_capabilities,
+                    cpace_public,
+                    nonce,
+                ),
+                _ => panic!("Expected HandshakeInit"),
+            };
+            assert_eq!(pv, declared, "the initiator declares what it was told to");
+
+            // The current build must ACCEPT it — that is the floor's whole job.
+            let resp_msg = receiver
+                .process_init(pv, suite_code, &caps, &cpace_pub, &snonce)
+                .unwrap_or_else(|e| {
+                    panic!("a peer declaring v{declared} must be accepted, got: {e}")
+                });
+
+            let (selected_kem, resp_cpace, resp_kem_pk, resp_nonce) = match resp_msg {
+                Message::HandshakeResponse {
+                    selected_kem,
+                    cpace_public,
+                    kem_public_key,
+                    nonce,
+                }
+                | Message::HandshakeResponseV9 {
+                    selected_kem,
+                    cpace_public,
+                    kem_public_key,
+                    nonce,
+                    ..
+                } => (selected_kem, cpace_public, kem_public_key, nonce),
+                _ => panic!("Expected HandshakeResponse"),
+            };
+
+            let (kem_msg, sender_key) = sender
+                .process_response(selected_kem, &resp_cpace, &resp_kem_pk, &resp_nonce)
+                .unwrap();
+
+            let (kem_ciphertext, sender_confirmation) = match kem_msg {
+                Message::HandshakeKem {
+                    kem_ciphertext,
+                    confirmation,
+                } => (kem_ciphertext, confirmation),
+                _ => panic!("Expected HandshakeKem"),
+            };
+
+            let (complete_msg, receiver_key) = receiver
+                .process_kem(&kem_ciphertext, &sender_confirmation)
+                .unwrap();
+
+            let receiver_confirmation = match complete_msg {
+                Message::HandshakeComplete { confirmation } => confirmation,
+                _ => panic!("Expected HandshakeComplete"),
+            };
+            sender
+                .verify_receiver_confirmation(&receiver_confirmation)
+                .unwrap();
+
+            assert_eq!(
+                sender_key.as_bytes(),
+                receiver_key.as_bytes(),
+                "a peer declaring v{} must still derive identical session keys",
+                declared
+            );
+        }
+    }
+
+    /// The v9 emit: a receiver answers a peer that declared >= 9 with
+    /// `HandshakeResponseV9`, and an older peer with the original shape.
+    ///
+    /// Pins the two properties the carrier decision rests on:
+    ///   1. the SHAPE follows the DECLARED version, so a v8 peer never receives a
+    ///      variant it cannot decode;
+    ///   2. `capability_bits` is CLEAR, because the ratcheting chat session is not
+    ///      wired yet. Setting `CAP_PQ_CHAT` here would advertise a capability the
+    ///      build does not exercise — the defect class doc 08 exists to prevent.
+    ///
+    /// This is the tripwire for (2): when the session swap lands, flipping the bit
+    /// must be a deliberate edit that updates this test too, rather than a silent
+    /// capability claim.
+    #[test]
+    fn test_v9_response_shape_follows_declared_version() {
+        use crate::wire::messages::CAP_PQ_CHAT;
+
+        for declared in MIN_ACCEPTED_INIT_VERSION..=crate::wire::PROTOCOL_VERSION {
+            let code = format!("v9-shape-{declared}");
+            let room_id = crate::room::code::derive_room_id(&code);
+            let mut sender = SenderHandshake::new(&code, &room_id);
+            let mut receiver = ReceiverHandshake::new(&code, &room_id);
+
+            let init_msg = sender.init_with_version(declared).unwrap();
+            let (pv, suite_code, caps, cpace_pub, snonce) = match init_msg {
+                Message::HandshakeInit {
+                    protocol_version,
+                    suite_code,
+                    kem_capabilities,
+                    cpace_public,
+                    nonce,
+                } => (
+                    protocol_version,
+                    suite_code,
+                    kem_capabilities,
+                    cpace_public,
+                    nonce,
+                ),
+                _ => panic!("Expected HandshakeInit"),
+            };
+
+            let resp = receiver
+                .process_init(pv, suite_code, &caps, &cpace_pub, &snonce)
+                .unwrap();
+
+            let is_v9_shape = matches!(resp, Message::HandshakeResponseV9 { .. });
+            assert_eq!(
+                is_v9_shape,
+                declared >= 9,
+                "a peer declaring v{declared} got the wrong response shape"
+            );
+
+            // POST-FLIP: a v9 peer must now be TOLD the capability. The site builds a
+            // ratcheting session whenever this bit is set, so a CLEAR bit would be the
+            // dishonest direction — withholding a capability the build has and exercises.
+            //
+            // An older peer receives the other shape, which carries no capability byte at
+            // all. That is the disclosed downgrade and it is correct: a v8 receiver cannot
+            // read ChatTextV9, so it must never be told to expect one.
+            if let Message::HandshakeResponseV9 { capability_bits, .. } = &resp {
+                assert_eq!(
+                    capability_bits & CAP_PQ_CHAT,
+                    CAP_PQ_CHAT,
+                    "a v9 peer must be told PQ chat is available now that the session is wired"
+                );
+            }
+        }
+    }
+
+    /// The v9 ratchet seed: both peers derive the SAME seed, and it is NOT the
+    /// session key.
+    ///
+    /// Two properties, both load-bearing for the session swap:
+    ///   1. identical on both sides — the seed comes from handshake material both
+    ///      peers already hold, so chat can move onto the ratchet with no extra
+    ///      round trip and no new agreement;
+    ///   2. distinct from the session key — domain separation means putting chat on
+    ///      the ratchet cannot weaken the AEAD key that protects everything else.
+    ///
+    /// (2) is asserted directly rather than described: if the two derivations ever
+    /// collapsed onto one label, the seed would equal the session key and this test
+    /// would catch it.
+    #[test]
+    fn test_ratchet_seed_matches_both_peers_and_differs_from_session_key() {
+        let kem_ss = [7u8; 32];
+        let pake = [9u8; 32];
+        let eph = [11u8; 32];
+        let th = [13u8; 32];
+        let ct = b"ratchet-seed-ct";
+
+        let seed_a = derive_handshake_ratchet_seed(&kem_ss, &pake, ct, &eph, &th).unwrap();
+        let seed_b = derive_handshake_ratchet_seed(&kem_ss, &pake, ct, &eph, &th).unwrap();
+        assert_eq!(
+            seed_a, seed_b,
+            "peers holding the same handshake material must derive the same seed"
+        );
+
+        let sk = derive_handshake_session_key(&kem_ss, &pake, ct, &eph, &th).unwrap();
+        assert_ne!(
+            seed_a, sk,
+            "the ratchet seed must be domain-separated from the session key"
+        );
+
+        // A different transcript must move the seed, so one session's seed cannot be
+        // reused by another.
+        let seed_other =
+            derive_handshake_ratchet_seed(&kem_ss, &pake, ct, &eph, &[14u8; 32]).unwrap();
+        assert_ne!(seed_a, seed_other, "the transcript must bind the seed");
+    }
+
     #[test]
     fn test_kem_handshake_roundtrip() {
         let code = "test-kem-handshake";
@@ -1742,6 +2463,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (selected_kem, cpace_public, kem_public_key, nonce),
             _ => panic!("Expected HandshakeResponse"),
         };
@@ -1810,6 +2538,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (selected_kem, cpace_public, kem_public_key, nonce),
             _ => panic!("Expected HandshakeResponse"),
         };
@@ -1866,6 +2601,13 @@ mod tests {
                     cpace_public,
                     kem_public_key,
                     nonce,
+                }
+                | Message::HandshakeResponseV9 {
+                    selected_kem,
+                    cpace_public,
+                    kem_public_key,
+                    nonce,
+                    ..
                 } => (selected_kem, cpace_public, kem_public_key, nonce),
                 _ => panic!("Expected HandshakeResponse"),
             };
@@ -1898,6 +2640,13 @@ mod tests {
                     cpace_public,
                     kem_public_key,
                     nonce,
+                }
+                | Message::HandshakeResponseV9 {
+                    selected_kem,
+                    cpace_public,
+                    kem_public_key,
+                    nonce,
+                    ..
                 } => (selected_kem, cpace_public, kem_public_key, nonce),
                 _ => panic!("Expected HandshakeResponse"),
             };
@@ -1949,7 +2698,9 @@ mod tests {
                 msg.contains("unsupported suite code"),
                 "refusal should name the problem, got: {msg}"
             ),
-            Err(other) => panic!("expected HandshakeFailed for an unknown suite, got another error"),
+            Err(other) => panic!(
+                "expected HandshakeFailed for an unknown suite, got another error: {other:?}"
+            ),
             Ok(_) => panic!("an unknown suite code must not be accepted"),
         }
 
@@ -1991,6 +2742,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (selected_kem, cpace_public, kem_public_key, nonce),
             _ => panic!("Expected HandshakeResponse"),
         };
@@ -2157,6 +2915,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (*selected_kem, *cpace_public, kem_public_key.clone(), *nonce),
             _ => panic!("expected HandshakeResponse"),
         };
@@ -2434,6 +3199,13 @@ mod tests {
                 cpace_public,
                 kem_public_key,
                 nonce,
+            }
+            | Message::HandshakeResponseV9 {
+                selected_kem,
+                cpace_public,
+                kem_public_key,
+                nonce,
+                ..
             } => (*selected_kem, *cpace_public, kem_public_key.clone(), *nonce),
             _ => panic!("expected HandshakeResponse"),
         };
@@ -2462,5 +3234,206 @@ mod tests {
         // Control: the un-rewritten flight still succeeds end to end
         // (drive_flight asserts both sides derive the same session key).
         let _ = drive_flight(code, TRANSCRIPT_BINDING_VERSION);
+    }
+
+    // -------------------------------------------------------------------
+    // Phase 5 item 2 — the PQ capability record's transcript binding
+    // -------------------------------------------------------------------
+
+    /// One full flight at `version`, with the initiator TOLD `told` capability
+    /// bits (what a middleman let through) while the responder advertises
+    /// [`RESPONDER_CAPABILITY_BITS`].
+    ///
+    /// Returns `(completed, advertised, told)`. `completed` means the whole
+    /// four-frame handshake finished AND both sides derived the same session key —
+    /// deliberately the same pass condition the hostile-relay matrix's strip arm
+    /// asserts, so the two instruments cannot disagree about what "detected" means.
+    fn capability_flight(code: &str, version: u32, told: Option<u8>) -> (bool, u8, u8) {
+        let room_id = crate::room::code::derive_room_id(code);
+        let mut sender = SenderHandshake::new(code, &room_id);
+        let mut receiver = ReceiverHandshake::new(code, &room_id);
+
+        let init = sender.init_with_version(version).unwrap();
+        let (caps, cpace_pub, init_nonce) = match &init {
+            Message::HandshakeInit {
+                kem_capabilities,
+                cpace_public,
+                nonce,
+                ..
+            } => (kem_capabilities.clone(), *cpace_public, *nonce),
+            _ => panic!("expected HandshakeInit"),
+        };
+        let resp = receiver
+            .process_init(
+                version,
+                tallow_crypto::suite_code(),
+                &caps,
+                &cpace_pub,
+                &init_nonce,
+            )
+            .unwrap();
+        let (selected_kem, resp_cpace, resp_pk, resp_nonce, advertised) = resp
+            .handshake_response_parts()
+            .expect("a handshake response");
+        let told = told.unwrap_or(advertised);
+
+        let (kem_msg, sender_key) = match sender.process_response_with_capabilities(
+            selected_kem,
+            &resp_cpace,
+            &resp_pk,
+            &resp_nonce,
+            told,
+        ) {
+            Ok(v) => v,
+            Err(_) => return (false, advertised, told),
+        };
+        let (ct, confirmation) = match &kem_msg {
+            Message::HandshakeKem {
+                kem_ciphertext,
+                confirmation,
+            } => (kem_ciphertext.clone(), *confirmation),
+            _ => panic!("expected HandshakeKem"),
+        };
+        let (complete, receiver_key) = match receiver.process_kem(&ct, &confirmation) {
+            Ok(v) => v,
+            Err(_) => return (false, advertised, told),
+        };
+        let receiver_confirmation = match &complete {
+            Message::HandshakeComplete { confirmation } => *confirmation,
+            _ => panic!("expected HandshakeComplete"),
+        };
+        let confirmed = sender
+            .verify_receiver_confirmation(&receiver_confirmation)
+            .is_ok();
+        (
+            confirmed && sender_key.as_bytes() == receiver_key.as_bytes(),
+            advertised,
+            told,
+        )
+    }
+
+    /// Below the binding version NOTHING changes: the transcript is byte-for-byte
+    /// what the deployed pair already speaks, both entry points complete a
+    /// handshake, and the capability byte stays a plain field.
+    ///
+    /// This is the interop control for the gate. If it ever fails, the binding has
+    /// been activated at (or below) a version a shipped peer declares — which is
+    /// the flag day `CAPABILITY_BINDING_VERSION`'s docs describe, and it must be a
+    /// deliberate move, with the pair-compat reference re-cut, not a side effect.
+    #[test]
+    fn test_capability_binding_is_inert_below_its_version() {
+        assert!(
+            CAPABILITY_BINDING_VERSION > KEX_PROTOCOL_VERSION,
+            "the binding must sit above the version this build declares"
+        );
+
+        let (completed, advertised, told) =
+            capability_flight("phase5-cap-inert", KEX_PROTOCOL_VERSION, None);
+        assert_eq!(advertised, RESPONDER_CAPABILITY_BITS);
+        assert_eq!(told, advertised);
+        assert!(
+            completed,
+            "an honest v{} flight must complete with the binding gate closed",
+            KEX_PROTOCOL_VERSION
+        );
+
+        // The capability-blind entry point is still CORRECT here — only the binding
+        // version requires the byte — so the deployed call sites keep working
+        // unchanged. (drive_flight asserts both sides derive the same session key.)
+        let _ = drive_flight("phase5-cap-inert-legacy", KEX_PROTOCOL_VERSION);
+    }
+
+    /// At the binding version the capability record IS bound, so a middleman that
+    /// clears it (or changes it) no longer decides what the initiator believes:
+    /// the two transcript hashes diverge, and with them the session key, the
+    /// ratchet seed and both confirmation tags.
+    ///
+    /// The assertion is the phase's own pass condition: the handshake must NOT
+    /// complete under the strip. Note what is NOT asserted — a low capability value
+    /// is not refused. The record is a pure function of the value, so a peer that
+    /// honestly advertises `0` binds `record(0)` on both sides and completes: the
+    /// binding refuses DISAGREEMENT, never a disclosed "no capabilities".
+    #[test]
+    fn test_stripped_capability_record_is_detected_at_the_binding_version() {
+        let version = CAPABILITY_BINDING_VERSION;
+
+        // Control — honest flight: completes, and the initiator latched what it was told.
+        let (completed, advertised, told) = capability_flight("phase5-cap-bound", version, None);
+        assert_eq!(advertised, RESPONDER_CAPABILITY_BITS);
+        assert_eq!(told, advertised);
+        assert!(completed, "the honest control flight must complete");
+
+        // ARM — the middleman clears the byte in flight.
+        let (completed, advertised, told) =
+            capability_flight("phase5-cap-stripped", version, Some(0));
+        assert_eq!(
+            advertised, RESPONDER_CAPABILITY_BITS,
+            "the responder still advertised"
+        );
+        assert_eq!(told, 0, "the middleman's view reached the initiator");
+        assert!(
+            !completed,
+            "STRIP NOT DETECTED at the binding version: the responder advertised \
+             0x{advertised:02x} and the initiator was told 0x{told:02x}, yet the handshake \
+             completed with matching keys — the capability record is not bound into the \
+             transcript"
+        );
+
+        // ARM — a rewritten (not cleared) byte is caught by the same divergence, so
+        // the protection is not "the zero case" only.
+        let (rewritten_completed, _, _) =
+            capability_flight("phase5-cap-rewritten", version, Some(0x02));
+        assert!(
+            !rewritten_completed,
+            "a rewritten capability byte must be detected as well as a cleared one"
+        );
+    }
+
+    /// The capability-blind entry point REFUSES a peer that declared the binding
+    /// version instead of silently deriving keys from an unbound transcript.
+    ///
+    /// This is what makes the version bump a mechanical, compiler-adjacent change:
+    /// a call site left behind fails loudly at handshake time with the rule in the
+    /// message.
+    #[test]
+    fn test_capability_blind_entry_point_refuses_a_binding_version_peer() {
+        let code = "phase5-cap-refuse";
+        let room_id = crate::room::code::derive_room_id(code);
+        let mut sender = SenderHandshake::new(code, &room_id);
+        let mut receiver = ReceiverHandshake::new(code, &room_id);
+
+        let init = sender
+            .init_with_version(CAPABILITY_BINDING_VERSION)
+            .unwrap();
+        let (caps, cpace_pub, init_nonce) = match &init {
+            Message::HandshakeInit {
+                kem_capabilities,
+                cpace_public,
+                nonce,
+                ..
+            } => (kem_capabilities.clone(), *cpace_public, *nonce),
+            _ => panic!("expected HandshakeInit"),
+        };
+        let resp = receiver
+            .process_init(
+                CAPABILITY_BINDING_VERSION,
+                tallow_crypto::suite_code(),
+                &caps,
+                &cpace_pub,
+                &init_nonce,
+            )
+            .unwrap();
+        let (selected_kem, resp_cpace, resp_pk, resp_nonce, _advertised) = resp
+            .handshake_response_parts()
+            .expect("a handshake response");
+
+        let err = match sender.process_response(selected_kem, &resp_cpace, &resp_pk, &resp_nonce) {
+            Ok(_) => panic!("the capability-blind entry point must refuse a binding-version peer"),
+            Err(err) => err,
+        };
+        assert!(
+            format!("{err}").contains("binds the PQ capability record"),
+            "the refusal must name the rule: {err}"
+        );
     }
 }

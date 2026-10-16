@@ -2,6 +2,7 @@
 //!
 //! Messages are serialized with postcard and framed with 4-byte BE length prefixes.
 
+pub mod capabilities;
 #[cfg(feature = "full")]
 pub mod codec;
 pub mod messages;
@@ -15,6 +16,9 @@ pub mod ordinals;
 // every configuration, so `wire` owns the number, exactly as its docs claim.
 pub mod version;
 
+pub use capabilities::{
+    capability_record, CapabilityLatch, CAPABILITY_BINDING_VERSION, CAPABILITY_RECORD_TAG,
+};
 #[cfg(feature = "full")]
 pub use codec::TallowCodec;
 pub use messages::{Message, PeerPresence, MODE_FULL, MODE_SIMPLE};

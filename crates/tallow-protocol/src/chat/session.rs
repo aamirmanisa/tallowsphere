@@ -20,6 +20,18 @@
 //! on the same root-key state on both peers. Crossing that boundary with
 //! in-flight traffic breaks decryption: the root-key mix replaces both chain
 //! keys, so messages must not straddle the two drain points.
+//!
+//! Receive-side placement (Phase 5 item 4): the ratchet is POSITIONAL — a frame
+//! is keyed by the position the receiver believes it occupies — so a peer that
+//! sends without labelling frames can only be decrypted in the order its frames
+//! arrive. [`ChatSession::receive_at`] is the entry point for a transport that
+//! carries the sender's own position (v9: `ChatTextV9.sequence`), and it is what
+//! makes a *disturbed* stream survivable: a frame the relay dropped or reordered
+//! decrypts at its own position through the skipped-key cache instead of leaving
+//! the receive direction permanently unable to decrypt anything. The position is
+//! a key-selection hint — the AEAD still decides — so no frame the peer did not
+//! produce at that position can be accepted. [`ChatSession::receive`] stays
+//! positional for transports with no position to offer.
 
 use super::ChatMessage;
 use crate::{ProtocolError, Result};
@@ -27,8 +39,9 @@ use tallow_crypto::kem::mlkem::{Ciphertext, PublicKey};
 use tallow_crypto::ratchet::TripleRatchet;
 use tokio::sync::mpsc;
 
-/// Default number of ratchet steps between sparse ML-KEM rekeys.
-const DEFAULT_PQ_REKEY_INTERVAL: u64 = 10;
+// Single source of truth lives in tallow-crypto, beside the ratchet that consumes it — see
+// `tallow_crypto::ratchet::DEFAULT_PQ_REKEY_INTERVAL` for why it is not defined here.
+use tallow_crypto::ratchet::DEFAULT_PQ_REKEY_INTERVAL;
 
 /// Magic prefix marking a ratchet payload that carries PQ rekey control data.
 const PQ_FRAME_MAGIC: &[u8; 4] = b"TQP1";
@@ -36,6 +49,17 @@ const PQ_FRAME_MAGIC: &[u8; 4] = b"TQP1";
 const PQ_FLAG_PK: u8 = 0b0000_0001;
 /// Payload flag: an ML-KEM encapsulation ciphertext record follows.
 const PQ_FLAG_CT: u8 = 0b0000_0010;
+
+/// How many received rekey public keys may wait for their answer.
+///
+/// One is answered per outgoing message, so the queue is normally empty or one
+/// deep; it only grows when the peer's rekey keys arrive faster than we send. It
+/// is bounded so a peer that floods rekey keys cannot grow session state without
+/// limit, and a key dropped by the bound is COUNTED
+/// ([`ChatSession::dropped_pq_peer_keys`]) — never silent, because an unanswered
+/// rekey key is what un-pairs every later ciphertext. Mirrors
+/// `tallow_web::ratchet`'s `MAX_PENDING_PEER_REKEYS`.
+const MAX_PENDING_PEER_REKEYS: usize = 8;
 
 /// A ratchet payload split into (optional) PQ control records and user text.
 struct PqPayload<'a> {
@@ -163,10 +187,23 @@ pub struct ChatSession {
     /// back so the peer can complete the exchange. Rides the same message
     /// that produced it.
     pending_pq_ciphertext: Option<Ciphertext>,
-    /// Peer's rekey public key received but not yet encapsulated. The
-    /// encapsulation is deferred to our next send so that both peers drain
-    /// the KEM secret into the root key at the same message boundary.
-    pending_pq_peer_key: Option<PublicKey>,
+    /// Peer's rekey public keys received but not yet encapsulated, OLDEST
+    /// FIRST. The encapsulation is deferred to our next send so that both peers
+    /// drain the KEM secret into the root key at the same message boundary, and
+    /// the queue means a second rekey key arriving before that send is ANSWERED
+    /// on the send after it instead of silently replacing the first.
+    ///
+    /// One unanswered key un-pairs every later ciphertext: the owner keeps a
+    /// keypair per public key it emitted and can only match a returning
+    /// ciphertext by the order the public keys went out (FIPS 203 decapsulation
+    /// implicit-rejects a mismatched ciphertext to a junk secret with `Ok`, so it
+    /// cannot tell). Mirrors `tallow_web::ratchet::RatchetSession`; keep the two
+    /// in lockstep.
+    pending_pq_peer_key: Vec<PublicKey>,
+    /// Received rekey public keys discarded because the queue was at capacity.
+    /// Non-zero means this session can no longer pair ciphertexts with the
+    /// keypairs they belong to, so PQ forward secrecy must not be claimed for it.
+    dropped_pq_peer_keys: u64,
 }
 
 impl std::fmt::Debug for ChatSession {
@@ -204,7 +241,8 @@ impl ChatSession {
             ratchet: None,
             pending_pq_rekey_key: None,
             pending_pq_ciphertext: None,
-            pending_pq_peer_key: None,
+            pending_pq_peer_key: Vec::new(),
+            dropped_pq_peer_keys: 0,
         };
 
         (session, outbound_rx, inbound_tx)
@@ -252,7 +290,8 @@ impl ChatSession {
         };
         self.pending_pq_rekey_key = None;
         self.pending_pq_ciphertext = None;
-        self.pending_pq_peer_key = None;
+        self.pending_pq_peer_key.clear();
+        self.dropped_pq_peer_keys = 0;
         self.ratchet = Some(ratchet);
     }
 
@@ -270,6 +309,37 @@ impl ChatSession {
         self.ratchet.as_ref().is_some_and(|r| r.is_pq_active())
     }
 
+    /// Received rekey keys dropped because the answer queue was full.
+    ///
+    /// Non-zero means this session can no longer pair ciphertexts with the
+    /// keypairs they belong to, so PQ forward secrecy must not be claimed for it
+    /// (see `pending_pq_peer_key`).
+    pub fn dropped_pq_peer_keys(&self) -> u64 {
+        self.dropped_pq_peer_keys
+    }
+
+    /// The ratchet position this session's NEXT outgoing frame will use, or
+    /// `None` when the session carries no ratchet.
+    ///
+    /// A transport that labels its frames (v9 `ChatTextV9.sequence`) must take
+    /// the label from here rather than from a counter of its own: the label IS
+    /// the ratchet position, and a transport counter can drift from it. Read it
+    /// BEFORE the `send` whose frame it belongs to.
+    pub fn send_sequence(&self) -> Option<u64> {
+        self.ratchet.as_ref().map(|r| r.send_sequence())
+    }
+
+    /// The ratchet position this session expects next from the peer, or `None`
+    /// when the session carries no ratchet.
+    ///
+    /// An expectation, not a verdict: with a labelling peer a frame may
+    /// legitimately arrive at a later position (a gap is stepped over) or at an
+    /// earlier cached one. It is what a caller asserts on to show that a refused
+    /// frame moved nothing — see [`ChatSession::receive_at`].
+    pub fn recv_sequence(&self) -> Option<u64> {
+        self.ratchet.as_ref().map(|r| r.recv_sequence())
+    }
+
     /// Send a message to the peer.
     ///
     /// If encryption is enabled, the message text is encrypted via the
@@ -281,14 +351,17 @@ impl ChatSession {
     pub async fn send(&mut self, text: String) -> Result<()> {
         let msg = if let Some(ref mut ratchet) = self.ratchet {
             // Complete any pending peer-side exchange first: encapsulate
-            // against the peer's rekey public key so the returned ciphertext
-            // can ride in this same message. The KEM secret is mixed into the
-            // sparse chain now and drained into the root key by the `step_pq`
-            // below — i.e. at this message boundary on both peers.
-            if let Some(pk) = self.pending_pq_peer_key.take() {
+            // against the OLDEST rekey public key the peer has not been answered
+            // for, so the returned ciphertext can ride in this same message. The
+            // KEM secret is mixed into the sparse chain now and drained into the
+            // root key by the `step_pq` below — i.e. at this message boundary on
+            // both peers — and the key is retired only once its answer is framed,
+            // so an encapsulation failure does not lose it.
+            if let Some(pk) = self.pending_pq_peer_key.first().cloned() {
                 let ct = ratchet.encapsulate_pq(&pk).map_err(|e| {
                     ProtocolError::TransferFailed(format!("PQ encapsulate failed: {}", e))
                 })?;
+                self.pending_pq_peer_key.remove(0);
                 self.pending_pq_ciphertext = Some(ct);
             }
 
@@ -316,7 +389,12 @@ impl ChatSession {
                 .step_pq()
                 .map_err(|e| ProtocolError::TransferFailed(format!("Ratchet step failed: {}", e)))?
             {
-                self.pending_pq_rekey_key = Some(pk);
+                if let Some(untransmitted) = self.pending_pq_rekey_key.replace(pk) {
+                    // This rekey key never reached the wire, so no ciphertext can
+                    // ever arrive for its keypair: retire it at the owner, or
+                    // every later ciphertext would be matched one place off.
+                    ratchet.abandon_rekey_key(&untransmitted);
+                }
             }
 
             // Hex-encode the ciphertext for wire transport
@@ -349,7 +427,31 @@ impl ChatSession {
     /// the hex-encoded ciphertext is decoded and decrypted via the Triple
     /// Ratchet before being returned as plaintext. PQ rekey control records
     /// embedded in the payload are applied to the ratchet before the step.
+    ///
+    /// This entry point is POSITIONAL: `ChatMessage` carries no position, so the
+    /// ratchet is asked to decrypt at whatever it expects next. A frame that
+    /// arrives after a gap cannot be placed and is refused (with the receive
+    /// state left untouched). Use [`ChatSession::receive_at`] when the transport
+    /// knows the position the sender labelled the frame with.
     pub async fn receive(&mut self) -> Result<ChatMessage> {
+        self.receive_core(None).await
+    }
+
+    /// Receive a message whose transport carried the sender's ratchet position
+    /// for it (on the v9 chat wire: `ChatTextV9.sequence`).
+    ///
+    /// The position is a key-selection hint, not a trusted input: the AEAD
+    /// decides whether it was right. What it buys is recovery — a frame that
+    /// arrives after a gap or out of order decrypts at its own position through
+    /// the skipped-key cache, so one refused or dropped frame costs that frame
+    /// instead of the direction. A peer whose frames are not labelled at all is
+    /// still placed positionally, so no honest unlabelled peer is refused.
+    pub async fn receive_at(&mut self, position: u64) -> Result<ChatMessage> {
+        self.receive_core(Some(position)).await
+    }
+
+    /// Shared body of [`ChatSession::receive`] and [`ChatSession::receive_at`].
+    async fn receive_core(&mut self, position: Option<u64>) -> Result<ChatMessage> {
         let mut msg = self
             .inbound_rx
             .recv()
@@ -378,7 +480,11 @@ impl ChatSession {
                     })
                     .collect::<std::result::Result<Vec<u8>, _>>()?;
 
-                let payload = ratchet.decrypt_message(&ct_bytes).map_err(|e| {
+                let decrypted = match position {
+                    Some(declared) => ratchet.decrypt_message_labeled(&ct_bytes, declared),
+                    None => ratchet.decrypt_message(&ct_bytes),
+                };
+                let payload = decrypted.map_err(|e| {
                     ProtocolError::TransferFailed(format!("Chat decrypt failed: {}", e))
                 })?;
 
@@ -392,7 +498,14 @@ impl ChatSession {
                     let pk = PublicKey::from_bytes(pk_bytes.to_vec()).map_err(|e| {
                         ProtocolError::TransferFailed(format!("Invalid PQ rekey key: {}", e))
                     })?;
-                    self.pending_pq_peer_key = Some(pk);
+                    if self.pending_pq_peer_key.len() >= MAX_PENDING_PEER_REKEYS {
+                        // Oldest first: the survivor sequence stays a suffix of
+                        // the produced one. Counted — an un-answered rekey key is
+                        // what un-pairs every later ciphertext.
+                        self.pending_pq_peer_key.remove(0);
+                        self.dropped_pq_peer_keys = self.dropped_pq_peer_keys.saturating_add(1);
+                    }
+                    self.pending_pq_peer_key.push(pk);
                 }
 
                 // Owner side: a peer ciphertext completes the exchange; the
@@ -415,7 +528,10 @@ impl ChatSession {
                 if let Some(pk) = ratchet.step_pq().map_err(|e| {
                     ProtocolError::TransferFailed(format!("Ratchet step failed: {}", e))
                 })? {
-                    self.pending_pq_rekey_key = Some(pk);
+                    if let Some(untransmitted) = self.pending_pq_rekey_key.replace(pk) {
+                        // Never transmitted: retire its keypair (see `send`).
+                        ratchet.abandon_rekey_key(&untransmitted);
+                    }
                 }
 
                 msg.text = String::from_utf8(parsed.text.to_vec()).map_err(|e| {
@@ -729,4 +845,194 @@ mod tests {
         assert!(pair.initiator.is_pq_active());
         assert!(pair.responder.is_pq_active());
     }
+
+    // --- Phase 5 item 4: the receive side survives a disturbed stream ---
+
+    /// A wired pair that ferries frames the way a transport does: each frame is
+    /// delivered WITH the position its sender labelled it with, read from the
+    /// session (`send_sequence`) rather than invented by the test.
+    struct LabelledPair {
+        initiator: ChatSession,
+        responder: ChatSession,
+        init_out: mpsc::Receiver<ChatMessage>,
+        resp_in: mpsc::Sender<ChatMessage>,
+    }
+
+    impl LabelledPair {
+        fn new(shared_secret: &[u8; 32]) -> Self {
+            let (mut initiator, init_out, _init_in) =
+                ChatSession::new("init".to_string(), "resp".to_string());
+            initiator.enable_encryption(shared_secret, true);
+            let (mut responder, _resp_out, resp_in) =
+                ChatSession::new("resp".to_string(), "init".to_string());
+            responder.enable_encryption(shared_secret, false);
+            Self {
+                initiator,
+                responder,
+                init_out,
+                resp_in,
+            }
+        }
+
+        /// Send one message and return the frame with the position it carried.
+        async fn send(&mut self, text: &str) -> (ChatMessage, u64) {
+            let position = self
+                .initiator
+                .send_sequence()
+                .expect("a ratcheted session has a position for its next frame");
+            self.initiator.send(text.to_string()).await.unwrap();
+            let frame = self.init_out.recv().await.expect("initiator produced a frame");
+            assert!(frame.encrypted, "the wire frame must be encrypted");
+            (frame, position)
+        }
+
+        /// Hand a frame to the responder at the position it carried.
+        async fn deliver(&mut self, frame: ChatMessage, position: u64) -> Result<String> {
+            self.resp_in.send(frame).await.unwrap();
+            self.responder.receive_at(position).await.map(|m| m.text)
+        }
+
+        /// Hand a frame to the responder with NO position — the shape a
+        /// transport with no sequence to offer presents.
+        async fn deliver_positional(&mut self, frame: ChatMessage) -> Result<String> {
+            self.resp_in.send(frame).await.unwrap();
+            self.responder.receive().await.map(|m| m.text)
+        }
+    }
+
+    /// A frame that arrives after a gap decrypts at its own position, and the
+    /// direction keeps working. This is the property the card was filed on: a
+    /// dropped frame cost the DIRECTION.
+    #[tokio::test]
+    async fn test_a_frame_after_a_gap_is_placed_at_its_own_position() {
+        let mut pair = LabelledPair::new(&[0x5Au8; 32]);
+
+        let (m0, p0) = pair.send("m0").await;
+        let (m1, p1) = pair.send("m1").await;
+        let (m2, p2) = pair.send("m2").await;
+        assert_eq!((p0, p1, p2), (0, 1, 2));
+
+        assert_eq!(pair.deliver(m0, p0).await.unwrap(), "m0");
+        // m1 is dropped in flight: the next frame still lands, at position 2.
+        assert_eq!(
+            pair.deliver(m2, p2).await.unwrap(),
+            "m2",
+            "a dropped frame must cost that frame, not the direction"
+        );
+        // And the dropped frame is still placeable if it turns up late.
+        assert_eq!(pair.deliver(m1, p1).await.unwrap(), "m1");
+        assert_eq!(pair.responder.recv_sequence(), Some(3));
+    }
+
+    /// A refused frame moves nothing: the next honest frame at the same position
+    /// decrypts, and the position the session reports is where it was.
+    #[tokio::test]
+    async fn test_a_refused_frame_moves_nothing_on_the_receive_side() {
+        let mut pair = LabelledPair::new(&[0x5Bu8; 32]);
+
+        let (m0, p0) = pair.send("m0").await;
+        let (m1, p1) = pair.send("m1").await;
+
+        // Flip the last hex digit of the tag — hex stays valid, the AEAD fails.
+        let mut corrupted = m0.clone();
+        let mut digits: Vec<char> = corrupted.text.chars().collect();
+        let last = digits.len() - 1;
+        digits[last] = if digits[last] == '0' { '1' } else { '0' };
+        corrupted.text = digits.into_iter().collect();
+
+        let err = pair
+            .deliver(corrupted, p0)
+            .await
+            .expect_err("a corrupted frame must be refused");
+        let refusal = format!("{err}");
+        assert!(refusal.contains("Chat decrypt failed"), "{refusal}");
+        assert_eq!(
+            pair.responder.recv_sequence(),
+            Some(0),
+            "a refused frame must leave the receive position exactly where it was"
+        );
+
+        // The undamaged frame at the same position still decrypts, and the
+        // conversation continues.
+        assert_eq!(pair.deliver(m0, p0).await.unwrap(), "m0");
+        assert_eq!(pair.deliver(m1, p1).await.unwrap(), "m1");
+    }
+
+    /// The positional entry point has not changed: a transport with no position
+    /// to offer still cannot place a frame that arrives after a gap, and the
+    /// refusal is a no-op rather than a state corruption. This is the shape a
+    /// caller with no sequence keeps — measured, not assumed.
+    #[tokio::test]
+    async fn test_the_positional_entry_point_cannot_place_a_frame_over_a_gap() {
+        let mut pair = LabelledPair::new(&[0x5Cu8; 32]);
+
+        let (_m0, _p0) = pair.send("m0").await; // dropped
+        let (m1, _p1) = pair.send("m1").await;
+        let (m2, _p2) = pair.send("m2").await;
+
+        assert!(
+            pair.deliver_positional(m1.clone()).await.is_err(),
+            "positional receive cannot place the frame over the gap"
+        );
+        assert!(
+            pair.deliver_positional(m2.clone()).await.is_err(),
+            "...nor the frames after it"
+        );
+        assert_eq!(
+            pair.responder.recv_sequence(),
+            Some(0),
+            "both refusals must leave the receive position where it was"
+        );
+
+        // The same frames, delivered with their positions, land.
+        assert_eq!(pair.deliver(m1, 1).await.unwrap(), "m1");
+        assert_eq!(pair.deliver(m2, 2).await.unwrap(), "m2");
+    }
+
+    /// The canonical CLI session at the SHIPPED default rekey interval under a
+    /// bursty schedule — the same defect and the same two-legged fix as the
+    /// browser side (`tallow_web::ratchet`'s
+    /// `test_chat_bursty_schedule_survives_rekey_at_the_shipped_default_interval`).
+    ///
+    /// Before the `t_7e1697ab` fix this desynced permanently at message 26 of 60
+    /// (burst8, default interval) with zero packet loss: the owner replaced the
+    /// rekey keypair whose ciphertext was still in flight, and the session
+    /// answered rekey keys by overwriting the previous one, so a returned
+    /// ciphertext was paired with the wrong keypair. Both halves are needed —
+    /// this test is the CLI mirror's own gate, kept byte-for-byte in step with
+    /// the browser path by construction.
+    #[tokio::test]
+    async fn test_pq_rekey_survives_a_bursty_schedule_at_the_default_interval() {
+        let shared_secret = [0x2Bu8; 32];
+        let mut pair = wired_pair(&shared_secret, DEFAULT_PQ_REKEY_INTERVAL);
+
+        for i in 0..60usize {
+            let init_leads = (i / 8) % 2 == 0;
+            let text = format!("burst {i}");
+            if init_leads {
+                WiredPair::deliver(
+                    &mut pair.initiator,
+                    &mut pair.init_out,
+                    &mut pair.responder,
+                    &mut pair.resp_in,
+                    &text,
+                )
+                .await;
+            } else {
+                WiredPair::deliver(
+                    &mut pair.responder,
+                    &mut pair.resp_out,
+                    &mut pair.initiator,
+                    &mut pair.init_in,
+                    &text,
+                )
+                .await;
+            }
+        }
+
+        assert!(pair.initiator.is_pq_active() && pair.responder.is_pq_active());
+        assert_eq!(pair.initiator.dropped_pq_peer_keys(), 0);
+        assert_eq!(pair.responder.dropped_pq_peer_keys(), 0);
+    }
+
 }

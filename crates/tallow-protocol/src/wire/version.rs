@@ -25,7 +25,7 @@ use crate::{ProtocolError, Result};
 /// (security review 2026-09-23 — downgrade rewrites fail loudly); v8 = the
 /// declared suite code joins that binding (checklist 5.2), so a peer running an
 /// unknown suite is refused rather than defaulted onto ours.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// Minimum supported protocol version
 ///
@@ -193,7 +193,14 @@ mod tests {
     fn test_process_floor_request_is_accepted() {
         // The floor itself must still be selectable, or raising it would have
         // broken exactly the peers it is meant to allow.
-        let response = process_version_request(&[4, 5, 6, 7, 8]).unwrap();
+        //
+        // Derived from the constants rather than a hardcoded ladder list: this
+        // test previously enumerated `[4, 5, 6, 7, 8]`, so a version bump failed
+        // here for a reason that had nothing to do with the floor — the peer's
+        // offer simply no longer reached our version. Keeping it derived means a
+        // bump cannot break the floor assertion again.
+        let offered: Vec<u32> = (MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).collect();
+        let response = process_version_request(&offered).unwrap();
         match response {
             Message::VersionResponse { selected_version } => {
                 assert_eq!(selected_version, PROTOCOL_VERSION);
