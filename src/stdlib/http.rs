@@ -649,6 +649,87 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
 /// Closes the documented "truth gap" where .tl scripts could check-pass
 /// against a declared http.batch but die at runtime.
 fn http_batch(args: Vec<Value>) -> StdlibResult {
+    /// One entry of an `http.batch` result — the typed per-URL model the stdlib declares
+    /// (`BatchResponse` with an optional `Response` and an optional `HttpError`).
+    fn batch_item(
+        url: &str,
+        ok: bool,
+        elapsed_ms: i128,
+        response: Value,
+        error: Option<(&str, Option<i128>, bool, String)>,
+    ) -> Value {
+        let error_value = match error {
+            Some((kind, status, retryable, message)) => Value::Struct {
+                name: "HttpError".into(),
+                fields: vec![
+                    ("kind".into(), Value::String(kind.to_string())),
+                    ("url".into(), Value::String(url.to_string())),
+                    ("status".into(), status.map(Value::Int).unwrap_or(Value::Nil)),
+                    ("retryable".into(), Value::Bool(retryable)),
+                    ("message".into(), Value::String(message)),
+                ],
+            },
+            None => Value::Nil,
+        };
+        Value::Struct {
+            name: "BatchResponse".into(),
+            fields: vec![
+                ("url".into(), Value::String(url.to_string())),
+                ("ok".into(), Value::Bool(ok)),
+                ("attempts".into(), Value::Int(1)),
+                ("elapsed_ms".into(), Value::Int(elapsed_ms)),
+                ("response".into(), response),
+                ("error".into(), error_value),
+            ],
+        }
+    }
+
+    /// Classify a `Response` struct by its status. A 4xx/5xx is a *result* here, not a transport
+    /// failure: the typed model reports it with its body attached.
+    fn classify(url: &str, response: Value, elapsed_ms: i128) -> Value {
+        let status = match &response {
+            Value::Struct { fields, .. } => fields
+                .iter()
+                .find(|(k, _)| k == "status")
+                .and_then(|(_, v)| if let Value::Int(n) = v { Some(*n) } else { None })
+                .unwrap_or(0),
+            _ => 0,
+        };
+        if status >= 400 {
+            let kind = if status < 500 { "http_4xx" } else { "http_5xx" };
+            batch_item(
+                url,
+                false,
+                elapsed_ms,
+                response,
+                Some((kind, Some(status), false, format!("HTTP {status} for {url}"))),
+            )
+        } else {
+            batch_item(url, true, elapsed_ms, response, None)
+        }
+    }
+
+    // Batch-only agent. ureq 3.2 defaults `http_status_as_error` to true, which turns a 4xx into an
+    // `Err` before its body is reachable — and this model must report a 404 as a result carrying the
+    // body. No proxy either: this path serves loopback literals only (see `is_loopback_literal`).
+    // Function-local so neither behaviour can leak into `http.get`/`http.post`.
+    static BATCH_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
+        let t = Duration::from_secs(30);
+        ureq::Agent::config_builder()
+            .timeout_global(None)
+            .timeout_per_call(Some(t))
+            .timeout_resolve(Some(Duration::from_secs(10)))
+            .timeout_connect(Some(Duration::from_secs(15)))
+            .timeout_send_request(Some(Duration::from_secs(10)))
+            .timeout_send_body(Some(t))
+            .timeout_recv_response(Some(t))
+            .timeout_recv_body(Some(t))
+            .https_only(false)
+            .http_status_as_error(false)
+            .build()
+            .new_agent()
+    });
+
     let urls = match args.first() {
         Some(Value::Array(items)) => items
             .iter()
@@ -656,31 +737,73 @@ fn http_batch(args: Vec<Value>) -> StdlibResult {
             .collect::<Vec<String>>(),
         _ => return Err("http.batch requires a [String] URLs argument".to_string()),
     };
-    let concurrency = args
-        .get(1)
-        .and_then(|v| if let Value::Int(n) = v { Some(*n) } else { None })
-        .map(|n| n.max(1) as usize)
-        .unwrap_or(8)
-        .min(64);
+    let headers = extract_headers(&args[2..]);
 
-    let fetch_one = |url: String| -> Value {
-        match http_get(vec![Value::String(url.clone())]) {
-            Ok(resp) => resp,
-            Err(e) => Value::Err(Box::new(Value::String(format!("http.batch[{url}]: {e}")))),
-        }
-    };
+    let results: Vec<Value> = urls
+        .into_iter()
+        .map(|url| {
+            let started = Instant::now();
+            // Non-loopback targets keep the existing path unchanged (stealth impersonation plus the
+            // egress proxy), so this change is scoped to the case the typed model needs.
+            if !is_loopback_literal(&url) {
+                return match http_get(vec![Value::String(url.clone())]) {
+                    Ok(Value::Struct { name, fields }) if name == "Response" => {
+                        let elapsed = elapsed_ms_since(started) as i128;
+                        classify(&url, Value::Struct { name, fields }, elapsed)
+                    }
+                    Ok(Value::Err(inner)) => {
+                        let message = match *inner {
+                            Value::String(s) => s,
+                            other => format!("{other:?}"),
+                        };
+                        batch_item(
+                            &url,
+                            false,
+                            elapsed_ms_since(started) as i128,
+                            Value::Nil,
+                            Some(("transport", None, true, message)),
+                        )
+                    }
+                    Ok(other) => batch_item(
+                        &url,
+                        false,
+                        elapsed_ms_since(started) as i128,
+                        Value::Nil,
+                        Some(("transport", None, true, format!("{other:?}"))),
+                    ),
+                    Err(e) => batch_item(
+                        &url,
+                        false,
+                        elapsed_ms_since(started) as i128,
+                        Value::Nil,
+                        Some(("transport", None, true, format!("http.get: {e}"))),
+                    ),
+                };
+            }
 
-    let results: Vec<Value> = if urls.len() <= concurrency || concurrency <= 1 {
-        urls.into_iter().map(fetch_one).collect()
-    } else {
-        // Sequential even for large batches: http_get closes over
-        // thread-local non-Send state (Rc<RefCell<_>> caches), so scoped
-        // threads cannot capture it. Per-URL failures stay isolated.
-        eprintln!(
-            "http.batch: concurrency capped to sequential in this build (non-Send fetch state)"
-        );
-        urls.into_iter().map(fetch_one).collect()
-    };
+            let mut req = BATCH_AGENT.get(&url);
+            for (k, v) in &headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
+            match req.call() {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let body = resp.into_body().read_to_vec().unwrap_or_default();
+                    let elapsed = elapsed_ms_since(started) as i128;
+                    let response =
+                        build_response_value(status, body, &url, vec![], elapsed_ms_since(started));
+                    classify(&url, response, elapsed)
+                }
+                Err(e) => batch_item(
+                    &url,
+                    false,
+                    elapsed_ms_since(started) as i128,
+                    Value::Nil,
+                    Some(("transport", None, true, format!("http.get: {e}"))),
+                ),
+            }
+        })
+        .collect();
 
     Ok(Value::Array(results))
 }
