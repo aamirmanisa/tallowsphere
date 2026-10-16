@@ -1,6 +1,7 @@
 # Typed batch result model for `http.batch` (`BatchResponse` / `HttpError`)
 
-Status: **open — needs the operator's direction.** Filed 2026-10-16 from the CI-wiring work.
+Status: **RESOLVED 2026-10-16.** Implemented and verified — `http_result_model` is 3 passed / 0 failed, and the
+suite has been promoted out of the `contract-cli` job's exclusion list into its target list.
 
 ## Why it exists
 
