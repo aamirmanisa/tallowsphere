@@ -1,8 +1,11 @@
 // tallow.http — HTTP client/server
 // This is a stub — will be implemented as a native module in the compiler runtime.
 
-/// Fetch many URLs in one call. Returns [Response] (per-URL Err entries on failure).
-native fn batch(urls: [String], concurrency: Int) -> [Response]
+/// Fetch many URLs in one call — one typed entry per URL. A 4xx/5xx is a *result* carrying its body
+/// plus an `HttpError`, never a failed whole batch; a transport failure carries `HttpError` with
+/// `kind: "transport"` and no response.
+/// http.batch(target_urls, concurrency, headers) -> []BatchResponse
+native fn batch(target_urls: []String, concurrency: i64, headers: Map<String, String>) -> []BatchResponse
 
 struct Response {
     status:  u16,
@@ -10,6 +13,28 @@ struct Response {
     headers: Map<String, String>,
     url:     String,
     time_ms: u64,
+}
+
+/// A per-URL failure, typed: `kind` is `http_4xx`, `http_5xx` or `transport`; `status` is present only
+/// for an HTTP status, and `retryable` says whether a retry could plausibly help.
+struct HttpError {
+    kind:      String,
+    url:       String,
+    status:    Int?,
+    retryable: Bool,
+    message:   String,
+}
+
+/// One entry of an `http.batch` result. Exactly one of `response`/`error` is meaningful: a success
+/// carries the response, a 4xx/5xx carries both (so the body stays readable), a transport failure
+/// carries only the error.
+struct BatchResponse {
+    url:        String,
+    ok:         Bool,
+    attempts:   Int,
+    elapsed_ms: Int,
+    response: Response?,
+    error: HttpError?,
 }
 
 impl Response {
