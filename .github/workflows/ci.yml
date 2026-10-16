@@ -139,14 +139,12 @@ jobs:
   #                                   (remove_dir_all, with failures surfaced) — verified 14 passed, 0 failed
   #   sec1_honesty_sweep     FIXED and promoted above — the assertion was the stale side; the document's 23
   #                                   matches src/main.rs's 23 named flags — verified 9 passed, 0 failed
-  #   http_result_model      0 / 3    its exclusion reason CHANGED after the loopback work: it no longer
-  #                                   fails on the stealth SOCKS plane (it now reaches a real socket and
-  #                                   reports "io: Connection refused"), and it now fails because
-  #                                   http.batch returns "Response" and raw Errs while the suite asserts a
-  #                                   typed BatchResponse/HttpError model that exists in neither the runtime
-  #                                   nor the stdlib/http.tl stub. That is unimplemented feature work on a
-  #                                   published contract, so it is a decision (author the model, or relax the
-  #                                   assertions), not an environment gap.
+  #   http_result_model      FIXED and promoted above — the typed BatchResponse/HttpError model now exists
+  #                                   (http_batch classifies 4xx as a result carrying its body, transport
+  #                                   failures as kind "transport"), and stdlib/http.tl declares it —
+  #                                   verified 3 passed, 0 failed. The status-as-error override is scoped to
+  #                                   a function-local agent on the loopback path, so http.get/post semantics
+  #                                   are unchanged (http unit tests still 61 passed, 0 failed).
   contract-cli:
     name: Contract and CLI suites (integration)
     runs-on: ubuntu-latest
@@ -162,6 +160,7 @@ jobs:
           cargo test --locked --no-fail-fast
           --test audit_cli_contract
           --test fingerprint_audit_cli
+          --test http_result_model
           --test pkg_cli
           --test replay_determinism
           --test scope_gate
