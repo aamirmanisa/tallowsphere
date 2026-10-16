@@ -168,6 +168,16 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Outbound authorization register (deny-by-default): `scope check|list|verify`.
+    /// A host absent from `configs/tallow/scope/authorized-hosts.toml` is refused
+    /// before a socket is opened; the exit status is the verdict (0 allowed,
+    /// 2 refused or defective) and the reason is printed, never implied.
+    #[command(name = "scope")]
+    Scope {
+        /// Everything after `scope`, e.g. `check https://example.com/ --json`
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Veil egress control: assert a transport rung, announce it, and hand
     /// off env for child runs (`tallow veil connect tor|mesh|direct`).
     /// Bridge server: `tallow veil bridge serve`.
@@ -2613,6 +2623,17 @@ fn real_main() -> anyhow::Result<()> {
             use tallow::cli::pin_cmd;
             pin_cmd::run_pin_cmd(&args).map_err(anyhow::Error::msg)?;
             return Ok(());
+        }
+        Command::Scope { args } => {
+            // Exit status is the verdict: 0 allowed, 2 refused or defective.
+            // The reason goes to stderr and is never implied by the status alone.
+            match tallow::cli::scope_cmd::run_scope_cmd(&args) {
+                Ok(()) => return Ok(()),
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    std::process::exit(2);
+                }
+            }
         }
         Command::Veil { args } => {
             std::process::exit(tallow::cli::veil_cmd::run_veil_args(&args));
