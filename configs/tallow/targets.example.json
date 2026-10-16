@@ -3,8 +3,8 @@
     "https://vendor.example/graphql",
     "https://vendor.example/api/graphql",
     "https://vendor.example/graphql",
-    "https://www.apollo.io/",
-    "https://www.apollo.io/robots.txt"
+    "https://vendor.example/",
+    "https://vendor.example/robots.txt"
   ],
   "headers": {
     "Accept": "application/json, text/plain, */*",
@@ -58,17 +58,17 @@
   "policy": {
     "allowlist": {
       "domains": [
-        "apollo.io",
-        "*.apollo.io"
+        "vendor.example",
+        "*.vendor.example"
       ],
       "url_patterns": [
-        "https://*.apollo.io/*"
+        "https://*.vendor.example/*"
       ]
     },
     "denylist": {
       "url_patterns": [
-        "https://*.apollo.io/admin/*",
-        "https://*.apollo.io/private/*"
+        "https://*.vendor.example/admin/*",
+        "https://*.vendor.example/private/*"
       ]
     },
     "robots": {
@@ -88,7 +88,7 @@
           "concurrent": 16,
           "cooldown_ms": 250
         },
-        "www.apollo.io": {
+        "vendor.example": {
           "requests_per_minute": 60,
           "burst": 10,
           "concurrent": 8,

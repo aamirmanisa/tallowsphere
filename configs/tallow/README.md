@@ -119,13 +119,13 @@ Rate limit entries support:
   },
   "policy": {
     "allowlist": {
-      "domains": ["apollo.io", "*.apollo.io"],
-      "url_patterns": ["https://*.apollo.io/*"]
+      "domains": ["vendor.example", "*.vendor.example"],
+      "url_patterns": ["https://*.vendor.example/*"]
     },
     "denylist": {
       "url_patterns": [
-        "https://*.apollo.io/admin/*",
-        "https://*.apollo.io/private/*"
+        "https://*.vendor.example/admin/*",
+        "https://*.vendor.example/private/*"
       ]
     },
     "robots": {
