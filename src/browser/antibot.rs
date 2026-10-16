@@ -121,7 +121,7 @@ impl Default for AntiBotSettings {
 /// Per-retailer configuration.
 #[derive(Debug, Clone)]
 pub struct RetailerConfig {
-    /// Domain pattern (e.g., "amazon.com").
+    /// Domain pattern (e.g., "shop-06.example").
     pub domain: String,
     /// Anti-bot systems in use.
     pub antibot_types: Vec<CookieType>,
@@ -391,7 +391,7 @@ impl AntiBotOrchestrator {
     fn register_default_retailers(&mut self) {
         let retailers = vec![
             RetailerConfig {
-                domain: "amazon.com".into(),
+                domain: "shop-06.example".into(),
                 antibot_types: vec![CookieType::Session],
                 use_api: false,
                 api_url: None,
@@ -435,7 +435,7 @@ impl AntiBotOrchestrator {
                 notes: "FREE official API at developer.shop-c.example. 5 req/sec.".into(),
             },
             RetailerConfig {
-                domain: "nike.com".into(),
+                domain: "shop-61.example".into(),
                 antibot_types: vec![CookieType::Akamai],
                 use_api: false,
                 api_url: None,
@@ -533,7 +533,7 @@ impl AntiBotOrchestrator {
     // Execution engine
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Extract the registrable domain from a URL (e.g. "https://www.amazon.com/dp/B09V3KXJPB" -> "amazon.com").
+    /// Extract the registrable domain from a URL (e.g. "https://shop-06.example/dp/B09V3KXJPB" -> "shop-06.example").
     fn extract_domain(url: &str) -> String {
         let after_scheme = url
             .strip_prefix("https://")
@@ -1700,7 +1700,7 @@ mod tests {
     fn retailer_lookup() {
         let orch = AntiBotOrchestrator::new();
 
-        let amazon = orch.get_retailer_config("www.amazon.com");
+        let amazon = orch.get_retailer_config("shop-06.example");
         assert!(amazon.is_some());
 
         let walmart = orch.get_retailer_config("shop-a.example");
@@ -1719,7 +1719,7 @@ mod tests {
         let rec = orch.recommend("shop-c.example");
         assert!(rec.contains("API"));
 
-        let rec = orch.recommend("amazon.com");
+        let rec = orch.recommend("shop-06.example");
         assert!(rec.contains("Residential"));
     }
 
@@ -1728,10 +1728,10 @@ mod tests {
         let mut orch = AntiBotOrchestrator::new();
 
         // Success
-        orch.report_response("amazon.com", 200, None, None, 150.0);
+        orch.report_response("shop-06.example", 200, None, None, 150.0);
 
         // Soft block
-        orch.report_response("amazon.com", 403, Some("captcha detected"), None, 0.0);
+        orch.report_response("shop-06.example", 403, Some("captcha detected"), None, 0.0);
 
         // Check rate was reduced
         let summary = orch.rate_manager.summary();

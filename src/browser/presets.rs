@@ -1219,7 +1219,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("costco.com"),
+            domain: s("shop-21.example"),
             display_name: s("Costco"),
             brand_color: s("#E31837"),
             default_level: ScrapeLevel::L3Deep,
@@ -1348,7 +1348,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("amazon.com"),
+            domain: s("shop-06.example"),
             display_name: s("Amazon / Whole Foods"),
             brand_color: s("#FF9900"),
             default_level: ScrapeLevel::L3Deep,
@@ -2892,7 +2892,7 @@ fn builtin_presets() -> Vec<SitePreset> {
         },
         // ─── E-commerce ───────────────────────────────────────────────
         SitePreset {
-            domain: s("ebay.com"),
+            domain: s("shop-27.example"),
             display_name: s("eBay"),
             brand_color: s("#E53238"),
             default_level: ScrapeLevel::L2Standard,
@@ -3439,7 +3439,7 @@ fn builtin_presets() -> Vec<SitePreset> {
 
         // ─── Additional e-commerce ────────────────────────────────────
         SitePreset {
-            domain: s("newegg.com"),
+            domain: s("shop-59.example"),
             display_name: s("Newegg"),
             brand_color: s("#CF6412"),
             default_level: ScrapeLevel::L2Standard,
@@ -3566,7 +3566,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("homedepot.com"),
+            domain: s("shop-41.example"),
             display_name: s("Home Depot"),
             brand_color: s("#F96302"),
             default_level: ScrapeLevel::L2Standard,
@@ -3700,7 +3700,7 @@ fn builtin_presets() -> Vec<SitePreset> {
             ]),
         },
         SitePreset {
-            domain: s("lowes.com"),
+            domain: s("shop-54.example"),
             display_name: s("Lowe's"),
             brand_color: s("#004990"),
             default_level: ScrapeLevel::L2Standard,
@@ -4485,8 +4485,8 @@ mod tests {
             "shop-b.example",
             "kroger.com",
             "shop-d.example",
-            "costco.com",
-            "amazon.com",
+            "shop-21.example",
+            "shop-06.example",
         ] {
             assert!(
                 mgr.get_site_preset(domain).is_some(),

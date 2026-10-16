@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn detects_amazon() {
         assert_eq!(
-            AffiliateManager::detect_network("https://www.amazon.com/dp/B0XYZ"),
+            AffiliateManager::detect_network("https://shop-06.example/dp/B0XYZ"),
             Some("amazon".to_string())
         );
     }
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn wraps_amazon_tag() {
         let m = AffiliateManager::new();
-        let w = m.wrap("https://www.amazon.com/dp/B0XYZ", 10_00);
+        let w = m.wrap("https://shop-06.example/dp/B0XYZ", 10_00);
         assert!(w.wrapped_url.contains("tag=hackthecart-20"));
         assert_eq!(w.network, "amazon");
         assert_eq!(w.estimated_commission_cents, 40); // 4% of $10
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn replaces_existing_tag() {
         let m = AffiliateManager::new();
-        let w = m.wrap("https://www.amazon.com/dp/B0XYZ?tag=other-20&foo=bar", 0);
+        let w = m.wrap("https://shop-06.example/dp/B0XYZ?tag=other-20&foo=bar", 0);
         assert!(w.wrapped_url.contains("tag=hackthecart-20"));
         assert!(!w.wrapped_url.contains("tag=other-20"));
         assert!(w.wrapped_url.contains("foo=bar"));

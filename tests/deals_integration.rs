@@ -178,7 +178,7 @@ fn deals_load_retailer_config_amazon() {
         }"#,
     );
     assert_eq!(output[0], "amazon");
-    assert!(output[1].contains("amazon.com"));
+    assert!(output[1].contains("shop-06.example"));
     assert_eq!(output[2], "true");
 }
 

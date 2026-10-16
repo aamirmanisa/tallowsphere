@@ -351,7 +351,7 @@
   <ul>
     <li><a href="#hero">Search</a></li>
     <li><a href="#capabilities">Capabilities</a></li>
-    <li><a href="https://github.com" target="_blank">Docs</a></li>
+    <li><a href="https://github.example" target="_blank">Docs</a></li>
   </ul>
   <button class="cta" onclick="runSearch()">Launch Scraper</button>
 </nav>
@@ -370,7 +370,7 @@
   </div>
 
   <div class="hero-hints fade-in">
-    <span onclick="fillSearch('amazon.com pricing API')">amazon.com</span>
+    <span onclick="fillSearch('shop-f.example pricing API')">shop-f.example</span>
     <span onclick="fillSearch('competitor product feeds')">product feeds</span>
     <span onclick="fillSearch('public SEC filings')">SEC filings</span>
     <span onclick="fillSearch('real estate listings MLS')">MLS data</span>
@@ -380,14 +380,14 @@
 <!-- RESULTS -->
 <section id="results">
   <div class="results-header fade-in">
-    <h2 id="resultsTitle">Results for "amazon.com pricing API"</h2>
+    <h2 id="resultsTitle">Results for "shop-f.example pricing API"</h2>
     <div class="results-meta"><span class="status-dot live"></span> <b>12 sources</b> scraped in <b>340ms</b> via 8 IPs</div>
   </div>
 
   <div class="result-card glass-card fade-in">
     <div>
       <a class="title" href="#">Amazon Product Advertising API v5</a>
-      <div class="url">https://webservices.amazon.com/paapi5/documentation</div>
+      <div class="url">https://webservices.shop-f.example/paapi5/documentation</div>
       <div class="snippet">Official product data API. Returns pricing, availability, and product metadata. Rate limited to 1 req/sec for new associates. TLS 1.3 required.</div>
       <div class="tags">
         <span class="tag tag-legal">GDPR Safe</span>
@@ -402,7 +402,7 @@
   <div class="result-card glass-card fade-in">
     <div>
       <a class="title" href="#">Keepa — Amazon Price Tracker</a>
-      <div class="url">https://keepa.com/api</div>
+      <div class="url">https://keepa.example/api</div>
       <div class="snippet">Historical pricing data for 900M+ products across 13 Amazon marketplaces. REST API with JSON responses. Public pricing data, no personal data collected.</div>
       <div class="tags">
         <span class="tag tag-legal">Public Data</span>
@@ -417,7 +417,7 @@
   <div class="result-card glass-card fade-in">
     <div>
       <a class="title" href="#">CamelCamelCamel Price History</a>
-      <div class="url">https://camelcamelcamel.com</div>
+      <div class="url">https://camelcamelcamel.example</div>
       <div class="snippet">Free Amazon price history charts. Provides buy/sell signals based on historical data. Publicly accessible without authentication.</div>
       <div class="tags">
         <span class="tag tag-legal">Public Data</span>
@@ -432,7 +432,7 @@
   <div class="result-card glass-card fade-in">
     <div>
       <a class="title" href="#">Rainforest API — Structured Product Data</a>
-      <div class="url">https://www.rainforestapi.com/docs</div>
+      <div class="url">https://rainforestapi.example/docs</div>
       <div class="snippet">Real-time Amazon product, pricing, and review data. Returns structured JSON. Rate limits enforced server-side. robots.txt compliant.</div>
       <div class="tags">
         <span class="tag tag-legal">Rate Limited</span>
@@ -446,8 +446,8 @@
 
   <div class="result-card glass-card fade-in" onclick="showAnalysis()">
     <div>
-      <a class="title" href="#">Amazon.com — Direct Product Pages</a>
-      <div class="url">https://amazon.com/dp/*</div>
+      <a class="title" href="#">shop-06.example — Direct Product Pages</a>
+      <div class="url">https://shop-f.example/dp/*</div>
       <div class="snippet">Direct page scraping with Tallow stealth engine. Anti-bot bypassed via 20-vector fingerprint. IP rotation across 10K residential proxies. Click to see full site analysis.</div>
       <div class="tags">
         <span class="tag tag-legal">Legal Basis: Public</span>
@@ -465,7 +465,7 @@
 <section id="analysis">
   <div class="analysis-header fade-in">
     <h2>Site Analysis</h2>
-    <p>amazon.com &mdash; deep infrastructure scan completed</p>
+    <p>shop-f.example &mdash; deep infrastructure scan completed</p>
   </div>
 
   <div class="metrics-grid">
@@ -680,9 +680,9 @@ function fillSearch(q) {
 
 function runSearch() {
   const q = document.getElementById('searchInput').value.trim();
-  if (!q) { fillSearch('amazon.com pricing API'); }
+  if (!q) { fillSearch('shop-f.example pricing API'); }
   const title = document.getElementById('resultsTitle');
-  if (title) title.textContent = 'Results for "' + (q || 'amazon.com pricing API') + '"';
+  if (title) title.textContent = 'Results for "' + (q || 'shop-f.example pricing API') + '"';
 
   document.getElementById('hero').style.minHeight = 'auto';
   document.getElementById('results').classList.add('active');

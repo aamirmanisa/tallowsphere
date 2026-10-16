@@ -1084,9 +1084,9 @@ impl DomainStrategyDatabase {
 
         // Amazon: strict — residential/mobile only
         strategies.insert(
-            "amazon.com".into(),
+            "shop-06.example".into(),
             DomainProxyStrategy {
-                domain: "amazon.com".into(),
+                domain: "shop-06.example".into(),
                 required_asn_type: Some(AsnType::Residential),
                 min_trust_score: 85,
                 preferred_country: Some("US".into()),
@@ -1117,9 +1117,9 @@ impl DomainStrategyDatabase {
 
         // Costco: Akamai
         strategies.insert(
-            "costco.com".into(),
+            "shop-21.example".into(),
             DomainProxyStrategy {
-                domain: "costco.com".into(),
+                domain: "shop-21.example".into(),
                 required_asn_type: Some(AsnType::Residential),
                 min_trust_score: 80,
                 preferred_country: Some("US".into()),
@@ -1875,7 +1875,7 @@ mod tests {
         assert!(target.required_asn_type.is_none());
         assert!(target.min_trust_score < 50);
 
-        let amazon = db.get("amazon.com").expect("amazon strategy");
+        let amazon = db.get("shop-06.example").expect("amazon strategy");
         assert!(amazon.min_trust_score >= 85);
     }
 

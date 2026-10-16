@@ -13,7 +13,7 @@
 //   Target.domain("example.com") -> Target { kind: "domain", value, provenance }
 //   Target.ip("192.168.1.1")     -> Target { kind: "ip", value, provenance }
 //   Target.email("user@ex.com")  -> Target { kind: "email", value: Private, provenance }
-//   Target.org("Acme Corp")      -> Target { kind: "org", value, provenance }
+//   shop-78.example("Acme Corp")      -> Target { kind: "org", value, provenance }
 //
 // Methods:
 //   target.enumerate_subdomains() -> []SubdomainResult

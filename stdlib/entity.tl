@@ -98,7 +98,7 @@ fn Entity.name_key(s: String) -> String
 /// Lowercase alias.
 fn entity.name_key(s: String) -> String
 
-/// Clean host ("WWW.Acme-Store.com:443/x" -> "acme-store.com").
+/// Clean host ("WWW.Acme-shop-77.example:443/x" -> "acme-shop-77.example").
 fn Entity.domain_key(s: String) -> String
 
 /// Lowercase alias.

@@ -272,3 +272,24 @@ patch provenance headers (now the project domain).
 Environment, not content: the browser system's per-retailer profiles survive as mechanism with
 neutral site data; the four vendored canonical crates are pinned by `crates/CANONICAL-SYNC.sha256`,
 which verifies clean and is gated in CI.
+
+### Second pass — retailer targets and the removed-module references (2026-10-15)
+
+The first pass scoped its strip to `src/`, `tests/`, `examples/` and `stdlib/`. A whole-tree scan
+afterwards found the same class outside those paths, now handled:
+
+| omitted or neutralised | why |
+|---|---|
+| `configs/tallow/retailers/` — 96 per-retailer configs, 94 carrying real domains | A customer/target list, not configuration the product needs to ship. One generic specimen is retained (`example.json`, domain `shop-a.example`) so the loader in `src/stdlib/deals.rs` and its documentation still work |
+| Retailer domains elsewhere in the tree (25 files: mockups, the research doc, integration tests, `deals.rs`, the browser's built-in retailer table) | Replaced with `shop-NN.example`. **Domain forms only** — a bare name would be unusable, since e.g. `target` is an ordinary English word that appears throughout the compiler |
+
+Kept deliberately, and recorded here so it is a decision rather than an oversight:
+
+- **`patches/` may name modules this tree does not contain.** The series is preserved history; a patch
+  that touched a now-omitted module still describes what was done at the time. Redacting it would
+  falsify the record.
+- **`docs/operations/stub-register.md` and `docs/extraction-engine/TALLOW-SCRAPER-AUDIT-2026-10-14.md`**
+  describe audits performed when those modules existed. The omissions table above is the mapping
+  between what they discuss and what is present here.
+- **Bare retailer names remain in design mockups.** The mockups illustrate the product's UI; retailer
+  *domains* are neutralised, brand words are not.

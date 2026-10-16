@@ -636,16 +636,16 @@ impl RetailerAntiBot {
     /// Get the anti-bot type for a known retailer domain.
     pub fn detect(domain: &str) -> Vec<CookieType> {
         match domain {
-            d if d.contains("amazon.com") => vec![CookieType::Session], // Custom AWS WAF
+            d if d.contains("shop-06.example") => vec![CookieType::Session], // Custom AWS WAF
             d if d.contains("shop-a.example") => vec![CookieType::Akamai, CookieType::PerimeterX],
             d if d.contains("shop-b.example") => vec![CookieType::Akamai],
             d if d.contains("shop-c.example") => vec![CookieType::Akamai, CookieType::Kasada],
-            d if d.contains("nike.com") => vec![CookieType::Akamai],
-            d if d.contains("adidas.com") => vec![CookieType::Akamai, CookieType::DataDome],
-            d if d.contains("footlocker.com") => vec![CookieType::Akamai, CookieType::PerimeterX],
-            d if d.contains("nordstrom.com") => vec![CookieType::Akamai],
-            d if d.contains("macys.com") => vec![CookieType::Akamai],
-            d if d.contains("asos.com") => vec![CookieType::Kasada],
+            d if d.contains("shop-61.example") => vec![CookieType::Akamai],
+            d if d.contains("shop-02.example") => vec![CookieType::Akamai, CookieType::DataDome],
+            d if d.contains("shop-31.example") => vec![CookieType::Akamai, CookieType::PerimeterX],
+            d if d.contains("shop-62.example") => vec![CookieType::Akamai],
+            d if d.contains("shop-56.example") => vec![CookieType::Akamai],
+            d if d.contains("shop-09.example") => vec![CookieType::Kasada],
             d if d.contains("zara.com") => vec![CookieType::Akamai, CookieType::DataDome],
             d if d.contains("hm.com") => vec![CookieType::Akamai],
             d if d.contains("fashionnova.com") => vec![CookieType::Cloudflare],
@@ -660,7 +660,7 @@ impl RetailerAntiBot {
         types.contains(&CookieType::Kasada)
             || types.len() >= 2
             || domain.contains("shop-c.example")
-            || domain.contains("adidas.com")
+            || domain.contains("shop-02.example")
     }
 
     /// Recommended approach for a domain.
@@ -669,9 +669,9 @@ impl RetailerAntiBot {
             d if d.contains("shop-c.example") => "Use official API at developer.shop-c.example (free, 5 req/sec)",
             d if d.contains("shop-a.example") => "Use Walmart Affiliate API (free, 20 req/sec)",
             d if d.contains("shop-b.example") => "Use Redsky API (semi-public, extract key from JS)",
-            d if d.contains("amazon.com") => "Real Chrome + stealth + residential proxy",
+            d if d.contains("shop-06.example") => "Real Chrome + stealth + residential proxy",
             d if d.contains("fashionnova.com") => "Shopify /products.json endpoint (often open)",
-            d if d.contains("asos.com") => "Real Chrome only (Kasada proof-of-work)",
+            d if d.contains("shop-09.example") => "Real Chrome only (Kasada proof-of-work)",
             _ => "Real Chrome + stealth + adaptive rate limiting",
         }
     }
@@ -813,7 +813,7 @@ mod tests {
         let mut farm = CookieFarm::new("Chrome/131");
 
         farm.jar("shop-a.example");
-        farm.jar("amazon.com");
+        farm.jar("shop-06.example");
 
         assert_eq!(farm.domains().len(), 2);
         assert_eq!(farm.domains_needing_refresh().len(), 2); // Empty jars need refresh

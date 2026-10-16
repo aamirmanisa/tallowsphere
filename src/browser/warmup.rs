@@ -110,8 +110,8 @@ impl WarmupSequence {
                 WarmupStep::simple("https://www.wikipedia.org", 2.0, 4.0),
                 WarmupStep::simple("https://news.ycombinator.com", 2.0, 5.0),
                 WarmupStep::simple("https://www.reddit.com", 3.0, 6.0),
-                WarmupStep::simple("https://www.amazon.com", 3.0, 7.0),
-                WarmupStep::simple("https://www.ebay.com", 2.0, 5.0),
+                WarmupStep::simple("https://shop-06.example", 3.0, 7.0),
+                WarmupStep::simple("https://shop-27.example", 2.0, 5.0),
             ],
         }
     }
@@ -350,10 +350,10 @@ pub struct RetailerWarmup;
 impl RetailerWarmup {
     pub fn amazon() -> WarmupSequence {
         WarmupSequence::domain_warmup(
-            "https://www.amazon.com",
+            "https://shop-06.example",
             &[
-                "https://www.amazon.com/gp/bestsellers/",
-                "https://www.amazon.com/deals",
+                "https://shop-06.example/gp/bestsellers/",
+                "https://shop-06.example/deals",
             ],
         )
     }
@@ -678,7 +678,7 @@ mod tests {
     fn retailer_presets() {
         let amazon = RetailerWarmup::amazon();
         assert!(amazon.steps.len() >= 3);
-        assert!(amazon.steps[0].url.contains("amazon.com"));
+        assert!(amazon.steps[0].url.contains("shop-06.example"));
 
         let walmart = RetailerWarmup::walmart();
         assert!(walmart.steps[0].url.contains("shop-a.example"));

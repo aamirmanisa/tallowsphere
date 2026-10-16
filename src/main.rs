@@ -199,7 +199,7 @@ enum Command {
     /// Exit codes: 0 ok, 64 usage, 69 refused (origin mismatch), 78 unbound.
     #[command(name = "secrets")]
     Secrets {
-        /// Everything after `secrets`, e.g. `set cstorepro --username u --origin https://host`
+        /// Everything after `secrets`, e.g. `set retailer-e --username u --origin https://host`
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },

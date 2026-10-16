@@ -169,7 +169,7 @@ impl MalleableProfile {
             accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8".into(),
             accept_language: "en-US,en;q=0.9".into(),
             accept_encoding: "gzip, deflate, br, zstd".into(),
-            referer: "https://www.amazon.com/".into(),
+            referer: "https://shop-06.example/".into(),
             extra_headers: vec![
                 ("Sec-Fetch-Dest".into(), "document".into()),
                 ("Sec-Fetch-Mode".into(), "navigate".into()),

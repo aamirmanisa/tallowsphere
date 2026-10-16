@@ -26,7 +26,7 @@ const EXTRACTOR_CONTRACT_VERSION: &str = "llm.extractor.contract.v2";
 /// A complete extraction schema for a given domain + page type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionSchema {
-    /// Domain this schema was generated for (e.g. "amazon.com").
+    /// Domain this schema was generated for (e.g. "shop-06.example").
     pub domain: String,
     /// Page type: "product_listing", "product_detail", "article", "recipe", etc.
     pub page_type: String,
@@ -2996,8 +2996,8 @@ mod tests {
     #[test]
     fn test_extract_domain() {
         assert_eq!(
-            extract_domain("https://www.amazon.com/dp/B09X"),
-            "www.amazon.com"
+            extract_domain("https://shop-06.example/dp/B09X"),
+            "shop-06.example"
         );
         assert_eq!(
             extract_domain("http://example.com:8080/path"),
@@ -3012,14 +3012,14 @@ mod tests {
     #[test]
     fn test_cache_key() {
         assert_eq!(
-            cache_key("amazon.com", "product_detail"),
-            "amazon.com::product_detail"
+            cache_key("shop-06.example", "product_detail"),
+            "shop-06.example::product_detail"
         );
     }
 
     #[test]
     fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("amazon.com"), "amazon_com");
+        assert_eq!(sanitize_filename("shop-06.example"), "amazon_com");
         assert_eq!(
             sanitize_filename("www.test-site.co.uk"),
             "www_test-site_co_uk"

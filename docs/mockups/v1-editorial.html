@@ -949,7 +949,7 @@ footer {
 
     <div class="analysis-url-bar fade-in fade-in-delay-3">
       <span class="analysis-url-protocol">https://</span>
-      <span class="analysis-url-domain">www.heb.com</span>
+      <span class="analysis-url-domain">www.shop-d.example</span>
       <span class="analysis-url-path">/product-detail/h-e-b-natural-chicken-breast/2438190</span>
       <span class="analysis-url-status">200 OK &middot; 142ms</span>
     </div>
@@ -1141,7 +1141,7 @@ footer {
         rotation: .per_request
     }
 
-    <span class="kw">let</span> stores = [<span class="str">"heb.com"</span>, <span class="str">"kroger.com"</span>, <span class="str">"target.com"</span>]
+    <span class="kw">let</span> stores = [<span class="str">"shop-d.example"</span>, <span class="str">"kroger.com"</span>, <span class="str">"shop-b.example"</span>]
     <span class="kw">let</span> urls = stores.map { s -> <span class="str">"https://{s}/search?q={query}"</span> }
 
     <span class="kw">let</span> pages = pool.map(urls, concurrency: <span class="num">50</span>) { url ->

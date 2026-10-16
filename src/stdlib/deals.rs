@@ -802,7 +802,7 @@ fn generate_affiliate_link(args: Vec<Value>) -> StdlibResult {
                 let asin_start = dp_pos + 4;
                 let asin_end = url[asin_start..].find('/').map_or(url.len(), |p| asin_start + p);
                 let asin = &url[asin_start..asin_end.min(url.len())];
-                format!("https://www.amazon.com/dp/{asin}?tag={tag}")
+                format!("https://shop-06.example/dp/{asin}?tag={tag}")
             } else {
                 format!("{url}?tag={tag}")
             }
@@ -1897,7 +1897,7 @@ fn scrape_hc_feed(args: Vec<Value>) -> StdlibResult {
     let kind = args.get(2).and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None })
         .unwrap_or_else(|| "online".to_string());
 
-    let url = format!("https://api.hiddenclearances.com/api/v1/feed?page={page}&limit={limit}&kind={kind}");
+    let url = format!("https://shop-40.example/api/v1/feed?page={page}&limit={limit}&kind={kind}");
     match crate::runtime::egress_http::get(&url)
         .header("User-Agent", "TallowDeals/1.0")
         .call()

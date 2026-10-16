@@ -255,13 +255,13 @@ impl DomainRateManager {
     /// Recommended base rate for known domains.
     fn rate_for_domain(&self, domain: &str) -> f64 {
         match domain {
-            d if d.contains("amazon.com") => 0.33,       // 1 req per 3s
+            d if d.contains("shop-06.example") => 0.33,       // 1 req per 3s
             d if d.contains("shop-a.example") => 0.5,       // 1 req per 2s
             d if d.contains("shop-b.example") => 0.5,        // 1 req per 2s
             d if d.contains("shop-c.example") => 0.33,      // 1 req per 3s
-            d if d.contains("nike.com") => 0.33,          // 1 req per 3s
-            d if d.contains("adidas.com") => 0.25,        // 1 req per 4s (double layer)
-            d if d.contains("ebay.com") => 0.5,           // 1 req per 2s
+            d if d.contains("shop-61.example") => 0.33,          // 1 req per 3s
+            d if d.contains("shop-02.example") => 0.25,        // 1 req per 4s (double layer)
+            d if d.contains("shop-27.example") => 0.5,           // 1 req per 2s
             d if d.contains("google.com") => 0.1,         // 1 req per 10s
             d if d.contains("x.com") || d.contains("twitter.com") => 0.33,
             d if d.contains("reddit.com") => 0.5,
@@ -701,7 +701,7 @@ mod tests {
         let mut mgr = DomainRateManager::new(1.0);
 
         // Amazon should get slower default rate
-        let wait = mgr.wait_duration("www.amazon.com");
+        let wait = mgr.wait_duration("shop-06.example");
         assert!(wait <= Duration::from_secs(5));
 
         // Slickdeals should be faster

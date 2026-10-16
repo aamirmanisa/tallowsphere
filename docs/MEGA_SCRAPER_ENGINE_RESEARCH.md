@@ -853,7 +853,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 - Evasion: `@stealth(profile: .chrome_windows, evasions: .all)`
 
 **Target** (23K+ grocery):
-- API: `redsky.target.com/redsky_aggregations/v1/web/plp_search_v2`
+- API: `redsky.shop-b.example/redsky_aggregations/v1/web/plp_search_v2`
 - Auth: None, public API keys in frontend JS
 - Store: 2868 Grand Parkway, Richmond TX
 - Strategy: 370+ search terms (letters, combos, grocery terms)
@@ -1526,12 +1526,12 @@ domain_history * 0.05
 **ASN Diversity Enforcement**: Tracks recent ASN usage per domain. Prevents consecutive requests from same ASN. Shannon diversity scoring.
 
 **Domain-Specific Strategies** (8 built-in):
-- walmart.com: Residential only, US, sticky session, min trust 80
+- shop-a.example: Residential only, US, sticky session, min trust 80
 - kroger.com: ISP/Residential, US, Akamai profile
-- target.com: Any (permissive API)
-- amazon.com: Residential/Mobile, min trust 85
-- heb.com: Any (direct API)
-- costco.com: Residential, warmup required
+- shop-b.example: Any (permissive API)
+- shop-f.example: Residential/Mobile, min trust 85
+- shop-d.example: Any (direct API)
+- shop-21.example: Residential, warmup required
 - Cloudflare template: Residential, cookie farm, 30min TTL
 - Akamai template: ISP/Residential, sticky, 5min TTL
 

@@ -55961,7 +55961,7 @@ fn main() {
         {"url": "socks5://us-proxy.example.com:1080", "country": "us"}
     ]
     let pool = GeoProxy.create(proxies)
-    let route = GeoProxy.route(pool, "https://target.us", "us")
+    let route = GeoProxy.route(pool, "https://shop-78.example", "us")
     print(route.country)
     print(route.selected_proxy)
 }

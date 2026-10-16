@@ -194,7 +194,7 @@ fn layer4_proxy_pool_geo_selection() {
     });
 
     // Request US proxy specifically
-    let us_proxy = pool.get_proxy_geo("target.com", "US");
+    let us_proxy = pool.get_proxy_geo("shop-b.example", "US");
     assert!(us_proxy.is_some());
     assert_eq!(us_proxy.unwrap().country.as_deref(), Some("US"));
 

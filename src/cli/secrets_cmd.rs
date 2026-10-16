@@ -638,7 +638,7 @@ mod tests {
         let path = dir.join("secrets.json");
         let mut m = BTreeMap::new();
         m.insert(
-            "cstorepro".to_string(),
+            "retailer-e".to_string(),
             Entry {
                 username: "trimart4005".into(),
                 password: "s3cr3t-value".into(),
@@ -652,7 +652,7 @@ mod tests {
         assert_eq!(mode, 0o600, "on-disk mode must be 0600, got {mode:o}");
 
         let back = load(&path).expect("load");
-        let e = back.get("cstorepro").expect("entry");
+        let e = back.get("retailer-e").expect("entry");
         assert_eq!(e.username, "trimart4005");
         assert_eq!(e.password, "s3cr3t-value");
         assert_eq!(e.origin.as_deref(), Some("https://secure.shop-e.example"));
@@ -696,7 +696,7 @@ mod tests {
         let path = dir.join("secrets.json");
         let mut m = BTreeMap::new();
         m.insert(
-            "cstorepro".into(),
+            "retailer-e".into(),
             Entry {
                 username: "u".into(),
                 password: "p".into(),
@@ -709,7 +709,7 @@ mod tests {
 
         let ok = run_secrets_args(&[
             "check".into(),
-            "cstorepro".into(),
+            "retailer-e".into(),
             "--origin".into(),
             "https://secure.shop-e.example/EmagineNETCOSM/".into(),
             "--path".into(),
@@ -719,7 +719,7 @@ mod tests {
 
         let bad = run_secrets_args(&[
             "check".into(),
-            "cstorepro".into(),
+            "retailer-e".into(),
             "--origin".into(),
             "https://secure.shop-e.example.evil.net".into(),
             "--path".into(),
@@ -736,7 +736,7 @@ mod tests {
         let path = dir.join("secrets.json");
         let mut m = BTreeMap::new();
         m.insert(
-            "cstorepro".into(),
+            "retailer-e".into(),
             Entry {
                 username: "u".into(),
                 password: "DO-NOT-PRINT-ME".into(),

@@ -94,7 +94,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "Target.domain" => Some(target_domain(args)),
         "Target.ip" => Some(target_ip(args)),
         "Target.email" => Some(target_email(args)),
-        "Target.org" => Some(target_org(args)),
+        "shop-78.example" => Some(target_org(args)),
         "TechStack.detect" => Some(techstack_detect(args)),
         "DomainIntel.whois" => Some(domain_intel_whois(args)),
         "DomainIntel.dns_history" => Some(domain_intel_dns_history(args)),
@@ -268,7 +268,7 @@ fn target_email(args: Vec<Value>) -> StdlibResult {
 fn target_org(args: Vec<Value>) -> StdlibResult {
     let org = match args.first() {
         Some(Value::String(s)) => s.clone(),
-        _ => return Err("Target.org() requires a string argument".to_string()),
+        _ => return Err("shop-78.example() requires a string argument".to_string()),
     };
     Ok(Value::Struct {
         name: "Target".to_string(),
@@ -277,7 +277,7 @@ fn target_org(args: Vec<Value>) -> StdlibResult {
             ("value".to_string(), Value::String(org)),
             (
                 "provenance".to_string(),
-                Value::Array(vec![make_provenance("user_input", "Target.org")]),
+                Value::Array(vec![make_provenance("user_input", "shop-78.example")]),
             ),
         ],
     })

@@ -1012,11 +1012,11 @@ mod tests {
 
         // Kill residential proxy
         for _ in 0..6 {
-            pool.report_failure("socks5://10.0.0.1:1080", "amazon.com");
+            pool.report_failure("socks5://10.0.0.1:1080", "shop-06.example");
         }
 
         // Should fall back to datacenter
-        let proxy = pool.get_proxy("amazon.com").unwrap();
+        let proxy = pool.get_proxy("shop-06.example").unwrap();
         assert_eq!(proxy.tier, ProxyTier::Datacenter);
     }
 

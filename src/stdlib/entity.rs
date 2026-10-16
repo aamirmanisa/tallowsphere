@@ -122,7 +122,7 @@ pub fn name_key(s: &str) -> String {
 }
 
 /// Clean, comparable host: lowercase, scheme/path/port/`www.` stripped.
-/// `"WWW.Acme-Store.com:443/x"` → `"acme-store.com"`.
+/// `"WWW.Acme-shop-77.example:443/x"` → `"acme-shop-77.example"`.
 pub fn domain_key(raw: &str) -> String {
     let mut h = raw.trim().to_lowercase();
     for s in ["https://", "http://", "ftp://"] {
@@ -1146,7 +1146,7 @@ mod tests {
         assert_eq!(email_key("mailto:ops@acme.example"), "ops@acme.example");
 
         // Domain cleanup.
-        assert_eq!(domain_key("WWW.Acme-Store.com:443/x?y=1"), "acme-store.com");
+        assert_eq!(domain_key("WWW.Acme-shop-77.example:443/x?y=1"), "acme-shop-77.example");
         assert_eq!(domain_key("https://QuikFoods.com"), "quikfoods.com");
         assert_eq!(domain_key("http://www.www.example.com."), "example.com");
 

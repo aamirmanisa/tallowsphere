@@ -767,7 +767,7 @@ mod tests {
   "brand": {"@type": "Brand", "name": "Amazon"},
   "sku": "B09B8V1LZ3",
   "mpn": "C2N6L4",
-  "image": ["https://m.media-amazon.com/images/I/71xoR4A6q-L.jpg"],
+  "image": ["https://m.media-shop-06.example/images/I/71xoR4A6q-L.jpg"],
   "description": "Smart speaker with Alexa",
   "offers": {
     "@type": "Offer",

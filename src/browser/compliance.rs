@@ -116,11 +116,11 @@ impl ComplianceManager {
         // Default retailer boundaries. Last-reviewed timestamps would normally
         // come from a config file or DB; we seed with 0 for now.
         let defaults = [
-            ("amazon",   true, true, true, "https://www.amazon.com/gp/help/customer/display.html?nodeId=508088"),
+            ("amazon",   true, true, true, "https://shop-06.example/gp/help/customer/display.html?nodeId=508088"),
             ("walmart",  true, true, true, "https://www.shop-a.example/help/article/walmart-com-terms-of-use"),
             ("target",   true, true, true, "https://www.shop-b.example/c/terms-conditions"),
             ("bestbuy",  true, true, true, "https://www.shop-c.example/site/help-topics/conditions-of-use/pcmcat204400050067.c"),
-            ("costco",   true, true, true, "https://www.costco.com/terms-and-conditions-of-use.html"),
+            ("costco",   true, true, true, "https://shop-21.example/terms-and-conditions-of-use.html"),
             ("kroger",   true, true, true, "https://www.kroger.com/hc/help/policies-information/terms-and-conditions"),
         ];
         for (retailer, pub_ok, no_bypass, no_create, tos) in defaults {
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn public_product_page_allowed() {
         let m = ComplianceManager::new();
-        let c = m.is_scrape_allowed("https://www.amazon.com/dp/B0XYZ", "amazon");
+        let c = m.is_scrape_allowed("https://shop-06.example/dp/B0XYZ", "amazon");
         assert!(c.allowed);
         assert_eq!(c.legal_basis, LegalBasis::PublicData);
     }
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn authenticated_path_denied() {
         let m = ComplianceManager::new();
-        let c = m.is_scrape_allowed("https://www.amazon.com/account/orders", "amazon");
+        let c = m.is_scrape_allowed("https://shop-06.example/account/orders", "amazon");
         assert!(!c.allowed);
         assert_eq!(c.legal_basis, LegalBasis::NotAllowed);
     }
