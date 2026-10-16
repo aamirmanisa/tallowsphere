@@ -12,6 +12,7 @@
     "sha256": "9218374662ea5573b6dfc87ff8c785c09915756d73599527f30f93318186ddaf"
   },
   "environment": {
+    "arch": "aarch64",
     "kernel": "6.8.0-146-generic",
     "cpu": "unknown",
     "cpus": 8,

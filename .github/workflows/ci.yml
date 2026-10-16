@@ -389,9 +389,23 @@ jobs:
         run: >-
           python3 benchmarks/run_compiler_parser.py --tallow target/debug/tallow
           --corpus-glob 'examples/*.tl' --iters 3 --warmup 1 --out benchmarks/out/current.json
-      - name: Block on regression (target ranges)
+      # BLOCKING, and it gates on BOTH surfaces:
+      #
+      #   --targets   absolute ranges. Platform-independent, so they hold on any runner.
+      #   --baseline  the committed aarch64 measurement. Its success_rate and unresolved
+      #               counts are platform-independent -- they count how many examples
+      #               type-check, not how long it took -- so they gate here too, and that
+      #               catches a drop INSIDE the target range, which a range check cannot.
+      #
+      # TIMING is deliberately not gated across platforms: this runner is x86_64 and the
+      # baseline is aarch64, so the ms/throughput/RSS budgets are skipped and the skip is
+      # printed. Unknown arch fails closed. Same-arch runs (local, nightly, a future arm
+      # runner) therefore get the timing gate for free, and cross-arch runs get an honest
+      # note rather than a comparison between two unrelated measurements.
+      - name: Block on regression (target ranges + environment-independent baseline)
         run: >-
           python3 scripts/no_regression_gate.py --targets benchmarks/targets/v1-targets.json
+          --baseline benchmarks/baseline/v1-baseline-aarch64.json
           --current benchmarks/out/current.json --report perf-verdict.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

@@ -100,7 +100,9 @@ def env_info() -> dict:
     cpu = "unknown"
     try:
         for line in Path("/proc/cpuinfo").read_text().splitlines():
-            if line.lower().startswith(("model name", "hardware", "model")) and ":" in line:
+            # `CPU part` is what an ARM kernel reports (e.g. 0xd0c = Neoverse-N1); without
+            # it this field reads "unknown" on exactly the machines the baselines came from.
+            if line.lower().startswith(("model name", "hardware", "model", "cpu part")) and ":" in line:
                 cpu = line.split(":", 1)[1].strip()
                 break
     except Exception:
@@ -111,6 +113,10 @@ def env_info() -> dict:
         load = []
     return {
         "kernel": platform.release(),
+        # The gate refuses to compare timing across platforms, so the platform has to BE
+        # in the record. A measurement without it can never be timing-gated against
+        # anything, by design rather than by accident.
+        "arch": platform.machine(),
         "cpu": cpu,
         "cpus": os.cpu_count(),
         "loadavg": load,
