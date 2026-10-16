@@ -330,6 +330,19 @@ enum Command {
         #[arg(long, conflicts_with = "require_native")]
         interpret: bool,
 
+        /// Compile and execute in-process with the Cranelift JIT: no object file, no `ld`
+        /// invocation. The measured reason this matters is that the native path's cost is
+        /// the LINKER (0.28-32 s per invocation, against ~0.1 s of codegen) — a JIT has no
+        /// linker in the loop at all. Numeric core only: strings, arrays, closures and
+        /// builtin calls (including `print`) are rejected LOUDLY rather than mis-executed.
+        /// Requires a binary built with `--features jit`; without it, this flag refuses
+        /// rather than quietly running a different engine.
+        #[arg(long, value_name = "BACKEND", default_value = "",
+              hide = !cfg!(feature = "jit"),
+              hide_default_value = true,
+              conflicts_with_all = ["interpret", "require_native"])]
+        backend: String,
+
         /// Run under kernel confinement (Landlock): reads limited to system
         /// dirs + CWD + the program's dir, writes limited to the temp dir.
         /// A Landlock failure refuses the run instead of executing
@@ -10425,10 +10438,58 @@ fn real_main() -> anyhow::Result<()> {
                     contracts,
                     require_native,
                     interpret,
+                    backend,
                     script,
                     sandbox,
                     ..
                 } => {
+                    // ── Cranelift JIT tier ────────────────────────────────────────────
+                    // Deliberately BEFORE the native path: the whole value is skipping its
+                    // compile+link. src/codegen_cranelift.rs has existed and been tested
+                    // behind `#[cfg(feature = "jit")]` with no way to reach it from the CLI
+                    // (its own doc comment claims a `--backend` flag that did not exist).
+                    if !backend.is_empty() {
+                        if backend != "cranelift" && backend != "jit" {
+                            eprintln!("error: unknown backend '{}' (known: cranelift)",
+                                backend);
+                            std::process::exit(exit_codes::COMPILE_ERROR);
+                        }
+                        #[cfg(feature = "jit")]
+                        {
+                            let t0 = std::time::Instant::now();
+                            // output_path/target are accepted for API compatibility and
+                            // unused by the JIT — it emits straight to memory.
+                            let never = std::env::temp_dir().join("tallow_jit_no_output");
+                            let rt = tallow::codegen::TargetConfig::host();
+                            match tallow::codegen_cranelift::CraneliftBackend::compile(
+                                &program, &env, &never, rt, false,
+                            ) {
+                                Ok(()) => {
+                                    eprintln!(
+                                        "* ran in the Cranelift JIT ({:.2} ms wall, no linker)",
+                                        t0.elapsed().as_secs_f64() * 1000.0
+                                    );
+                                    return Ok(());
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "* cranelift backend cannot run this program: {e}"
+                                    );
+                                    std::process::exit(exit_codes::COMPILE_ERROR);
+                                }
+                            }
+                        }
+                        #[cfg(not(feature = "jit"))]
+                        {
+                            eprintln!(
+                                "error: this binary was built WITHOUT the `jit` feature, so the \
+                                 cranelift backend is not compiled in. Rebuild with \
+                                 `cargo build --features jit`. Refusing to silently run a \
+                                 different engine than the one that was asked for."
+                            );
+                            std::process::exit(exit_codes::COMPILE_ERROR);
+                        }
+                    }
                     // Warn about cross-compilation when using --target with run
                     if let Some(t) = &target {
                         let host = tallow::codegen::TargetConfig::host();

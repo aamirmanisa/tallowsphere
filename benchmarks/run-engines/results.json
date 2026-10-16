@@ -2,17 +2,22 @@
   "_meta": {
     "harness": "benchmarks/run-engines/run_engine_bench.py",
     "binary": "/home/aamir/tallowsphere/target/release/tallow",
-    "binary_sha256": "1ef1a897a1ab031283e33e6c1519d96a40151a3dd118f2051000c77146c86253",
+    "binary_sha256": "c38430cc7e1e424a0df24834751f12ff81bf06f4bfab683e7f9b23024570c39a",
+    "engines": [
+      "native",
+      "interpret",
+      "cranelift"
+    ],
     "kernel": "6.8.0-146-generic",
     "cpu": "0xd0c",
     "vcpus": 8,
     "loadavg_1_5_15": [
-      "2.33",
-      "4.64",
-      "3.65"
+      "2.69",
+      "4.35",
+      "3.66"
     ],
-    "date_utc": "2026-10-16T18:23:20+00:00",
-    "iters": 6,
+    "date_utc": "2026-10-16T18:47:36+00:00",
+    "iters": 5,
     "timing": "median wall over N runs of the whole `tallow run` invocation, perf_counter around the child; this INCLUDES the native path's compile+link, because that is what a user waits for",
     "floor": "`tallow --version` median = the cost of starting the binary and nothing else; reported so the engine's work can be separated from process startup"
   },
@@ -20,94 +25,337 @@
     "hello (trivial)": {
       "program": "benchmarks/run-engines/programs/hello.tl",
       "program_sha256": "9ba95137f788d3a00790f7fed9a78a46c37cdb89471757b81ee444b15e901c76",
-      "engines_agree": true,
       "known_divergence": false,
-      "native": {
-        "median_ms": 305.44,
-        "min_ms": 302.47,
-        "stdout": [
-          "hello\n"
-        ],
-        "rc": [
-          0
-        ],
-        "median_ms_excl_process_floor": 295.31,
-        "peak_rss_kb": 79616
+      "expected_main_return": null,
+      "engines": {
+        "native": {
+          "median_ms": 326.31,
+          "min_ms": 318.96,
+          "median_ms_excl_process_floor": 315.79,
+          "stdout": [
+            "hello\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 79488
+        },
+        "interpret": {
+          "median_ms": 12.81,
+          "min_ms": 11.98,
+          "median_ms_excl_process_floor": 2.28,
+          "stdout": [
+            "hello\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 27340
+        },
+        "cranelift": {
+          "median_ms": 12.97,
+          "min_ms": 12.82,
+          "median_ms_excl_process_floor": 2.44,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            1
+          ],
+          "peak_rss_kb": -1,
+          "rejected": true,
+          "reason": "* cranelift backend cannot run this program: call to non-top-level function/builtin (e.g. print, closure, dynamic) not yet implemented in Cranelift backend"
+        }
       },
-      "interpret": {
-        "median_ms": 13.25,
-        "min_ms": 12.41,
-        "stdout": [
-          "hello\n"
-        ],
-        "rc": [
-          0
-        ],
-        "median_ms_excl_process_floor": 3.12,
-        "peak_rss_kb": 24912
-      },
+      "engines_agree": true,
       "divergence_status": "engines agree"
     },
     "loop 200k (compute)": {
       "program": "benchmarks/run-engines/programs/loop.tl",
       "program_sha256": "b29bcba613ebfbdac1aba8065adf296e754a262f4d8765365ba2f0b49c0e4a88",
-      "engines_agree": true,
       "known_divergence": false,
-      "native": {
-        "median_ms": 309.34,
-        "min_ms": 288.65,
-        "stdout": [
-          "sum 19999900000\n"
-        ],
-        "rc": [
-          0
-        ],
-        "median_ms_excl_process_floor": 299.21,
-        "peak_rss_kb": 80640
+      "expected_main_return": null,
+      "engines": {
+        "native": {
+          "median_ms": 335.06,
+          "min_ms": 307.68,
+          "median_ms_excl_process_floor": 324.53,
+          "stdout": [
+            "sum 19999900000\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 80384
+        },
+        "interpret": {
+          "median_ms": 139.81,
+          "min_ms": 134.64,
+          "median_ms_excl_process_floor": 129.28,
+          "stdout": [
+            "sum 19999900000\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 27468
+        },
+        "cranelift": {
+          "median_ms": 16.26,
+          "min_ms": 14.89,
+          "median_ms_excl_process_floor": 5.74,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            1
+          ],
+          "peak_rss_kb": -1,
+          "rejected": true,
+          "reason": "* cranelift backend cannot run this program: call to non-top-level function/builtin (e.g. print, closure, dynamic) not yet implemented in Cranelift backend"
+        }
       },
-      "interpret": {
-        "median_ms": 139.73,
-        "min_ms": 135.9,
-        "stdout": [
-          "sum 19999900000\n"
-        ],
-        "rc": [
-          0
-        ],
-        "median_ms_excl_process_floor": 129.6,
-        "peak_rss_kb": 26860
-      },
+      "engines_agree": true,
       "divergence_status": "engines agree"
     },
     "map .set() regression pin": {
       "program": "tests/parity/parity_programs/06_map_mut.tl",
       "program_sha256": "ad20b3a3de739d2d573fedfcac74fa8378c508f0a4816f10f76163c14a288150",
-      "engines_agree": true,
       "known_divergence": false,
-      "native": {
-        "median_ms": 4729.71,
-        "min_ms": 4648.82,
-        "stdout": [
-          "len 10\nk3 3\nMAP_MUT_OK\n"
-        ],
-        "rc": [
-          0
-        ],
-        "median_ms_excl_process_floor": 4719.58,
-        "peak_rss_kb": 715844
+      "expected_main_return": null,
+      "engines": {
+        "native": {
+          "median_ms": 5015.22,
+          "min_ms": 4915.15,
+          "median_ms_excl_process_floor": 5004.69,
+          "stdout": [
+            "len 10\nk3 3\nMAP_MUT_OK\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 752212
+        },
+        "interpret": {
+          "median_ms": 12.6,
+          "min_ms": 11.88,
+          "median_ms_excl_process_floor": 2.07,
+          "stdout": [
+            "len 10\nk3 3\nMAP_MUT_OK\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 27852
+        },
+        "cranelift": {
+          "median_ms": 14.01,
+          "min_ms": 13.41,
+          "median_ms_excl_process_floor": 3.49,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            1
+          ],
+          "peak_rss_kb": -1,
+          "rejected": true,
+          "reason": "* cranelift backend cannot run this program: array/map literals not yet implemented in Cranelift backend"
+        }
       },
-      "interpret": {
-        "median_ms": 14.29,
-        "min_ms": 13.34,
-        "stdout": [
-          "len 10\nk3 3\nMAP_MUT_OK\n"
-        ],
-        "rc": [
-          0
-        ],
-        "median_ms_excl_process_floor": 4.16,
-        "peak_rss_kb": 27244
+      "engines_agree": true,
+      "divergence_status": "engines agree"
+    },
+    "compute 3M (JIT-capable)": {
+      "program": "benchmarks/run-engines/programs/compute.tl",
+      "program_sha256": "d29f6bf677408e957b333b3f28580ba58383396c33f500535e6811f7e44d1b79",
+      "known_divergence": false,
+      "expected_main_return": 4499998500000,
+      "engines": {
+        "native": {
+          "median_ms": 330.42,
+          "min_ms": 322.85,
+          "median_ms_excl_process_floor": 319.89,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 80384
+        },
+        "interpret": {
+          "median_ms": 2027.67,
+          "min_ms": 1973.92,
+          "median_ms_excl_process_floor": 2017.14,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 27344
+        },
+        "cranelift": {
+          "median_ms": 16.57,
+          "min_ms": 14.86,
+          "median_ms_excl_process_floor": 6.04,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            1
+          ],
+          "peak_rss_kb": -1,
+          "rejected": true,
+          "reason": "* cranelift backend cannot run this program: failed to define function 'sum_to': Compilation error: Verifier errors"
+        }
       },
+      "engines_agree": true,
+      "divergence_status": "engines agree"
+    },
+    "compute 3M + print (JIT must reject)": {
+      "program": "benchmarks/run-engines/programs/compute_print.tl",
+      "program_sha256": "3ce12fb46b4f2f51104f3538e028d58610935d62a74dc221eda462bd1063df56",
+      "known_divergence": true,
+      "expected_main_return": 4499998500000,
+      "engines": {
+        "native": {
+          "median_ms": 340.58,
+          "min_ms": 326.05,
+          "median_ms_excl_process_floor": 330.05,
+          "stdout": [
+            "sum 4499998500000\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 80640
+        },
+        "interpret": {
+          "median_ms": 2038.3,
+          "min_ms": 2010.32,
+          "median_ms_excl_process_floor": 2027.77,
+          "stdout": [
+            "sum 4499998500000\n"
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 27472
+        },
+        "cranelift": {
+          "median_ms": 12.89,
+          "min_ms": 12.13,
+          "median_ms_excl_process_floor": 2.37,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            1
+          ],
+          "peak_rss_kb": -1,
+          "rejected": true,
+          "reason": "* cranelift backend cannot run this program: call to non-top-level function/builtin (e.g. print, closure, dynamic) not yet implemented in Cranelift backend"
+        }
+      },
+      "engines_agree": true,
+      "divergence_status": "engines agree"
+    },
+    "jit arithmetic (JIT works)": {
+      "program": "benchmarks/run-engines/programs/jit_arith.tl",
+      "program_sha256": "313cafddb528ae9f0716e0d8f0e7131a77edb5bdbb776ceb18afc0e77324f0e0",
+      "known_divergence": false,
+      "expected_main_return": 7,
+      "engines": {
+        "native": {
+          "median_ms": 338.0,
+          "min_ms": 317.8,
+          "median_ms_excl_process_floor": 327.47,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 79616
+        },
+        "interpret": {
+          "median_ms": 13.39,
+          "min_ms": 11.36,
+          "median_ms_excl_process_floor": 2.86,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 25276
+        },
+        "cranelift": {
+          "median_ms": 25.89,
+          "min_ms": 21.25,
+          "median_ms_excl_process_floor": 15.37,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 26812,
+          "reported_main_return": 7,
+          "value_correct": true
+        }
+      },
+      "engines_agree": true,
+      "divergence_status": "engines agree"
+    },
+    "jit function call (JIT ICEs)": {
+      "program": "benchmarks/run-engines/programs/jit_fncall.tl",
+      "program_sha256": "9e55bee67582a23478f7f8bf099ce2cf9f47d3337397d47ac1f2eaaf2e498b5b",
+      "known_divergence": true,
+      "expected_main_return": 5,
+      "engines": {
+        "native": {
+          "median_ms": 326.59,
+          "min_ms": 315.33,
+          "median_ms_excl_process_floor": 316.06,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 79616
+        },
+        "interpret": {
+          "median_ms": 15.29,
+          "min_ms": 13.43,
+          "median_ms_excl_process_floor": 4.76,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            0
+          ],
+          "peak_rss_kb": 25660
+        },
+        "cranelift": {
+          "median_ms": 201.87,
+          "min_ms": 190.93,
+          "median_ms_excl_process_floor": 191.34,
+          "stdout": [
+            ""
+          ],
+          "rc": [
+            -6
+          ],
+          "peak_rss_kb": -1,
+          "internal_compiler_error": true,
+          "reason": "ICE \u2014 crashed, did not refuse"
+        }
+      },
+      "engines_agree": true,
       "divergence_status": "engines agree"
     }
   }
