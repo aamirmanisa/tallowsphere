@@ -30,7 +30,7 @@ function Count-Files($path) {
   }
 }
 
-$root = 'E:\Nixe'
+$root = 'tallowsphere'
 $patterns = @('*.png','*.jpg','*.jpeg','*.webp','*.gif','*.html','*.json','*.csv','*.log','*.sql')
 $allowedRootFiles = @('package.json','package-lock.json')
 

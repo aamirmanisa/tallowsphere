@@ -24,8 +24,8 @@ Executed with explicit source/destination path checks:
 ## Safety Checks Used
 
 - Verified each source path existed before move.
-- Resolved each absolute source path and confirmed it starts with `E:\Nixe`.
-- Resolved each absolute destination parent path and confirmed it starts with `E:\Nixe`.
+- Resolved each absolute source path and confirmed it starts with `tallowsphere`.
+- Resolved each absolute destination parent path and confirmed it starts with `tallowsphere`.
 - Refused to overwrite existing destination paths.
 - Used `Move-Item -LiteralPath` only.
 

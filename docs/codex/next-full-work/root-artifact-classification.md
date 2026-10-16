@@ -1,6 +1,6 @@
 # Repo-Root Artifact Classification
 
-Audit source: `E:\Nixe\docs\codex\cleanup-execution.md`
+Audit source: `tallowsphere/docs/codex/cleanup-execution.md`
 
 Audit result: `git ls-files -- <listed root files>` returned all `70` listed files, so this classification covers the full remaining tracked repo-root loose-clutter set.
 
@@ -96,4 +96,4 @@ Net recommendation: `59` of the remaining `70` tracked loose-clutter files shoul
 
 ## Changed Files
 
-- `E:\Nixe\docs\codex\next-full-work\root-artifact-classification.md`
+- `tallowsphere/docs/codex/next-full-work/root-artifact-classification.md`

@@ -2,7 +2,7 @@
 
 Audit date: 2026-04-29
 
-Scope: safe cleanup of repo-root disposable clutter in `E:\Nixe` without relocating tracked project assets.
+Scope: safe cleanup of repo-root disposable clutter in `tallowsphere` without relocating tracked project assets.
 
 ## Result
 

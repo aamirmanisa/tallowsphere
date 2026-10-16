@@ -2,13 +2,13 @@
 
 ## Scope
 
-This manifest covers only root-level files in `E:\Nixe` matching `probe_*`.
+This manifest covers only root-level files in `tallowsphere` matching `probe_*`.
 It does not assess similarly named directories such as `probe_browser_*`.
 
 ## Status Basis
 
 - `git status --short --ignored=matching -- 'probe_*'` reports all three files as `!!` (ignored, not tracked).
-- [`E:\Nixe\.gitignore`](E:\Nixe\.gitignore) contains `/probe_*`, so these files are intentionally excluded from version control.
+- [`tallowsphere/.gitignore`](tallowsphere/.gitignore) contains `/probe_*`, so these files are intentionally excluded from version control.
 - `git grep` across tracked files found no references to `probe_0.txt`, `probe_1.txt`, or `probe_2.txt`.
 
 ## Findings

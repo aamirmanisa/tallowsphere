@@ -1,7 +1,7 @@
 ﻿# Root Artifact Manifest
 
 Generated: 2026-05-10
-Root: E:\Nixe
+Root: tallowsphere
 Policy: docs/codex/root-artifact-policy.md
 
 | Metric | Value |

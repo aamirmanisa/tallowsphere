@@ -42,7 +42,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\launcher_integration
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\launcher_integration_test.ps1 `
-  -RepoRoot E:\Nixe `
+  -RepoRoot tallowsphere `
   -LauncherPath scripts\launch_tallow_parallel.ps1 `
   -BinaryPath .tallow-bin\tallow.exe `
   -ScriptPath scripts\tallow_max_scraper_graphql_json_parallel_v2.tl `

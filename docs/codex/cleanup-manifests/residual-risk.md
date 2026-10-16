@@ -2,7 +2,7 @@
 
 Audit date: 2026-04-29
 
-Scope: root clutter and status noise that still remains after a safe untracked-only cleanup pass in `E:\Nixe`.
+Scope: root clutter and status noise that still remains after a safe untracked-only cleanup pass in `tallowsphere`.
 
 Definition: "untracked-only" means deleting paths that are not tracked by Git without touching tracked content. If the pass does not explicitly include ignored paths, ignored roots also remain.
 

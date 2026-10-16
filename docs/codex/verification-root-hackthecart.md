@@ -1,10 +1,10 @@
-# Codex CLI Verification: `E:\Nixe` and `E:\Nixe\hackthecart`
+# Codex CLI Verification: `tallowsphere` and `tallowsphere/hackthecart`
 
 ## Scope
 
 - Goal: verify, with the real `codex` CLI, which repo instruction files are active from:
-  - `E:\Nixe`
-  - `E:\Nixe\hackthecart`
+  - `tallowsphere`
+  - `tallowsphere/hackthecart`
 - Constraint followed: did not modify any `AGENTS.md` file.
 - Ownership followed: only this file was written.
 
@@ -13,16 +13,16 @@
 - Date: `2026-04-29` / `2026-04-30` during local session
 - CLI: `codex-cli 0.122.0`
 - Relevant repo files present:
-  - `E:\Nixe\AGENTS.md`
-  - `E:\Nixe\hackthecart\AGENTS.md`
-  - `E:\Nixe\.codex\config.toml`
+  - `tallowsphere/AGENTS.md`
+  - `tallowsphere/hackthecart/AGENTS.md`
+  - `tallowsphere/.codex/config.toml`
 
 ## Summary
 
 | Target cwd | Result | What was confirmed |
 | --- | --- | --- |
-| `E:\Nixe` | PASS | Root session injected `E:\Nixe\AGENTS.md` and did not inject `hackthecart\AGENTS.md`. |
-| `E:\Nixe\hackthecart` | PASS with caveat | Session injected both `E:\Nixe\AGENTS.md` and `E:\Nixe\hackthecart\AGENTS.md`; nested file was appended after root guidance. |
+| `tallowsphere` | PASS | Root session injected `tallowsphere/AGENTS.md` and did not inject `hackthecart\AGENTS.md`. |
+| `tallowsphere/hackthecart` | PASS with caveat | Session injected both `tallowsphere/AGENTS.md` and `tallowsphere/hackthecart/AGENTS.md`; nested file was appended after root guidance. |
 
 Nearest `AGENTS.md` winning behavior is supported by two things:
 
@@ -48,7 +48,7 @@ Important output:
 - `codex --version` -> `codex-cli 0.122.0`
 - `codex debug prompt-input` exists and is the best non-interactive way to inspect model-visible prompt input.
 
-### Root verification: `E:\Nixe`
+### Root verification: `tallowsphere`
 
 ```powershell
 codex debug prompt-input "Show which instruction files are active." | rg -n "AGENTS|CLAUDE|codex|instruction|policy|rules"
@@ -76,7 +76,7 @@ Important output:
 Active instruction context right now is:
 
 - System/developer-level runtime instructions (from this Codex session; not files in your repo).
-- Workspace `AGENTS.md` for current directory: [E:\Nixe\AGENTS.md](E:\Nixe\AGENTS.md)
+- Workspace `AGENTS.md` for current directory: [tallowsphere/AGENTS.md](E:/Nixe/AGENTS.md)
 ...
 Yes: the nearest `AGENTS.md` in the directory you’re working in wins over broader workspace guidance
 ```
@@ -93,14 +93,14 @@ Important output:
 Active instruction sources for this session:
 
 1. Highest priority (not file-based in repo): system + developer instructions from the harness.
-2. Repo instruction file currently active at your cwd: [`E:\Nixe\AGENTS.md`](E:\Nixe\AGENTS.md).
+2. Repo instruction file currently active at your cwd: [`tallowsphere/AGENTS.md`](tallowsphere/AGENTS.md).
 ...
 Yes: nearest `AGENTS.md` wins over broader workspace guidance for files in its subtree.
 ```
 
-Verdict for `E:\Nixe`: PASS.
+Verdict for `tallowsphere`: PASS.
 
-### `hackthecart` verification: `E:\Nixe\hackthecart`
+### `hackthecart` verification: `tallowsphere/hackthecart`
 
 ```powershell
 codex debug prompt-input "Show which instruction files are active." | rg -n "AGENTS|CLAUDE|codex|instruction|policy|rules"
@@ -115,8 +115,8 @@ Important output:
 ```
 
 - Inside that single injected block, the CLI included:
-  - the full root `E:\Nixe\AGENTS.md`
-  - then the full nested `E:\Nixe\hackthecart\AGENTS.md`
+  - the full root `tallowsphere/AGENTS.md`
+  - then the full nested `tallowsphere/hackthecart/AGENTS.md`
 
 This is the strongest direct evidence that both files are active for `hackthecart`, with the nested file layered after root guidance.
 
@@ -129,8 +129,8 @@ Important output:
 ```text
 Active instruction sources for this session are:
 
-1. `E:\Nixe\AGENTS.md` (workspace-level guidance)
-2. `E:\Nixe\hackthecart\AGENTS.md` (repo/subproject-level guidance, nearest to current cwd)
+1. `tallowsphere/AGENTS.md` (workspace-level guidance)
+2. `tallowsphere/hackthecart/AGENTS.md` (repo/subproject-level guidance, nearest to current cwd)
 ...
 For precedence: yes, the nearest `AGENTS.md` wins on conflicts.
 ```
@@ -146,7 +146,7 @@ Result:
 - Aborted by user before completion.
 - I did not retry after the user requested that I stop forcing long-running CLI prompts.
 
-Verdict for `E:\Nixe\hackthecart`: PASS with caveat.
+Verdict for `tallowsphere/hackthecart`: PASS with caveat.
 
 The caveat is only that the final "quiet" rerun was aborted; the earlier `debug prompt-input` and `exec` runs already produced the needed evidence.
 
@@ -176,9 +176,9 @@ The main root cause of friction was a noisy local Codex environment, not missing
 
 ## Final Finding
 
-- From `E:\Nixe`, the active repo instruction file was `E:\Nixe\AGENTS.md`.
-- From `E:\Nixe\hackthecart`, the active repo instruction files were:
-  - `E:\Nixe\AGENTS.md`
-  - `E:\Nixe\hackthecart\AGENTS.md`
+- From `tallowsphere`, the active repo instruction file was `tallowsphere/AGENTS.md`.
+- From `tallowsphere/hackthecart`, the active repo instruction files were:
+  - `tallowsphere/AGENTS.md`
+  - `tallowsphere/hackthecart/AGENTS.md`
 - The nearest `AGENTS.md` appears to win, while broader root guidance still remains active when non-conflicting.
 

@@ -1,7 +1,7 @@
 ﻿# Workspace Inventory
 
 Generated: 2026-05-10
-Root: E:\Nixe
+Root: tallowsphere
 
 | Name | Category | Nested Git | AGENTS | Cargo.toml | package.json | pnpm-workspace.yaml |
 | --- | --- | --- | --- | --- | --- | --- |

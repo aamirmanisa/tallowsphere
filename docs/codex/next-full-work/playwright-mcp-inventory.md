@@ -1,7 +1,7 @@
 # `.playwright-mcp` inventory
 
 Inventory date: 2026-04-29
-Scope: `E:\Nixe\.playwright-mcp` only
+Scope: `tallowsphere/.playwright-mcp` only
 
 ## Top-level shape
 

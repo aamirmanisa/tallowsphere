@@ -16,7 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_e2e_mock_targets
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_e2e_mock_targets.ps1 `
-  -RepoRoot E:\Nixe `
+  -RepoRoot tallowsphere `
   -BinaryPath .tallow-bin\tallow.exe `
   -BenchmarkScriptPath scripts\benchmark_batch_http.tl `
   -MockServerScriptPath scripts\line246_mock_server.py `

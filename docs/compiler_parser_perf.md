@@ -1,6 +1,6 @@
 # Compiler/Parser Performance Harness
 
-`E:\Nixe\scripts\benchmark_compiler_parser.ps1` benchmarks parse and compile workloads with multiple iterations and aggregate metrics.
+`tallowsphere/scripts/benchmark_compiler_parser.ps1` benchmarks parse and compile workloads with multiple iterations and aggregate metrics.
 
 ## What It Runs
 
@@ -28,7 +28,7 @@ The JSON includes:
 
 ## Basic Usage
 
-From repo root (`E:\Nixe`):
+From repo root (`tallowsphere`):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\benchmark_compiler_parser.ps1

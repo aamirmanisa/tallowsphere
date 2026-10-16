@@ -4,24 +4,24 @@ Generated: 2026-04-23 10:32:08 -05:00
 
 ## 1) Scope Clarification
 
-There is no literal folder at `E:\Nixe\tallow`.
+There is no literal folder at `tallowsphere/tallow`.
 
 For this audit, the Tallow scope was treated as:
 
-- `E:\Nixe\src` (core language/compiler/runtime)
-- `E:\Nixe\stdlib` (Tallow `.tl` stdlib surface)
-- `E:\Nixe\scripts` (automation and scrape orchestration scripts)
-- `E:\Nixe\crates` (core Rust crates: crypto/net/protocol)
-- `E:\Nixe\tallow-search` (API/web product + artifacts)
-- `E:\Nixe\openclaw-tallow` (OpenClaw-on-Tallow release workspace)
+- `tallowsphere/src` (core language/compiler/runtime)
+- `tallowsphere/stdlib` (Tallow `.tl` stdlib surface)
+- `tallowsphere/scripts` (automation and scrape orchestration scripts)
+- `tallowsphere/crates` (core Rust crates: crypto/net/protocol)
+- `tallowsphere/tallow-search` (API/web product + artifacts)
+- `tallowsphere/openclaw-tallow` (OpenClaw-on-Tallow release workspace)
 
 ## 2) Full File/Folder Inventory Artifacts
 
 I generated complete recursive inventory files for the scope above:
 
-- `E:\Nixe\docs\TALLOW_SCOPE_FILE_FOLDER_INDEX.txt`
-- `E:\Nixe\docs\TALLOW_SCOPE_COUNTS.csv`
-- `E:\Nixe\docs\TALLOW_SCOPE_EXTENSION_COUNTS.csv`
+- `tallowsphere/docs/TALLOW_SCOPE_FILE_FOLDER_INDEX.txt`
+- `tallowsphere/docs/TALLOW_SCOPE_COUNTS.csv`
+- `tallowsphere/docs/TALLOW_SCOPE_EXTENSION_COUNTS.csv`
 
 `TALLOW_SCOPE_FILE_FOLDER_INDEX.txt` contains every directory and file path (plus file size) in scope.
 
@@ -34,12 +34,12 @@ Format:
 
 | Root | Directories | Files |
 |---|---:|---:|
-| `E:\Nixe\src` | 12 | 246 |
-| `E:\Nixe\stdlib` | 0 | 33 |
-| `E:\Nixe\scripts` | 1 | 141 |
-| `E:\Nixe\crates` | 1388 | 10655 |
-| `E:\Nixe\tallow-search` | 6999 | 57056 |
-| `E:\Nixe\openclaw-tallow` | 42 | 176 |
+| `tallowsphere/src` | 12 | 246 |
+| `tallowsphere/stdlib` | 0 | 33 |
+| `tallowsphere/scripts` | 1 | 141 |
+| `tallowsphere/crates` | 1388 | 10655 |
+| `tallowsphere/tallow-search` | 6999 | 57056 |
+| `tallowsphere/openclaw-tallow` | 42 | 176 |
 
 Important composition note:
 
@@ -55,7 +55,7 @@ Top immediate `tallow-search` subtree counts:
 
 ## 4) Tallow Language: Compiler/Parser/Runtime Features
 
-### 4.1 Core module surface (`E:\Nixe\src\lib.rs`)
+### 4.1 Core module surface (`tallowsphere/src/lib.rs`)
 
 Core modules exported include:
 
@@ -63,7 +63,7 @@ Core modules exported include:
 - Runtime/stdlib: `runtime`, `stdlib`, `pkg`, `net`, `tor`, `vault`
 - Security/compliance/assurance passes: `privacy_pass`, `legal_pass`, `consent_pass`, `erasure_pass`, `contract_pass`, `sast_pass`, `safety_pass`, `sandbox_pass`, `crypto_policy_pass`, `constitution_pass`, `ai_act_pass`, `nis2_pass`, `otel_pass`, and others
 
-### 4.2 Lexer (`E:\Nixe\src\lexer.rs`)
+### 4.2 Lexer (`tallowsphere/src/lexer.rs`)
 
 Tokenization supports:
 
@@ -73,7 +73,7 @@ Tokenization supports:
 - Rich operators: arithmetic, bitwise, logical, shift, power, and compound assignments
 - Delimiters/punctuation for tuples/arrays/maps/generics/calls/annotations
 
-### 4.3 Parser (`E:\Nixe\src\parser.rs`)
+### 4.3 Parser (`tallowsphere/src/parser.rs`)
 
 Parser capabilities include:
 
@@ -84,7 +84,7 @@ Parser capabilities include:
 - Patterns/types: destructuring patterns, match arms, generic type parsing
 - Extensive parser tests for advanced syntax (generics, async, closures, struct spread, patterns, named args)
 
-### 4.4 AST (`E:\Nixe\src\ast.rs`)
+### 4.4 AST (`tallowsphere/src/ast.rs`)
 
 AST models include:
 
@@ -94,7 +94,7 @@ AST models include:
 - Type system expressions (`TypeExpr`, `TypeExprKind`)
 - Agent-level enum and annotation models for policy/task semantics
 
-### 4.5 Type Checker (`E:\Nixe\src\typeck.rs`)
+### 4.5 Type Checker (`tallowsphere/src/typeck.rs`)
 
 Type-check layer includes:
 
@@ -106,7 +106,7 @@ Type-check layer includes:
 - Network-touch detection and browser-navigation usage checks in function bodies
 - Agent-task annotation registration and analysis hooks
 
-### 4.6 Code Generator (`E:\Nixe\src\codegen.rs`)
+### 4.6 Code Generator (`tallowsphere/src/codegen.rs`)
 
 Codegen capabilities include:
 
@@ -118,7 +118,7 @@ Codegen capabilities include:
 - Browser method call emission path (`emit_browser_method_call`)
 - Deterministic toolchain args + runtime lib discovery
 
-### 4.7 Interpreter Runtime (`E:\Nixe\src\interp.rs`)
+### 4.7 Interpreter Runtime (`tallowsphere/src/interp.rs`)
 
 Interpreter/runtime features include:
 
@@ -131,7 +131,7 @@ Interpreter/runtime features include:
 - Extensive method dispatch including arrays/maps/strings and stdlib modules
 - Browser sentinel integrations and domain-specific sentinels (observability, transfer, security families)
 
-### 4.8 CLI/Tooling (`E:\Nixe\src\main.rs`)
+### 4.8 CLI/Tooling (`tallowsphere/src/main.rs`)
 
 CLI supports broad workflows including:
 
@@ -143,7 +143,7 @@ CLI supports broad workflows including:
 
 ## 5) Scraper Engine Features (Tallow Browser Stack)
 
-### 5.1 Browser module breadth (`E:\Nixe\src\browser\mod.rs`)
+### 5.1 Browser module breadth (`tallowsphere/src/browser/mod.rs`)
 
 The browser stack exposes a large modular scraping platform, including:
 
@@ -155,7 +155,7 @@ The browser stack exposes a large modular scraping platform, including:
 - quality/compliance/observability: robots/rate limiting, quality validation, trace/recording, provenance/privacy scanning
 - specialized modules: slider CAPTCHA, warmup/cookie farm, resource blocker, A/B layout detection
 
-### 5.2 Level system (`E:\Nixe\src\browser\presets.rs`)
+### 5.2 Level system (`tallowsphere/src/browser/presets.rs`)
 
 Internal level enum:
 
@@ -175,7 +175,7 @@ Default level configs include:
 
 Route-policy depth/transport increases by level, with L5 using unlimited depth + pipe-only transport.
 
-### 5.3 Canonical level IDs used by API (`E:\Nixe\tallow-search\api\src\routes\presets.rs`)
+### 5.3 Canonical level IDs used by API (`tallowsphere/tallow-search/api/src/routes/presets.rs`)
 
 `tallow-search` maps internal level names to API-facing canonical IDs:
 
@@ -187,7 +187,7 @@ Route-policy depth/transport increases by level, with L5 using unlimited depth +
 
 This is why snapshot tooling accepts `L1Quick..L5Extreme` naming.
 
-## 6) Tallow Search Project Features (`E:\Nixe\tallow-search`)
+## 6) Tallow Search Project Features (`tallowsphere/tallow-search`)
 
 ### 6.1 API architecture (`api/src`)
 
@@ -224,7 +224,7 @@ Astro + Svelte app with feature areas including:
 - grocery/property workflows
 - proxy manager, level selector, history, charts, alert/webhook configuration
 
-## 7) Core Crates (`E:\Nixe\crates`)
+## 7) Core Crates (`tallowsphere/crates`)
 
 ### 7.1 `tallow-crypto`
 
@@ -244,10 +244,10 @@ Astro + Svelte app with feature areas including:
 ## 8) Tallow `.tl` Surface
 
 - Scope-wide `.tl` files discovered: 600
-- Root stdlib `.tl` modules in `E:\Nixe\stdlib`: 33 (agent/browser/cloud/crypto/db/http/net/osint/forensics/transfer/etc.)
+- Root stdlib `.tl` modules in `tallowsphere/stdlib`: 33 (agent/browser/cloud/crypto/db/http/net/osint/forensics/transfer/etc.)
 - Additional `.tl` workloads exist across examples, scripts, hackthecart pipelines, and `openclaw-tallow/tallow`
 
-## 9) OpenClaw-Tallow Workspace (`E:\Nixe\openclaw-tallow`)
+## 9) OpenClaw-Tallow Workspace (`tallowsphere/openclaw-tallow`)
 
 Release workspace provides:
 
@@ -272,10 +272,10 @@ Key directories:
 Delivered artifacts that satisfy full recursive visibility:
 
 - Full index of every directory and file in scope:
-  - `E:\Nixe\docs\TALLOW_SCOPE_FILE_FOLDER_INDEX.txt`
+  - `tallowsphere/docs/TALLOW_SCOPE_FILE_FOLDER_INDEX.txt`
 - Summary counts by root:
-  - `E:\Nixe\docs\TALLOW_SCOPE_COUNTS.csv`
+  - `tallowsphere/docs/TALLOW_SCOPE_COUNTS.csv`
 - Extension-level composition by root:
-  - `E:\Nixe\docs\TALLOW_SCOPE_EXTENSION_COUNTS.csv`
+  - `tallowsphere/docs/TALLOW_SCOPE_EXTENSION_COUNTS.csv`
 
 If you want, I can generate a second "source-only" index that excludes build artifacts (for example, `target`, bundled outputs, and cache-heavy trees) so the inventory is easier to review manually.

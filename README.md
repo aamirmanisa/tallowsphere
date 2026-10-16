@@ -178,6 +178,21 @@ configuration, the in-container firewall, the host systemd units and the operati
 carries the egress *policy* — Tor-first, proxy-aware, refusing a bare leak — and not the plane. The two are a
 pair: neither is a working anonymous scraper without the other.
 
+## Security posture and residual work
+
+- [`SECURITY.md`](SECURITY.md) — reporting, scope, and the honest cryptographic-validation statement
+  (no CMVP claim; KATs are not validation).
+- [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) — what the stealth and transfer tiers do and do not
+  defeat, stated as measured planes.
+- [`docs/MEMORY-SAFETY-ROADMAP.md`](docs/MEMORY-SAFETY-ROADMAP.md) — which tier is safe by construction
+  and which is by convention.
+- [`docs/CAPABILITY-CONTROL-MAP.md`](docs/CAPABILITY-CONTROL-MAP.md) — the agent capability flags mapped
+  to CSA AICM v1.1 domains and the MAESTRO layers.
+- [`docs/IO-PLANE-TIERS.md`](docs/IO-PLANE-TIERS.md) — the I/O plane tiers, and why kernel-bypass is not
+  in the default tier.
+- [`docs/operations/stub-register.md`](docs/operations/stub-register.md) — the residual register: every
+  admitted stub, one row each.
+
 ## What it is not
 
 Not SendTallow (the file-transfer product). Not the `Tallow/` subdirectory (a separate repository on its own

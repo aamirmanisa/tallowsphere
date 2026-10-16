@@ -3,8 +3,8 @@
 ## Current AGENTS Coverage
 
 - Effective instruction chain for most HackTheCart work today:
-  - `E:\Nixe\AGENTS.md`
-  - `E:\Nixe\hackthecart\AGENTS.md`
+  - `tallowsphere/AGENTS.md`
+  - `tallowsphere/hackthecart/AGENTS.md`
 - Current deeper coverage inside `hackthecart/`: none. `rg --files hackthecart -g AGENTS.md` returns only `hackthecart\AGENTS.md`.
 - What the current HackTheCart file already does well:
   - Defines the product-level priority: data correctness over scrape throughput.
@@ -32,7 +32,7 @@ Additional narrower overrides should be added now, but only for the import/infra
 
 ### Add Now
 
-1. `E:\Nixe\hackthecart\import\AGENTS.override.md`
+1. `tallowsphere/hackthecart/import/AGENTS.override.md`
    - Reason: `import/` is a separate crate with its own build/test loop and dataset-handling rules that are not captured by the workspace-level HackTheCart instructions.
    - The override should cover:
      - Use `cd hackthecart/import && cargo test` as the default verification loop.
@@ -40,7 +40,7 @@ Additional narrower overrides should be added now, but only for the import/infra
      - Do not download or process the full Open Food Facts dataset unless the task explicitly requires it.
      - Preserve licensing/attribution expectations for OFF-derived data.
 
-2. `E:\Nixe\hackthecart\infra\scripts\AGENTS.override.md`
+2. `tallowsphere/hackthecart/infra/scripts/AGENTS.override.md`
    - Reason: this directory is operational, side-effect-heavy, multi-runtime, and cluttered with one-off scripts plus a nested `node_modules/`.
    - The override should cover:
      - Treat `node_modules/`, generated CSV/JSON outputs, and target-specific artifacts as low-signal.
@@ -48,14 +48,14 @@ Additional narrower overrides should be added now, but only for the import/infra
      - Prefer reading `package.json` scripts first, then the smallest relevant script file.
      - Verify with the narrowest runnable command or with static inspection when execution would touch live systems.
 
-3. `E:\Nixe\hackthecart\data\AGENTS.override.md`
+3. `tallowsphere/hackthecart/data/AGENTS.override.md`
    - Reason: this directory mixes seed SQL, helper scripts, and large data artifacts. It needs explicit guidance to keep agents from bulk-reading or rewriting snapshots.
    - The override should cover:
      - Sample large files with targeted reads/searches instead of full-file opens.
      - Treat bulk JSON/JSONL/CSV artifacts as generated or reference data unless the task explicitly says to edit them.
      - Prefer touching source scripts or SQL over mass-editing generated outputs.
 
-4. `E:\Nixe\hackthecart\pipeline_data\AGENTS.override.md`
+4. `tallowsphere/hackthecart/pipeline_data/AGENTS.override.md`
    - Reason: this is the heaviest snapshot area and is separate from `data/`, so it needs its own local guardrails.
    - The override should cover:
      - Avoid opening full `all_products.*` or batch upload payloads unless absolutely necessary.
@@ -64,10 +64,10 @@ Additional narrower overrides should be added now, but only for the import/infra
 
 ### Do Not Add Now
 
-1. `E:\Nixe\hackthecart\api\AGENTS.override.md`
+1. `tallowsphere/hackthecart/api/AGENTS.override.md`
    - Not needed yet. The area is conventional, the package-level test command already exists, and the current HackTheCart guidance already tells agents to run targeted API tests.
 
-2. `E:\Nixe\hackthecart\web\AGENTS.override.md`
+2. `tallowsphere/hackthecart/web/AGENTS.override.md`
    - Not needed yet. Root UI guidance plus the existing `npm run build` rule already covers the normal edit loop.
 
 ## Bottom Line

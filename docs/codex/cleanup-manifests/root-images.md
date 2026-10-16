@@ -1,6 +1,6 @@
 # Root Image Cleanup Manifest
 
-- Inspected root: `E:\Nixe`
+- Inspected root: `tallowsphere`
 - Inspected on: `2026-04-29`
 - Scope: root-level image files only
 
