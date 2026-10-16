@@ -51,7 +51,7 @@ possible; the confirmatory test on an x86_64 host is one command:
 
 ```
 cargo build --release --target x86_64-unknown-linux-musl
-objdump -d target/x86_64-unknown-linux-musl/release/tallow | grep -c aesenc   # expect > 0
+objdump -d target/x86_64-unknown-linux-musl/release/tallow | grep -cE 'vaesenc|aesenc'   # expect > 0
 ```
 
 **Applied:** `rustflags = ["-C", "target-feature=+aes,+avx2,+pclmulqdq"]` on all four
@@ -67,6 +67,34 @@ so editing only this one would have fixed nothing that ships.
 
 **Not yet true until a release runs:** the already-published x86_64 artifacts are still
 on the old path. This changes what the next release build produces.
+
+**F3 confirmation — x86_64 codegen, added after the fact (2026-10-16).** The exposure was
+[inferred] when the fix was applied, and an unverified fix is the thing this audit exists to
+prevent — so it was checked statically afterwards. Cross-built the same probe for
+`x86_64-unknown-linux-gnu` and disassembled `libcrux_aesgcm`'s object:
+
+| build | out-of-line `core::arch` AES wrapper fns | inlined AES round instructions |
+|---|---|---|
+| default (no flags) | **30** | 4 (`aesenc`, `aesenclast`) |
+| `+aes,+avx2,+pclmulqdq` | **0** | **276** (`vaesenc`, `vaesenclast`) + 60 `vpclmulqdq` |
+
+Without the flags the intrinsics stay out-of-line — 30 separate `...core_arch3x86...aes...`
+functions the hot loop has to **call**; with them they are inlined into the round loop. That is
+the same inlining mechanism measured on aarch64, reproduced in x86_64 codegen, so the fix
+addresses the same defect on the same reasoning. The VEX prefix in the flagged build is
+expected: `+avx2` implies `+avx`, so LLVM emits the VEX form.
+
+*Two traps worth recording.* (1) This box's native `objdump` is **aarch64-only** — on an x86-64
+object it prints `can't disassemble for architecture UNKNOWN` and returns **nothing**, and the
+first run of the analysis therefore reported "0 AES instructions" in *both* builds, which looked
+like a finding. Use `llvm-objdump-18` (installed here) for any non-aarch64 target. (2)
+`rustup target add x86_64-unknown-linux-gnu` works, but linking does not — there is no x86_64
+cross-linker on this box, so the build stops at the link step with `cc: unrecognized ... '-m64'`.
+That is fine: the object files are produced before linking, and codegen is the question here.
+
+**Still not a throughput number** — that needs an x86_64 host. What this establishes is that the
+mechanism and the fix are arch-independent, which is what the [inferred] label was standing in
+for.
 
 **F4 — the RUSTFLAGS hazard is clear today.** An exported `RUSTFLAGS` makes cargo
 ignore the `[target.*]` tables entirely, which would undo the whole thing
@@ -111,7 +139,7 @@ Exit: `0` clean · `1` gap found · `2` incompletely evaluated.
 |---|---|
 | aarch64 AES (bulk AEAD) | **closed** — flag set, present in the shipped binary |
 | aarch64 SHA-256 / PMULL | **closed** — present in the shipped binary |
-| x86_64 AES (3 shipped targets) | **closed** — flags applied 2026-10-16 to both trees; takes effect at the next release build |
+| x86_64 AES (3 shipped targets) | **closed** — flags applied 2026-10-16 to both trees; codegen confirmed on a cross-build (30 out-of-line intrinsic wrappers → 0, inlined); takes effect at the next release build |
 | `RUSTFLAGS` bypass | clear, and gated |
 
 The gate exits **0** on this tree. It exited 1 on F3 alone until the x86_64 call was
