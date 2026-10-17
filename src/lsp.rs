@@ -108,7 +108,9 @@ impl TallowLanguageServer {
                 // Phase 6: Agent Pass
                 let agent_diags = crate::agent_pass::AgentPass::new(&program).check();
 
-                // Convert all diagnostics
+                // Convert all diagnostics — collapsed first, so a rule enforced
+                // by two passes shows once in the editor as well.
+                let mut merged = crate::error::Diagnostics::new();
                 for d in typeck_diags
                     .items
                     .iter()
@@ -116,6 +118,10 @@ impl TallowLanguageServer {
                     .chain(privacy_diags.items.iter())
                     .chain(agent_diags.items.iter())
                 {
+                    merged.push(d.clone());
+                }
+                merged.dedupe_same_site();
+                for d in &merged.items {
                     lsp_diags.push(tallow_diag_to_lsp(d, source));
                 }
             }

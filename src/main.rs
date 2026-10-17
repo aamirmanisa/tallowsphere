@@ -10323,6 +10323,11 @@ fn real_main() -> anyhow::Result<()> {
             }
 
             // ── Report ───────────────────────────────────────────────
+            // Two passes can enforce the same rule at the same expression
+            // (typeck and the privacy pass both reject `print(private)`), which
+            // renders one problem twice. Collapse them before reporting.
+            all_diags.dedupe_same_site();
+
             if !all_diags.items.is_empty() {
                 eprintln!("{}", all_diags.render_all(&source, &filename));
                 eprintln!();
