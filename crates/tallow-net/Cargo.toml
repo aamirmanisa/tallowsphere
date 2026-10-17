@@ -48,6 +48,11 @@ hex = "0.4"
 
 # sha256 (SPKI pin hashing — spki_pin module)
 sha2 = "0.10"
+# TURN long-term credential mechanism (RFC 5389 §10.2): HMAC-SHA1
+# MESSAGE-INTEGRITY. The MD5 key derivation is implemented in `nat::turn`
+# (md-5 0.10 is not in the offline crate cache).
+sha1 = "0.10"
+hmac = "0.12"
 
 # Proxy
 tokio-socks = "0.5"

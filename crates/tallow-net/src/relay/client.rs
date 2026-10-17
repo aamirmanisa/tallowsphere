@@ -4,6 +4,7 @@
 //! a SOCKS5 proxy, joins a room by code hash, and forwards encrypted
 //! data to/from the paired peer.
 
+use super::identity::{authenticate_daemon_over, RelayMutualAuth};
 use crate::privacy::ProxyConfig;
 use crate::{NetworkError, Result};
 use std::net::SocketAddr;
@@ -98,6 +99,10 @@ pub struct RelayClient {
     /// TLS server name for the direct QUIC path (SNI + certificate
     /// validation name in strict builds). `None` = default dev name.
     server_name: Option<String>,
+    /// Opt-in relay mutual authentication. When set, the handshake runs on the
+    /// live dial before the room-join payload is sent; a failed handshake
+    /// aborts the connection.
+    mutual_auth: Option<Box<RelayMutualAuth>>,
 }
 
 impl std::fmt::Debug for RelayClient {
@@ -120,6 +125,7 @@ impl RelayClient {
             proxy_config: None,
             relay_hostname: None,
             server_name: None,
+            mutual_auth: None,
         }
     }
 
@@ -138,6 +144,7 @@ impl RelayClient {
             proxy_config: None,
             relay_hostname: None,
             server_name,
+            mutual_auth: None,
         }
     }
 
@@ -156,6 +163,7 @@ impl RelayClient {
             proxy_config: Some(proxy),
             relay_hostname: Some(relay_host.to_string()),
             server_name: None,
+            mutual_auth: None,
         }
     }
 
@@ -165,6 +173,30 @@ impl RelayClient {
     /// through SOCKS5.
     pub fn set_proxy(&mut self, proxy: ProxyConfig) {
         self.proxy_config = Some(proxy);
+    }
+
+    /// Enable relay mutual authentication (workload identity + peer trust).
+    ///
+    /// The handshake runs on the live dial, *before* the room-join payload. A
+    /// failed handshake aborts the connection rather than falling back to an
+    /// unauthenticated join.
+    pub fn with_mutual_auth(mut self, auth: RelayMutualAuth) -> Self {
+        self.mutual_auth = Some(Box::new(auth));
+        self
+    }
+
+    /// Run the mutual-auth handshake when one is configured.
+    async fn handshake<T: crate::Transport>(&self, transport: &mut T) -> Result<()> {
+        let Some(auth) = self.mutual_auth.as_deref() else {
+            return Ok(());
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or(0);
+        let _session = authenticate_daemon_over(transport, auth, now).await?;
+        info!("relay mutual authentication established");
+        Ok(())
     }
 
     /// Connect to the relay server and join a room
@@ -234,6 +266,7 @@ impl RelayClient {
                 proxy.socks5_addr
             );
 
+            self.handshake(&mut transport).await?;
             transport.send(&join_payload).await?;
 
             // Read response
@@ -266,6 +299,7 @@ impl RelayClient {
                     .await?;
                 info!("connected to relay at {}", self.relay_addr);
 
+                self.handshake(&mut transport).await?;
                 transport.send(&join_payload).await?;
 
                 let mut buf = [0u8; 256];
