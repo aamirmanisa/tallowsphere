@@ -789,7 +789,10 @@ mod tests {
         assert_eq!(p.availability.as_deref(), Some("InStock"));
         assert_eq!(p.rating, Some(4.7));
         assert_eq!(p.review_count, Some(452301));
-        assert!(p.image_url.as_deref().unwrap().contains("media-amazon"));
+        // The fixture is de-identified: `m.media-amazon.com` is written as
+        // `m.media-shop-06.example`, so the old `media-amazon` assertion could never hold against
+        // the fixture it was paired with.
+        assert!(p.image_url.as_deref().unwrap().contains("media-shop-06"));
     }
 
     // ---- JSON-LD: Walmart-style (@graph) ----
