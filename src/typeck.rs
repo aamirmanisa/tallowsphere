@@ -1267,11 +1267,25 @@ impl<'a> TypeChecker<'a> {
                 args,
                 ..
             } => {
-                self.check_expr(object, locals);
+                // A HackTheCart kind name (`AdaptiveCrawler.new()`) is a static
+                // namespace, not a value: the interpreter dispatches on the
+                // dotted name, so warning that the receiver is "possibly
+                // undefined" would be exactly wrong. Every other receiver is
+                // checked as before.
+                let static_namespace = matches!(
+                    &object.kind,
+                    ExprKind::Ident(name)
+                        if !locals.contains_key(name)
+                            && crate::interp_hackthecart_dispatch::is_hackthecart_static(
+                                &format!("{name}.{method}"),
+                            )
+                );
+                if !static_namespace {
+                    self.check_expr(object, locals);
+                }
                 for arg in args {
                     self.check_expr(&arg.value, locals);
                 }
-                // Check known method on struct types
                 let obj_ty = self.infer_expr_type(object, locals);
                 let type_name = self.type_to_name(&obj_ty);
                 if let Some(ref tname) = type_name {

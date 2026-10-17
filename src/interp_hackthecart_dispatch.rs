@@ -1014,6 +1014,39 @@ fn observations_from_value(
 ///
 /// Returns `Some(result)` if `name` matches a HackTheCart builtin, otherwise
 /// `None` so the caller can fall through to other dispatchers.
+/// True when `name` is one of the static entries this dispatcher serves.
+///
+/// The interpreter's method-call path needs this **before** evaluating
+/// arguments: `AdaptiveCrawler.new()` is a static namespace call, not a method
+/// on a value, and args must not be evaluated twice when it turns out not to
+/// be one.
+pub fn is_hackthecart_static(name: &str) -> bool {
+    matches!(
+        name,
+          "AdaptiveCrawler.new"
+        | "BasketOptimizer.new"
+        | "CanaryRegistry.new"
+        | "CircuitBreaker.new"
+        | "CrawlPipeline.new"
+        | "CrawlQueue.new"
+        | "FingerprintValidator.new"
+        | "JobQueue.new"
+        | "PriceBoundsRegistry.new"
+        | "PriceHistoryEngine.new"
+        | "ProductMatcher.new"
+        | "QualityValidator.new"
+        | "RecipeParser.new"
+        | "SchemaExtractor.new"
+        | "SelectorChain.new"
+        | "SelfHealingSelector.new"
+        | "SitemapParser.new"
+        | "SmartExtractor.new"
+        | "StructuredDataExtractor.new"
+        | "Triangulator.new"
+        | "UnitNormalizer.new"
+    )
+}
+
 pub fn dispatch_hackthecart_static(
     name: &str,
     args: &[Value],
