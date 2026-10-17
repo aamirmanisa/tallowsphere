@@ -101,7 +101,15 @@ impl AffiliateManager {
             .unwrap_or(&lower);
         let host = host_part.split('/').next().unwrap_or("");
 
-        if host.contains("amazon.") || host.contains("amzn.to") {
+        // `shop-06.example` is this tree's synthetic name for the Amazon host — browser/compliance.rs
+        // carries the amazon row as ("amazon", …, "https://shop-06.example/…") and presets.rs uses
+        // it too. The brand-literal checks alone never fired for it, which is why three tests in
+        // this file were permanently red. Both forms are accepted: real-world URLs still resolve,
+        // and the de-identified fixtures now do as well.
+        if host.contains("shop-06.example")
+            || host.contains("amazon.")
+            || host.contains("amzn.to")
+        {
             Some("amazon".to_string())
         } else if host.contains("shop-a.example") {
             Some("walmart".to_string())

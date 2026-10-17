@@ -3019,7 +3019,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("shop-06.example"), "amazon_com");
+        // The input is this tree's synthetic Amazon host, so the sanitiser's own rule applies
+        // (dots -> underscores). "amazon_com" was the expectation before the tree de-identified
+        // its hosts; the function is a sanitiser and must not carry brand mappings.
+        assert_eq!(sanitize_filename("shop-06.example"), "shop-06_example");
         assert_eq!(
             sanitize_filename("www.test-site.co.uk"),
             "www_test-site_co_uk"
