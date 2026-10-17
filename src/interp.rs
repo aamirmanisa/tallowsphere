@@ -11474,32 +11474,10 @@ impl Interpreter {
                     Some(Value::String(s)) => s.clone(),
                     _ => return Err(RuntimeError::TypeError("url.parse expects a String".into())),
                 };
-                // Simple URL parsing: extract scheme, host, path, query
-                let (scheme, rest) = if let Some(idx) = raw.find("://") {
-                    (raw[..idx].to_string(), raw[idx + 3..].to_string())
-                } else {
-                    ("https".to_string(), raw.clone())
-                };
-                let (host_path, query) = if let Some(idx) = rest.find('?') {
-                    (rest[..idx].to_string(), rest[idx + 1..].to_string())
-                } else {
-                    (rest.clone(), String::new())
-                };
-                let (host, path) = if let Some(idx) = host_path.find('/') {
-                    (host_path[..idx].to_string(), host_path[idx..].to_string())
-                } else {
-                    (host_path.clone(), "/".to_string())
-                };
-                return Ok(Value::Ok(Box::new(Value::Struct {
-                    name: "URL".to_string(),
-                    fields: vec![
-                        ("scheme".to_string(), Value::String(scheme)),
-                        ("host".to_string(), Value::String(host)),
-                        ("path".to_string(), Value::String(path)),
-                        ("query".to_string(), Value::String(query)),
-                        ("raw".to_string(), Value::String(raw)),
-                    ],
-                })));
+                // Parsing moved into `stdlib::url::parse_url_value` so the module has ONE parser:
+                // this arm used to build the struct inline with only scheme/host/path/query, which
+                // silently dropped a port, fragment or userinfo. Same return shape as before.
+                return Ok(Value::Ok(Box::new(crate::stdlib::url::parse_url_value(&raw))));
             }
             "url.encode" => {
                 let s = match positional.first() {
@@ -11529,24 +11507,12 @@ impl Interpreter {
                         ));
                     }
                 };
-                let mut decoded = String::new();
-                let mut chars = s.chars();
-                while let Some(c) = chars.next() {
-                    if c == '%' {
-                        let hex: String = chars.by_ref().take(2).collect();
-                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                            decoded.push(byte as char);
-                        } else {
-                            decoded.push('%');
-                            decoded.push_str(&hex);
-                        }
-                    } else if c == '+' {
-                        decoded.push(' ');
-                    } else {
-                        decoded.push(c);
-                    }
-                }
-                return Ok(Value::Ok(Box::new(Value::String(decoded))));
+                // Delegates to the module's decoder. The inline version pushed `byte as char` for
+                // each `%XX`, which reinterprets the bytes as Latin-1: `%C3%A9` returned `Ã©`
+                // instead of `é`. Same signature and same Result shape, correct bytes.
+                return Ok(Value::Ok(Box::new(Value::String(
+                    crate::stdlib::url::percent_decode(&s),
+                ))));
             }
 
             // ── math module ──
@@ -17218,6 +17184,17 @@ impl Interpreter {
                     _ => unreachable!(),
                 };
                 let rt = get_browser_runtime();
+                // stdlib/browser.tl declares its Page methods with a `page_` prefix
+                // (`page_structured_data`), while every arm below is keyed by the stem
+                // (`("Page", "structured_data")`) — and nothing normalised the two. Measured
+                // 2026-10-16: 40 `page_*` methods declared, 39 with a working stem-keyed arm, and
+                // 0 of the 171 `("Page", …)` keys in the prefixed form, so all 39 were
+                // unreachable from .tl and a call died with
+                // `unknown method: .page_structured_data()`. Normalising here fixes all of them at
+                // one site instead of adding 39 aliases in two files (this one and codegen.rs).
+                // A stem with no arm still falls through to the unknown-method error, so this
+                // cannot turn a missing method into a silent success.
+                let method = method.strip_prefix("page_").unwrap_or(method);
                 match (bh.kind.as_str(), method) {
                     // ── Browser methods ──
                     ("Browser", "new_page") => {

@@ -22,8 +22,46 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
 }
 
 /// Dispatch a method call on a `tallow.time` object (e.g., Timestamp, Duration).
-pub fn dispatch_method(_object: &Value, _method: &str, _args: Vec<Value>) -> Option<StdlibResult> {
-    None
+///
+/// A `Timestamp` is Int-backed in epoch **milliseconds** (`time.now`, `time.parse_iso`), so its
+/// methods are answered for an `Int` receiver. Before this, the whole function was
+/// `None` — `_object`/`_method`/`_args` unused — so every method declared `// native:` in
+/// `stdlib/time.tl` was unreachable and a call died with `unknown method: .to_iso() on int`, even
+/// though the second-half implementation (`epoch_secs_to_iso`) already existed below.
+///
+/// `Duration` is also Int-backed (`nanos`, built as `Duration { nanos: n }` by the `impl i64`
+/// block in the .tl file), so a `Duration` receiver answers a different, nanosecond-based method
+/// set; `to_iso`/`format` are *instant* methods and are deliberately not offered on it. The two are
+/// indistinguishable at the value level (both `Int`), so this dispatches on the method name — the
+/// same shape the rest of the dispatchers use, and the reason `Duration` has no `to_iso` arm.
+pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option<StdlibResult> {
+    let millis = match object {
+        Value::Int(n) => *n,
+        _ => return None,
+    };
+    // Values are i128 but the calendar arithmetic is i64. Refuse an instant outside i64
+    // milliseconds loudly instead of wrapping it into a plausible-looking date.
+    let millis = match i64::try_from(millis) {
+        Ok(v) => v,
+        Err(_) => {
+            return Some(Err(format!(
+                "timestamp {millis} is out of range for calendar formatting (i64 milliseconds)"
+            )))
+        }
+    };
+    let pattern = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(_) | None => "%Y-%m-%d %H:%M:%S".to_string(),
+    };
+    // Integer division of millis -> seconds, truncating the same way `epoch_to_datetime` expects.
+    // Sub-second precision is dropped deliberately: the ISO form the .tl declaration documents is
+    // second-granular (`"2026-03-01T14:23:11Z"`).
+    let secs = millis.div_euclid(1000);
+    match method {
+        "to_iso" => Some(Ok(Value::String(epoch_secs_to_iso(secs)))),
+        "format" => Some(Ok(Value::String(apply_pattern(secs, &pattern)))),
+        _ => None,
+    }
 }
 
 /// `time.parse_iso(s: String) -> Result<Timestamp>`
@@ -154,22 +192,39 @@ fn time_format(args: Vec<Value>) -> StdlibResult {
         None => return Err("time.format requires an epoch seconds argument".into()),
     };
 
+    // `time.now()` returns MILLISECONDS while this takes SECONDS, so `time.format(time.now())` used
+    // to format 1.7e12 seconds — a date in the year ~55,000 — and return it as though it were
+    // right. That silent wrong answer is the failure mode the stub register forbids; refuse it
+    // instead of guessing which unit the caller meant. 1e11 seconds is the year 5138, so the two
+    // ranges cannot collide for any real timestamp.
+    const PLAUSIBLE_MAX_SECS: i64 = 100_000_000_000;
+    if epoch_secs.abs() > PLAUSIBLE_MAX_SECS {
+        return Err(format!(
+            "time.format expects epoch SECONDS but got {epoch_secs}, which is in millisecond \
+             range — pass seconds (millis / 1000), or use the method form `t.format(pattern)` / \
+             `t.to_iso()` on a millisecond Timestamp"
+        ));
+    }
+
     let pattern = match args.get(1) {
         Some(Value::String(s)) => s.clone(),
         Some(_) | None => "%Y-%m-%d %H:%M:%S".to_string(),
     };
 
+    Ok(Value::String(apply_pattern(epoch_secs, &pattern)))
+}
+
+/// Apply an strftime-like subset to epoch seconds. Shared by `time.format` and the `Timestamp`
+/// methods so the two cannot drift apart.
+fn apply_pattern(epoch_secs: i64, pattern: &str) -> String {
     let (year, month, day, hour, min, sec) = epoch_to_datetime(epoch_secs);
-
-    let result = pattern
-        .replace("%Y", &format!("{:04}", year))
-        .replace("%m", &format!("{:02}", month))
-        .replace("%d", &format!("{:02}", day))
-        .replace("%H", &format!("{:02}", hour))
-        .replace("%M", &format!("{:02}", min))
-        .replace("%S", &format!("{:02}", sec));
-
-    Ok(Value::String(result))
+    pattern
+        .replace("%Y", &format!("{year:04}"))
+        .replace("%m", &format!("{month:02}"))
+        .replace("%d", &format!("{day:02}"))
+        .replace("%H", &format!("{hour:02}"))
+        .replace("%M", &format!("{min:02}"))
+        .replace("%S", &format!("{sec:02}"))
 }
 
 // ---- Date/time helpers (UTC only, no timezone support in v0.3) ----
@@ -361,5 +416,64 @@ mod tests {
             epoch_secs_to_iso(1704067200),
             "2024-01-01T00:00:00Z"
         );
+    }
+
+    // ---- Timestamp method dispatch (wired 2026-10-16; was an unwired `// native:` stub) ----
+
+    /// The case that used to be `unknown method: .to_iso() on int`.
+    #[test]
+    fn test_timestamp_to_iso_from_millis() {
+        let r = dispatch_method(&Value::Int(1_704_067_200_000), "to_iso", vec![]).unwrap().unwrap();
+        assert_eq!(r.as_string(), "2024-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_timestamp_format_from_millis() {
+        let r = dispatch_method(
+            &Value::Int(1_704_067_200_000),
+            "format",
+            vec![Value::String("%Y-%m-%d".into())],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(r.as_string(), "2024-01-01");
+    }
+
+    /// The declared contract is that `time.now` and `time.parse_iso` compose, so a parsed instant
+    /// must survive a round trip through the method that renders it.
+    #[test]
+    fn test_parse_iso_roundtrips_through_to_iso() {
+        let stamp = time_parse_iso(vec![Value::String("2026-03-05T14:30:45Z".into())]).unwrap();
+        let rendered = dispatch_method(&stamp, "to_iso", vec![]).unwrap().unwrap();
+        assert_eq!(rendered.as_string(), "2026-03-05T14:30:45Z");
+    }
+
+    /// Sub-second precision is dropped, not rounded into the next second.
+    #[test]
+    fn test_timestamp_to_iso_truncates_sub_second() {
+        let r = dispatch_method(&Value::Int(1_704_067_200_999), "to_iso", vec![]).unwrap().unwrap();
+        assert_eq!(r.as_string(), "2024-01-01T00:00:00Z");
+    }
+
+    /// An unknown method must stay unknown: returning `None` lets the engine fail loudly rather
+    /// than this arm inventing a result.
+    #[test]
+    fn test_dispatch_method_unknown_is_none() {
+        assert!(dispatch_method(&Value::Int(1_704_067_200_000), "not_a_method", vec![]).is_none());
+        assert!(dispatch_method(&Value::String("x".into()), "to_iso", vec![]).is_none());
+    }
+
+    /// The footgun this replaced: `time.format(time.now())` silently formatted 1.7e12 *seconds*,
+    /// i.e. a date in the year ~55,000, and returned it as a success.
+    #[test]
+    fn test_time_format_refuses_a_millisecond_argument() {
+        let err = time_format(vec![Value::Int(1_704_067_200_000)]).unwrap_err();
+        assert!(err.contains("millisecond"), "error should name the unit mismatch: {err}");
+    }
+
+    #[test]
+    fn test_time_format_still_accepts_seconds() {
+        let r = time_format(vec![Value::Int(1704067200)]).unwrap();
+        assert_eq!(r.as_string(), "2024-01-01 00:00:00");
     }
 }

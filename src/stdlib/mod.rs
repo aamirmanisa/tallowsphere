@@ -371,17 +371,35 @@ pub fn is_registered_module(module: &str) -> bool {
 /// Phase 12-13 will add: FileInfo, JsonValue, Timestamp, Duration,
 /// UrlParts, Regex, HttpClient, Process.
 pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option<StdlibResult> {
+    // Int-backed stdlib types. `Timestamp` (epoch millis, from `time.now`/`time.parse_iso`) and
+    // `Duration` (nanos) are declared as `struct`s in `stdlib/*.tl` but are plain Ints at runtime,
+    // so a name-only struct match can never reach them — which is why every method declared
+    // `// native:` in `stdlib/time.tl` was unreachable and died with
+    // `unknown method: .to_iso() on int` while the implementation sat unused below.
+    // `time` answers only its own instant methods and returns None otherwise, so this cannot
+    // shadow the built-in Int methods: the interpreter tries this dispatcher first, and a `None`
+    // here falls through to the built-in match exactly as before.
+    if matches!(object, Value::Int(_)) {
+        if let Some(result) = time::dispatch_method(object, method, args.clone()) {
+            return Some(result);
+        }
+    }
     if let Value::Struct { name, .. } = object {
         match name.as_str() {
+            // `url.parse` returns a struct named `URL`, but nothing ever routed that name here —
+            // so every `URL` method declared `// native:` in stdlib/url.tl was unreachable (and
+            // `u.to_string()` was silently answered by the interpreter's generic display-based
+            // arm). The name is the dispatch key, exactly as for the types below.
+            "URL" => url::dispatch_method(object, method, args),
             "FileInfo" => fs::dispatch_method(object, method, args),
             "FilterFileInfo" | "FilterProfile" | "FilterResult" | "FilterPredicate" => {
                 filter::dispatch_method(object, method, args)
-            },
+            }
             "FsWatcher" => fs::dispatch_method(object, method, args),
             "HtmlDocument" => html::dispatch_method(object, method, args),
             "HtmlElement" => html::dispatch_method(object, method, args),
-            // json, time, and url types are handled inline in interp.rs;
-            // their dispatch_method implementations return None unconditionally.
+            // json and url types are handled inline in interp.rs. `time` is NOT one of them any
+            // more: its Int-backed receivers are routed above (see the note there).
             "Regex" => regex::dispatch_method(object, method, args),
             "HttpListener" | "Response" => http::dispatch_method(object, method, args),
             "ChildProcess" => process::dispatch_method(object, method, args),

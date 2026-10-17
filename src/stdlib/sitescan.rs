@@ -3410,8 +3410,15 @@ mod tests {
         let ip = parse_ipv4("203.0.113.1").unwrap();
         let base = parse_ipv4("203.0.113.1").unwrap();
         assert!(ipv4_in_cidr(ip, base, 32));
-        let net = parse_ipv4("204.168.219.0").unwrap();
+        // This read `204.168.219.0`, which made the assertion ARITHMETICALLY FALSE — a
+        // different /24 can never contain 203.0.113.1 — so the suite could only ever be red.
+        // The implementation was right and the fixture was wrong (203.0.113.0/24 is
+        // TEST-NET-3, the documentation range: clearly the intent). Corrected to the network
+        // that actually covers the address, and the boundary below is what makes the test
+        // discriminate instead of merely agreeing.
+        let net = parse_ipv4("203.0.113.0").unwrap();
         assert!(ipv4_in_cidr(ip, net, 24));
+        assert!(!ipv4_in_cidr(ip, parse_ipv4("203.0.114.0").unwrap(), 24));
         assert!(!ipv4_in_cidr(ip, parse_ipv4("10.0.0.0").unwrap(), 8));
         assert!(ipv4_in_cidr(ip, 0, 0));
     }
