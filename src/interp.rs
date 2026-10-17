@@ -2820,6 +2820,36 @@ impl Interpreter {
                     }
                 }
 
+                // HackTheCart static namespaces: `AdaptiveCrawler.new()` is a
+                // call on a *kind name*, not on a value. Name resolution has no
+                // binding for the kind ident, so without this the receiver eval
+                // below fails with `undefined variable: AdaptiveCrawler` and the
+                // dispatcher — which keys on the dotted name — is never
+                // consulted. Guarded by `is_hackthecart_static` so the arguments
+                // are evaluated exactly once and nothing else changes shape.
+                if let ExprKind::Ident(name) = &object.kind {
+                    let qualified = format!("{name}.{method}");
+                    let unbound = env.get(name).is_none()
+                        && !self.structs.contains_key(name.as_str())
+                        && !self.enums.contains_key(name.as_str());
+                    if unbound
+                        && crate::interp_hackthecart_dispatch::is_hackthecart_static(&qualified)
+                    {
+                        let evaluated: Vec<Value> = args
+                            .iter()
+                            .map(|a| self.eval_expr(&a.value, env))
+                            .collect::<Result<Vec<_>, RuntimeError>>()?;
+                        if let Some(result) =
+                            crate::interp_hackthecart_dispatch::dispatch_hackthecart_static(
+                                &qualified,
+                                &evaluated,
+                            )
+                        {
+                            return result;
+                        }
+                    }
+                }
+
                 // Check for struct static method call: StructName.method(args)
                 if let ExprKind::Ident(name) = &object.kind {
                     if self.structs.contains_key(name.as_str())
