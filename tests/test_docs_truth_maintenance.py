@@ -2,6 +2,7 @@
 """P2-009 docs-truth maintenance regressions."""
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -168,6 +169,29 @@ class DocsTruthMaintenanceTests(unittest.TestCase):
                     window,
                     f"unlabeled 'undetectable' in {path.name}:{i + 1}",
                 )
+
+
+    # ── Stub register integrity ──────────────────────────────────────────
+    # The 2026-10-17 re-verification found four cells cut off at write time
+    # ("... [truncated]") and four rows carrying an extra column, which made
+    # their last cell invisible when the table rendered. This guard keeps the
+    # register one row per audit id with exactly five cells.
+
+    def test_stub_register_rows_are_complete(self) -> None:
+        text = self.read("docs/operations/stub-register.md")
+        rows: dict[int, str] = {}
+        for line in text.splitlines():
+            match = re.match(r"^\|\s*(\d{1,2})\s*\|", line)
+            if not match:
+                continue
+            number = int(match.group(1))
+            self.assertNotIn("[truncated]", line, f"row {number} is truncated")
+            self.assertEqual(
+                line.count("|"), 6, f"row {number} is not five cells"
+            )
+            self.assertNotIn(number, rows, f"row {number} appears twice")
+            rows[number] = line
+        self.assertEqual(sorted(rows), list(range(1, 95)))
 
 
 if __name__ == "__main__":
