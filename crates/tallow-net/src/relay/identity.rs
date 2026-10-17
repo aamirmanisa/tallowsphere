@@ -198,6 +198,71 @@ where
         .map_err(|e| auth_failed("daemon", e))
 }
 
+/// Daemon handshake over a `Transport` rather than an `AsyncRead`/`AsyncWrite`
+/// stream.
+///
+/// `Transport::send`/`receive` already frame with a 4-byte big-endian length
+/// prefix, which is exactly the relay-auth wire frame, so the live relay path
+/// needs no stream adapter: each `send` carries one JSON handshake message.
+pub async fn authenticate_daemon_over<T: crate::Transport>(
+    transport: &mut T,
+    config: &RelayMutualAuth,
+    now: i64,
+) -> Result<EstablishedSession> {
+    let mut machine = ClientMachine::begin(
+        config.identity.as_ref(),
+        &config.trust,
+        config.token.clone(),
+    )
+    .map_err(|e| auth_failed("daemon", e))?;
+
+    let hello = machine.hello().map_err(|e| auth_failed("daemon", e))?;
+    send_json(transport, &hello).await?;
+
+    let server_proof = recv_json(transport).await?;
+    let confirm = machine
+        .on_server_proof(&server_proof, now)
+        .map_err(|e| auth_failed("daemon", e))?;
+    send_json(transport, &confirm).await?;
+
+    let established = recv_json(transport).await?;
+    machine
+        .on_established(&established)
+        .map_err(|e| auth_failed("daemon", e))
+}
+
+async fn send_json<T: crate::Transport>(
+    transport: &mut T,
+    msg: &RelayAuthMessage,
+) -> Result<()> {
+    let json = msg
+        .to_json()
+        .map_err(|e| NetworkError::ProtocolNegotiation(format!("relay-auth encode: {e}")))?;
+    if json.len() > MAX_RELAY_AUTH_FRAME {
+        return Err(NetworkError::ProtocolNegotiation(format!(
+            "relay-auth frame {} exceeds cap {MAX_RELAY_AUTH_FRAME}",
+            json.len()
+        )));
+    }
+    transport.send(json.as_bytes()).await?;
+    Ok(())
+}
+
+async fn recv_json<T: crate::Transport>(transport: &mut T) -> Result<RelayAuthMessage> {
+    let mut buf = vec![0u8; MAX_RELAY_AUTH_FRAME];
+    let len = transport.receive(&mut buf).await?;
+    if len == 0 {
+        return Err(NetworkError::ProtocolNegotiation(
+            "peer closed before a relay-auth message".to_string(),
+        ));
+    }
+    buf.truncate(len);
+    let json = std::str::from_utf8(&buf)
+        .map_err(|e| NetworkError::ProtocolNegotiation(format!("relay-auth not utf-8: {e}")))?;
+    RelayAuthMessage::from_json(json)
+        .map_err(|e| NetworkError::ProtocolNegotiation(format!("relay-auth decode: {e}")))
+}
+
 /// The accepting side: the **relay**.
 ///
 /// Refuses before reading a byte when no identity is configured. Every
@@ -261,6 +326,42 @@ mod tests {
     };
 
     use tokio::io::AsyncReadExt;
+
+    /// Minimal in-memory `Transport`: each `send` is one frame, each
+    /// `receive` pops one frame. Framing is the transport's own 4-byte prefix,
+    /// which this stands in for.
+    struct ChanTransport {
+        outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
+        inbound: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    }
+
+    impl crate::Transport for ChanTransport {
+        async fn connect(&mut self, _addr: std::net::SocketAddr) -> Result<()> {
+            Ok(())
+        }
+        async fn send(&mut self, data: &[u8]) -> Result<usize> {
+            let len = data.len();
+            self.outbound
+                .send(data.to_vec())
+                .await
+                .map_err(|_| NetworkError::ConnectionFailed("channel closed".to_string()))?;
+            Ok(len)
+        }
+        async fn receive(&mut self, buf: &mut [u8]) -> Result<usize> {
+            let frame = self
+                .inbound
+                .recv()
+                .await
+                .ok_or_else(|| NetworkError::ConnectionFailed("channel closed".to_string()))?;
+            if frame.len() > buf.len() {
+                return Err(NetworkError::ConnectionFailed(
+                    "frame larger than buffer".to_string(),
+                ));
+            }
+            buf[..frame.len()].copy_from_slice(&frame);
+            Ok(frame.len())
+        }
+    }
 
     fn scope(service: &str, action: Action) -> Scope {
         Scope::new(service, action).unwrap()
@@ -471,5 +572,26 @@ mod tests {
         assert_eq!(client.binding, server.binding);
         assert_eq!(client.peer.sub, id("node-01", "relay"));
         assert_eq!(server.peer.sub, id("node-01", "daemon"));
+    }
+
+    #[tokio::test]
+    async fn daemon_over_transport_refuses_without_identity_before_any_frame() {
+        let fx = fixture();
+        let anon = RelayMutualAuth::anonymous(fx.daemon_trust.clone());
+        let (outbound, mut observed) = tokio::sync::mpsc::channel(4);
+        let (_peer_tx, inbound) = tokio::sync::mpsc::channel(4);
+        let mut transport = ChanTransport { outbound, inbound };
+
+        let err = authenticate_daemon_over(&mut transport, &anon, now_unix())
+            .await
+            .expect_err("an anonymous config must refuse");
+        assert!(
+            matches!(err, crate::NetworkError::AuthenticationFailed),
+            "anonymous config must fail authentication, got: {err:?}"
+        );
+        assert!(
+            observed.try_recv().is_err(),
+            "no handshake frame may be sent when no identity is configured"
+        );
     }
 }
