@@ -1,11 +1,10 @@
 //! Text embeddings via Candle (mock-by-default).
 //!
-//! **Honesty note:** the `real-ml` cargo feature is **not shipped** in this
-//! crate. There is no declared `real-ml` feature in `Cargo.toml`, and the
-//! candle-based BGE-small-en-v1.5 loader is not implemented — so enabling it
-//! (if the feature ever gets declared) returns a clear `Err`, never a silent
-//! fallback. By default we use a deterministic **non-semantic** mock that
-//! produces 384-dim vectors derived from a stable hash (FNV-1a bag-of-words)
+//! **Honesty note:** the `real-ml` cargo feature is declared in `Cargo.toml`
+//! (`real-ml = []`) but **not shipped**: the candle-based BGE-small-en-v1.5
+//! loader is not implemented, so enabling it returns a clear `Err`, never a
+//! silent fallback. By default we use a deterministic **non-semantic** mock
+//! that produces 384-dim vectors derived from a stable hash (FNV-1a bag-of-words)
 //! of the input text. This makes tests reproducible and lets the rest of the
 //! ML pipeline (vector store, matcher, reranker) be developed and tested
 //! without committing ~150MB of model weights — but the mock vectors do NOT
