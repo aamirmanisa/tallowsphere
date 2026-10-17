@@ -3012,11 +3012,101 @@ mod tests {
         let compiler = FinancialCompiler::new();
         let result = compiler.compile(&expr).unwrap();
         assert!(
-            !result.nodes_offloaded_to_gpu.is_empty(),
+            !result.cuda_offload_candidates.is_empty(),
             "100_001 elements must trip the 100_000 GPU threshold"
         );
         assert!(result.cuda_kernels.is_empty(), "Transpose has no kernel in the CUDA stub");
         assert!(result.llvm_ir.contains("define void @tallow_finance"));
+    }
+
+    // ── Row #89: ops that used to return "not yet implemented" ────────────
+
+    fn const_scalar(graph: &mut FinanceGraph, v: f64) -> NodeId {
+        graph.push(
+            Op::Constant(ConstantValue::F64(v)),
+            DType::F64,
+            Shape::Scalar,
+            vec![],
+        )
+    }
+
+    fn const_vec(graph: &mut FinanceGraph, vals: &[f64]) -> NodeId {
+        let cells: Vec<ConstantValue> = vals.iter().map(|v| ConstantValue::F64(*v)).collect();
+        graph.push(
+            Op::Constant(ConstantValue::Array(cells, DType::F64)),
+            DType::F64,
+            Shape::Vector(vals.len()),
+            vec![],
+        )
+    }
+
+    fn scalar_at(results: &[RuntimeValue], index: usize) -> f64 {
+        match &results[index] {
+            RuntimeValue::Scalar(ConstantValue::F64(v)) => *v,
+            other => panic!("expected scalar at {index}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn interp_pow_mod_round_floor_ceil_log10() {
+        let mut graph = FinanceGraph::new();
+        let two = const_scalar(&mut graph, 2.0);
+        let five = const_scalar(&mut graph, 5.0);
+        let frac = const_scalar(&mut graph, 2.6);
+        let thousand = const_scalar(&mut graph, 1000.0);
+        let pow = graph.push(Op::Pow, DType::F64, Shape::Scalar, vec![two, five]);
+        let modulo = graph.push(Op::Mod, DType::F64, Shape::Scalar, vec![five, two]);
+        let round = graph.push(Op::Round, DType::F64, Shape::Scalar, vec![frac]);
+        let floor = graph.push(Op::Floor, DType::F64, Shape::Scalar, vec![frac]);
+        let ceil = graph.push(Op::Ceil, DType::F64, Shape::Scalar, vec![frac]);
+        let log10 = graph.push(Op::Log10, DType::F64, Shape::Scalar, vec![thousand]);
+        graph.outputs = vec![pow, modulo, round, floor, ceil, log10];
+        graph.rebuild_adjacency();
+
+        let mut interp = GraphInterpreter::new(4096);
+        let out = interp.eval(&graph, &HashMap::new()).unwrap();
+        assert!((scalar_at(&out, 0) - 32.0).abs() < 1e-9, "pow");
+        assert!((scalar_at(&out, 1) - 1.0).abs() < 1e-9, "mod");
+        assert!((scalar_at(&out, 2) - 3.0).abs() < 1e-9, "round");
+        assert!((scalar_at(&out, 3) - 2.0).abs() < 1e-9, "floor");
+        assert!((scalar_at(&out, 4) - 3.0).abs() < 1e-9, "ceil");
+        assert!((scalar_at(&out, 5) - 3.0).abs() < 1e-9, "log10");
+    }
+
+    #[test]
+    fn interp_var_min_max_over_vector() {
+        let mut graph = FinanceGraph::new();
+        let values = const_vec(&mut graph, &[1.0, 2.0, 3.0, 4.0]);
+        let var = graph.push(Op::Var, DType::F64, Shape::Scalar, vec![values]);
+        let min = graph.push(Op::Min, DType::F64, Shape::Scalar, vec![values]);
+        let max = graph.push(Op::Max, DType::F64, Shape::Scalar, vec![values]);
+        graph.outputs = vec![var, min, max];
+        graph.rebuild_adjacency();
+
+        let mut interp = GraphInterpreter::new(4096);
+        let out = interp.eval(&graph, &HashMap::new()).unwrap();
+        assert!((scalar_at(&out, 0) - 1.25).abs() < 1e-9, "population var");
+        assert!((scalar_at(&out, 1) - 1.0).abs() < 1e-9, "min");
+        assert!((scalar_at(&out, 2) - 4.0).abs() < 1e-9, "max");
+    }
+
+    #[test]
+    fn interp_cov_and_corr_over_two_vectors() {
+        let mut graph = FinanceGraph::new();
+        let xs = const_vec(&mut graph, &[1.0, 2.0, 3.0]);
+        let ys = const_vec(&mut graph, &[2.0, 4.0, 6.0]);
+        let cov = graph.push(Op::Cov, DType::F64, Shape::Scalar, vec![xs, ys]);
+        let corr = graph.push(Op::Corr, DType::F64, Shape::Scalar, vec![xs, ys]);
+        graph.outputs = vec![cov, corr];
+        graph.rebuild_adjacency();
+
+        let mut interp = GraphInterpreter::new(4096);
+        let out = interp.eval(&graph, &HashMap::new()).unwrap();
+        assert!(
+            (scalar_at(&out, 0) - 4.0 / 3.0).abs() < 1e-9,
+            "population covariance"
+        );
+        assert!((scalar_at(&out, 1) - 1.0).abs() < 1e-9, "perfect correlation");
     }
 }
 

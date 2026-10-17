@@ -2780,16 +2780,15 @@ impl Default for LlvmCodegen {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Section 9: CUDA Code Generation (Stub)
+// Section 9: CUDA source generation (no execution path)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Stub for CUDA PTX code generation from the financial IR graph.
+/// Emits CUDA C **source text** for large financial kernels.
 ///
-/// In production, this would:
-/// 1. Identify large matrix/array operations that benefit from GPU parallelism
-/// 2. Generate CUDA kernels with thread-block decomposition
-/// 3. Manage host-device memory transfers
-/// 4. Use cuBLAS/cuFFT for linear algebra primitives
+/// This build does not compile, launch or link CUDA: the returned kernels are
+/// strings for a downstream toolchain. `CompileResult.cuda_offload_candidates`
+/// therefore names nodes whose kernel source was generated — not nodes that ran
+/// on a GPU. Execution always goes through the LLVM IR path.
 pub struct CudaCodegen {
     /// CUDA compute capability (e.g., "sm_80" for A100).
     pub compute_capability: String,
@@ -3501,18 +3500,73 @@ impl GraphInterpreter {
             | Op::AsTimestamp
             | Op::ParseTimestamp(_)
             | Op::Median
-            | Op::Quantile
-            | Op::Corr
-            | Op::Cov
-            | Op::Mod
-            | Op::Pow
-            | Op::Round
-            | Op::Floor
-            | Op::Ceil
-            | Op::Log10
-            | Op::Var
-            | Op::Min
-            | Op::Max => Err(format!("Op::{:?} not yet implemented in interpreter", op)),
+            | Op::Quantile => Err(format!(
+                "Op::{:?} not yet implemented in interpreter",
+                op
+            )),
+            Op::Mod => {
+                if inputs.len() < 2 {
+                    return Err("mod: expected 2 inputs".to_string());
+                }
+                if Self::extract_f64s(inputs[1]).iter().any(|d| *d == 0.0) {
+                    return Err("mod: division by zero".to_string());
+                }
+                Self::bin_op(inputs, |a, b| a % b)
+            }
+            Op::Pow => Self::bin_op(inputs, |a, b| a.powf(b)),
+            Op::Round => Self::un_op(inputs, |a| a.round()),
+            Op::Floor => Self::un_op(inputs, |a| a.floor()),
+            Op::Ceil => Self::un_op(inputs, |a| a.ceil()),
+            Op::Log10 => Self::un_op(inputs, |a| a.log10()),
+            Op::Var => {
+                // Population variance, matching Op::StdDev (÷ n, not ÷ n−1).
+                let vals = Self::extract_f64s(inputs[0]);
+                if vals.is_empty() {
+                    return Err("var: empty input".to_string());
+                }
+                let mean = vals.iter().sum::<f64>() / vals.len() as f64;
+                let var = vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / vals.len() as f64;
+                Ok(RuntimeValue::Scalar(ConstantValue::F64(var)))
+            }
+            Op::Min => Self::min_max(inputs, true),
+            Op::Max => Self::min_max(inputs, false),
+            Op::Cov | Op::Corr => {
+                if inputs.len() < 2 {
+                    return Err(format!("{:?}: expected 2 inputs", op));
+                }
+                let xs = Self::extract_f64s(inputs[0]);
+                let ys = Self::extract_f64s(inputs[1]);
+                if xs.len() != ys.len() {
+                    return Err(format!(
+                        "{:?}: input lengths differ ({} vs {})",
+                        op,
+                        xs.len(),
+                        ys.len()
+                    ));
+                }
+                if xs.is_empty() {
+                    return Err(format!("{:?}: empty input", op));
+                }
+                let n = xs.len() as f64;
+                let mean_x = xs.iter().sum::<f64>() / n;
+                let mean_y = ys.iter().sum::<f64>() / n;
+                // Population covariance (÷ n), consistent with Op::Var/StdDev.
+                let cov = xs
+                    .iter()
+                    .zip(ys.iter())
+                    .map(|(x, y)| (x - mean_x) * (y - mean_y))
+                    .sum::<f64>()
+                    / n;
+                if matches!(op, &Op::Cov) {
+                    return Ok(RuntimeValue::Scalar(ConstantValue::F64(cov)));
+                }
+                let sd_x = (xs.iter().map(|x| (x - mean_x).powi(2)).sum::<f64>() / n).sqrt();
+                let sd_y = (ys.iter().map(|y| (y - mean_y).powi(2)).sum::<f64>() / n).sqrt();
+                if sd_x == 0.0 || sd_y == 0.0 {
+                    return Err("corr: zero variance in an input".to_string());
+                }
+                Ok(RuntimeValue::Scalar(ConstantValue::F64(cov / (sd_x * sd_y))))
+            }
         }
     }
 
@@ -3654,6 +3708,29 @@ impl GraphInterpreter {
         }
     }
 
+    /// `Op::Min` / `Op::Max`. Two scalar inputs compare; otherwise the first
+    /// input is reduced. A single-value reduce is that value.
+    fn min_max(inputs: &[&RuntimeValue], want_min: bool) -> Result<RuntimeValue, String> {
+        if inputs.is_empty() {
+            return Err("min/max: expected at least 1 input".to_string());
+        }
+        if inputs.len() >= 2 && inputs.iter().all(|v| matches!(v, RuntimeValue::Scalar(_))) {
+            let a = Self::extract_f64s(inputs[0])[0];
+            let b = Self::extract_f64s(inputs[1])[0];
+            let out = if want_min { a.min(b) } else { a.max(b) };
+            return Ok(RuntimeValue::Scalar(ConstantValue::F64(out)));
+        }
+        let vals = Self::extract_f64s(inputs[0]);
+        if vals.is_empty() {
+            return Err("min/max: empty input".to_string());
+        }
+        let out = vals
+            .iter()
+            .copied()
+            .fold(vals[0], |acc, v| if want_min { acc.min(v) } else { acc.max(v) });
+        Ok(RuntimeValue::Scalar(ConstantValue::F64(out)))
+    }
+
     fn fold_scalars<F>(val: &RuntimeValue, init: f64, f: F) -> f64
     where
         F: Fn(f64, f64) -> f64,
@@ -3685,7 +3762,9 @@ pub struct CompileResult {
     pub memory_plan: MemoryPlan,
     pub llvm_ir: String,
     pub cuda_kernels: Vec<String>,
-    pub nodes_offloaded_to_gpu: Vec<NodeId>,
+    /// Nodes for which CUDA source was generated. **Not** a record of GPU
+    /// execution: nothing in this build compiles or launches these kernels.
+    pub cuda_offload_candidates: Vec<NodeId>,
 }
 
 impl FinancialCompiler {
@@ -3761,7 +3840,7 @@ impl FinancialCompiler {
             memory_plan,
             llvm_ir,
             cuda_kernels,
-            nodes_offloaded_to_gpu: nodes_offloaded,
+            cuda_offload_candidates: nodes_offloaded,
         })
     }
 
