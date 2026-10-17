@@ -402,6 +402,11 @@ const ELEM_BOOL: i32 = 3;
 /// chained call (`html.parse(b).select_one("h1")`) resolves exactly like the
 /// same expression bound to a variable first.
 fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
+    // Same `page_` normalisation as the dispatch sites (src/interp.rs BrowserObject arm,
+    // emit_browser_method_call): stdlib/browser.tl names the methods `page_*` while the keys
+    // here use the stem, so without this a `page_extract_all_text()` call infers no result
+    // kind at all.
+    let method = method.strip_prefix("page_").unwrap_or(method);
     match (recv_kind?, method) {
         ("html" | "Html", "parse") | ("html" | "Html", "parse_bytes") => {
             Some("HtmlDocument".to_string())
@@ -8882,6 +8887,11 @@ void tallow_async_runtime_shutdown(void) {
         method: &str,
         args: &[CallArg],
     ) -> Result<LLValue, String> {
+        // Mirror of the interpreter's normalisation (src/interp.rs, the BrowserObject arm):
+        // stdlib/browser.tl declares `page_*` while every key below uses the stem, so the compiled
+        // and interpreted planes must strip the same prefix or they would disagree about which
+        // methods exist.
+        let method = method.strip_prefix("page_").unwrap_or(method);
         match (browser_kind, method) {
             // ── Browser methods ─────────────────────────────────────────
             ("Browser", "new_page") => {

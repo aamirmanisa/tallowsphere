@@ -1,0 +1,1728 @@
+{
+  "counts": {
+    "declared": 286,
+    "rust_named": 266,
+    "absent": 20
+  },
+  "method": "name-absence only: a name present in Rust may still be a refusal rather than an implementation, so `absent` is a NECESSARY-condition screen, not the final verdict",
+  "absent": [
+    {
+      "fn": "page_is_wordfence_challenge",
+      "line": 225,
+      "marker": "// Runtime: checks document.title for \"One moment, please...\"",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_bypass_wordfence",
+      "line": 232,
+      "marker": "// Runtime: executes WF JS challenge, waits for redirect",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_navigate_bypass_wordfence",
+      "line": 238,
+      "marker": "// Runtime: navigate \u2192 detect WF \u2192 bypass \u2192 return final URL",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_wp_extract_rest_nonce",
+      "line": 246,
+      "marker": "// Runtime: evaluates wpApiSettings.nonce, hidden _wpnonce fields",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_wp_is_logged_in",
+      "line": 252,
+      "marker": "// Runtime: checks for #wpadminbar, .logged-in, logout links",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_wp_login",
+      "line": 259,
+      "marker": "// Runtime: full wp-login.php flow \u2192 detect 2FA/success/failure",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_wp_extract_all_nonces",
+      "line": 265,
+      "marker": "// Runtime: evaluates all nonce sources on page",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "browser_context_create",
+      "line": 376,
+      "marker": "// native: creates CDP BrowserContext with proxy isolation",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_extract_all_text",
+      "line": 456,
+      "marker": "// native: single Runtime.evaluate returning all texts",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_extract_all_attrs",
+      "line": 461,
+      "marker": "// native: single Runtime.evaluate returning all attribute maps",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_block_non_essential",
+      "line": 466,
+      "marker": "// native: Fetch.enable blocking images, fonts, CSS, media",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_wait_for_stable",
+      "line": 471,
+      "marker": "// native: MutationObserver-based stability detection",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_detect_pagination",
+      "line": 476,
+      "marker": "// native: detects numbered, next_button, load_more, infinite_scroll",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_handle_cookie_consent",
+      "line": 481,
+      "marker": "// native: clicks accept/reject/dismiss on consent banners",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_structured_data",
+      "line": 486,
+      "marker": "// native: JSON-LD + OpenGraph extraction",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_capture_dom_snapshot",
+      "line": 491,
+      "marker": "// native: CDP DOMSnapshot.captureSnapshot",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_text_redacted",
+      "line": 496,
+      "marker": "// native: text extraction with email/phone/SSN/CC/IP redaction",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "try_lock",
+      "line": 63,
+      "marker": "// native: returns nil if already locked",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "to_iso",
+      "line": 43,
+      "marker": "// native: \"2026-03-01T14:23:11Z\"",
+      "file": "time.tl"
+    },
+    {
+      "fn": "with_param",
+      "line": 42,
+      "marker": "// native: adds or replaces query parameter",
+      "file": "url.tl"
+    }
+  ],
+  "rust_named": [
+    {
+      "fn": "await",
+      "line": 24,
+      "marker": "// native: blocks until agent finishes",
+      "file": "agent.tl"
+    },
+    {
+      "fn": "await",
+      "line": 29,
+      "marker": "// native: blocks with timeout",
+      "file": "agent.tl"
+    },
+    {
+      "fn": "cancel",
+      "line": 34,
+      "marker": "// native: signals cancellation",
+      "file": "agent.tl"
+    },
+    {
+      "fn": "status",
+      "line": 49,
+      "marker": "// native: checks current status",
+      "file": "agent.tl"
+    },
+    {
+      "fn": "current_stats",
+      "line": 88,
+      "marker": "// native: returns resource usage",
+      "file": "agent.tl"
+    },
+    {
+      "fn": "launch",
+      "line": 23,
+      "marker": "// Runtime: spawns Chrome process, connects via CDP WebSocket",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "new_page",
+      "line": 28,
+      "marker": "// Runtime: creates new CDP target",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "close",
+      "line": 33,
+      "marker": "// Runtime: sends Browser.close via CDP, kills process",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "goto",
+      "line": 48,
+      "marker": "// Runtime: Page.navigate + Page.loadEventFired via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "goto_antibot",
+      "line": 76,
+      "marker": "// Runtime: AntiBotOrchestrator.execute_request + relaunch-on-proxy",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "title",
+      "line": 81,
+      "marker": "// Runtime: evaluates document.title via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "url",
+      "line": 86,
+      "marker": "// Runtime: evaluates window.location.href via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "query_selector",
+      "line": 92,
+      "marker": "// Runtime: document.querySelector via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "query_selector_all",
+      "line": 98,
+      "marker": "// Runtime: document.querySelectorAll via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "wait_for_selector",
+      "line": 104,
+      "marker": "// Runtime: polls querySelector until found or timeout",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "fill",
+      "line": 116,
+      "marker": "// Runtime: query_selector \u2192 focus/clear/type_text via CDP Input domain",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "click",
+      "line": 122,
+      "marker": "// Runtime: query_selector \u2192 ElementHandle.click via CDP Input domain",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "select",
+      "line": 128,
+      "marker": "// Runtime: query_selector \u2192 ElementHandle.select_option via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "resolve_antibot",
+      "line": 138,
+      "marker": "// Runtime: AntiBotOrchestrator.resolve (src/browser/antibot.rs) +",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "reload",
+      "line": 144,
+      "marker": "// Runtime: Page.reload via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "go_back",
+      "line": 149,
+      "marker": "// Runtime: Page.navigateToHistoryEntry via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "go_forward",
+      "line": 154,
+      "marker": "// Runtime: Page.navigateToHistoryEntry via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "scroll_by",
+      "line": 159,
+      "marker": "// Runtime: Input.dispatchMouseEvent with type=mouseWheel via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "scroll_to_bottom",
+      "line": 164,
+      "marker": "// Runtime: evaluates window.scrollTo(0, document.body.scrollHeight) via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "get_cookies",
+      "line": 172,
+      "marker": "// Runtime: CDP Network.getCookies \u2192 Vec<CdpCookie>",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "cookie_string",
+      "line": 178,
+      "marker": "// Runtime: get_cookies() \u2192 domain filter \u2192 join",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "set_cookies_from_header",
+      "line": 185,
+      "marker": "// Runtime: parse header \u2192 CdpCookie \u2192 Network.setCookie",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "authenticated_get",
+      "line": 192,
+      "marker": "// Runtime: cookie_string() \u2192 ureq GET with Cookie header",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "authenticated_request",
+      "line": 199,
+      "marker": "// Runtime: cookie_string() \u2192 ureq with Cookie header",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "text",
+      "line": 327,
+      "marker": "// Runtime: callFunctionOn element.innerText via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "inner_html",
+      "line": 332,
+      "marker": "// Runtime: callFunctionOn element.innerHTML via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "attribute",
+      "line": 337,
+      "marker": "// Runtime: callFunctionOn element.getAttribute(name) via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "click",
+      "line": 342,
+      "marker": "// Runtime: scrollIntoView + getBoxModel + Input.dispatchMouseEvent via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "type_text",
+      "line": 348,
+      "marker": "// Runtime: focus + Input.dispatchKeyEvent per character via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "hover",
+      "line": 353,
+      "marker": "// Runtime: scrollIntoView + getBoxModel + Input.dispatchMouseEvent(mouseMoved) via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "visible",
+      "line": 358,
+      "marker": "// Runtime: checks element bounding box and visibility via CDP",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "crawler_from_sitemap",
+      "line": 392,
+      "marker": "// native: discovers and parses sitemap.xml",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "crawler_from_links",
+      "line": 397,
+      "marker": "// native: BFS link-following crawler",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "page_cache_create",
+      "line": 412,
+      "marker": "// native: initializes cache with content-addressed storage",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "content_fingerprint_from_text",
+      "line": 424,
+      "marker": "// native: BLAKE3-based SimHash fingerprinting",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "content_fingerprint_similarity",
+      "line": 429,
+      "marker": "// native: Hamming distance on hash bits",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "structured_data_extract",
+      "line": 441,
+      "marker": "// native: parses script[type=\"application/ld+json\"] and meta[property^=\"og:\"]",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "on_alert",
+      "line": 516,
+      "marker": "// native: Page.javascriptDialogOpening CDP event",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "on_confirm",
+      "line": 521,
+      "marker": "// native: Page.javascriptDialogOpening with confirm type",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "on_prompt",
+      "line": 526,
+      "marker": "// native: Page.javascriptDialogOpening with prompt type",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "accept",
+      "line": 531,
+      "marker": "// native: Page.handleJavaScriptDialog accept=true",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "dismiss",
+      "line": 536,
+      "marker": "// native: Page.handleJavaScriptDialog accept=false",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "parse",
+      "line": 805,
+      "marker": "// native: string-based HTML parsing (no browser needed)",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "links",
+      "line": 811,
+      "marker": "// native: extracts all href values",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "meta",
+      "line": 817,
+      "marker": "// native: extracts <title> and <meta> tags",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "create",
+      "line": 840,
+      "marker": "// native: returns config struct for the specified mode",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "fast",
+      "line": 846,
+      "marker": "// native: { mode: \"fast\", resource_blocking: true, default_wait: \"domcontentloaded\" }",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "balanced",
+      "line": 852,
+      "marker": "// native: { mode: \"balanced\", resource_blocking: true, default_wait: \"networkalmostidle\" }",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "stealth",
+      "line": 858,
+      "marker": "// native: { mode: \"stealth\", resource_blocking: false, default_wait: \"networkidle\" }",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "status",
+      "line": 872,
+      "marker": "// native: checks if daemon process is alive",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "config",
+      "line": 878,
+      "marker": "// native: reads daemon config",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "browser_surface_manifest",
+      "line": 2088,
+      "marker": "// native: returns contract metadata for the browser surface",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "browser_pipe_transport_status",
+      "line": 2094,
+      "marker": "// native: returns pipe transport contract status",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "browser_fallback_boundary",
+      "line": 2099,
+      "marker": "// native: returns fallback boundary contract metadata",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "browser_fallback_service_status",
+      "line": 2104,
+      "marker": "// native: returns fallback service status metadata",
+      "file": "browser.tl"
+    },
+    {
+      "fn": "run",
+      "line": 53,
+      "marker": "// native: parses CLI args and dispatches to handler",
+      "file": "cli.tl"
+    },
+    {
+      "fn": "compress_with",
+      "line": 16,
+      "marker": "// native: compresses data",
+      "file": "compress.tl"
+    },
+    {
+      "fn": "decompress",
+      "line": 21,
+      "marker": "// native: decompresses data",
+      "file": "compress.tl"
+    },
+    {
+      "fn": "decompress_with",
+      "line": 26,
+      "marker": "// native: decompresses with specific algorithm",
+      "file": "compress.tl"
+    },
+    {
+      "fn": "extract",
+      "line": 38,
+      "marker": "// native: launches browser, visits landing page, extracts tokens",
+      "file": "csrf.tl"
+    },
+    {
+      "fn": "sign_request",
+      "line": 44,
+      "marker": "// native: copies request with added CSRF token headers/body fields",
+      "file": "csrf.tl"
+    },
+    {
+      "fn": "connect",
+      "line": 27,
+      "marker": "// native: opens connection pool",
+      "file": "db.tl"
+    },
+    {
+      "fn": "query",
+      "line": 38,
+      "marker": "// native: executes parameterized query",
+      "file": "db.tl"
+    },
+    {
+      "fn": "query_one",
+      "line": 43,
+      "marker": "// native: executes query, expects exactly one row",
+      "file": "db.tl"
+    },
+    {
+      "fn": "execute",
+      "line": 48,
+      "marker": "// native: executes parameterized statement",
+      "file": "db.tl"
+    },
+    {
+      "fn": "begin",
+      "line": 53,
+      "marker": "// native: starts transaction",
+      "file": "db.tl"
+    },
+    {
+      "fn": "close",
+      "line": 58,
+      "marker": "// native: closes connection pool",
+      "file": "db.tl"
+    },
+    {
+      "fn": "ping",
+      "line": 63,
+      "marker": "// native: pings database",
+      "file": "db.tl"
+    },
+    {
+      "fn": "query",
+      "line": 74,
+      "marker": "// native: query within transaction",
+      "file": "db.tl"
+    },
+    {
+      "fn": "execute",
+      "line": 78,
+      "marker": "// native: execute within transaction",
+      "file": "db.tl"
+    },
+    {
+      "fn": "commit",
+      "line": 82,
+      "marker": "// native: commits transaction",
+      "file": "db.tl"
+    },
+    {
+      "fn": "rollback",
+      "line": 86,
+      "marker": "// native: rolls back transaction",
+      "file": "db.tl"
+    },
+    {
+      "fn": "get_string",
+      "line": 103,
+      "marker": "// native: gets column as string",
+      "file": "db.tl"
+    },
+    {
+      "fn": "get_i64",
+      "line": 107,
+      "marker": "// native: gets column as i64",
+      "file": "db.tl"
+    },
+    {
+      "fn": "get_f64",
+      "line": 111,
+      "marker": "// native: gets column as f64",
+      "file": "db.tl"
+    },
+    {
+      "fn": "get_bool",
+      "line": 115,
+      "marker": "// native: gets column as bool",
+      "file": "db.tl"
+    },
+    {
+      "fn": "get",
+      "line": 7,
+      "marker": "// native: reads env var",
+      "file": "env.tl"
+    },
+    {
+      "fn": "get_or",
+      "line": 12,
+      "marker": "// native: reads env var, returns default if unset",
+      "file": "env.tl"
+    },
+    {
+      "fn": "require",
+      "line": 17,
+      "marker": "// native: reads env var, errors if missing",
+      "file": "env.tl"
+    },
+    {
+      "fn": "set",
+      "line": 22,
+      "marker": "// native: sets env var for current process",
+      "file": "env.tl"
+    },
+    {
+      "fn": "remove",
+      "line": 27,
+      "marker": "// native: unsets env var",
+      "file": "env.tl"
+    },
+    {
+      "fn": "all",
+      "line": 32,
+      "marker": "// native: returns all env vars as map",
+      "file": "env.tl"
+    },
+    {
+      "fn": "has",
+      "line": 37,
+      "marker": "// native: true if env var exists",
+      "file": "env.tl"
+    },
+    {
+      "fn": "cwd",
+      "line": 42,
+      "marker": "// native: returns current working directory",
+      "file": "env.tl"
+    },
+    {
+      "fn": "home",
+      "line": 47,
+      "marker": "// native: returns user home directory",
+      "file": "env.tl"
+    },
+    {
+      "fn": "home_dir",
+      "line": 52,
+      "marker": "// native: returns user home directory",
+      "file": "env.tl"
+    },
+    {
+      "fn": "config_dir",
+      "line": 57,
+      "marker": "// native: returns platform config directory",
+      "file": "env.tl"
+    },
+    {
+      "fn": "data_dir",
+      "line": 62,
+      "marker": "// native: returns platform data directory",
+      "file": "env.tl"
+    },
+    {
+      "fn": "temp_dir",
+      "line": 67,
+      "marker": "// native: returns system temp directory path",
+      "file": "env.tl"
+    },
+    {
+      "fn": "cache_dir",
+      "line": 72,
+      "marker": "// native: returns platform cache directory",
+      "file": "env.tl"
+    },
+    {
+      "fn": "exe_path",
+      "line": 77,
+      "marker": "// native: returns path to current executable",
+      "file": "env.tl"
+    },
+    {
+      "fn": "args",
+      "line": 82,
+      "marker": "// native: returns CLI arguments",
+      "file": "env.tl"
+    },
+    {
+      "fn": "content",
+      "line": 16,
+      "marker": "// native: evaluates document.documentElement.outerHTML",
+      "file": "frame.tl"
+    },
+    {
+      "fn": "query_selector",
+      "line": 22,
+      "marker": "// native: frame.contentDocument.querySelector(selector)",
+      "file": "frame.tl"
+    },
+    {
+      "fn": "query_selector_all",
+      "line": 28,
+      "marker": "// native: frame.contentDocument.querySelectorAll(selector)",
+      "file": "frame.tl"
+    },
+    {
+      "fn": "inner_html",
+      "line": 33,
+      "marker": "// native: evaluates frame.contentDocument.body.innerHTML",
+      "file": "frame.tl"
+    },
+    {
+      "fn": "page_frames",
+      "line": 41,
+      "marker": "// native: CDP Page.getFrameTree \u2192 parse_frame_tree",
+      "file": "frame.tl"
+    },
+    {
+      "fn": "read_file",
+      "line": 12,
+      "marker": "// native: reads file at path, returns UTF-8 string",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "read_bytes",
+      "line": 19,
+      "marker": "// native: reads file at path, returns raw bytes",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "write_file",
+      "line": 24,
+      "marker": "// native: writes content to file",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "write_bytes",
+      "line": 29,
+      "marker": "// native: writes bytes to file",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "append_file",
+      "line": 34,
+      "marker": "// native: appends content to end of file",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "create_file",
+      "line": 39,
+      "marker": "// native: creates empty file",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "delete_file",
+      "line": 44,
+      "marker": "// native: removes file at path",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "exists",
+      "line": 49,
+      "marker": "// native: returns true if path exists",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "is_file",
+      "line": 54,
+      "marker": "// native: returns true if path is a regular file",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "is_dir",
+      "line": 59,
+      "marker": "// native: returns true if path is a directory",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "mkdir",
+      "line": 64,
+      "marker": "// native: creates directory recursively",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "remove_dir",
+      "line": 69,
+      "marker": "// native: removes directory (must be empty)",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "remove_dir_all",
+      "line": 74,
+      "marker": "// native: removes directory tree",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "list_dir",
+      "line": 79,
+      "marker": "// native: returns file/dir names in directory",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "copy",
+      "line": 84,
+      "marker": "// native: copies file",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "rename",
+      "line": 89,
+      "marker": "// native: moves/renames file",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "file_size",
+      "line": 94,
+      "marker": "// native: returns file size",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "stat",
+      "line": 109,
+      "marker": "// native: returns file metadata",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "read_lines",
+      "line": 114,
+      "marker": "// native: reads file, splits by newline",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "temp_file",
+      "line": 119,
+      "marker": "// native: creates temp file, returns path",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "temp_dir",
+      "line": 124,
+      "marker": "// native: creates temp directory, returns path",
+      "file": "fs.tl"
+    },
+    {
+      "fn": "parse",
+      "line": 18,
+      "marker": "// native: parses HTML into DOM tree",
+      "file": "html.tl"
+    },
+    {
+      "fn": "parse_bytes",
+      "line": 23,
+      "marker": "// native: parses HTML bytes (auto-detects encoding)",
+      "file": "html.tl"
+    },
+    {
+      "fn": "select",
+      "line": 29,
+      "marker": "// native: CSS selector query, returns matching elements",
+      "file": "html.tl"
+    },
+    {
+      "fn": "select_one",
+      "line": 34,
+      "marker": "// native: returns first match or nil",
+      "file": "html.tl"
+    },
+    {
+      "fn": "text",
+      "line": 50,
+      "marker": "// native: extracts all text nodes",
+      "file": "html.tl"
+    },
+    {
+      "fn": "text",
+      "line": 57,
+      "marker": "// native: text content of element and children",
+      "file": "html.tl"
+    },
+    {
+      "fn": "inner_html",
+      "line": 72,
+      "marker": "// native: HTML content inside this element",
+      "file": "html.tl"
+    },
+    {
+      "fn": "outer_html",
+      "line": 77,
+      "marker": "// native: HTML including this element",
+      "file": "html.tl"
+    },
+    {
+      "fn": "select",
+      "line": 82,
+      "marker": "// native: CSS selector within this element's subtree",
+      "file": "html.tl"
+    },
+    {
+      "fn": "parent",
+      "line": 87,
+      "marker": "// native: parent node",
+      "file": "html.tl"
+    },
+    {
+      "fn": "children",
+      "line": 92,
+      "marker": "// native: direct child elements",
+      "file": "html.tl"
+    },
+    {
+      "fn": "parse_value",
+      "line": 22,
+      "marker": "// native: parses JSON into JsonValue tree",
+      "file": "json.tl"
+    },
+    {
+      "fn": "get",
+      "line": 39,
+      "marker": "// returns value at key or nil",
+      "file": "json.tl"
+    },
+    {
+      "fn": "at",
+      "line": 44,
+      "marker": "// returns value at index or nil",
+      "file": "json.tl"
+    },
+    {
+      "fn": "log_audit",
+      "line": 56,
+      "marker": "// native: appends one JSON object per line, returns Ok(())",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "read_audit_log",
+      "line": 62,
+      "marker": "// native: parses each JSONL line into an AuditEntry struct",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "consent_register",
+      "line": 68,
+      "marker": "// native: persists {subject, purpose, status: registered, registered_at}",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "consent_check",
+      "line": 74,
+      "marker": "// native: answers from consent_register.jsonl",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "erasure_request",
+      "line": 80,
+      "marker": "// native: persists {subject, status: requested, requested_at}",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "subject_access_request",
+      "line": 86,
+      "marker": "// native: persists {event: subject_access_request, ...}",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "generate_report",
+      "line": 91,
+      "marker": "// native: generates human-readable compliance report",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "check_compliance",
+      "line": 96,
+      "marker": "// native: validates entries against jurisdiction rules",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "cra_audit",
+      "line": 133,
+      "marker": "// native: runs CRA compliance checks and returns structured report",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "nis2_audit",
+      "line": 170,
+      "marker": "// native: collects crypto inventory and checks BSI TR-02102 compliance",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "dora_incident_new",
+      "line": 203,
+      "marker": "// native: creates incident with UUID and ISO-8601 detection_time",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "dora_classify",
+      "line": 212,
+      "marker": "// native: updates severity and classification_time",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "dora_report",
+      "line": 217,
+      "marker": "// native: serializes incident to JSON per DORA Art.19 format",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "ai_inference_log_create",
+      "line": 259,
+      "marker": "// native: creates log with genesis hash chain",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "ai_inference_log_entry",
+      "line": 264,
+      "marker": "// native: appends entry with BLAKE3 chain hash",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "ai_inference_log_verify",
+      "line": 269,
+      "marker": "// native: returns true if hash chain is valid",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "ai_inference_log_export",
+      "line": 274,
+      "marker": "// native: JSON serialization",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "human_approval_request",
+      "line": 291,
+      "marker": "// native: blocks until human approves (auto-approves in interpreter)",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "model_provenance_create",
+      "line": 310,
+      "marker": "// native: creates provenance with empty fields",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "model_provenance_set",
+      "line": 315,
+      "marker": "// native: returns updated provenance",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "model_provenance_attest",
+      "line": 320,
+      "marker": "// native: computes attestation hash of all fields",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "model_provenance_verify",
+      "line": 325,
+      "marker": "// native: recomputes and compares attestation hash",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "model_provenance_export",
+      "line": 330,
+      "marker": "// native: JSON serialization of provenance chain",
+      "file": "legal.tl"
+    },
+    {
+      "fn": "debug",
+      "line": 16,
+      "marker": "// native: logs at DEBUG level",
+      "file": "log.tl"
+    },
+    {
+      "fn": "info",
+      "line": 22,
+      "marker": "// native: logs at INFO level",
+      "file": "log.tl"
+    },
+    {
+      "fn": "warn",
+      "line": 27,
+      "marker": "// native: logs at WARN level",
+      "file": "log.tl"
+    },
+    {
+      "fn": "error",
+      "line": 32,
+      "marker": "// native: logs at ERROR level",
+      "file": "log.tl"
+    },
+    {
+      "fn": "fatal",
+      "line": 37,
+      "marker": "// native: logs at FATAL level, then exits process",
+      "file": "log.tl"
+    },
+    {
+      "fn": "info",
+      "line": 42,
+      "marker": "// native: structured logging with key-value pairs",
+      "file": "log.tl"
+    },
+    {
+      "fn": "debug",
+      "line": 47,
+      "marker": "// native: structured debug log",
+      "file": "log.tl"
+    },
+    {
+      "fn": "warn",
+      "line": 51,
+      "marker": "// native: structured warning log",
+      "file": "log.tl"
+    },
+    {
+      "fn": "error",
+      "line": 55,
+      "marker": "// native: structured error log",
+      "file": "log.tl"
+    },
+    {
+      "fn": "set_level",
+      "line": 60,
+      "marker": "// native: sets global minimum log level",
+      "file": "log.tl"
+    },
+    {
+      "fn": "set_format",
+      "line": 71,
+      "marker": "// native: sets output format",
+      "file": "log.tl"
+    },
+    {
+      "fn": "set_output",
+      "line": 76,
+      "marker": "// native: redirects log output to file",
+      "file": "log.tl"
+    },
+    {
+      "fn": "from_bytes",
+      "line": 39,
+      "marker": "// native: inspects magic bytes to detect type",
+      "file": "mime.tl"
+    },
+    {
+      "fn": "connect",
+      "line": 49,
+      "marker": "// Establishes QUIC connection to the given URL",
+      "file": "net.tl"
+    },
+    {
+      "fn": "send",
+      "line": 54,
+      "marker": "// Opens a unidirectional stream and sends data",
+      "file": "net.tl"
+    },
+    {
+      "fn": "recv",
+      "line": 58,
+      "marker": "// Accepts a unidirectional stream and reads data",
+      "file": "net.tl"
+    },
+    {
+      "fn": "request",
+      "line": 62,
+      "marker": "// Sends an HTTP/3 request over the QUIC connection",
+      "file": "net.tl"
+    },
+    {
+      "fn": "close",
+      "line": 66,
+      "marker": "// Closes the QUIC connection gracefully",
+      "file": "net.tl"
+    },
+    {
+      "fn": "connect",
+      "line": 79,
+      "marker": "// Establishes WebSocket connection (ws:// or wss://)",
+      "file": "net.tl"
+    },
+    {
+      "fn": "send",
+      "line": 83,
+      "marker": "// Sends a text message over the WebSocket",
+      "file": "net.tl"
+    },
+    {
+      "fn": "recv",
+      "line": 87,
+      "marker": "// Receives the next message from the WebSocket",
+      "file": "net.tl"
+    },
+    {
+      "fn": "close",
+      "line": 91,
+      "marker": "// Sends a close frame and disconnects",
+      "file": "net.tl"
+    },
+    {
+      "fn": "start",
+      "line": 104,
+      "marker": "// Opens a packet capture on the given network interface",
+      "file": "net.tl"
+    },
+    {
+      "fn": "filter",
+      "line": 109,
+      "marker": "// Applies a BPF filter to the capture (e.g., \"tcp port 80\")",
+      "file": "net.tl"
+    },
+    {
+      "fn": "next",
+      "line": 113,
+      "marker": "// Captures the next packet, returns { data, len, timestamp }",
+      "file": "net.tl"
+    },
+    {
+      "fn": "stop",
+      "line": 117,
+      "marker": "// Stops the capture and releases the interface",
+      "file": "net.tl"
+    },
+    {
+      "fn": "tor_pool_create",
+      "line": 152,
+      "marker": "// Returns TorPool struct with ready/rotation probed from the daemon",
+      "file": "net.tl"
+    },
+    {
+      "fn": "fetch",
+      "line": 157,
+      "marker": "// Fetches URL through Tor network (onion-routed, real egress)",
+      "file": "net.tl"
+    },
+    {
+      "fn": "new_circuit",
+      "line": 161,
+      "marker": "// REAL circuit rotation (SIGNAL NEWNYM) when the daemon is reachable;",
+      "file": "net.tl"
+    },
+    {
+      "fn": "close",
+      "line": 166,
+      "marker": "// Closes the Tor pool and releases resources",
+      "file": "net.tl"
+    },
+    {
+      "fn": "onion_addr",
+      "line": 179,
+      "marker": "// Returns OnionAddr struct",
+      "file": "net.tl"
+    },
+    {
+      "fn": "to_string",
+      "line": 184,
+      "marker": "// Returns the .onion address as a string",
+      "file": "net.tl"
+    },
+    {
+      "fn": "proxy_chain_create",
+      "line": 204,
+      "marker": "// Returns ProxyChain struct with ordered hops",
+      "file": "net.tl"
+    },
+    {
+      "fn": "fetch",
+      "line": 209,
+      "marker": "// Routes fetch through proxy hops sequentially",
+      "file": "net.tl"
+    },
+    {
+      "fn": "rotate",
+      "line": 213,
+      "marker": "// Rotates to next available proxy in pool",
+      "file": "net.tl"
+    },
+    {
+      "fn": "add_hop",
+      "line": 217,
+      "marker": "// Adds a hop to the chain, returns new hop count",
+      "file": "net.tl"
+    },
+    {
+      "fn": "tunnel_wireguard",
+      "line": 232,
+      "marker": "// Returns Tunnel struct with status=\"initialized\"",
+      "file": "net.tl"
+    },
+    {
+      "fn": "handshake",
+      "line": 237,
+      "marker": "// Performs WireGuard handshake, returns status (\"connected\")",
+      "file": "net.tl"
+    },
+    {
+      "fn": "send",
+      "line": 241,
+      "marker": "// Sends data through tunnel, returns bytes sent",
+      "file": "net.tl"
+    },
+    {
+      "fn": "receive",
+      "line": 245,
+      "marker": "// Receives data from tunnel",
+      "file": "net.tl"
+    },
+    {
+      "fn": "status",
+      "line": 249,
+      "marker": "// Returns current tunnel status",
+      "file": "net.tl"
+    },
+    {
+      "fn": "close",
+      "line": 253,
+      "marker": "// Closes the tunnel",
+      "file": "net.tl"
+    },
+    {
+      "fn": "grpc_server_create",
+      "line": 275,
+      "marker": "// Returns GrpcServer struct with running=false",
+      "file": "net.tl"
+    },
+    {
+      "fn": "route",
+      "line": 280,
+      "marker": "// Registers a service route, returns new route count",
+      "file": "net.tl"
+    },
+    {
+      "fn": "start",
+      "line": 284,
+      "marker": "// Starts the gRPC server",
+      "file": "net.tl"
+    },
+    {
+      "fn": "stop",
+      "line": 288,
+      "marker": "// Stops the gRPC server and releases resources",
+      "file": "net.tl"
+    },
+    {
+      "fn": "grpc_client_connect",
+      "line": 300,
+      "marker": "// Returns GrpcClient struct with connected=true",
+      "file": "net.tl"
+    },
+    {
+      "fn": "call",
+      "line": 305,
+      "marker": "// Invokes a remote procedure call",
+      "file": "net.tl"
+    },
+    {
+      "fn": "close",
+      "line": 309,
+      "marker": "// Closes the gRPC client connection",
+      "file": "net.tl"
+    },
+    {
+      "fn": "traffic_shape_create",
+      "line": 335,
+      "marker": "// Returns TrafficShape struct with active=false",
+      "file": "net.tl"
+    },
+    {
+      "fn": "apply",
+      "line": 340,
+      "marker": "// Pads data to nearest padding boundary for traffic analysis resistance.",
+      "file": "net.tl"
+    },
+    {
+      "fn": "start",
+      "line": 345,
+      "marker": "// Enables constant-rate transmission mode.",
+      "file": "net.tl"
+    },
+    {
+      "fn": "stop",
+      "line": 351,
+      "marker": "// Disables constant-rate transmission mode.",
+      "file": "net.tl"
+    },
+    {
+      "fn": "transport_obfs4",
+      "line": 367,
+      "marker": "// Returns Transport struct with type=\"obfs4\", connected=false",
+      "file": "net.tl"
+    },
+    {
+      "fn": "transport_meek",
+      "line": 375,
+      "marker": "// Returns Transport struct with type=\"meek\", connected=false",
+      "file": "net.tl"
+    },
+    {
+      "fn": "transport_snowflake",
+      "line": 383,
+      "marker": "// Returns Transport struct with type=\"snowflake\", connected=false",
+      "file": "net.tl"
+    },
+    {
+      "fn": "connect",
+      "line": 388,
+      "marker": "// Establishes the transport connection.",
+      "file": "net.tl"
+    },
+    {
+      "fn": "send",
+      "line": 395,
+      "marker": "// Sends data through the transport, returns bytes sent.",
+      "file": "net.tl"
+    },
+    {
+      "fn": "receive",
+      "line": 400,
+      "marker": "// Receives data from the transport.",
+      "file": "net.tl"
+    },
+    {
+      "fn": "close",
+      "line": 405,
+      "marker": "// Closes the transport connection and cleans up resources.",
+      "file": "net.tl"
+    },
+    {
+      "fn": "exec",
+      "line": 6,
+      "marker": "// native: runs command in default shell",
+      "file": "process.tl"
+    },
+    {
+      "fn": "exec",
+      "line": 11,
+      "marker": "// native: runs command with arguments",
+      "file": "process.tl"
+    },
+    {
+      "fn": "spawn",
+      "line": 29,
+      "marker": "// native: starts process without waiting",
+      "file": "process.tl"
+    },
+    {
+      "fn": "wait",
+      "line": 40,
+      "marker": "// native: blocks until process exits",
+      "file": "process.tl"
+    },
+    {
+      "fn": "kill",
+      "line": 45,
+      "marker": "// native: sends SIGKILL",
+      "file": "process.tl"
+    },
+    {
+      "fn": "is_running",
+      "line": 50,
+      "marker": "// native: checks process status",
+      "file": "process.tl"
+    },
+    {
+      "fn": "exit",
+      "line": 56,
+      "marker": "// native: exits with status code",
+      "file": "process.tl"
+    },
+    {
+      "fn": "pid",
+      "line": 61,
+      "marker": "// native: returns current PID",
+      "file": "process.tl"
+    },
+    {
+      "fn": "bytes",
+      "line": 6,
+      "marker": "// native: CSPRNG bytes",
+      "file": "rand.tl"
+    },
+    {
+      "fn": "u64",
+      "line": 11,
+      "marker": "// native: CSPRNG u64",
+      "file": "rand.tl"
+    },
+    {
+      "fn": "i64",
+      "line": 16,
+      "marker": "// native: CSPRNG i64",
+      "file": "rand.tl"
+    },
+    {
+      "fn": "f64",
+      "line": 21,
+      "marker": "// native: CSPRNG f64",
+      "file": "rand.tl"
+    },
+    {
+      "fn": "range",
+      "line": 26,
+      "marker": "// native: uniform random in range",
+      "file": "rand.tl"
+    },
+    {
+      "fn": "token",
+      "line": 31,
+      "marker": "// native: random base64url string",
+      "file": "rand.tl"
+    },
+    {
+      "fn": "uuid",
+      "line": 36,
+      "marker": "// native: random UUID v4",
+      "file": "rand.tl"
+    },
+    {
+      "fn": "compile",
+      "line": 9,
+      "marker": "// native: compiles regex pattern",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "is_match",
+      "line": 22,
+      "marker": "// native: returns true if any match",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "find",
+      "line": 27,
+      "marker": "// native: returns first match or nil",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "find_all",
+      "line": 32,
+      "marker": "// native: returns all matches",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "replace",
+      "line": 37,
+      "marker": "// native: replaces first match",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "replace_all",
+      "line": 42,
+      "marker": "// native: replaces all matches",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "split",
+      "line": 47,
+      "marker": "// native: splits at matches",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "captures",
+      "line": 52,
+      "marker": "// native: returns capture groups or nil",
+      "file": "regex.tl"
+    },
+    {
+      "fn": "send",
+      "line": 22,
+      "marker": "// native: sends value",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "recv",
+      "line": 27,
+      "marker": "// native: receives value",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "try_recv",
+      "line": 32,
+      "marker": "// native: returns nil if empty",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "close",
+      "line": 37,
+      "marker": "// native: closes channel",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "len",
+      "line": 42,
+      "marker": "// native: current queue length",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "lock",
+      "line": 58,
+      "marker": "// native: acquires lock, returns guard",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "atomic",
+      "line": 73,
+      "marker": "// native: creates atomic",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "wait_group",
+      "line": 90,
+      "marker": "// native: creates wait group",
+      "file": "sync.tl"
+    },
+    {
+      "fn": "assert_panics",
+      "line": 63,
+      "marker": "// native: catches panic, fails if no panic occurred",
+      "file": "test.tl"
+    },
+    {
+      "fn": "now",
+      "line": 6,
+      "marker": "// native: returns current UTC timestamp",
+      "file": "time.tl"
+    },
+    {
+      "fn": "monotonic",
+      "line": 11,
+      "marker": "// native: monotonic nanoseconds",
+      "file": "time.tl"
+    },
+    {
+      "fn": "sleep",
+      "line": 16,
+      "marker": "// native: blocks current task for duration",
+      "file": "time.tl"
+    },
+    {
+      "fn": "format",
+      "line": 48,
+      "marker": "// native: formats using strftime-like pattern",
+      "file": "time.tl"
+    },
+    {
+      "fn": "parse_iso",
+      "line": 89,
+      "marker": "// native: parses ISO 8601 timestamp",
+      "file": "time.tl"
+    },
+    {
+      "fn": "solve_turnstile",
+      "line": 33,
+      "marker": "// native: connects to src/browser/captcha.rs captcha detection engine,",
+      "file": "turnstile.tl"
+    },
+    {
+      "fn": "parse",
+      "line": 16,
+      "marker": "// native: parses URL",
+      "file": "url.tl"
+    },
+    {
+      "fn": "to_string",
+      "line": 22,
+      "marker": "// native: builds URL from components",
+      "file": "url.tl"
+    },
+    {
+      "fn": "query_params",
+      "line": 27,
+      "marker": "// native: parses query string",
+      "file": "url.tl"
+    },
+    {
+      "fn": "join",
+      "line": 57,
+      "marker": "// native: resolves relative URL",
+      "file": "url.tl"
+    },
+    {
+      "fn": "encode",
+      "line": 63,
+      "marker": "// native: percent-encodes string",
+      "file": "url.tl"
+    },
+    {
+      "fn": "decode",
+      "line": 68,
+      "marker": "// native: decodes percent-encoded string",
+      "file": "url.tl"
+    },
+    {
+      "fn": "encode_query",
+      "line": 73,
+      "marker": "// native: builds \"key=value&key2=value2\"",
+      "file": "url.tl"
+    },
+    {
+      "fn": "warmup_session",
+      "line": 36,
+      "marker": "// native: connects to src/browser/warmup.rs execute_warmup engine,",
+      "file": "warmup.tl"
+    }
+  ]
+}

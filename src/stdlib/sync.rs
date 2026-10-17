@@ -459,6 +459,23 @@ fn sync_mutex_method(
                 fields: vec![("value".to_string(), value.unwrap_or(Value::Nil))],
             }))
         }
+        // Declared in stdlib/sync.tl as `fn try_lock(self) -> T?` with the body
+        // `// native: returns nil if already locked`, and previously absent from this match — a
+        // call died with `unknown method: .try_lock()` while `lock` one arm above worked.
+        //
+        // It mirrors `lock`'s documented model instead of inventing contention: within the
+        // interpreter every mutation is already atomic (see this function's header), so a lock is
+        // never held across an interleaved region and the "already locked" branch is unreachable
+        // BY CONSTRUCTION, not by omission. Returning the value is the true answer under that
+        // model; fabricating a nil to make the optional type look used would be the fake.
+        // Making `try_lock` observably fail needs the actor runtime the header describes.
+        "try_lock" => {
+            let value = fields
+                .iter()
+                .find(|(k, _)| k == "value")
+                .map(|(_, v)| v.clone());
+            Some(Ok(value.unwrap_or(Value::Nil)))
+        }
         "value" => {
             let val = fields
                 .iter()
@@ -802,6 +819,40 @@ mod tests {
             vec![Value::Int(42)],
         );
         assert!(result.is_some());
+    }
+
+    /// `try_lock` was declared in stdlib/sync.tl and answered by nothing, so this call was
+    /// `unknown method: .try_lock()`. It must return the value (never a fabricated nil): under the
+    /// interpreter's documented non-contended model the "already locked" branch cannot occur.
+    #[test]
+    fn mutex_try_lock_returns_the_value() {
+        let m = Value::Struct {
+            name: "SyncMutex".into(),
+            fields: vec![("value".into(), Value::Int(7))],
+        };
+        match dispatch_method(&m, "try_lock", vec![]).unwrap().unwrap() {
+            Value::Int(n) => assert_eq!(n, 7),
+            other => panic!("expected the guarded value, got {other:?}"),
+        }
+    }
+
+    /// And `lock` still hands back a guard, unchanged by the arm above.
+    #[test]
+    fn mutex_lock_still_returns_a_guard() {
+        let m = Value::Struct {
+            name: "SyncMutex".into(),
+            fields: vec![("value".into(), Value::Int(7))],
+        };
+        match dispatch_method(&m, "lock", vec![]).unwrap().unwrap() {
+            Value::Struct { name, fields } => {
+                assert_eq!(name, "SyncGuard");
+                // `Value` has no PartialEq, so match rather than compare.
+                assert!(fields
+                    .iter()
+                    .any(|(k, v)| k == "value" && matches!(v, Value::Int(7))));
+            }
+            other => panic!("expected SyncGuard, got {other:?}"),
+        }
     }
 
     #[test]

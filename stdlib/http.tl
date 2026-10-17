@@ -1,5 +1,10 @@
 // tallow.http — HTTP client/server
-// This is a stub — will be implemented as a native module in the compiler runtime.
+//
+// NOT a stub. This header used to read "This is a stub — will be implemented as a native module in
+// the compiler runtime", which was false: `src/stdlib/http.rs` implements get/post/put/delete/batch/
+// listen/server, the compiled plane lowers `http.batch` through `tallow_http_batch`
+// (src/codegen.rs), and `Client`/`Server` constructors are handled inline in the interpreter. A
+// module header that calls working code a stub is a false claim, not a coming-soon note.
 
 /// Fetch many URLs in one call — one typed entry per URL. A 4xx/5xx is a *result* carrying its body
 /// plus an `HttpError`, never a failed whole batch; a transport failure carries `HttpError` with
