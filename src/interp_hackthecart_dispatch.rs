@@ -449,6 +449,163 @@ fn value_as_f64(v: &Value) -> Option<f64> {
     }
 }
 
+/// A required field of a Map/Struct argument. Missing is an error naming the
+/// field, never a fabricated default.
+fn require_field<'a>(
+    v: &'a Value,
+    key: &str,
+    context: &str,
+) -> Result<&'a Value, RuntimeError> {
+    tagged_field(v, key).ok_or_else(|| {
+        RuntimeError::Error(format!("{context}: missing required field `{key}`"))
+    })
+}
+
+fn field_string(v: &Value, key: &str) -> Option<String> {
+    match tagged_field(v, key) {
+        Some(Value::String(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn field_i64(v: &Value, key: &str) -> Option<i64> {
+    tagged_field(v, key).and_then(value_as_i64)
+}
+
+fn field_f64(v: &Value, key: &str) -> Option<f64> {
+    tagged_field(v, key).and_then(value_as_f64)
+}
+
+fn field_string_array(v: &Value, key: &str) -> Option<Vec<String>> {
+    match tagged_field(v, key) {
+        Some(Value::Array(items)) => Some(
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// Build a `PriceObservation` from a Map/Struct. Every field is required:
+/// the validator's job is to judge real data, not to judge defaults this
+/// bridge invented.
+fn price_observation_from_value(v: &Value) -> Result<browser::quality_validator::PriceObservation, RuntimeError> {
+    let context = "QualityValidator.validate(observation)";
+    if !matches!(v, Value::Map(_) | Value::Struct { .. }) {
+        return Err(RuntimeError::Error(format!(
+            "{context}: expected a Map/Struct, got {}",
+            value_kind(v)
+        )));
+    }
+    Ok(browser::quality_validator::PriceObservation {
+        sku: require_field(v, "sku", context)?.as_string(),
+        canonical_id: value_as_i64(require_field(v, "canonical_id", context)?)
+            .ok_or_else(|| RuntimeError::Error(format!("{context}: canonical_id must be an Int")))?,
+        store_id: value_as_i64(require_field(v, "store_id", context)?)
+            .ok_or_else(|| RuntimeError::Error(format!("{context}: store_id must be an Int")))?,
+        source: require_field(v, "source", context)?.as_string(),
+        category: require_field(v, "category", context)?.as_string(),
+        price_cents: value_as_i64(require_field(v, "price_cents", context)?)
+            .ok_or_else(|| RuntimeError::Error(format!("{context}: price_cents must be an Int")))?,
+        raw_price_string: require_field(v, "raw_price_string", context)?.as_string(),
+        currency: require_field(v, "currency", context)?.as_string(),
+        url: require_field(v, "url", context)?.as_string(),
+        observed_at: value_as_i64(require_field(v, "observed_at", context)?)
+            .ok_or_else(|| RuntimeError::Error(format!("{context}: observed_at must be an Int (unix seconds)")))?,
+        batch_id: require_field(v, "batch_id", context)?.as_string(),
+    })
+}
+
+fn canonical_product_from_value(
+    v: &Value,
+) -> Result<browser::quality_validator::CanonicalProduct, RuntimeError> {
+    let context = "QualityValidator.validate(product)";
+    if !matches!(v, Value::Map(_) | Value::Struct { .. }) {
+        return Err(RuntimeError::Error(format!(
+            "{context}: expected a Map/Struct, got {}",
+            value_kind(v)
+        )));
+    }
+    Ok(browser::quality_validator::CanonicalProduct {
+        canonical_id: value_as_i64(require_field(v, "canonical_id", context)?)
+            .ok_or_else(|| RuntimeError::Error(format!("{context}: canonical_id must be an Int")))?,
+        category: require_field(v, "category", context)?.as_string(),
+        title: require_field(v, "title", context)?.as_string(),
+    })
+}
+
+/// Build a `StealthProfile` from a Map/Struct. Absent fields keep the
+/// Chrome-on-Windows preset value, so a partial profile is a real profile with
+/// documented defaults rather than a zeroed one that fails every check.
+fn stealth_profile_from_value(
+    v: &Value,
+) -> Result<browser::stealth::StealthProfile, RuntimeError> {
+    let context = "FingerprintValidator.validate(profile)";
+    if !matches!(v, Value::Map(_) | Value::Struct { .. }) {
+        return Err(RuntimeError::Error(format!(
+            "{context}: expected a Map/Struct, got {}",
+            value_kind(v)
+        )));
+    }
+    let mut profile = browser::stealth::StealthProfile::chrome_windows();
+    if let Some(value) = field_string(v, "user_agent") {
+        profile.user_agent = value;
+    }
+    if let Some(value) = field_string(v, "platform") {
+        profile.platform = value;
+    }
+    if let Some(value) = field_string(v, "vendor") {
+        profile.vendor = value;
+    }
+    if let Some(value) = field_string_array(v, "languages") {
+        profile.languages = value;
+    }
+    if let Some(value) = field_i64(v, "hardware_concurrency") {
+        profile.hardware_concurrency = value.max(0) as u32;
+    }
+    if let Some(value) = field_f64(v, "device_memory") {
+        profile.device_memory = value;
+    }
+    if let Some(value) = field_i64(v, "max_touch_points") {
+        profile.max_touch_points = value.max(0) as u32;
+    }
+    if let Some(Value::Array(pair)) = tagged_field(v, "viewport") {
+        if let (Some(width), Some(height)) = (
+            pair.first().and_then(value_as_i64),
+            pair.get(1).and_then(value_as_i64),
+        ) {
+            profile.viewport = (width.max(0) as u32, height.max(0) as u32);
+        }
+    }
+    if let Some(value) = field_f64(v, "device_scale_factor") {
+        profile.device_scale_factor = value;
+    }
+    if let Some(value) = field_string(v, "webgl_vendor") {
+        profile.webgl_vendor = value;
+    }
+    if let Some(value) = field_string(v, "webgl_renderer") {
+        profile.webgl_renderer = value;
+    }
+    if let Some(value) = field_string(v, "timezone") {
+        profile.timezone = value;
+    }
+    if let Some(value) = field_string(v, "locale") {
+        profile.locale = value;
+    }
+    if let Some(value) = field_i64(v, "canvas_noise_seed") {
+        profile.canvas_noise_seed = value.max(0) as u64;
+    }
+    if let Some(Value::Bool(value)) = tagged_field(v, "is_firefox_profile") {
+        profile.is_firefox_profile = *value;
+    }
+    Ok(profile)
+}
+
 /// Marshal a Tallow array of observation records (Struct or Map, fields:
 /// `source`, `price_cents`, optional `observed_at` unix secs, optional
 /// `confidence`) into `triangulation::SourceObservation` values.
@@ -871,11 +1028,44 @@ pub fn dispatch_hackthecart_method(
         }
 
         ("QualityValidator", "validate") => {
-            // The real validate() requires typed PriceObservation +
-            // CanonicalProduct structs, which are Rust-only types.
-            return Some(Err(RuntimeError::Error(
-                "QualityValidator.validate is not callable from Tallow: it requires Rust-side PriceObservation + CanonicalProduct values. Use the Rust API (browser::quality_validator) instead.".to_string(),
-            )));
+            let validator = bh
+                .handle
+                .downcast_ref::<browser::quality_validator::QualityValidator>()?;
+            let (Some(observation_value), Some(product_value)) = (args.first(), args.get(1)) else {
+                return Some(Err(RuntimeError::Error(
+                    "QualityValidator.validate expects (observation, product): two Map/Struct values".to_string(),
+                )));
+            };
+            let observation = match price_observation_from_value(observation_value) {
+                Ok(value) => value,
+                Err(err) => return Some(Err(err)),
+            };
+            let product = match canonical_product_from_value(product_value) {
+                Ok(value) => value,
+                Err(err) => return Some(Err(err)),
+            };
+            let result = validator.validate(&observation, &product);
+            return Some(Ok(Value::Struct {
+                name: "ValidationResult".to_string(),
+                fields: vec![
+                    (
+                        "status".to_string(),
+                        Value::String(format!("{:?}", result.status)),
+                    ),
+                    (
+                        "warnings".to_string(),
+                        Value::Array(result.warnings.into_iter().map(Value::String).collect()),
+                    ),
+                    (
+                        "errors".to_string(),
+                        Value::Array(result.errors.into_iter().map(Value::String).collect()),
+                    ),
+                    (
+                        "confidence_adjustment".to_string(),
+                        Value::Float(result.confidence_adjustment),
+                    ),
+                ],
+            }));
         }
 
         ("CrawlQueue", "push") => {
@@ -1196,9 +1386,40 @@ pub fn dispatch_hackthecart_method(
 
         // ── Honest errors for methods whose inputs are Rust-only types ──
         ("FingerprintValidator", "validate") => {
-            return Some(Err(RuntimeError::Error(
-                "FingerprintValidator.validate is not callable from Tallow: it requires a Rust-side StealthProfile. Use the Rust API (browser::fingerprint_validator) instead.".to_string(),
-            )));
+            let Some(value) = args.first() else {
+                return Some(Err(RuntimeError::Error(
+                    "FingerprintValidator.validate expects a profile Map/Struct (absent fields keep the Chrome-on-Windows preset)".to_string(),
+                )));
+            };
+            let profile = match stealth_profile_from_value(value) {
+                Ok(profile) => profile,
+                Err(err) => return Some(Err(err)),
+            };
+            let warnings = browser::fingerprint_validator::FingerprintValidator::validate(&profile);
+            let items: Vec<Value> = warnings
+                .into_iter()
+                .map(|warning| Value::Struct {
+                    name: "FingerprintWarning".to_string(),
+                    fields: vec![
+                        (
+                            "severity".to_string(),
+                            Value::String(format!("{:?}", warning.severity)),
+                        ),
+                        (
+                            "vectors".to_string(),
+                            Value::Array(
+                                warning
+                                    .vectors
+                                    .iter()
+                                    .map(|vector| Value::String((*vector).to_string()))
+                                    .collect(),
+                            ),
+                        ),
+                        ("message".to_string(), Value::String(warning.message)),
+                    ],
+                })
+                .collect();
+            return Some(Ok(Value::Array(items)));
         }
 
         _ => {}
@@ -1373,6 +1594,78 @@ mod tests {
         assert_eq!(wide_agreement, 2, "a 1.0 threshold must admit it");
         assert_eq!(default_consensus, 10_000);
         let _ = wide_consensus;
+    }
+
+    #[test]
+    fn quality_validator_accepts_map_records() {
+        let v = dispatch_hackthecart_static("QualityValidator.new", &[])
+            .unwrap()
+            .unwrap();
+        let bh = unwrap_browser_handle(v);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i128;
+        let observation = Value::Map(vec![
+            (Value::String("sku".to_string()), Value::String("SKU-1".to_string())),
+            (Value::String("canonical_id".to_string()), Value::Int(42)),
+            (Value::String("store_id".to_string()), Value::Int(7)),
+            (Value::String("source".to_string()), Value::String("test".to_string())),
+            (Value::String("category".to_string()), Value::String("produce".to_string())),
+            (Value::String("price_cents".to_string()), Value::Int(199)),
+            (Value::String("raw_price_string".to_string()), Value::String("$1.99".to_string())),
+            (Value::String("currency".to_string()), Value::String("USD".to_string())),
+            (Value::String("url".to_string()), Value::String("https://example.test/p/1".to_string())),
+            (Value::String("observed_at".to_string()), Value::Int(now)),
+            (Value::String("batch_id".to_string()), Value::String("b1".to_string())),
+        ]);
+        let product = Value::Map(vec![
+            (Value::String("canonical_id".to_string()), Value::Int(42)),
+            (Value::String("category".to_string()), Value::String("produce".to_string())),
+            (Value::String("title".to_string()), Value::String("Bananas".to_string())),
+        ]);
+        let r = dispatch_hackthecart_method(&bh, "validate", &[observation, product])
+            .expect("dispatched")
+            .expect("ok");
+        match r {
+            Value::Struct { name, fields } => {
+                assert_eq!(name, "ValidationResult");
+                assert!(fields.iter().any(|(k, _)| k == "status"));
+                assert!(fields.iter().any(|(k, _)| k == "errors"));
+            }
+            other => panic!("expected ValidationResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fingerprint_validator_accepts_partial_profile() {
+        let v = dispatch_hackthecart_static("FingerprintValidator.new", &[])
+            .unwrap()
+            .unwrap();
+        let bh = unwrap_browser_handle(v);
+        let profile = Value::Map(vec![
+            (
+                Value::String("user_agent".to_string()),
+                Value::String(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+                        .to_string(),
+                ),
+            ),
+            (
+                Value::String("platform".to_string()),
+                Value::String("MacIntel".to_string()),
+            ),
+        ]);
+        let r = dispatch_hackthecart_method(&bh, "validate", &[profile])
+            .expect("dispatched")
+            .expect("ok");
+        match r {
+            Value::Array(items) => assert!(
+                !items.is_empty(),
+                "a Windows UA with platform MacIntel must produce at least one warning"
+            ),
+            other => panic!("expected an array of warnings, got {other:?}"),
+        }
     }
 
     #[test]
