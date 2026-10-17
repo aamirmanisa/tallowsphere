@@ -1383,6 +1383,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i64 @ftell(ptr)\n");
         ir.push_str("declare i32 @access(ptr, i32)\n");
         ir.push_str("declare i32 @remove(ptr)\n");
+        ir.push_str("declare ptr @calloc(i64, i64)\n");
+        ir.push_str("declare i32 @stat(ptr, ptr)\n");
         ir.push('\n');
 
         // Runtime FFI declarations (browser + fetch)
@@ -6704,6 +6706,21 @@ void tallow_async_runtime_shutdown(void) {
                     if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
                         return Ok(result);
                     }
+                }
+                // Transfer.* — `hash` is lowered; `chunk`/`tree_hash` carry
+                // `[]ChunkInfo`, which the native value model cannot represent
+                // (no struct). Refuse by name here: falling through would emit
+                // the module ident as an undefined global and hash it with the
+                // wrong algorithm, which only clang catches.
+                "Transfer" | "transfer" => {
+                    if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
+                        return Ok(result);
+                    }
+                    return Err(format!(
+                        "native backend has no lowering for Transfer.{method}: the native value \
+                         model has no struct, so []ChunkInfo cannot be represented; failing \
+                         loudly so the interpreter runs it"
+                    ));
                 }
                 // html.* / Extract.* — natively lowered where implemented
                 // (src/runtime/html_ffi.rs). Any method this module does not
@@ -18532,6 +18549,7 @@ impl<'a> CodeGen<'a> {
             "rand" => self.emit_stdlib_rand(method, args),
             "log" => self.emit_stdlib_log(method, args),
             "provenance" => self.emit_stdlib_provenance(method, args),
+            "Transfer" | "transfer" => self.emit_stdlib_transfer(method, args),
             "process" => self.emit_stdlib_process(method, args),
             "url" => self.emit_stdlib_url(method, args),
             "html" | "Html" => self.emit_stdlib_html(method, args),
@@ -19782,6 +19800,7 @@ impl<'a> CodeGen<'a> {
             "read_file" => Ok(Some(self.emit_fs_read_file(args)?)),
             "write_file" => Ok(Some(self.emit_fs_write_file(args)?)),
             "exists" => Ok(Some(self.emit_fs_exists(args)?)),
+            "is_file" => Ok(Some(self.emit_fs_is_file(args)?)),
             "remove" => Ok(Some(self.emit_fs_remove(args)?)),
             "append_file" => Ok(Some(self.emit_fs_append_file(args)?)),
             "remove_dir_all" => Ok(Some(self.emit_fs_remove_dir_all(args)?)),
@@ -19952,6 +19971,58 @@ impl<'a> CodeGen<'a> {
         self.emit_line(&format!("{cmp} = icmp eq i32 {result}, 0"));
 
         Ok(LLValue::new(cmp, LLType::I1))
+    }
+
+    /// `fs.is_file(path)` -> Bool, via `stat` + `S_ISREG`.
+    ///
+    /// The interpreter asks Rust's `Path::is_file`, which is exactly
+    /// "stat succeeds and the mode is a regular file". `struct stat` is
+    /// ABI-fixed per architecture, so the mode offset is chosen from the host
+    /// triple — 24 on x86_64 (144-byte struct: st_dev, st_ino, st_nlink are 8
+    /// bytes each) and 16 on aarch64 (128-byte struct: st_dev, st_ino). An
+    /// unknown target is refused at build time so `tallow run` falls back to
+    /// the interpreter instead of guessing a layout.
+    fn emit_fs_is_file(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        let mode_offset: i64 = if cfg!(target_arch = "x86_64") {
+            24
+        } else if cfg!(target_arch = "aarch64") {
+            16
+        } else {
+            return Err(format!(
+                "native backend has no `struct stat` layout for fs.is_file on {}; \
+                 failing loudly so the interpreter runs it",
+                std::env::consts::ARCH
+            ));
+        };
+
+        let path_val = self.emit_expr(&args[0].value)?;
+        let path_str = self.coerce_to_string(&path_val)?;
+
+        // Zeroed so a failed stat leaves mode = 0 (S_ISREG false) rather than
+        // reading uninitialised memory.
+        let buf = self.fresh_reg();
+        self.emit_line(&format!("{buf} = call ptr @calloc(i64 1, i64 160)"));
+
+        let rc = self.fresh_reg();
+        self.emit_line(&format!("{rc} = call i32 @stat(ptr {path_str}, ptr {buf})"));
+        let ok = self.fresh_reg();
+        self.emit_line(&format!("{ok} = icmp eq i32 {rc}, 0"));
+
+        let mode_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{mode_ptr} = getelementptr i8, ptr {buf}, i64 {mode_offset}"
+        ));
+        let mode = self.fresh_reg();
+        self.emit_line(&format!("{mode} = load i32, ptr {mode_ptr}"));
+        // S_IFMT = 0170000, S_IFREG = 0100000.
+        let file_type = self.fresh_reg();
+        self.emit_line(&format!("{file_type} = and i32 {mode}, 61440"));
+        let is_reg = self.fresh_reg();
+        self.emit_line(&format!("{is_reg} = icmp eq i32 {file_type}, 32768"));
+
+        let both = self.fresh_reg();
+        self.emit_line(&format!("{both} = and i1 {ok}, {is_reg}"));
+        Ok(LLValue::new(both, LLType::I1))
     }
 
     fn emit_fs_remove(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
@@ -20175,6 +20246,40 @@ impl<'a> CodeGen<'a> {
     }
 
     // ── Crypto module codegen ─────────────────────────────────────────────
+
+    /// `Transfer` module (stdlib/transfer.tl) — the file-level surface.
+    ///
+    /// Only scalar-returning members are lowered here. `Transfer.hash` is the
+    /// BLAKE3 file hash, so it maps to `tallow_file_hash`; before this arm
+    /// existed the call fell through to a generic method path that emitted
+    /// `call ptr @tallow_sha256(ptr @tallow.Transfer)` — the module name as an
+    /// undefined global, hashed under the wrong algorithm, caught only by
+    /// clang. `chunk` returns `[]ChunkInfo` and `tree_hash` consumes it; the
+    /// native value model has no struct, so those fall through and fail loudly
+    /// by name (the interpreter then runs the program) instead of emitting IR
+    /// that cannot be right.
+    fn emit_stdlib_transfer(
+        &mut self,
+        method: &str,
+        args: &[CallArg],
+    ) -> Result<Option<LLValue>, String> {
+        match method {
+            "hash" => {
+                let Some(arg) = args.first() else {
+                    return Ok(None);
+                };
+                let val = self.emit_expr(&arg.value)?;
+                let path = self.coerce_to_string(&val)?;
+                let result = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{result} = call ptr @tallow_file_hash(ptr {path})"
+                ));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            _ => Ok(None),
+        }
+    }
 
     fn emit_stdlib_crypto(
         &mut self,
@@ -30085,6 +30190,47 @@ mod tests {
         assert!(
             ir.contains("icmp eq i32"),
             "should compare access result to 0"
+        );
+    }
+
+    #[test]
+    fn codegen_stdlib_fs_is_file() {
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let f = fs.is_file("test.txt")
+                print(f)
+            }
+        "#,
+        );
+        assert!(ir.contains("call i32 @stat(ptr"), "should call stat");
+        assert!(
+            ir.contains("and i32") && ir.contains("icmp eq i32"),
+            "should mask st_mode with S_IFMT and compare with S_IFREG"
+        );
+        assert!(
+            ir.contains("declare i32 @stat(ptr, ptr)"),
+            "stat must be declared"
+        );
+    }
+
+    #[test]
+    fn codegen_stdlib_transfer_hash_uses_the_file_hash() {
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let h = Transfer.hash("test.txt")
+                print(h)
+            }
+        "#,
+        );
+        assert!(
+            ir.contains("call ptr @tallow_file_hash(ptr"),
+            "Transfer.hash must lower to the BLAKE3 file hash"
+        );
+        assert!(
+            !ir.contains("@tallow.Transfer"),
+            "the module ident must never be emitted as an undefined global"
         );
     }
 
