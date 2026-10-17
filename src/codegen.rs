@@ -6468,6 +6468,25 @@ void tallow_async_runtime_shutdown(void) {
             };
             if let Some(sig) = sig_opt {
                 let mangled = mangle_name(&resolved_name);
+                // Omitted trailing arguments: the interpreter binds the declared
+                // defaults, the native backend has no default metadata at call
+                // sites. Emitting the call with fewer operands than the
+                // signature declares would fail in the LLVM verifier with a
+                // cryptic message (or, on the indirect path, bind null). Refuse
+                // loudly instead, so `tallow run` falls back to the interpreter
+                // that applies the default.
+                if args.len() < sig.params.len() {
+                    let omitted: Vec<String> = sig.params[args.len()..]
+                        .iter()
+                        .map(|(param, _)| param.clone())
+                        .collect();
+                    return Err(format!(
+                        "call to `{name}` omits argument(s) {}: the native backend \
+                         does not bind parameter defaults at call sites (the interpreter \
+                         does) — build failing loudly so the interpreter runs it",
+                        omitted.join(", ")
+                    ));
+                }
                 let mut arg_regs: Vec<String> = Vec::new();
 
                 for (i, arg) in args.iter().enumerate() {
@@ -6511,6 +6530,23 @@ void tallow_async_runtime_shutdown(void) {
                     .unwrap_or_else(|| "null".to_string());
                 let mut arg_regs: Vec<String> = vec![format!("ptr {env_arg}")];
                 if let Some(ref sig) = known_sig {
+                    // Same fail-loud rule as the direct-call branch: a shorter
+                    // argument list would leave the callee's parameters
+                    // unbound (the indirect path otherwise passes null), while
+                    // the interpreter applies the declared defaults.
+                    let declared = sig.params.len().saturating_sub(1); // minus env
+                    if args.len() < declared {
+                        let omitted: Vec<String> = sig.params[args.len() + 1..]
+                            .iter()
+                            .map(|(param, _)| param.clone())
+                            .collect();
+                        return Err(format!(
+                            "call to `{name}` omits argument(s) {}: the native backend \
+                             does not bind parameter defaults at indirect call sites (the \
+                             interpreter does) — build failing loudly so the interpreter runs it",
+                            omitted.join(", ")
+                        ));
+                    }
                     // Use typed parameters from the known signature (skip env param at index 0)
                     for (i, arg) in args.iter().enumerate() {
                         let val = self.emit_expr(&arg.value)?;

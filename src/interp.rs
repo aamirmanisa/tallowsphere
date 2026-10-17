@@ -4716,7 +4716,7 @@ impl Interpreter {
                     .first()
                     .map(|v| v.as_string())
                     .unwrap_or_default();
-                let child_args: Vec<Value> = positional[1..].to_vec();
+                let mut child_args: Vec<Value> = positional[1..].to_vec();
 
                 let child_func = match self.functions.get(&func_name).cloned() {
                     Some(f) => f,
@@ -4733,6 +4733,34 @@ impl Interpreter {
                         "spawn_agent_async: '{}' is not an @agent_task function",
                         func_name
                     )))));
+                }
+                // Bind declared defaults for omitted trailing arguments before
+                // the values cross the thread boundary. The child receives
+                // bound Values (only parameter names travel), so an omitted
+                // argument used to bind Nil regardless of its declared default.
+                if child_args.len() < child_func.params.len() {
+                    let mut default_env = Env::new();
+                    let mut bound: Vec<Value> = Vec::with_capacity(child_func.params.len());
+                    for (index, param) in child_func.params.iter().enumerate() {
+                        let value = match child_args.get(index).cloned() {
+                            Some(value) => value,
+                            None => match param.default.as_ref() {
+                                Some(expr) => match self.eval_expr(expr, &mut default_env) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        return Ok(Value::Err(Box::new(Value::String(format!(
+                                            "spawn_agent_async: evaluating default for '{}' failed: {err}",
+                                            param.name
+                                        )))));
+                                    }
+                                },
+                                None => Value::Nil,
+                            },
+                        };
+                        default_env.define(param.name.clone(), value.clone());
+                        bound.push(value);
+                    }
+                    child_args = bound;
                 }
                 if let Some(ref runtime) = self.agent_runtime {
                     if let Err(msg) = runtime.can_spawn() {
@@ -12335,7 +12363,15 @@ impl Interpreter {
                     _ => None,
                 };
                 if let Some(trait_name) = trait_name {
-                    let val = positional.get(i).cloned().unwrap_or(Value::Nil);
+                    // Read the value the binding loop actually bound: when the
+                    // argument was omitted the callee applied the declared
+                    // default, and classifying `Nil` for the constraint check
+                    // rejected a default that legitimately satisfies the trait.
+                    let val = call_env
+                        .get(&param.name)
+                        .cloned()
+                        .or_else(|| positional.get(i).cloned())
+                        .unwrap_or(Value::Nil);
                     let val_type = runtime_type_name(&val);
                     if !self.type_implements_trait(&val_type, trait_name) {
                         self.call_depth -= 1;
@@ -47312,6 +47348,26 @@ world
         );
         assert!(output.contains(&"pstart".to_string()));
         assert!(output.contains(&"pend".to_string()));
+    }
+
+    #[test]
+    fn spawn_agent_async_binds_declared_defaults() {
+        // Only parameter names crossed the thread boundary, so an omitted
+        // argument used to bind Nil and the child computed 10 instead of 17.
+        let source = r#"
+@agent_task(id: "d1", timeout: 60.seconds, max_requests: 100, can_write: false, can_store: false, can_spawn: false)
+fn task(x: i32, bump: i32 = 7) -> i32 { x + bump }
+
+fn main() {
+    let h = spawn_agent_async("task", 10)
+    print(spawn_await(h))
+}
+"#;
+        let (_, output) = run(source);
+        assert!(
+            output.iter().any(|line| line.contains("17")),
+            "declared default bump=7 must be bound before the args cross the thread boundary, got: {output:?}"
+        );
     }
 
     // ── F1: cooperative scheduler (increment 1) ─────────────────────────
