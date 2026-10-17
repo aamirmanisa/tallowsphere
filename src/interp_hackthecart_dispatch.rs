@@ -1,6 +1,6 @@
 //! HackTheCart module dispatcher for the Tallow interpreter.
 //!
-//! Surfaces the 44 browser/* helper modules to Tallow scripts via static
+//! Surfaces 18 browser/* helper modules to Tallow scripts via static
 //! dotted-name calls (e.g. `ProductMatcher.new()`).
 //!
 //! The interpreter routes unknown builtin names through
@@ -9,19 +9,22 @@
 //! object. Instance methods on those objects are routed via
 //! [`dispatch_hackthecart_method`] from the method-call dispatcher.
 //!
-//! Scope: this is a *surfacing* layer. Constructors are wired for all 44
-//! modules. The crawl engine is now reachable from scripts: `CrawlQueue`
-//! push/pop operate a real in-process queue, `AdaptiveCrawler.fetch` /
-//! `CrawlPipeline.fetch` run the real HTTP crawl path, `JobQueue`
-//! enqueue/dequeue/ack/nack drive the real in-memory queue, and the
-//! extractors (`SmartExtractor`, `SitemapParser`, `SchemaExtractor`,
-//! `StructuredDataExtractor`, `SelfHealingSelector`, `RecipeParser`,
-//! `UnitNormalizer`) call their real implementations.
+//! Scope: this is a *surfacing* layer. Constructors are wired for the 18
+//! modules that have real methods behind them. The other 25 kinds were
+//! constructor-only (every method refused with "not yet dispatched") and were
+//! removed on 2026-10-17 — they now resolve as unknown builtins instead of
+//! handing scripts an object that cannot do anything. The crawl engine is
+//! reachable from scripts: `CrawlQueue` push/pop operate a real in-process
+//! queue, `AdaptiveCrawler.fetch` / `CrawlPipeline.fetch` run the real HTTP
+//! crawl path, `JobQueue` enqueue/dequeue/ack/nack drive the real in-memory
+//! queue, and the extractors (`SmartExtractor`, `SitemapParser`,
+//! `SchemaExtractor`, `StructuredDataExtractor`, `SelfHealingSelector`,
+//! `RecipeParser`, `UnitNormalizer`) call their real implementations.
 //!
 //! Methods whose inputs are Rust-only types (e.g. `StealthProfile`,
 //! `PriceObservation`) return an honest `Err` explaining why — never a fake
-//! success. Everything else returns a clear "not yet dispatched" error so
-//! callers get a useful diagnostic instead of "unknown builtin".
+//! success. An unknown method on a live kind falls through to the normal
+//! unknown-method diagnostic.
 //!
 //! Intentional limitations/gates in this surface are catalogued in
 //! `docs/operations/stub-register.md` (seeded by remediation task R2-6).
@@ -567,30 +570,6 @@ pub fn dispatch_hackthecart_static(
             "Triangulator",
             browser::triangulation::Triangulator::new(),
         )),
-        "CanaryRegistry.new" => ok(obj(
-            "CanaryRegistry",
-            browser::canary::CanaryRegistry::new(),
-        )),
-        "PriceBoundsRegistry.new" => ok(obj(
-            "PriceBoundsRegistry",
-            browser::price_bounds::PriceBoundsRegistry::new(),
-        )),
-        "AbLayoutDetector.new" => ok(obj(
-            "AbLayoutDetector",
-            browser::ab_detector::AbLayoutDetector::new(),
-        )),
-        "ZipRotator.new" => ok(obj(
-            "ZipRotator",
-            browser::zip_rotation::ZipRotator::new(),
-        )),
-        "ObservabilityDashboard.new" => ok(obj(
-            "ObservabilityDashboard",
-            browser::observability::ObservabilityDashboard::new(),
-        )),
-        "AuthStrategyRegistry.new" => ok(obj(
-            "AuthStrategyRegistry",
-            browser::auth_strategy::AuthStrategyRegistry::new(),
-        )),
         "BasketOptimizer.new" => ok(obj(
             "BasketOptimizer",
             browser::basket_optimizer::BasketOptimizer::new(),
@@ -598,30 +577,6 @@ pub fn dispatch_hackthecart_static(
         "PriceHistoryEngine.new" => ok(obj(
             "PriceHistoryEngine",
             Mutex::new(browser::price_history::PriceHistoryEngine::new()),
-        )),
-        "ShrinkflationDetector.new" => ok(obj(
-            "ShrinkflationDetector",
-            browser::shrinkflation::ShrinkflationDetector::new(),
-        )),
-        "SubstitutionEngine.new" => ok(obj(
-            "SubstitutionEngine",
-            browser::substitution::SubstitutionEngine::new(),
-        )),
-        "HouseholdService.new" => ok(obj(
-            "HouseholdService",
-            browser::household::HouseholdService::new(),
-        )),
-        "AffiliateManager.new" => ok(obj(
-            "AffiliateManager",
-            browser::affiliate::AffiliateManager::new(),
-        )),
-        "ComplianceManager.new" => ok(obj(
-            "ComplianceManager",
-            browser::compliance::ComplianceManager::new(),
-        )),
-        "ProductSearchIndex.new" => ok(obj(
-            "ProductSearchIndex",
-            browser::search_index::ProductSearchIndex::new(),
         )),
         "AdaptiveCrawler.new" => ok(obj(
             "AdaptiveCrawler",
@@ -635,54 +590,11 @@ pub fn dispatch_hackthecart_static(
             "CrawlPipeline",
             Mutex::new(browser::crawl_pipeline::CrawlPipelineBuilder::new().build()),
         )),
-        "AntiBotOrchestrator.new" => ok(obj(
-            "AntiBotOrchestrator",
-            browser::antibot::AntiBotOrchestrator::new(),
-        )),
-
-        // ── Constructors with simple args ─────────────────────────────
-        "SelectorChain.new" => {
-            let field = args.first().map(|v| v.as_string()).unwrap_or_default();
-            ok(obj(
-                "SelectorChain",
-                browser::selector_chain::SelectorChain::new(&field),
-            ))
-        }
-        "SnapshotSampler.new" => {
-            let path = args.first().map(|v| v.as_string()).unwrap_or_default();
-            let rate = match args.get(1) {
-                Some(Value::Float(f)) => *f,
-                Some(Value::Int(i)) => *i as f64,
-                _ => 0.01,
-            };
-            ok(obj(
-                "SnapshotSampler",
-                browser::snapshot_sampler::SnapshotSampler::new(&path, rate),
-            ))
-        }
         "CircuitBreaker.new" => {
             let target = args.first().map(|v| v.as_string()).unwrap_or_default();
             ok(obj(
                 "CircuitBreaker",
                 Mutex::new(browser::circuit_breaker::CircuitBreaker::new(&target)),
-            ))
-        }
-        "DeadLetterQueue.new" => {
-            let max = match args.first() {
-                Some(Value::Int(i)) => *i as usize,
-                _ => 1000,
-            };
-            ok(obj("DeadLetterQueue", browser::dlq::DeadLetterQueue::new(max)))
-        }
-        "SchemaDriftDetector.new" => {
-            let thresh = match args.first() {
-                Some(Value::Float(f)) => *f,
-                Some(Value::Int(i)) => *i as f64,
-                _ => 0.1,
-            };
-            ok(obj(
-                "SchemaDriftDetector",
-                browser::schema_drift::SchemaDriftDetector::new(thresh),
             ))
         }
         "JobQueue.new" => {
@@ -692,71 +604,6 @@ pub fn dispatch_hackthecart_static(
             };
             ok(obj("JobQueue", browser::job_queue::JobQueue::new(bp)))
         }
-        "TypesenseClient.new" => {
-            let url = args.first().map(|v| v.as_string()).unwrap_or_default();
-            let key = args.get(1).map(|v| v.as_string()).unwrap_or_default();
-            ok(obj(
-                "TypesenseClient",
-                browser::typesense::TypesenseClient::new(&url, &key),
-            ))
-        }
-        "ProvenanceRecord.new" => {
-            let price = match args.first() {
-                Some(Value::Int(i)) => *i as i64,
-                _ => 0,
-            };
-            let pid = match args.get(1) {
-                Some(Value::Int(i)) => *i as i64,
-                _ => 0,
-            };
-            let sid = match args.get(2) {
-                Some(Value::Int(i)) => *i as i64,
-                _ => 0,
-            };
-            let src = args.get(3).map(|v| v.as_string()).unwrap_or_default();
-            ok(obj(
-                "ProvenanceRecord",
-                browser::provenance::ProvenanceRecord::new(price, pid, sid, &src),
-            ))
-        }
-
-        // ── Singletons / pools whose constructors take optional args (real
-        //    constructors; omitted args fall back to documented defaults) ──
-        "CookieFarm.new" => {
-            let ua = args
-                .first()
-                .map(|v| v.as_string())
-                .unwrap_or_else(|| "Mozilla/5.0".to_string());
-            ok(obj("CookieFarm", browser::cookie_farm::CookieFarm::new(&ua)))
-        }
-        "ProfilePool.new" => {
-            let dir = args
-                .first()
-                .map(|v| v.as_string())
-                .unwrap_or_else(|| ".".to_string());
-            let max = match args.get(1) {
-                Some(Value::Int(i)) => *i as usize,
-                _ => 16,
-            };
-            ok(obj(
-                "ProfilePool",
-                browser::warmup::ProfilePool::new(std::path::PathBuf::from(dir), max),
-            ))
-        }
-        "ProxyPool.new" => ok(obj("ProxyPool", browser::proxy::ProxyPool::new())),
-        "DomainRateManager.new" => {
-            let rate = match args.first() {
-                Some(Value::Float(f)) => *f,
-                Some(Value::Int(i)) => *i as f64,
-                _ => 1.0,
-            };
-            ok(obj(
-                "DomainRateManager",
-                browser::ratelimit::DomainRateManager::new(rate),
-            ))
-        }
-
-        // ── Real constructors (previously empty type-tag handles) ─────
         "SmartExtractor.new" => {
             // Optional first arg enables the LLM (Ollama) fallback tier.
             let llm = match args.first() {
@@ -768,10 +615,6 @@ pub fn dispatch_hackthecart_static(
                 browser::smart_extract::SmartExtractor::with_llm_fallback(llm),
             ))
         }
-        "ResourceBlocker.new" => ok(obj(
-            "ResourceBlocker",
-            browser::resource_blocker::ResourceBlocker,
-        )),
         "UnitNormalizer.new" => ok(obj(
             "UnitNormalizer",
             browser::unit_normalizer::UnitNormalizer,
@@ -796,11 +639,6 @@ pub fn dispatch_hackthecart_static(
         )),
 
         // ── Direct-call (associated function) constructors ─────────────
-        "Http2Fingerprint.chrome" => ok(obj(
-            "Http2Fingerprint",
-            browser::http2_fingerprint::Http2Fingerprint::chrome(),
-        )),
-
         _ => return None,
     };
     Some(Ok(result))
@@ -814,8 +652,9 @@ pub fn dispatch_hackthecart_static(
 ///
 /// Wired methods call the real browser implementations (crawl queue, crawl
 /// engine fetch, job queue, extractors). Methods whose inputs are Rust-only
-/// types return an honest `Err` naming the Rust API to use instead. Anything
-/// else returns a clear "not yet dispatched" error — never a fake success.
+/// types return an honest `Err` naming the Rust API to use instead. An
+/// unwired method on a live kind returns a clear "not wired" error — never a
+/// fake success.
 pub fn dispatch_hackthecart_method(
     bh: &BrowserHandle,
     method: &str,
@@ -1330,52 +1169,26 @@ pub fn dispatch_hackthecart_method(
         _ => {}
     }
 
-    // Recognized kinds — return a "not yet dispatched" placeholder so
-    // callers get a useful error instead of "unknown browser method".
+    // Live kinds only: the 25 constructor-only kinds were pruned 2026-10-17.
     const KNOWN: &[&str] = &[
         "ProductMatcher",
         "QualityValidator",
         "Triangulator",
         "SmartExtractor",
-        "SelectorChain",
-        "CanaryRegistry",
-        "PriceBoundsRegistry",
-        "SnapshotSampler",
         "CircuitBreaker",
-        "DeadLetterQueue",
-        "ResourceBlocker",
-        "AbLayoutDetector",
-        "ZipRotator",
-        "ObservabilityDashboard",
-        "SchemaDriftDetector",
-        "AuthStrategyRegistry",
         "UnitNormalizer",
         "RecipeParser",
         "BasketOptimizer",
         "PriceHistoryEngine",
-        "ShrinkflationDetector",
-        "SubstitutionEngine",
-        "HouseholdService",
-        "AffiliateManager",
-        "ComplianceManager",
-        "ProductSearchIndex",
-        "ProvenanceRecord",
         "JobQueue",
         "AdaptiveCrawler",
         "CrawlQueue",
         "CrawlPipeline",
         "SitemapParser",
-        "AntiBotOrchestrator",
-        "CookieFarm",
-        "ProfilePool",
-        "ProxyPool",
-        "DomainRateManager",
         "FingerprintValidator",
         "SchemaExtractor",
         "StructuredDataExtractor",
         "SelfHealingSelector",
-        "TypesenseClient",
-        "Http2Fingerprint",
     ];
 
     if !KNOWN.contains(&kind) {
@@ -1383,7 +1196,7 @@ pub fn dispatch_hackthecart_method(
     }
 
     Some(Err(RuntimeError::Error(format!(
-        "HackTheCart method not yet dispatched: {kind}.{method}() — constructor wired, method stub pending"
+        "HackTheCart method not wired: {kind}.{method}() — this kind exists but has no Tallow binding for that method"
     ))))
 }
 
@@ -1708,6 +1521,31 @@ mod tests {
                 }
             }
             other => panic!("expected TriangulationResult struct, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn removed_constructor_only_kinds_are_unknown() {
+        for name in [
+            "SelectorChain.new",
+            "CanaryRegistry.new",
+            "PriceBoundsRegistry.new",
+            "Http2Fingerprint.chrome",
+        ] {
+            assert!(
+                dispatch_hackthecart_static(name, &[]).is_none(),
+                "{name} should no longer dispatch: the constructor-only surface was pruned"
+            );
+        }
+    }
+
+    #[test]
+    fn live_kinds_still_construct() {
+        for name in ["CrawlQueue.new", "ProductMatcher.new", "JobQueue.new"] {
+            assert!(
+                matches!(dispatch_hackthecart_static(name, &[]), Some(Ok(_))),
+                "{name} must still construct"
+            );
         }
     }
 }
