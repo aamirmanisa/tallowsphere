@@ -17184,17 +17184,6 @@ impl Interpreter {
                     _ => unreachable!(),
                 };
                 let rt = get_browser_runtime();
-                // stdlib/browser.tl declares its Page methods with a `page_` prefix
-                // (`page_structured_data`), while every arm below is keyed by the stem
-                // (`("Page", "structured_data")`) — and nothing normalised the two. Measured
-                // 2026-10-16: 40 `page_*` methods declared, 39 with a working stem-keyed arm, and
-                // 0 of the 171 `("Page", …)` keys in the prefixed form, so all 39 were
-                // unreachable from .tl and a call died with
-                // `unknown method: .page_structured_data()`. Normalising here fixes all of them at
-                // one site instead of adding 39 aliases in two files (this one and codegen.rs).
-                // A stem with no arm still falls through to the unknown-method error, so this
-                // cannot turn a missing method into a silent success.
-                let method = method.strip_prefix("page_").unwrap_or(method);
                 match (bh.kind.as_str(), method) {
                     // ── Browser methods ──
                     ("Browser", "new_page") => {
