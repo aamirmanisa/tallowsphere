@@ -150,7 +150,14 @@ impl<'a> PrivacyPass<'a> {
                 }
             }
             StmtKind::Break | StmtKind::Continue => {}
-            StmtKind::Defer { .. } => {}
+            // `defer` runs its block on scope exit, so it is a sink site like
+            // any other: a `print(secret)` in a deferred block still prints.
+            StmtKind::Defer { body } => {
+                let mut inner = locals.clone();
+                for s in &body.stmts {
+                    self.check_stmt(s, &mut inner);
+                }
+            }
         }
     }
 
@@ -330,8 +337,49 @@ impl<'a> PrivacyPass<'a> {
             ExprKind::Bail(e) => {
                 self.check_expr_privacy(e, locals);
             }
-            // ── Concurrency (Phase 1) — nothing to check yet ─────────────
-            ExprKind::Spawn { .. } | ExprKind::Select { .. } => {}
+            // ── Concurrency (Phase 1) ────────────────────────────────────
+            // A spawn evaluates its arguments on the spawning thread and then
+            // runs them on another one — same data, so the scan must see both
+            // the arguments (a spawned `print(secret)` prints) and any closure
+            // body reached through `func`.
+            ExprKind::Spawn { func, args } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if is_logging_function(name) {
+                        for arg in args {
+                            self.check_not_sensitive_raw(arg, locals);
+                        }
+                    }
+                }
+                self.check_expr_privacy(func, locals);
+                for arg in args {
+                    self.check_expr_privacy(arg, locals);
+                }
+            }
+            // `select` arm bodies and their channel operations are ordinary
+            // code: an arm that prints a secret is the same violation it would
+            // be outside the select.
+            ExprKind::Select { cases, default } => {
+                for case in cases {
+                    match &case.op {
+                        SelectOp::Recv(ch) => self.check_expr_privacy(ch, locals),
+                        SelectOp::Send { ch, val } => {
+                            self.check_expr_privacy(ch, locals);
+                            self.check_expr_privacy(val, locals);
+                        }
+                    }
+                    match &case.variable {
+                        Some(variable) => {
+                            let mut inner = locals.clone();
+                            inner.insert(variable.clone(), Type::Unknown);
+                            self.check_expr_privacy(&case.body, &inner);
+                        }
+                        None => self.check_expr_privacy(&case.body, locals),
+                    }
+                }
+                if let Some(default) = default {
+                    self.check_expr_privacy(default, locals);
+                }
+            }
             // Leaf nodes
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
@@ -959,6 +1007,58 @@ fn bad(uid: UserID) { print(uid) }"#,
         assert!(
             diags.has_errors(),
             "private in interpolation should be blocked"
+        );
+    }
+
+    #[test]
+    fn deferred_print_of_a_secret_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            fn f(password: Password) {
+                defer {
+                    print(password)
+                }
+            }
+        "#,
+        );
+        assert!(
+            diags.has_errors(),
+            "a deferred print(secret) is still a print: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn select_arm_print_of_a_secret_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            fn f(password: Password) {
+                let ch = sync.channel(10)
+                select {
+                    recv(ch) -> val {
+                        print(password)
+                    }
+                }
+            }
+        "#,
+        );
+        assert!(
+            diags.has_errors(),
+            "a select arm that prints a secret must be flagged: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn spawned_print_of_a_secret_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            fn f(password: Password) {
+                spawn print(password)
+            }
+        "#,
+        );
+        assert!(
+            diags.has_errors(),
+            "spawn print(secret) is the same sink on another thread: {diags:?}"
         );
     }
 }
