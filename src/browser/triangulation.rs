@@ -117,6 +117,19 @@ impl Triangulator {
         self.now_override.unwrap_or_else(now)
     }
 
+    /// Combine N observations into a consensus price, overriding the deviation
+    /// threshold for this call only (0.0..=1.0). The instance setting is left
+    /// untouched so a script cannot silently reshape later calls.
+    pub fn triangulate_with_threshold(
+        &self,
+        observations: &[SourceObservation],
+        deviation_threshold: f64,
+    ) -> TriangulationResult {
+        let mut copy = self.clone();
+        copy.deviation_threshold = deviation_threshold;
+        copy.triangulate(observations)
+    }
+
     /// Combine N observations into a consensus price.
     pub fn triangulate(&self, observations: &[SourceObservation]) -> TriangulationResult {
         let current = self.current_time();
