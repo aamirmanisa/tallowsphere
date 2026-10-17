@@ -9,7 +9,7 @@
 ## Table of Contents
 
 1. [Language & Compiler](#1-language--compiler)
-2. [CLI Commands (81)](#2-cli-commands-81)
+2. [CLI Commands (82)](#2-cli-commands-82)
 3. [Cryptography (42+ stdlib algorithms; 18 registry-governed primitives)](#3-cryptography-42-stdlib-algorithms-18-registry-governed-primitives)
 4. [Browser Automation (270 Features)](#4-browser-automation-270-features)
 5. [TallowTransfer (104 Functions)](#5-tallowtransfer-104-functions)
@@ -193,6 +193,7 @@ Source (.tl)
 | `tallow licenses` | List dependency licenses (`--json`, `--prod`, `--check`) |
 | `tallow vendor` | Copy dependencies into vendor directory (air-gap builds) |
 | `tallow workspace list\|root\|run` | Manage multi-module workspaces |
+| `tallow pins` | Author package pins (`.tallow-pins`): `add`, `list`, `remove` — distinct from the peer registry written by `tallow pin` |
 
 ### Compliance & Audit
 
@@ -838,7 +839,7 @@ examples/
 | **Rust source code** | 500,404 lines in src/ (recount 2026-09-27; src+crates+tests = 595,264) |
 | **Self-hosted Tallow code** | 9,798 lines |
 | **Total implementation** | 192,126 lines |
-| **CLI commands** | 81 (counted from `tallow --help`, 2026-09-26; includes the built-in `help` subcommand) |
+| **CLI commands** | 82 (counted from `tallow --help`, 2026-10-17; includes the built-in `help` subcommand) |
 | **Compiler passes** | 31 (*_pass.rs files; 32 pass types constructed in src/main.rs, 35 construction sites — recount 2026-09-16) |
 | **Crypto dispatch functions** | 113 (all real implementations) |
 | **Transfer dispatch functions** | 104 |

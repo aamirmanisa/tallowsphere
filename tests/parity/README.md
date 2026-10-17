@@ -4,7 +4,7 @@
 
 Prove that the **tree-walking interpreter** (`src/interp.rs`, the default path)
 and the **CodeGen/native path** (`src/codegen_cranelift.rs`,
-`src/codegen.rs`, `src/codegen_llvm.rs`, invoked from `src/main.rs`) execute the
+`src/codegen.rs`, invoked from `src/main.rs`) execute the
 **same `.tl` source to byte-identical output and the same exit code**.
 
 This is the infra for **Phase 1.3** of `artifacts/TALLOW_PARITY_PLAN.md` / the

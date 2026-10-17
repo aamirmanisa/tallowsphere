@@ -3111,7 +3111,7 @@ fn s3_req_no_body(
 ) -> Result<(u16, String), String> {
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign(method, url, extra, &[], creds, &now);
-    let agent = crate::runtime::egress_http::agent();
+    let agent = s3_agent();
     let mut req = match method {
         "GET"    => agent.get(url),
         "HEAD"   => agent.head(url),
@@ -3139,6 +3139,15 @@ fn s3_req_no_body(
     }
 }
 
+fn s3_agent() -> ureq::Agent {
+    // Bounded so an 8 MiB multipart part or a large download cannot hang
+    // forever over Tor: 600 s wall clock, 30 s per socket operation.
+    crate::runtime::egress_http::agent_with_timeouts(
+        Some(std::time::Duration::from_secs(600)),
+        Some(std::time::Duration::from_secs(30)),
+    )
+}
+
 fn s3_req_with_body(
     method: &str,
     url:    &str,
@@ -3149,7 +3158,7 @@ fn s3_req_with_body(
 ) -> Result<(u16, String), String> {
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign(method, url, extra, &body, creds, &now);
-    let agent = crate::runtime::egress_http::agent();
+    let agent = s3_agent();
     let mut req = match method {
         "PUT"  => agent.put(url),
         "POST" => agent.post(url),
@@ -3182,7 +3191,7 @@ fn s3_req_with_body(
 fn s3_get_bytes(url: &str, creds: &S3Creds) -> Result<Vec<u8>, String> {
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign("GET", url, &[], &[], creds, &now);
-    let agent = crate::runtime::egress_http::agent();
+    let agent = s3_agent();
     let req = agent
         .get(url)
         .header("Authorization",        &auth)
@@ -3521,7 +3530,7 @@ fn cloud_s3_head(args: &[Value]) -> StdlibResult {
 
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign("HEAD", &obj_url, &[], &[], &creds, &now);
-    let agent = crate::runtime::egress_http::agent();
+    let agent = s3_agent();
     let req = agent
         .head(&obj_url)
         .header("Authorization",        &auth)

@@ -76,7 +76,9 @@ impl KeyPinStore {
     /// with the same key return `AlreadyPinned`, different key returns `Mismatch`.
     pub fn pin_author_key(&mut self, package: &str, fingerprint: &str) -> PinResult {
         if let Some(existing) = self.pins.get(package) {
-            if existing == fingerprint {
+            let same = canonical_fingerprint(existing).is_some()
+                && canonical_fingerprint(existing) == canonical_fingerprint(fingerprint);
+            if same || existing == fingerprint {
                 PinResult::AlreadyPinned
             } else {
                 PinResult::Mismatch {
@@ -99,7 +101,11 @@ impl KeyPinStore {
         current_key: &str,
     ) -> bool {
         match self.pins.get(package) {
-            Some(pinned) => pinned == current_key,
+            Some(pinned) => {
+                pinned == current_key
+                    || (canonical_fingerprint(pinned).is_some()
+                        && canonical_fingerprint(pinned) == canonical_fingerprint(current_key))
+            }
             None => true, // no pin yet — no mismatch
         }
     }
@@ -128,6 +134,64 @@ pub const PINS_FORMAT_VERSION: u32 = 1;
 
 /// Root key carrying [`PINS_FORMAT_VERSION`].
 pub const PINS_VERSION_KEY: &str = "pins-version";
+
+/// Public wrapper for CLI authors: normalize a fingerprint to
+/// `blake3:<64-hex>` / `sha256:<64-hex>` (or bare 64-hex with the BLAKE3
+/// default). `None` when malformed.
+pub fn normalize_fingerprint(raw: &str) -> Option<String> {
+    normalize_pin_fingerprint(raw).map(|value| match value.contains(':') {
+        true => value,
+        // A bare digest is the BLAKE3 default in the file format; spell it out
+        // so a later prefixed pin compares equal and the file says which hash.
+        false => format!("blake3:{value}"),
+    })
+}
+
+/// Canonical comparison form: bare 64-hex means BLAKE3.
+fn canonical_fingerprint(raw: &str) -> Option<String> {
+    normalize_pin_fingerprint(raw).map(|value| match value.contains(':') {
+        true => value,
+        false => format!("blake3:{value}"),
+    })
+}
+
+/// Remove a pin. Returns true when a row existed.
+pub fn remove_pin(store: &mut KeyPinStore, package: &str) -> bool {
+    store.pins.remove(package).is_some()
+}
+
+/// Serialize a pin store to the `.tallow-pins` TOML format. Entries are
+/// sorted by subject so the file is stable across writes.
+pub fn render_pins(store: &KeyPinStore) -> String {
+    let mut pins = toml::Table::new();
+    let mut entries: Vec<_> = store.all_pins().iter().collect();
+    entries.sort_by(|left, right| left.0.cmp(right.0));
+    for (subject, fingerprint) in entries {
+        pins.insert(subject.clone(), toml::Value::String(fingerprint.clone()));
+    }
+    let mut root = toml::Table::new();
+    root.insert(
+        PINS_VERSION_KEY.to_string(),
+        toml::Value::Integer(i64::from(PINS_FORMAT_VERSION)),
+    );
+    root.insert("pins".to_string(), toml::Value::Table(pins));
+    format!(
+        "# tallow package pins — written by `tallow pins`\n{}",
+        toml::to_string(&root).unwrap_or_default()
+    )
+}
+
+/// Write `<project_dir>/.tallow-pins` atomically (temp file + rename). The
+/// directory must already exist; this never invents a project root.
+pub fn write_pin_store(project_dir: &Path, store: &KeyPinStore) -> Result<PathBuf, String> {
+    let path = project_dir.join(PINS_FILE_NAME);
+    let temp = project_dir.join(format!(".{PINS_FILE_NAME}.tmp"));
+    std::fs::write(&temp, render_pins(store))
+        .map_err(|err| format!("cannot write {}: {err}", temp.display()))?;
+    std::fs::rename(&temp, &path)
+        .map_err(|err| format!("cannot replace {}: {err}", path.display()))?;
+    Ok(path)
+}
 
 /// A loaded pin store plus its provenance.
 #[derive(Debug, Clone, Default)]
@@ -775,6 +839,28 @@ mod tests {
             "lockfile-version = 1\n\n[[package]]\nname = \"pkg-a\"\nversion = \"1.0.0\"\n\
              integrity = \"blake3:{integrity}\"\n"
         )
+    }
+
+    #[test]
+    fn render_pins_round_trips_and_sorts() {
+        let mut store = KeyPinStore::new();
+        store.pin_author_key("zeta", &format!("blake3:{}", "b".repeat(64)));
+        store.pin_author_key("alpha", &format!("sha256:{}", "a".repeat(64)));
+
+        let text = render_pins(&store);
+        assert!(text.contains("pins-version = 1"), "{text}");
+        let alpha = format!("sha256:{}", "a".repeat(64));
+        let zeta = format!("blake3:{}", "b".repeat(64));
+        let parsed = parse_pins(&text).expect("rendered pins must parse");
+        assert_eq!(
+            parsed.all_pins().get("alpha").map(String::as_str),
+            Some(alpha.as_str())
+        );
+        assert_eq!(
+            parsed.all_pins().get("zeta").map(String::as_str),
+            Some(zeta.as_str())
+        );
+        assert!(text.find("alpha").unwrap() < text.find("zeta").unwrap());
     }
 
     #[test]
