@@ -206,6 +206,49 @@ pub fn quinn_client_config_pinned(spki_sha256: [u8; 32]) -> Result<quinn::Client
     quinn_client_config_from_rustls(client_config_pinned(&[], spki_sha256)?)
 }
 
+/// Operator-facing env var carrying the relay's SPKI pin as 64 hex chars.
+///
+/// A `sha256:` prefix and `:` separators are accepted so a pin printed by
+/// `spki_pin_probe --hash-cert` can be pasted verbatim.
+pub const RELAY_SPKI_PIN_ENV: &str = "TALLOW_RELAY_SPKI_PIN";
+
+/// Parse a SHA-256 SPKI pin: exactly 32 bytes of hex.
+pub fn parse_spki_pin(raw: &str) -> Result<[u8; 32]> {
+    let trimmed = raw.trim();
+    let without_prefix = trimmed
+        .strip_prefix("sha256:")
+        .or_else(|| trimmed.strip_prefix("SHA256:"))
+        .unwrap_or(trimmed);
+    let compact: String = without_prefix
+        .chars()
+        .filter(|c| *c != ':' && !c.is_whitespace())
+        .collect();
+    let bytes = hex::decode(&compact)
+        .map_err(|e| NetworkError::TlsError(format!("SPKI pin is not hex: {e}")))?;
+    bytes.try_into().map_err(|bytes: Vec<u8>| {
+        NetworkError::TlsError(format!(
+            "SPKI pin must be 32 bytes (64 hex chars), got {} bytes",
+            bytes.len()
+        ))
+    })
+}
+
+/// The SPKI pin configured for this process, if any.
+///
+/// `None` means unset or blank — the caller keeps CA validation. A pin that is
+/// set but malformed is an `Err`: callers must fail closed rather than quietly
+/// falling back to unpinned validation.
+pub fn configured_spki_pin() -> Result<Option<[u8; 32]>> {
+    match std::env::var(RELAY_SPKI_PIN_ENV) {
+        Ok(value) if !value.trim().is_empty() => parse_spki_pin(&value).map(Some),
+        Ok(_) => Ok(None),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(e) => Err(NetworkError::TlsError(format!(
+            "{RELAY_SPKI_PIN_ENV}: {e}"
+        ))),
+    }
+}
+
 /// Shared quinn wrapper: transport parameters + rustls crypto config.
 #[cfg(feature = "quic")]
 fn quinn_client_config_from_rustls(crypto: rustls::ClientConfig) -> Result<quinn::ClientConfig> {
@@ -535,5 +578,55 @@ mod tests {
             config_list: vec![9, 9, 9],
         };
         assert!(client_config_for_host("relay.example.com", &[], &policy).is_err());
+    }
+
+    #[test]
+    fn parse_spki_pin_accepts_plain_prefixed_upper_and_colon_forms() {
+        let pin_hex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        let expected: [u8; 32] = hex::decode(pin_hex).unwrap().try_into().unwrap();
+        assert_eq!(parse_spki_pin(pin_hex).unwrap(), expected);
+        assert_eq!(
+            parse_spki_pin(&format!("sha256:{pin_hex}")).unwrap(),
+            expected
+        );
+        assert_eq!(parse_spki_pin(&pin_hex.to_uppercase()).unwrap(), expected);
+        let coloned = pin_hex
+            .as_bytes()
+            .chunks(2)
+            .map(|pair| std::str::from_utf8(pair).unwrap())
+            .collect::<Vec<_>>()
+            .join(":");
+        assert_eq!(parse_spki_pin(&coloned).unwrap(), expected);
+    }
+
+    #[test]
+    fn parse_spki_pin_rejects_wrong_length_and_non_hex() {
+        assert!(parse_spki_pin("").is_err());
+        assert!(parse_spki_pin("0011").is_err());
+        assert!(parse_spki_pin(&"zz".repeat(32)).is_err());
+        // 31 bytes of valid hex is still a refusal: a pin is all or nothing.
+        assert!(parse_spki_pin(&"11".repeat(31)).is_err());
+    }
+
+    #[test]
+    fn configured_spki_pin_reads_the_env_and_fails_closed() {
+        std::env::remove_var(RELAY_SPKI_PIN_ENV);
+        assert_eq!(configured_spki_pin().unwrap(), None);
+
+        std::env::set_var(RELAY_SPKI_PIN_ENV, "   ");
+        assert_eq!(configured_spki_pin().unwrap(), None);
+
+        std::env::set_var(
+            RELAY_SPKI_PIN_ENV,
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        );
+        assert!(configured_spki_pin().unwrap().is_some());
+
+        std::env::set_var(RELAY_SPKI_PIN_ENV, "not-a-pin");
+        assert!(
+            configured_spki_pin().is_err(),
+            "a malformed pin must be an error, never a silent fallback to unpinned"
+        );
+        std::env::remove_var(RELAY_SPKI_PIN_ENV);
     }
 }
