@@ -4554,7 +4554,7 @@ mod tests {
             }
         "#,
         );
-        let has_privacy = diags.items.iter().any(|e| e.code == "E0201");
+        let has_privacy = diags.items.iter().any(|e| e.code == "E0200");
         assert!(
             has_privacy,
             "privacy should propagate through let binding, got: {:?}",
@@ -4573,7 +4573,7 @@ mod tests {
             }
         "#,
         );
-        let has_secret = diags.items.iter().any(|e| e.code == "E0200");
+        let has_secret = diags.items.iter().any(|e| e.code == "E0201");
         assert!(
             has_secret,
             "secret should propagate through let binding, got: {:?}",
