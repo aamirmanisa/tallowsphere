@@ -471,12 +471,50 @@ impl<'a> PrivacyPass<'a> {
                     );
                 }
             }
-            // Nested call — recurse
+            // Call as the printed value — the *result* carries the callee's
+            // return type, so `print(fetch_email())` must be as illegal as
+            // printing the Email it returns. Wrappers (`Result`, `Optional`,
+            // arrays) are unwrapped: `print(find()?)` exposes the inner value.
             ExprKind::Call { callee, args, .. } => {
-                self.check_not_sensitive_raw(callee, locals);
+                let mut ret = self.infer_type(expr, locals);
+                while let Type::Result(inner) | Type::Optional(inner) | Type::Array(inner) = ret {
+                    ret = *inner;
+                }
+                let callee_name = match &callee.kind {
+                    ExprKind::Ident(name) => format!("`{name}()`"),
+                    _ => "this call".to_string(),
+                };
+                if ret.is_secret() {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "E0201",
+                            format!(
+                                "{callee_name} returns a secret type and can NEVER be logged, printed, or serialized"
+                            ),
+                            expr.span,
+                        )
+                        .with_help("secret types cannot be exposed in any form — use .verify() for comparison"),
+                    );
+                } else if ret.is_private() {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "E0200",
+                            format!(
+                                "{callee_name} returns a private type and cannot be logged or printed directly"
+                            ),
+                            expr.span,
+                        )
+                        .with_help("use .redact(), .hash(), or .mask() on the result"),
+                    );
+                }
                 for arg in args {
                     self.check_not_sensitive_raw(&arg.value, locals);
                 }
+            }
+            // `print(x?)` / `print(await x)` expose whatever the inner
+            // expression evaluates to.
+            ExprKind::Try(inner) | ExprKind::Await(inner) => {
+                self.check_not_sensitive_raw(inner, locals);
             }
             // Everything else — not flagged at this level
             _ => {}
@@ -627,6 +665,83 @@ mod tests {
     fn non_sensitive_type_ok() {
         let diags = run_privacy_pass("fn log_data(name: String) { print(name) }");
         assert!(!diags.has_errors());
+    }
+
+    // ── Call-result sensitivity (#49) ───────────────────────────────────────
+
+    #[test]
+    fn private_return_value_printed_directly_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            fn fetch_email() -> Email { "a@b.c" }
+            fn leak() { print(fetch_email()) }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0200"),
+            "a call returning a private type must be flagged at the sink, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn secret_return_value_printed_directly_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            fn fetch_token() -> Token { "tok" }
+            fn leak() { print(fetch_token()) }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0201"),
+            "a call returning a secret type must be flagged at the sink, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn redacted_call_result_is_allowed() {
+        let diags = run_privacy_pass(
+            r#"
+            fn fetch_email() -> Email { "a@b.c" }
+            fn ok() { print(fetch_email().redact()) }
+        "#,
+        );
+        assert!(
+            !diags.has_errors(),
+            "redacting the result is the safe path, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn private_result_unwrapped_by_try_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            fn find_email() -> Result<Email, String> { Ok("a@b.c") }
+            fn leak() -> Result<Int, String> { print(find_email()?) 0 }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0200"),
+            "the inner private value of a `?`-unwrapped call must be flagged, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn plain_return_value_printed_directly_is_allowed() {
+        let diags = run_privacy_pass(
+            r#"
+            fn greeting() -> String { "hi" }
+            fn ok() { print(greeting()) }
+        "#,
+        );
+        assert!(
+            !diags.has_errors(),
+            "a plain return type must not be flagged, got: {:?}",
+            diags.items
+        );
     }
 
     #[test]
