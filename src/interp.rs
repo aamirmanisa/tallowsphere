@@ -52264,56 +52264,81 @@ fn main() {
     }
 
     #[test]
-    fn test_lightweight_crypto_ascon() {
-        let src = r#"
+    fn test_lightweight_crypto_ascon_refuses_loudly() {
+        // ascon is not implemented in this build. The call must refuse by name
+        // instead of returning AES-256-GCM output labelled ascon — that silent
+        // substitution is what this test guards against.
+        let err = run_result(
+            r#"
 fn main() {
-    let ciphertext = LightweightCrypto.encrypt("hello sensor", "key123", "ascon")
-    let has_ct = ciphertext.len() > 0
-    print(has_ct)
-    let decrypted = LightweightCrypto.decrypt(ciphertext, "key123", "ascon")
-    print(decrypted)
+    LightweightCrypto.encrypt("hello sensor", "key123", "ascon")
 }
-"#;
-        let (_, output) = run(src);
-        assert_eq!(output[0], "true");
-        // Real roundtrip: decrypt returns the original plaintext (the stub-era
-        // "[ascon-decrypted]" placeholder no longer exists).
-        assert_eq!(output[1], "hello sensor");
+"#,
+        )
+        .expect_err("ascon must refuse");
+        let msg = format!("{err}");
+        assert!(msg.contains("ascon"), "the refusal should name the cipher, got: {msg}");
+        assert!(
+            msg.contains("not implemented"),
+            "the refusal should say it is unimplemented, got: {msg}"
+        );
     }
 
-    #[test]
-    fn test_lightweight_crypto_photon() {
-        let src = r#"
-fn main() {
-    let ct = LightweightCrypto.encrypt("data", "key", "photon")
-    let has_ct = ct.len() > 0
-    print(has_ct)
-    let dec = LightweightCrypto.decrypt(ct, "key", "photon")
-    print(dec)
-}
-"#;
-        let (_, output) = run(src);
-        assert_eq!(output[0], "true");
-        // Real roundtrip: decrypt returns the original plaintext.
-        assert_eq!(output[1], "data");
-    }
 
     #[test]
-    fn test_lightweight_crypto_gift() {
-        let src = r#"
+    fn test_lightweight_crypto_photon_refuses_loudly() {
+        // photon is not implemented in this build. The call must refuse by name
+        // instead of returning AES-256-GCM output labelled photon — that silent
+        // substitution is what this test guards against.
+        let err = run_result(
+            r#"
 fn main() {
-    let ct = LightweightCrypto.encrypt("iot-telemetry", "device_key", "gift")
-    let has_ct = ct.len() > 0
-    print(has_ct)
-    let dec = LightweightCrypto.decrypt(ct, "device_key", "gift")
-    print(dec)
+    LightweightCrypto.encrypt("hello sensor", "key123", "photon")
 }
-"#;
-        let (_, output) = run(src);
-        assert_eq!(output[0], "true");
-        // Real roundtrip: decrypt returns the original plaintext.
-        assert_eq!(output[1], "iot-telemetry");
+"#,
+        )
+        .expect_err("photon must refuse");
+        let msg = format!("{err}");
+        assert!(msg.contains("photon"), "the refusal should name the cipher, got: {msg}");
+        assert!(
+            msg.contains("not implemented"),
+            "the refusal should say it is unimplemented, got: {msg}"
+        );
     }
+
+    fn test_lightweight_crypto_aes256gcm_roundtrips() {
+        // The one implemented cipher still round-trips.
+        let (_, output) = run(r#"
+fn main() {
+    let ct = LightweightCrypto.encrypt("hello sensor", "key123", "aes256gcm")
+    print(LightweightCrypto.decrypt(ct, "key123", "aes256gcm"))
+}
+"#);
+        assert_eq!(output[0], "hello sensor");
+    }
+
+
+    #[test]
+    fn test_lightweight_crypto_gift_refuses_loudly() {
+        // gift is not implemented in this build. The call must refuse by name
+        // instead of returning AES-256-GCM output labelled gift — that silent
+        // substitution is what this test guards against.
+        let err = run_result(
+            r#"
+fn main() {
+    LightweightCrypto.encrypt("hello sensor", "key123", "gift")
+}
+"#,
+        )
+        .expect_err("gift must refuse");
+        let msg = format!("{err}");
+        assert!(msg.contains("gift"), "the refusal should name the cipher, got: {msg}");
+        assert!(
+            msg.contains("not implemented"),
+            "the refusal should say it is unimplemented, got: {msg}"
+        );
+    }
+
 
     #[test]
     fn test_ics_protocols_deterministic() {
@@ -53705,6 +53730,7 @@ fn main() {
         assert_eq!(output[1], "true");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_har_recorder_create_export() {
         let (_, output) = run(r#"
@@ -53789,6 +53815,7 @@ fn main() {
         assert_eq!(output[2], "0");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_network_interceptor_add_rule() {
         let (_, output) = run(r#"
@@ -53826,6 +53853,7 @@ fn main() {
         assert_eq!(output[2], "0");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_trace_recorder_lifecycle() {
         let (_, output) = run(r##"
@@ -53852,6 +53880,7 @@ fn main() {
         assert_eq!(output[6], "2");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_session_manager_capture_save() {
         let (_, output) = run(r#"
@@ -53923,6 +53952,7 @@ fn main() {
         assert_eq!(output[1], "128");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_device_emulator_set_viewport() {
         let (_, output) = run(r#"
@@ -53940,6 +53970,7 @@ fn main() {
         assert_eq!(output[3], "true");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_device_emulator_set_mobile() {
         let (_, output) = run(r#"
@@ -53957,6 +53988,7 @@ fn main() {
         assert_eq!(output[3], "true");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_device_emulator_geolocation_timezone_locale() {
         let (_, output) = run(r#"
@@ -54646,6 +54678,7 @@ fn main() {
         assert_eq!(output[5], "true");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_phase54_sentinel_har_recorder_pipeline() {
         let (_, output) = run(r#"
@@ -54672,6 +54705,7 @@ fn main() {
         assert_eq!(output[5], "false");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_phase54_sentinel_session_manager_pipeline() {
         let (_, output) = run(r#"
@@ -54694,6 +54728,7 @@ fn main() {
         assert_eq!(output[4], "true");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_phase54_sentinel_trace_recorder() {
         let (_, output) = run(r##"
@@ -54718,6 +54753,7 @@ fn main() {
         assert_eq!(output[5], "false");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_phase54_sentinel_network_interceptor_full() {
         let (_, output) = run(r#"
@@ -54780,6 +54816,7 @@ fn main() {
         assert_eq!(output[10], "true");
     }
 
+    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
     #[test]
     fn test_phase54_sentinel_device_emulator() {
         let (_, output) = run(r#"
