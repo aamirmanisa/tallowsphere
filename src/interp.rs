@@ -23038,7 +23038,8 @@ impl Interpreter {
                 name: "HarRecorder".to_string(),
                 fields: vec![
                     ("entries".into(), Value::Array(vec![])),
-                    ("recording".into(), Value::Bool(true)),
+                    ("recording".into(), Value::Bool(false)),
+                    ("simulated".into(), Value::Bool(true)),
                     ("format".into(), Value::String("har_1.2".into())),
                     ("entry_count".into(), Value::Int(0)),
                 ],
@@ -23096,7 +23097,8 @@ impl Interpreter {
                     name: "HarRecorder".to_string(),
                     fields: vec![
                         ("entries".into(), Value::Array(entries)),
-                        ("recording".into(), Value::Bool(true)),
+                        ("recording".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                         ("format".into(), Value::String("har_1.2".into())),
                         ("entry_count".into(), Value::Int(count)),
                     ],
@@ -23502,7 +23504,8 @@ impl Interpreter {
                 name: "NetworkInterceptor".to_string(),
                 fields: vec![
                     ("rules".into(), Value::Array(vec![])),
-                    ("active".into(), Value::Bool(true)),
+                    ("active".into(), Value::Bool(false)),
+                    ("simulated".into(), Value::Bool(true)),
                     ("rule_count".into(), Value::Int(0)),
                 ],
             })),
@@ -23540,7 +23543,8 @@ impl Interpreter {
                     name: "NetworkInterceptor".to_string(),
                     fields: vec![
                         ("rules".into(), Value::Array(rules)),
-                        ("active".into(), Value::Bool(true)),
+                        ("active".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                         ("rule_count".into(), Value::Int(count)),
                     ],
                 }))
@@ -23574,7 +23578,8 @@ impl Interpreter {
                     name: "NetworkInterceptor".to_string(),
                     fields: vec![
                         ("rules".into(), Value::Array(rules)),
-                        ("active".into(), Value::Bool(true)),
+                        ("active".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                         ("rule_count".into(), Value::Int(count)),
                     ],
                 }))
@@ -23621,7 +23626,8 @@ impl Interpreter {
                     name: "NetworkInterceptor".to_string(),
                     fields: vec![
                         ("rules".into(), Value::Array(rules)),
-                        ("active".into(), Value::Bool(true)),
+                        ("active".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                         ("rule_count".into(), Value::Int(count)),
                     ],
                 }))
@@ -23639,7 +23645,8 @@ impl Interpreter {
                     name: "NetworkInterceptor".to_string(),
                     fields: vec![
                         ("rules".into(), Value::Array(vec![])),
-                        ("active".into(), Value::Bool(true)),
+                        ("active".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                         ("rule_count".into(), Value::Int(0)),
                     ],
                 }))
@@ -23657,7 +23664,8 @@ impl Interpreter {
                         ("actions".into(), Value::Array(vec![])),
                         ("screenshots".into(), Value::Array(vec![])),
                         ("network".into(), Value::Array(vec![])),
-                        ("recording".into(), Value::Bool(true)),
+                        ("recording".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                         ("action_count".into(), Value::Int(0)),
                     ],
                 }))
@@ -23766,17 +23774,12 @@ impl Interpreter {
                     .get(1)
                     .map(|v| v.as_string())
                     .unwrap_or_else(|| "session".into());
-                let hash = blake3::hash(format!("saved_session:{}", save_name).as_bytes())
-                    .to_hex()
-                    .to_string();
-                Some(Ok(Value::Struct {
-                    name: "SavedSession".to_string(),
-                    fields: vec![
-                        ("name".into(), Value::String(save_name)),
-                        ("encrypted".into(), Value::Bool(true)),
-                        ("hash".into(), Value::String(hash[..16].to_string())),
-                    ],
-                }))
+                // No live browser: nothing was captured, so there is nothing to
+                // encrypt. Returning a SavedSession with `encrypted: true` was
+                // an outcome claim about a session that does not exist.
+                Some(Ok(Value::Err(Box::new(Value::String(format!(
+                    "no browser connected — SessionManager.save('{save_name}') cannot write an encrypted session without a live browser session"
+                ))))))
             }
             "SessionManager.load" => {
                 let load_name = positional
@@ -23900,7 +23903,8 @@ impl Interpreter {
                         ("width".into(), Value::Int(width)),
                         ("height".into(), Value::Int(height)),
                         ("scale".into(), Value::Float(scale)),
-                        ("applied".into(), Value::Bool(true)),
+                        ("applied".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                     ],
                 }))
             }
@@ -23938,7 +23942,8 @@ impl Interpreter {
                         ("height".into(), Value::Int(h)),
                         ("scale".into(), Value::Float(s)),
                         ("user_agent".into(), Value::String(ua.into())),
-                        ("applied".into(), Value::Bool(true)),
+                        ("applied".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                     ],
                 }))
             }
@@ -23965,7 +23970,8 @@ impl Interpreter {
                         ("lat".into(), Value::Float(lat)),
                         ("lon".into(), Value::Float(lon)),
                         ("accuracy".into(), Value::Int(100)),
-                        ("applied".into(), Value::Bool(true)),
+                        ("applied".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                     ],
                 }))
             }
@@ -23978,7 +23984,8 @@ impl Interpreter {
                     name: "TimezoneConfig".to_string(),
                     fields: vec![
                         ("timezone".into(), Value::String(tz)),
-                        ("applied".into(), Value::Bool(true)),
+                        ("applied".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                     ],
                 }))
             }
@@ -23991,7 +23998,8 @@ impl Interpreter {
                     name: "LocaleConfig".to_string(),
                     fields: vec![
                         ("locale".into(), Value::String(locale)),
-                        ("applied".into(), Value::Bool(true)),
+                        ("applied".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                     ],
                 }))
             }
@@ -24004,7 +24012,8 @@ impl Interpreter {
                     name: "UserAgentConfig".to_string(),
                     fields: vec![
                         ("user_agent".into(), Value::String(ua)),
-                        ("applied".into(), Value::Bool(true)),
+                        ("applied".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(true)),
                     ],
                 }))
             }
