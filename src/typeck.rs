@@ -1244,13 +1244,13 @@ impl<'a> TypeChecker<'a> {
                             let arg_ty = self.infer_expr_type(&arg.value, locals);
                             if arg_ty.is_secret() {
                                 self.diags.error(
-                                    "E0200",
+                                    "E0201",
                                     "cannot pass secret type to print/log -- secret types must never be logged",
                                     arg.span,
                                 );
                             } else if arg_ty.is_private() {
                                 self.diags.error(
-                                    "E0201",
+                                    "E0200",
                                     "cannot pass private type to print/log without .redact() or .hash()",
                                     arg.span,
                                 );
@@ -4240,10 +4240,10 @@ mod tests {
             }
         "#,
         );
-        let has_e0201 = diags.items.iter().any(|e| e.code == "E0201");
+        let has_e0200 = diags.items.iter().any(|e| e.code == "E0200");
         assert!(
-            has_e0201,
-            "print(private) should emit E0201, got: {:?}",
+            has_e0200,
+            "print(private) should emit E0200, got: {:?}",
             diags.items
         );
     }
@@ -4258,10 +4258,10 @@ mod tests {
             }
         "#,
         );
-        let has_e0200 = diags.items.iter().any(|e| e.code == "E0200");
+        let has_e0201 = diags.items.iter().any(|e| e.code == "E0201");
         assert!(
-            has_e0200,
-            "print(secret) should emit E0200, got: {:?}",
+            has_e0201,
+            "print(secret) should emit E0201, got: {:?}",
             diags.items
         );
     }
