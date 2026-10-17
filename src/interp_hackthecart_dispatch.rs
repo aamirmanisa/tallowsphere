@@ -539,6 +539,311 @@ fn canonical_product_from_value(
     })
 }
 
+fn required_int(v: &Value, key: &str, context: &str) -> Result<i64, RuntimeError> {
+    value_as_i64(require_field(v, key, context)?)
+        .ok_or_else(|| RuntimeError::Error(format!("{context}: `{key}` must be an Int")))
+}
+
+fn required_f64(v: &Value, key: &str, context: &str) -> Result<f64, RuntimeError> {
+    value_as_f64(require_field(v, key, context)?)
+        .ok_or_else(|| RuntimeError::Error(format!("{context}: `{key}` must be a Float")))
+}
+
+fn required_string(v: &Value, key: &str, context: &str) -> Result<String, RuntimeError> {
+    match require_field(v, key, context)? {
+        Value::String(s) => Ok(s.clone()),
+        other => Err(RuntimeError::Error(format!(
+            "{context}: `{key}` must be a String, got {}",
+            value_kind(other)
+        ))),
+    }
+}
+
+/// Build (recipe, catalog, zip, radius, stop limit) from one config map.
+///
+/// Shape:
+/// ```text
+/// {
+///   zip, zip_lat, zip_lon,
+///   max_distance_mi?, max_stores?,
+///   title?, servings?,
+///   ingredients: [{ item, quantity?, unit?, preparation?, optional?, raw_text? }],
+///   stores:      [{ store_id, name, lat, lon }],
+///   listings:    [{ store_id, store_listing_id, canonical_id, canonical_name,
+///                   product_name, price_cents, unit_price_cents,
+///                   pack_size_text?, image_url? }],
+/// }
+/// ```
+fn basket_config_from_value(
+    v: &Value,
+) -> Result<
+    (
+        browser::recipe_parser::Recipe,
+        browser::basket_optimizer::ProductDb,
+        String,
+        f64,
+        u8,
+    ),
+    RuntimeError,
+> {
+    use browser::basket_optimizer::{ProductDb, StoreInfo, StoreListing};
+
+    let context = "BasketOptimizer.optimize(config)";
+    if !matches!(v, Value::Map(_) | Value::Struct { .. }) {
+        return Err(RuntimeError::Error(format!(
+            "{context}: expected a Map/Struct, got {}",
+            value_kind(v)
+        )));
+    }
+
+    let zip = required_string(v, "zip", context)?;
+    let zip_lat = required_f64(v, "zip_lat", context)?;
+    let zip_lon = required_f64(v, "zip_lon", context)?;
+    let max_distance_mi = field_f64(v, "max_distance_mi").unwrap_or(10.0);
+    if !(max_distance_mi.is_finite() && max_distance_mi > 0.0) {
+        return Err(RuntimeError::Error(format!(
+            "{context}: `max_distance_mi` must be a positive finite Float"
+        )));
+    }
+    let max_stores_raw = field_i64(v, "max_stores").unwrap_or(3);
+    if !(0..=u8::MAX as i64).contains(&max_stores_raw) {
+        return Err(RuntimeError::Error(format!(
+            "{context}: `max_stores` must be an Int in 0..=255"
+        )));
+    }
+    let max_stores = max_stores_raw as u8;
+
+    let Some(Value::Array(ingredient_items)) = tagged_field(v, "ingredients") else {
+        return Err(RuntimeError::Error(format!(
+            "{context}: `ingredients` must be an Array"
+        )));
+    };
+    let mut ingredients = Vec::with_capacity(ingredient_items.len());
+    for (index, item) in ingredient_items.iter().enumerate() {
+        let item_context = format!("ingredients[{index}]");
+        if !matches!(item, Value::Map(_) | Value::Struct { .. }) {
+            return Err(RuntimeError::Error(format!(
+                "{item_context}: expected a Map/Struct"
+            )));
+        }
+        let item_name = required_string(item, "item", &item_context)?;
+        ingredients.push(browser::recipe_parser::Ingredient {
+            raw_text: field_string(item, "raw_text").unwrap_or_else(|| item_name.clone()),
+            quantity: field_f64(item, "quantity"),
+            unit: field_string(item, "unit"),
+            item: item_name,
+            preparation: field_string(item, "preparation"),
+            optional: matches!(tagged_field(item, "optional"), Some(Value::Bool(true))),
+        });
+    }
+
+    let mut db = ProductDb::new();
+    db.set_zip_coords(&zip, zip_lat, zip_lon);
+
+    let Some(Value::Array(store_items)) = tagged_field(v, "stores") else {
+        return Err(RuntimeError::Error(format!(
+            "{context}: `stores` must be an Array"
+        )));
+    };
+    for (index, store) in store_items.iter().enumerate() {
+        let store_context = format!("stores[{index}]");
+        if !matches!(store, Value::Map(_) | Value::Struct { .. }) {
+            return Err(RuntimeError::Error(format!(
+                "{store_context}: expected a Map/Struct"
+            )));
+        }
+        db.add_store(StoreInfo {
+            store_id: required_int(store, "store_id", &store_context)?,
+            name: required_string(store, "name", &store_context)?,
+            distance_mi: 0.0,
+            lat: required_f64(store, "lat", &store_context)?,
+            lon: required_f64(store, "lon", &store_context)?,
+        });
+    }
+
+    let Some(Value::Array(listing_items)) = tagged_field(v, "listings") else {
+        return Err(RuntimeError::Error(format!(
+            "{context}: `listings` must be an Array"
+        )));
+    };
+    for (index, listing) in listing_items.iter().enumerate() {
+        let listing_context = format!("listings[{index}]");
+        if !matches!(listing, Value::Map(_) | Value::Struct { .. }) {
+            return Err(RuntimeError::Error(format!(
+                "{listing_context}: expected a Map/Struct"
+            )));
+        }
+        let store_id = required_int(listing, "store_id", &listing_context)?;
+        db.add_listing(
+            store_id,
+            StoreListing {
+                store_listing_id: required_int(listing, "store_listing_id", &listing_context)?,
+                canonical_id: required_int(listing, "canonical_id", &listing_context)?,
+                canonical_name: required_string(listing, "canonical_name", &listing_context)?,
+                product_name: required_string(listing, "product_name", &listing_context)?,
+                price_cents: required_int(listing, "price_cents", &listing_context)?,
+                unit_price_cents: required_int(listing, "unit_price_cents", &listing_context)?,
+                pack_size_text: field_string(listing, "pack_size_text").unwrap_or_default(),
+                image_url: field_string(listing, "image_url"),
+            },
+        );
+    }
+
+    let servings = field_i64(v, "servings").unwrap_or(1);
+    if !(0..=i32::MAX as i64).contains(&servings) {
+        return Err(RuntimeError::Error(format!(
+            "{context}: `servings` must be an Int in 0..=2147483647"
+        )));
+    }
+    let recipe = browser::recipe_parser::Recipe {
+        title: field_string(v, "title").unwrap_or_else(|| "Untitled".to_string()),
+        servings: servings as i32,
+        prep_time_minutes: None,
+        cook_time_minutes: None,
+        ingredients,
+        instructions: Vec::new(),
+        source_url: None,
+        image_url: None,
+    };
+
+    Ok((recipe, db, zip, max_distance_mi, max_stores))
+}
+
+fn basket_item_to_value(item: &browser::basket_optimizer::BasketItem) -> Value {
+    Value::Struct {
+        name: "BasketItem".to_string(),
+        fields: vec![
+            (
+                "ingredient".to_string(),
+                Value::String(item.ingredient.clone()),
+            ),
+            (
+                "product_name".to_string(),
+                Value::String(item.product_name.clone()),
+            ),
+            ("price_cents".to_string(), Value::Int(item.price_cents as i128)),
+            (
+                "unit_price_cents".to_string(),
+                Value::Int(item.unit_price_cents as i128),
+            ),
+            (
+                "quantity_needed".to_string(),
+                Value::Float(item.quantity_needed),
+            ),
+            (
+                "quantity_unit".to_string(),
+                Value::String(item.quantity_unit.clone()),
+            ),
+            (
+                "image_url".to_string(),
+                match &item.image_url {
+                    Some(url) => Value::String(url.clone()),
+                    None => Value::Nil,
+                },
+            ),
+        ],
+    }
+}
+
+fn substitution_to_value(sub: &browser::basket_optimizer::Substitution) -> Value {
+    Value::Struct {
+        name: "Substitution".to_string(),
+        fields: vec![
+            ("original".to_string(), Value::String(sub.original.clone())),
+            (
+                "substitute".to_string(),
+                Value::String(sub.substitute.clone()),
+            ),
+            ("reason".to_string(), Value::String(sub.reason.clone())),
+            (
+                "price_delta_cents".to_string(),
+                Value::Int(sub.price_delta_cents as i128),
+            ),
+        ],
+    }
+}
+
+fn basket_to_value(basket: &browser::basket_optimizer::Basket) -> Value {
+    Value::Struct {
+        name: "Basket".to_string(),
+        fields: vec![
+            (
+                "items".to_string(),
+                Value::Array(basket.items.iter().map(basket_item_to_value).collect()),
+            ),
+            (
+                "total_cents".to_string(),
+                Value::Int(basket.total_cents as i128),
+            ),
+            ("store".to_string(), Value::String(basket.store.clone())),
+            ("store_id".to_string(), Value::Int(basket.store_id as i128)),
+            ("distance_mi".to_string(), Value::Float(basket.distance_mi)),
+            (
+                "missing_items".to_string(),
+                Value::Array(
+                    basket
+                        .missing_items
+                        .iter()
+                        .map(|item| Value::String(item.clone()))
+                        .collect(),
+                ),
+            ),
+            (
+                "substitutions".to_string(),
+                Value::Array(basket.substitutions.iter().map(substitution_to_value).collect()),
+            ),
+        ],
+    }
+}
+
+fn basket_result_to_value(result: &browser::basket_optimizer::OptimizationResult) -> Value {
+    let split = match &result.split_basket {
+        Some(split) => Value::Struct {
+            name: "SplitBasket".to_string(),
+            fields: vec![
+                (
+                    "stores".to_string(),
+                    Value::Array(split.stores.iter().map(basket_to_value).collect()),
+                ),
+                ("total_cents".to_string(), Value::Int(split.total_cents as i128)),
+                (
+                    "savings_vs_cheapest_single".to_string(),
+                    Value::Int(split.savings_vs_cheapest_single as i128),
+                ),
+                ("extra_stops".to_string(), Value::Int(split.extra_stops as i128)),
+            ],
+        },
+        None => Value::Nil,
+    };
+    Value::Struct {
+        name: "OptimizationResult".to_string(),
+        fields: vec![
+            (
+                "single_store_baskets".to_string(),
+                Value::Array(
+                    result
+                        .single_store_baskets
+                        .iter()
+                        .map(basket_to_value)
+                        .collect(),
+                ),
+            ),
+            ("split_basket".to_string(), split),
+            (
+                "cheapest_single".to_string(),
+                basket_to_value(&result.cheapest_single),
+            ),
+            (
+                "closest_with_all_items".to_string(),
+                match &result.closest_with_all_items {
+                    Some(basket) => basket_to_value(basket),
+                    None => Value::Nil,
+                },
+            ),
+        ],
+    }
+}
+
 /// Build a `StealthProfile` from a Map/Struct. Absent fields keep the
 /// Chrome-on-Windows preset value, so a partial profile is a real profile with
 /// documented defaults rather than a zeroed one that fails every check.
@@ -1020,11 +1325,21 @@ pub fn dispatch_hackthecart_method(
         }
 
         ("BasketOptimizer", "optimize") => {
-            // The real optimize() requires a populated Rust-side ProductDb and
-            // a typed Recipe — neither is constructible from Tallow values.
-            return Some(Err(RuntimeError::Error(
-                "BasketOptimizer.optimize is not callable from Tallow: it requires a populated Rust-side ProductDb and a typed Recipe. Use the Rust API (browser::basket_optimizer) instead.".to_string(),
-            )));
+            // Stateless form: build a transient ProductDb from the config map,
+            // so one script call never mutates the receiver's catalog.
+            let Some(config) = args.first() else {
+                return Some(Err(RuntimeError::Error(
+                    "BasketOptimizer.optimize expects one Map/Struct config".to_string(),
+                )));
+            };
+            let (recipe, db, zip, max_distance_mi, max_stores) =
+                match basket_config_from_value(config) {
+                    Ok(parsed) => parsed,
+                    Err(err) => return Some(Err(err)),
+                };
+            let optimizer = browser::basket_optimizer::BasketOptimizer::with_db(db);
+            let result = optimizer.optimize(&recipe, &zip, max_distance_mi, max_stores);
+            return Some(Ok(basket_result_to_value(&result)));
         }
 
         ("QualityValidator", "validate") => {
@@ -1665,6 +1980,91 @@ mod tests {
                 "a Windows UA with platform MacIntel must produce at least one warning"
             ),
             other => panic!("expected an array of warnings, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn basket_optimizer_accepts_inline_catalog() {
+        let v = dispatch_hackthecart_static("BasketOptimizer.new", &[])
+            .unwrap()
+            .unwrap();
+        let bh = unwrap_browser_handle(v);
+        let store = |id: i64, name: &str, lat: f64| {
+            Value::Map(vec![
+                (Value::String("store_id".into()), Value::Int(id as i128)),
+                (Value::String("name".into()), Value::String(name.into())),
+                (Value::String("lat".into()), Value::Float(lat)),
+                (Value::String("lon".into()), Value::Float(-74.0)),
+            ])
+        };
+        let listing = |store_id: i64, id: i64, name: &str, price: i64| {
+            Value::Map(vec![
+                (Value::String("store_id".into()), Value::Int(store_id as i128)),
+                (Value::String("store_listing_id".into()), Value::Int(id as i128)),
+                (Value::String("canonical_id".into()), Value::Int((id * 10) as i128)),
+                (Value::String("canonical_name".into()), Value::String(name.into())),
+                (Value::String("product_name".into()), Value::String(format!("{name} brand"))),
+                (Value::String("price_cents".into()), Value::Int(price as i128)),
+                (Value::String("unit_price_cents".into()), Value::Int(price as i128)),
+            ])
+        };
+        let config = Value::Map(vec![
+            (Value::String("zip".into()), Value::String("00000".into())),
+            (Value::String("zip_lat".into()), Value::Float(40.0)),
+            (Value::String("zip_lon".into()), Value::Float(-74.0)),
+            (Value::String("max_distance_mi".into()), Value::Float(10.0)),
+            (Value::String("max_stores".into()), Value::Int(3)),
+            (
+                Value::String("ingredients".into()),
+                Value::Array(vec![
+                    Value::Map(vec![(Value::String("item".into()), Value::String("milk".into()))]),
+                    Value::Map(vec![(Value::String("item".into()), Value::String("bread".into()))]),
+                ]),
+            ),
+            (
+                Value::String("stores".into()),
+                Value::Array(vec![store(1, "Near A", 40.01), store(2, "Near B", 40.02)]),
+            ),
+            (
+                Value::String("listings".into()),
+                Value::Array(vec![
+                    listing(1, 1, "milk", 300),
+                    listing(1, 2, "bread", 200),
+                    listing(2, 3, "milk", 250),
+                    listing(2, 4, "bread", 400),
+                ]),
+            ),
+        ]);
+        let r = dispatch_hackthecart_method(&bh, "optimize", &[config])
+            .expect("dispatched")
+            .expect("ok");
+        let Value::Struct { name, fields } = r else {
+            panic!("expected OptimizationResult")
+        };
+        assert_eq!(name, "OptimizationResult");
+        let field = |key: &str| {
+            fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("missing {key}"))
+        };
+        match field("single_store_baskets") {
+            Value::Array(baskets) => assert_eq!(baskets.len(), 2, "both stores within 10 mi"),
+            other => panic!("expected array, got {other:?}"),
+        }
+        match field("cheapest_single") {
+            Value::Struct { fields, .. } => {
+                let total = fields
+                    .iter()
+                    .find(|(k, _)| k == "total_cents")
+                    .map(|(_, v)| v.clone());
+                match total {
+                    Some(Value::Int(cents)) => assert_eq!(cents, 500, "store 1 totals 300+200"),
+                    other => panic!("expected total_cents Int(500), got {other:?}"),
+                }
+            }
+            other => panic!("expected Basket, got {other:?}"),
         }
     }
 

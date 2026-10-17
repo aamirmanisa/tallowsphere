@@ -260,8 +260,36 @@ pub struct TypeEnv {
 pub struct FnSignature {
     pub name: String,
     pub params: Vec<(String, Type)>,
+    /// One flag per entry in `params`: `true` when the parameter declares a
+    /// default (`fn f(x: int = 3)`). Omitted trailing arguments whose flag is
+    /// true are supplied by the callee, so the checker must not demand them.
+    pub defaults: Vec<bool>,
     pub return_type: Type,
     pub span: Span,
+}
+
+impl FnSignature {
+    /// Smallest legal argument count: one past the last parameter that has no
+    /// default. `params[got..]` must all carry defaults for a call to be legal.
+    pub fn required_params(&self) -> usize {
+        self.params
+            .iter()
+            .zip(self.defaults.iter())
+            .rposition(|(_, has_default)| !*has_default)
+            .map(|index| index + 1)
+            .unwrap_or(0)
+    }
+
+    /// True when `got` arguments is a legal call shape.
+    pub fn accepts_arity(&self, got: usize) -> bool {
+        got <= self.params.len()
+            && self
+                .params
+                .iter()
+                .zip(self.defaults.iter())
+                .skip(got)
+                .all(|(_, has_default)| *has_default)
+    }
 }
 
 // ── Type Checker ─────────────────────────────────────────────────────────────
@@ -341,6 +369,8 @@ impl<'a> TypeChecker<'a> {
                         .iter()
                         .map(|p| (p.name.clone(), self.resolve_param_type(p)))
                         .collect();
+                    let defaults: Vec<bool> =
+                        f.params.iter().map(|p| p.default.is_some()).collect();
 
                     let return_type = f
                         .return_type
@@ -353,6 +383,7 @@ impl<'a> TypeChecker<'a> {
                         FnSignature {
                             name: f.name.clone(),
                             params,
+                            defaults,
                             return_type,
                             span: f.span,
                         },
@@ -410,6 +441,12 @@ impl<'a> TypeChecker<'a> {
                         .filter(|p| p.name != "self")
                         .map(|p| (p.name.clone(), self.resolve_param_type(p)))
                         .collect();
+                    let defaults: Vec<bool> = method
+                        .params
+                        .iter()
+                        .filter(|p| p.name != "self")
+                        .map(|p| p.default.is_some())
+                        .collect();
                     let return_type = method
                         .return_type
                         .as_ref()
@@ -418,6 +455,7 @@ impl<'a> TypeChecker<'a> {
                     sigs.push(FnSignature {
                         name: method.name.clone(),
                         params,
+                        defaults,
                         return_type,
                         span: method.span,
                     });
@@ -1171,19 +1209,33 @@ impl<'a> TypeChecker<'a> {
                 for arg in args {
                     self.check_expr(&arg.value, locals);
                 }
-                // Check argument count for known functions
+                // Check argument count for known functions. A trailing run of
+                // defaulted parameters may be omitted: the callee binds them.
                 if let ExprKind::Ident(name) = &callee.kind {
-                    if let Some(sig) = self.env.functions.get(name) {
-                        let expected = sig.params.len();
-                        let got = args.len();
-                        if got != expected {
-                            self.diags.error(
-                                "E0103",
+                    let got = args.len();
+                    let arity = self.env.functions.get(name).map(|sig| {
+                        (
+                            sig.params.len(),
+                            sig.required_params(),
+                            sig.accepts_arity(got),
+                        )
+                    });
+                    if let Some((expected, required, accepted)) = arity {
+                        if !accepted {
+                            let message = if got > expected {
+                                format!(
+                                    "function `{name}` expects at most {expected} argument(s), got {got}"
+                                )
+                            } else if required == expected {
                                 format!(
                                     "function `{name}` expects {expected} argument(s), got {got}"
-                                ),
-                                expr.span,
-                            );
+                                )
+                            } else {
+                                format!(
+                                    "function `{name}` expects at least {required} argument(s), got {got}"
+                                )
+                            };
+                            self.diags.error("E0103", message, expr.span);
                         }
                     }
                     // Check privacy: print/log with private/secret arg
@@ -1224,17 +1276,30 @@ impl<'a> TypeChecker<'a> {
                 let type_name = self.type_to_name(&obj_ty);
                 if let Some(ref tname) = type_name {
                     if let Some(methods) = self.env.methods.get(tname) {
-                        if let Some(sig) = methods.iter().find(|s| s.name == *method) {
-                            let expected = sig.params.len();
-                            let got = args.len();
-                            if got != expected {
-                                self.diags.error(
-                                    "E0104",
+                        let arity = methods.iter().find(|s| s.name == *method).map(|sig| {
+                            (
+                                sig.params.len(),
+                                sig.required_params(),
+                                sig.accepts_arity(args.len()),
+                            )
+                        });
+                        if let Some((expected, required, accepted)) = arity {
+                            if !accepted {
+                                let got = args.len();
+                                let message = if got > expected {
+                                    format!(
+                                        "method `{method}` on `{tname}` expects at most {expected} argument(s), got {got}"
+                                    )
+                                } else if required == expected {
                                     format!(
                                         "method `{method}` on `{tname}` expects {expected} argument(s), got {got}"
-                                    ),
-                                    expr.span,
-                                );
+                                    )
+                                } else {
+                                    format!(
+                                        "method `{method}` on `{tname}` expects at least {required} argument(s), got {got}"
+                                    )
+                                };
+                                self.diags.error("E0104", message, expr.span);
                             }
                         }
                         // Note: we don't error on unknown methods because many are builtins
@@ -4774,5 +4839,37 @@ mod tests {
     fn try_reports_one_error_per_site() {
         let msgs = e0111_msgs("fn f() { let x = 1? }");
         assert_eq!(msgs.len(), 1, "one E0111 per `?` site: {msgs:?}");
+    }
+
+    #[test]
+    fn omitted_trailing_default_is_not_an_arity_error() {
+        let source = r#"
+fn greet(name: string, punct: string = "!") -> string { return name + punct; }
+fn main() { print(greet("hi")); }
+"#;
+        let (env, diags) = check(source);
+        assert!(
+            !diags.has_errors(),
+            "a trailing parameter with a default may be omitted: {:?}",
+            diags.has_errors()
+        );
+        assert_eq!(
+            env.functions.get("greet").map(|sig| sig.required_params()),
+            Some(1),
+            "only `name` is required"
+        );
+    }
+
+    #[test]
+    fn omitted_required_argument_still_fails() {
+        let source = r#"
+fn add(a: int, b: int) -> int { return a + b; }
+fn main() { print(add(1)); }
+"#;
+        let (_, diags) = check(source);
+        assert!(
+            diags.has_errors(),
+            "a parameter without a default is still required"
+        );
     }
 }
