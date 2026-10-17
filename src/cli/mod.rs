@@ -6,6 +6,7 @@ pub mod fixity_cmd;
 pub mod never_probe;
 pub mod phone_cmd;
 pub mod pin_cmd;
+pub mod pins_cmd;
 pub mod plan_cmd;
 pub mod rmdb_cmd;
 pub mod sandbox_cmd;

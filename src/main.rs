@@ -168,6 +168,14 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Package pin file (`.tallow-pins`) authoring: `pins add|list|remove`.
+    /// Distinct from `pin`, which manages the peer registry (`pins.json`).
+    #[command(name = "pins")]
+    Pins {
+        /// Everything after `pins`, e.g. `--file . add <subject> <fingerprint>`
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Outbound authorization register (deny-by-default): `scope check|list|verify`.
     /// A host absent from `configs/tallow/scope/authorized-hosts.toml` is refused
     /// before a socket is opened; the exit status is the verdict (0 allowed,
@@ -2690,6 +2698,11 @@ fn real_main() -> anyhow::Result<()> {
         Command::Pin { args } => {
             use tallow::cli::pin_cmd;
             pin_cmd::run_pin_cmd(&args).map_err(anyhow::Error::msg)?;
+            return Ok(());
+        }
+        Command::Pins { args } => {
+            use tallow::cli::pins_cmd;
+            pins_cmd::run_pins_cmd(&args).map_err(anyhow::Error::msg)?;
             return Ok(());
         }
         Command::Scope { args } => {

@@ -105,6 +105,9 @@ pub struct CopyJob {
     pub threads: usize,
     pub buffer_size_bytes: usize,
     pub dry_run: bool,
+    /// Manifest used by `VerifyPolicy::Manifest`: one
+    /// `blake3:<hex>  <relative-path>` line per file, `#` comments allowed.
+    pub manifest: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -226,6 +229,7 @@ impl CopyJob {
             threads: 1,
             buffer_size_bytes: DEFAULT_BUFFER_SIZE_BYTES,
             dry_run: false,
+            manifest: None,
         }
     }
 }
@@ -463,7 +467,14 @@ where
                         // ReadAfterWrite did; Size/SampledHash silently did nothing).
                         if !matches!(plan.job.verify, VerifyPolicy::None) {
                             let policy = effective_verify_policy(&plan.job);
-                            verify_pair(source, &action.destination, &policy, &mut report);
+                            verify_pair(
+                                source,
+                                &action.destination,
+                                &policy,
+                                plan.job.manifest.as_deref(),
+                                &action.relative_path,
+                                &mut report,
+                            );
                         }
                     }
                     Err(err) => {
@@ -523,7 +534,14 @@ where
                 // R3-4: the action's verification uses the same policy resolution as the
                 // post-copy path, so plan and execution can never disagree.
                 let policy = effective_verify_policy(&plan.job);
-                verify_pair(source, &action.destination, &policy, &mut report);
+                verify_pair(
+                    source,
+                    &action.destination,
+                    &policy,
+                    plan.job.manifest.as_deref(),
+                    &action.relative_path,
+                    &mut report,
+                );
                 files_done += 1;
                 aggregate_bytes_done = aggregate_bytes_done.saturating_add(action.bytes);
                 progress(with_aggregate(
@@ -738,7 +756,14 @@ fn process_non_copy_action<F>(
             };
             // R3-4: same policy resolution as the sequential path (plan/execute agree).
             let policy = effective_verify_policy(&plan.job);
-            verify_pair(source, &action.destination, &policy, report);
+            verify_pair(
+                source,
+                &action.destination,
+                &policy,
+                plan.job.manifest.as_deref(),
+                &action.relative_path,
+                report,
+            );
             *files_done += 1;
             *aggregate_bytes_done = (*aggregate_bytes_done).saturating_add(action.bytes);
             progress(with_aggregate(
@@ -861,6 +886,7 @@ fn execute_copy_actions_in_parallel<F>(
         // R3-4: Size/SampledHash verification runs in the worker (the
         // `should_parallel_copy` gate keeps FullHash/ReadAfterWrite sequential).
         let verify_policy = plan.job.verify.clone();
+        let manifest = plan.job.manifest.clone();
         let control = control.clone();
         handles.push(thread::spawn(move || {
             loop {
@@ -915,7 +941,13 @@ fn execute_copy_actions_in_parallel<F>(
                 );
                 let verification = match &result {
                     Ok(_) if !matches!(verify_policy, VerifyPolicy::None) => Some(
-                        verify_pair_result(&source, &action.destination, &verify_policy),
+                        verify_pair_result(
+                            &source,
+                            &action.destination,
+                            &verify_policy,
+                            manifest.as_deref(),
+                            &action.relative_path,
+                        ),
                     ),
                     _ => None,
                 };
@@ -1627,22 +1659,93 @@ const VERIFY_SAMPLE_WINDOW_COUNT: u64 = 3;
 
 /// Applies a verification outcome to the report: a match counts as a verified file,
 /// anything else is reported as an error (a mismatch never "un-copies" the file).
-fn verify_pair(source: &Path, destination: &Path, policy: &VerifyPolicy, report: &mut CopyReport) {
-    match verify_pair_result(source, destination, policy) {
+fn verify_pair(
+    source: &Path,
+    destination: &Path,
+    policy: &VerifyPolicy,
+    manifest: Option<&Path>,
+    relative: &Path,
+    report: &mut CopyReport,
+) {
+    match verify_pair_result(source, destination, policy, manifest, relative) {
         Ok(()) => report.verified_files += 1,
         Err(err) => report.errors.push(err),
     }
 }
 
+/// Parse a `.tallow-manifest` file: one `blake3:<hex>  <relative-path>` entry
+/// per line, `#` comments and blank lines ignored. Paths use `/` separators.
+fn load_manifest(path: &Path) -> Result<HashMap<String, String>, CopyError> {
+    let text = fs::read_to_string(path).map_err(|err| {
+        invalid_input(
+            Some(path.to_path_buf()),
+            format!("cannot read manifest: {err}"),
+        )
+    })?;
+    let mut entries = HashMap::new();
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((hash, relative)) = line.split_once(char::is_whitespace) else {
+            return Err(invalid_input(
+                Some(path.to_path_buf()),
+                format!("manifest line {}: expected `<hash>  <relative-path>`", index + 1),
+            ));
+        };
+        let hex = hash.trim().strip_prefix("blake3:").unwrap_or(hash.trim());
+        if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(invalid_input(
+                Some(path.to_path_buf()),
+                format!("manifest line {}: `{hash}` is not a 64-hex BLAKE3 digest", index + 1),
+            ));
+        }
+        entries.insert(
+            relative.trim().replace('\\', "/"),
+            hex.to_ascii_lowercase(),
+        );
+    }
+    Ok(entries)
+}
+
+/// Verify one copied file against its manifest entry. A missing entry is an
+/// error, not a pass: a manifest that does not list the file cannot vouch for it.
+fn verify_manifest(
+    destination: &Path,
+    relative: &Path,
+    manifest: &Path,
+) -> Result<(), CopyError> {
+    let entries = load_manifest(manifest)?;
+    let key = relative.to_string_lossy().replace('\\', "/");
+    let Some(expected) = entries.get(&key) else {
+        return Err(verify_mismatch(
+            destination,
+            format!("`{key}` is not listed in manifest {}", manifest.display()),
+        ));
+    };
+    let actual = hash_file(destination)?;
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(verify_mismatch(
+            destination,
+            format!("manifest hash mismatch for `{key}`: expected {expected}, got {actual}"),
+        ))
+    }
+}
+
 /// R3-4: the real verification behind every `VerifyPolicy` variant. `Size` compares
 /// metadata lengths, `SampledHash` a BLAKE3 hash over fixed sample windows (head,
-/// middle, tail), `FullHash`/`ReadAfterWrite` the whole content, `Manifest` (and an
-/// unset policy) are rejected. A symlink destination is verified as a symlink (link
+/// middle, tail), `FullHash`/`ReadAfterWrite` the whole content, and `Manifest`
+/// checks each copied file against `CopyJob::manifest`. An unset policy is rejected. A symlink destination is verified as a symlink (link
 /// target strings must match) since the copied artifact is the link itself.
 fn verify_pair_result(
     source: &Path,
     destination: &Path,
     policy: &VerifyPolicy,
+    manifest: Option<&Path>,
+    relative: &Path,
 ) -> Result<(), CopyError> {
     if is_symlink(destination) {
         return verify_symlink_pair(source, destination);
@@ -1658,10 +1761,15 @@ fn verify_pair_result(
         VerifyPolicy::FullHash | VerifyPolicy::ReadAfterWrite => {
             verify_full_hash(source, destination)
         }
-        VerifyPolicy::Manifest => Err(unsupported(
-            Some(destination.to_path_buf()),
-            "verify policy Manifest is not implemented in this build; select FullHash, SampledHash or Size",
-        )),
+        VerifyPolicy::Manifest => {
+            let Some(manifest) = manifest else {
+                return Err(unsupported(
+                    Some(destination.to_path_buf()),
+                    "verify policy Manifest requires CopyJob::manifest",
+                ));
+            };
+            verify_manifest(destination, relative, manifest)
+        }
     }
 }
 
@@ -1885,10 +1993,10 @@ fn validate_policies(job: &CopyJob) -> Result<(), CopyError> {
         | MetadataPolicy::All => {}
     }
 
-    if matches!(job.verify, VerifyPolicy::Manifest) {
+    if matches!(job.verify, VerifyPolicy::Manifest) && job.manifest.is_none() {
         return Err(unsupported(
             Some(job.source.clone()),
-            "verify policy Manifest is not implemented in this build (no manifest format or manifest store); select Size, SampledHash, FullHash, ReadAfterWrite or None",
+            "verify policy Manifest requires `CopyJob::manifest` (a blake3 manifest: one `<hex>  <relative-path>` line per file)",
         ));
     }
 
@@ -1958,6 +2066,15 @@ fn cancelled_error(path: Option<PathBuf>) -> CopyError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pre-manifest call shape for the existing verification tests.
+    fn verify_legacy(
+        source: &Path,
+        destination: &Path,
+        policy: &VerifyPolicy,
+    ) -> Result<(), CopyError> {
+        verify_pair_result(source, destination, policy, None, Path::new(""))
+    }
 
     #[test]
     fn dry_run_execute_does_not_copy() {
@@ -2042,12 +2159,12 @@ mod tests {
         fs::write(&destination, b"0123456789").unwrap();
 
         assert!(
-            verify_pair_result(&source, &destination, &VerifyPolicy::Size).is_ok(),
+            verify_legacy(&source, &destination, &VerifyPolicy::Size).is_ok(),
             "equal sizes should verify"
         );
 
         fs::write(&destination, b"012345").unwrap();
-        let err = verify_pair_result(&source, &destination, &VerifyPolicy::Size).unwrap_err();
+        let err = verify_legacy(&source, &destination, &VerifyPolicy::Size).unwrap_err();
         assert_eq!(err.category, CopyErrorCategory::VerifyMismatch);
         assert!(err.message.contains("size mismatch"), "{}", err.message);
     }
@@ -2066,13 +2183,13 @@ mod tests {
         corrupted[0] = 2;
         fs::write(&destination, &corrupted).unwrap();
         let err =
-            verify_pair_result(&source, &destination, &VerifyPolicy::SampledHash).unwrap_err();
+            verify_legacy(&source, &destination, &VerifyPolicy::SampledHash).unwrap_err();
         assert_eq!(err.category, CopyErrorCategory::VerifyMismatch);
         assert!(err.message.contains("sampled hash mismatch"), "{}", err.message);
 
         fs::write(&destination, &content).unwrap();
         assert!(
-            verify_pair_result(&source, &destination, &VerifyPolicy::SampledHash).is_ok(),
+            verify_legacy(&source, &destination, &VerifyPolicy::SampledHash).is_ok(),
             "identical content should verify"
         );
     }
@@ -2093,10 +2210,10 @@ mod tests {
         fs::write(&destination, &corrupted).unwrap();
 
         assert!(
-            verify_pair_result(&source, &destination, &VerifyPolicy::SampledHash).is_ok(),
+            verify_legacy(&source, &destination, &VerifyPolicy::SampledHash).is_ok(),
             "the sampler deliberately does not read every byte"
         );
-        let err = verify_pair_result(&source, &destination, &VerifyPolicy::FullHash).unwrap_err();
+        let err = verify_legacy(&source, &destination, &VerifyPolicy::FullHash).unwrap_err();
         assert_eq!(err.category, CopyErrorCategory::VerifyMismatch);
         assert!(err.message.contains("hash mismatch"), "{}", err.message);
     }
@@ -2110,7 +2227,7 @@ mod tests {
         fs::write(&destination, b"same").unwrap();
 
         for policy in [VerifyPolicy::Manifest, VerifyPolicy::None] {
-            let err = verify_pair_result(&source, &destination, &policy).unwrap_err();
+            let err = verify_legacy(&source, &destination, &policy).unwrap_err();
             assert_eq!(err.category, CopyErrorCategory::Unsupported);
         }
     }
@@ -2157,5 +2274,37 @@ mod tests {
             .expect("socket entry must appear in the plan");
         assert_eq!(skip.kind, CopyActionKind::Skip);
         assert!(skip.reason.contains("special file"), "{}", skip.reason);
+    }
+
+    #[test]
+    fn manifest_policy_verifies_listed_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("src");
+        fs::create_dir_all(&source_root).unwrap();
+        let file = source_root.join("a.txt");
+        fs::write(&file, b"hello").unwrap();
+        let hash = hash_file(&file).unwrap();
+        let manifest = tmp.path().join("manifest.txt");
+        fs::write(&manifest, format!("# test manifest\nblake3:{hash}  a.txt\n")).unwrap();
+
+        let mut job = CopyJob::copy(&source_root, tmp.path().join("dst"));
+        job.verify = VerifyPolicy::Manifest;
+        job.manifest = Some(manifest.clone());
+        let report = execute(&plan(job).unwrap());
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.verified_files, 1);
+
+        // A hash that disagrees with the manifest must fail verification.
+        fs::write(&manifest, format!("blake3:{}  a.txt\n", "0".repeat(64))).unwrap();
+        let mut job = CopyJob::copy(&source_root, tmp.path().join("dst2"));
+        job.verify = VerifyPolicy::Manifest;
+        job.manifest = Some(manifest);
+        let report = execute(&plan(job).unwrap());
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(
+            report.errors[0].message.contains("manifest hash mismatch"),
+            "{}",
+            report.errors[0].message
+        );
     }
 }
