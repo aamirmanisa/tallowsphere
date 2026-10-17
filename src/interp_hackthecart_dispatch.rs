@@ -668,19 +668,38 @@ pub fn dispatch_hackthecart_method(
             let matcher = bh
                 .handle
                 .downcast_ref::<browser::product_matcher::ProductMatcher>()?;
-            let title = args.first().map(|v| v.as_string()).unwrap_or_default();
-            let brand = args.get(1).map(|v| v.as_string()).unwrap_or_default();
-            let size = args.get(2).map(|v| v.as_string());
-            let _unit = args.get(3).map(|v| v.as_string());
-            let listing = browser::product_matcher::ScrapedListing {
-                title,
-                upc: None,
-                gtin: None,
-                price_cents: 0,
-                image_url: None,
-                size_text: size,
-                brand_text: Some(brand),
-                source: "interp".to_string(),
+            let listing = match args.first() {
+                Some(value) if matches!(value, Value::Map(_) | Value::Struct { .. }) => {
+                    let text = |key: &str| tagged_field(value, key).map(|v| v.as_string());
+                    browser::product_matcher::ScrapedListing {
+                        title: text("title").unwrap_or_default(),
+                        upc: text("upc"),
+                        gtin: text("gtin"),
+                        price_cents: tagged_field(value, "price_cents")
+                            .and_then(value_as_i64)
+                            .unwrap_or(0),
+                        image_url: text("image_url"),
+                        size_text: text("size_text").or_else(|| text("size")),
+                        brand_text: text("brand_text").or_else(|| text("brand")),
+                        source: text("source").unwrap_or_else(|| "interp".to_string()),
+                    }
+                }
+                _ => {
+                    let title = args.first().map(|v| v.as_string()).unwrap_or_default();
+                    let brand = args.get(1).map(|v| v.as_string()).unwrap_or_default();
+                    let size = args.get(2).map(|v| v.as_string());
+                    let _unit = args.get(3).map(|v| v.as_string());
+                    browser::product_matcher::ScrapedListing {
+                        title,
+                        upc: None,
+                        gtin: None,
+                        price_cents: 0,
+                        image_url: None,
+                        size_text: size,
+                        brand_text: Some(brand),
+                        source: "interp".to_string(),
+                    }
+                }
             };
             let result = matcher.match_listing(&listing);
             return Some(Ok(Value::Struct {
@@ -722,7 +741,23 @@ pub fn dispatch_hackthecart_method(
                     ))))
                 }
             };
-            let result = tri.triangulate(&observations);
+            let result = match args.get(1) {
+                Some(value) => {
+                    let Some(threshold) = value_as_f64(value) else {
+                        return Some(Err(RuntimeError::Error(format!(
+                            "Triangulator.triangulate: deviation_threshold must be a Float in 0.0..=1.0, got {}",
+                            value_kind(value)
+                        ))));
+                    };
+                    if !(0.0..=1.0).contains(&threshold) {
+                        return Some(Err(RuntimeError::Error(format!(
+                            "Triangulator.triangulate: deviation_threshold {threshold} is outside 0.0..=1.0"
+                        ))));
+                    }
+                    tri.triangulate_with_threshold(&observations, threshold)
+                }
+                None => tri.triangulate(&observations),
+            };
             return Some(Ok(Value::Struct {
                 name: "TriangulationResult".to_string(),
                 fields: vec![
@@ -1255,6 +1290,89 @@ mod tests {
             }
             other => panic!("expected MatchResult struct, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn product_matcher_accepts_full_listing_map() {
+        let v = dispatch_hackthecart_static("ProductMatcher.new", &[]).unwrap().unwrap();
+        let bh = unwrap_browser_handle(v);
+        let listing = Value::Map(vec![
+            (
+                Value::String("title".to_string()),
+                Value::String("Acme Cola 12 oz".to_string()),
+            ),
+            (
+                Value::String("upc".to_string()),
+                Value::String("012345678905".to_string()),
+            ),
+            (
+                Value::String("price_cents".to_string()),
+                Value::Int(129),
+            ),
+            (
+                Value::String("image_url".to_string()),
+                Value::String("https://example.test/a.png".to_string()),
+            ),
+            (
+                Value::String("brand".to_string()),
+                Value::String("Acme".to_string()),
+            ),
+        ]);
+        let r = dispatch_hackthecart_method(&bh, "match_listing", &[listing])
+            .expect("dispatched")
+            .expect("ok");
+        assert!(
+            matches!(r, Value::Struct { ref name, .. } if name == "MatchResult"),
+            "expected MatchResult, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn triangulator_threshold_override_applies_per_call() {
+        let v = dispatch_hackthecart_static("Triangulator.new", &[]).unwrap().unwrap();
+        let bh = unwrap_browser_handle(v);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i128;
+        let obs = |source: &str, price: i128| Value::Struct {
+            name: "SourceObservation".to_string(),
+            fields: vec![
+                ("source".to_string(), Value::String(source.to_string())),
+                ("price_cents".to_string(), Value::Int(price)),
+                ("observed_at".to_string(), Value::Int(now)),
+            ],
+        };
+        let observations = Value::Array(vec![
+            obs("a", 10_000),
+            obs("b", 20_000), // 100% spread: rejected at 0.20, admitted at 1.0
+        ]);
+        let consensus = |args: &[Value]| match dispatch_hackthecart_method(&bh, "triangulate", args)
+            .expect("dispatched")
+            .expect("ok")
+        {
+            Value::Struct { fields, .. } => {
+                let field_i = |name: &str| {
+                    fields
+                        .iter()
+                        .find(|(k, _)| k == name)
+                        .and_then(|(_, v)| match v {
+                            Value::Int(i) => Some(*i),
+                            _ => None,
+                        })
+                        .expect("int field")
+                };
+                (field_i("consensus_price_cents"), field_i("agreement_count"))
+            }
+            other => panic!("expected TriangulationResult, got {other:?}"),
+        };
+
+        let (default_consensus, default_agreement) = consensus(&[observations.clone()]);
+        let (wide_consensus, wide_agreement) = consensus(&[observations, Value::Float(1.0)]);
+        assert_eq!(default_agreement, 1, "the 100%-spread observation must be rejected by default");
+        assert_eq!(wide_agreement, 2, "a 1.0 threshold must admit it");
+        assert_eq!(default_consensus, 10_000);
+        let _ = wide_consensus;
     }
 
     #[test]
