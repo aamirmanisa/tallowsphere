@@ -27053,22 +27053,23 @@ fn call_safety_iot_sentinel(name: &str, positional: Vec<Value>) -> Result<Value,
             };
             let algo = match positional.get(2) {
                 Some(Value::String(s)) => s.clone(),
-                _ => "ascon".to_string(),
+                _ => "aes256gcm".to_string(),
             };
-            // Validate algorithm
+            // Only the implemented cipher is accepted. Naming a lightweight
+            // algorithm here used to be honoured with AES-256-GCM output, which
+            // returned ciphertext from a cipher the caller did not ask for.
             match algo.as_str() {
-                "ascon" | "photon" | "gift" => {}
+                "aes256gcm" | "aes-256-gcm" => {}
                 other => {
                     return Err(RuntimeError::Error(format!(
-                        "LightweightCrypto.encrypt: unknown algorithm '{}' (valid: ascon, photon, gift)",
+                        "LightweightCrypto.encrypt: algorithm '{}' is not implemented in this build (supported: aes256gcm)",
                         other
                     )));
                 }
             }
             // Derive a 32-byte AES key from the user-supplied key string via BLAKE3.
-            // Real ASCON/PHOTON/GIFT require dedicated crates not yet integrated;
-            // AES-256-GCM is used as a standards-compliant stand-in so encrypt/decrypt
-            // round-trips work correctly.
+            // ASCON/PHOTON/GIFT are not implemented; the only cipher this build
+            // exposes is AES-256-GCM, and the API now says so.
             use aes_gcm::{
                 Aes256Gcm,
                 aead::{Aead, AeadCore, KeyInit, OsRng},
@@ -27107,13 +27108,13 @@ fn call_safety_iot_sentinel(name: &str, positional: Vec<Value>) -> Result<Value,
             };
             let algo = match positional.get(2) {
                 Some(Value::String(s)) => s.clone(),
-                _ => "ascon".to_string(),
+                _ => "aes256gcm".to_string(),
             };
             match algo.as_str() {
-                "ascon" | "photon" | "gift" => {}
+                "aes256gcm" | "aes-256-gcm" => {}
                 other => {
                     return Err(RuntimeError::Error(format!(
-                        "LightweightCrypto.decrypt: unknown algorithm '{}' (valid: ascon, photon, gift)",
+                        "LightweightCrypto.decrypt: algorithm '{}' is not implemented in this build (supported: aes256gcm)",
                         other
                     )));
                 }
