@@ -807,7 +807,7 @@ log.info("masked: {phone.mask()}")       // logs "***-***-1234"
 | `tallow-transfer-browser-guide.html` | Quick overview |
 | `api/` (34 pages) | Auto-generated API docs: 159 functions, 92 structs, 11 enums |
 
-### Example Programs (85 files)
+### Example Programs (63 programs)
 
 ```
 examples/
@@ -826,7 +826,7 @@ examples/
 ├── ai_act.tl                 # AI Act compliance
 ├── anonymize.tl              # Data anonymization
 ├── stealth_net.tl            # Stealth networking
-└── ... (69 more)
+└── ... (48 more)
 ```
 
 ---
@@ -851,7 +851,7 @@ examples/
 | **Crypto tests** | Per-surface `#[test]` counts (2026-09-13): 206 (tallow-crypto) · 126 (src/stdlib/crypto.rs) · 218 (src/vault) · 5 (crypto_policy_pass) — there is no single "124" suite |
 | **Crate dependencies** | 130 direct (root Cargo.toml, 2026-09-16) |
 | **Documentation files** | 40 |
-| **Example programs** | 85 (2026-09-26 refresh — includes the four previously-missing §10 programs) |
+| **Example programs** | 63 `.tl` programs (2026-10-17 re-measure; the previous 85 was the top-level file count, not the program count) |
 | **Compiled binary size** | 20.5 MB — **unverified** (no release-build measurement; the `#[ignore]`d `perf_binary_size` test asserts <12 MB for the release binary — one of the two is stale — cycle-01/03 §6) |
 | **Startup time** | <1ms (unmeasured — no process-level measurement; treat as target) |
 | **NIST crypto algorithms** | 42+ (stdlib surface; 18 registry-governed primitives; no external audit, not FIPS-validated) |
