@@ -2247,6 +2247,7 @@ impl Interpreter {
                     "KeyPair" => Ok(Value::String("__module_KeyPair__".to_string())),
                     "SymKey" => Ok(Value::String("__module_SymKey__".to_string())),
                     "IPPool" => Ok(Value::String("__module_IPPool__".to_string())),
+                    "TorPool" => Ok(Value::String("__module_TorPool__".to_string())),
                     "TLSConn" => Ok(Value::String("__module_TLSConn__".to_string())),
                     "Browser" => Ok(Value::String("__module_Browser__".to_string())),
                     "Extract" => Ok(Value::String("__module_Extract__".to_string())),
@@ -2650,6 +2651,12 @@ impl Interpreter {
                                 "decimal" => Ok(Value::String("__module_decimal__".to_string())),
                                 "finance" => Ok(Value::String("__module_finance__".to_string())),
                                 "heston" => Ok(Value::String("__module_heston__".to_string())),
+                                _ if crate::stdlib::is_registered_module(name) => {
+                                    // Single source of truth for module namespaces:
+                                    // any module the stdlib router registered is
+                                    // callable by bare name, not just the lists above.
+                                    Ok(Value::String(format!("__module_{name}__")))
+                                }
                                 _ => Err(RuntimeError::UndefinedVar(name.clone())),
                             }
                         }
@@ -9526,21 +9533,9 @@ impl Interpreter {
                     _ => 1,
                 };
                 // Optional 2nd arg: rotation policy ("per_request" default,
-                // "per_batch" with optional batch size, or "manual").
-                let rotation = match positional.get(1).map(|v| v.as_string()) {
-                    Some(s) if s == "per_batch" => {
-                        let batch = positional
-                            .get(2)
-                            .and_then(|v| match v {
-                                Value::Int(n) => Some(*n as u32),
-                                _ => None,
-                            })
-                            .unwrap_or(10);
-                        crate::tor::RotationPolicy::PerBatch(batch)
-                    }
-                    Some(s) if s == "manual" => crate::tor::RotationPolicy::Manual,
-                    _ => crate::tor::RotationPolicy::PerRequest,
-                };
+                // "per_batch" with optional batch size, "per_duration" with
+                // optional seconds, or "manual").
+                let rotation = parse_tor_rotation(&positional);
                 let pool = get_browser_runtime().block_on(async {
                     crate::tor::TorPool::new(instances, rotation.clone()).await
                 });
@@ -32360,11 +32355,69 @@ impl Interpreter {
     }
 }
 
+/// Parse the optional rotation-policy argument of `TorPool.new`.
+///
+/// `(instances, "per_batch", n)` rotates every `n` requests (default 10),
+/// `(instances, "per_duration", secs)` rotates after `secs` seconds
+/// (default 60), `(instances, "manual")` leaves rotation to the caller, and
+/// anything else is `per_request`.
+fn parse_tor_rotation(positional: &[Value]) -> crate::tor::RotationPolicy {
+    use crate::tor::RotationPolicy;
+    match positional.get(1).map(|v| v.as_string()) {
+        Some(s) if s == "per_batch" => {
+            let batch = positional
+                .get(2)
+                .and_then(|v| match v {
+                    Value::Int(n) => Some(*n as u32),
+                    _ => None,
+                })
+                .unwrap_or(10);
+            RotationPolicy::PerBatch(batch)
+        }
+        Some(s) if s == "manual" => RotationPolicy::Manual,
+        Some(s) if s == "per_duration" => {
+            let secs = positional
+                .get(2)
+                .and_then(|v| match v {
+                    Value::Int(n) if *n > 0 => Some(*n as u64),
+                    _ => None,
+                })
+                .unwrap_or(60);
+            RotationPolicy::PerDuration(std::time::Duration::from_secs(secs))
+        }
+        _ => RotationPolicy::PerRequest,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lexer;
     use crate::parser::Parser;
+
+    #[test]
+    fn tor_rotation_parses_per_duration() {
+        use crate::tor::RotationPolicy;
+        let int = |n: i128| Value::Int(n);
+        let text = |s: &str| Value::String(s.to_string());
+
+        match parse_tor_rotation(&[int(1), text("per_duration"), int(30)]) {
+            RotationPolicy::PerDuration(d) => assert_eq!(d.as_secs(), 30),
+            other => panic!("expected per_duration(30), got {other:?}"),
+        }
+        match parse_tor_rotation(&[int(1), text("per_duration")]) {
+            RotationPolicy::PerDuration(d) => assert_eq!(d.as_secs(), 60),
+            other => panic!("expected the 60s default, got {other:?}"),
+        }
+        assert!(matches!(
+            parse_tor_rotation(&[int(1), text("manual")]),
+            RotationPolicy::Manual
+        ));
+        assert!(matches!(
+            parse_tor_rotation(&[int(1)]),
+            RotationPolicy::PerRequest
+        ));
+    }
 
     fn run(source: &str) -> (Value, Vec<String>) {
         let (tokens, lex_errors) = lexer::tokenize(source);

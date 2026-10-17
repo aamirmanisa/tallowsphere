@@ -1203,6 +1203,17 @@ fn plan_dir(
                 metadata,
                 actions,
             )?;
+        } else {
+            // FIFOs, sockets and device nodes are not copyable as regular files.
+            // Record an explicit skip instead of silently dropping the entry.
+            actions.push(CopyAction {
+                kind: CopyActionKind::Skip,
+                source: Some(source_path.clone()),
+                destination: destination_path,
+                relative_path,
+                bytes: 0,
+                reason: "special file (FIFO/socket/device) skipped: unsupported".to_string(),
+            });
         }
     }
 
@@ -2125,5 +2136,26 @@ mod tests {
         let err = validate_policies(&job).unwrap_err();
         assert_eq!(err.category, CopyErrorCategory::Unsupported);
         assert!(err.message.contains("Manifest"), "{}", err.message);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn plan_dir_skips_special_files_explicitly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("src");
+        let destination_root = tmp.path().join("dst");
+        fs::create_dir_all(&source_root).unwrap();
+        fs::write(source_root.join("regular.txt"), b"hi").unwrap();
+        let socket_path = source_root.join("agent.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
+        let plan = plan(CopyJob::copy(&source_root, &destination_root)).unwrap();
+        let skip = plan
+            .actions
+            .iter()
+            .find(|action| action.source.as_deref() == Some(socket_path.as_path()))
+            .expect("socket entry must appear in the plan");
+        assert_eq!(skip.kind, CopyActionKind::Skip);
+        assert!(skip.reason.contains("special file"), "{}", skip.reason);
     }
 }
