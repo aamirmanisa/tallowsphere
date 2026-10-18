@@ -229,6 +229,21 @@ impl Page {
         // recover the frame id and completion.
         let nav_debug = std::env::var("TALLOW_DEBUG_NAV").is_ok_and(|v| v == "1");
         let nav_started = std::time::Instant::now();
+        // The document that is current BEFORE the navigation. `location.href`
+        // alone cannot tell a reload from the same URL: it still matches while
+        // the OLD document is current, so the readiness poll below could
+        // report success for the page that was already there. `timeOrigin` is
+        // minted per document, so a changed value proves the new one committed.
+        // Best-effort: a page that cannot answer leaves the guard inactive.
+        let doc_epoch: Option<f64> = match tokio::time::timeout(
+            std::time::Duration::from_millis(750),
+            self.evaluate_expression("performance.timeOrigin"),
+        )
+        .await
+        {
+            Ok(Ok(v)) => v.as_f64(),
+            _ => None,
+        };
         if nav_debug {
             eprintln!("[nav] -> Page.navigate {url} (t+0ms)");
         }
@@ -325,7 +340,7 @@ impl Page {
                 let probe = tokio::time::timeout(
                     std::time::Duration::from_millis(750),
                     self.evaluate_expression(
-                        "JSON.stringify({u: location.href, s: document.readyState})",
+                        "JSON.stringify({u: location.href, s: document.readyState, o: performance.timeOrigin})",
                     ),
                 )
                 .await;
@@ -352,6 +367,14 @@ impl Page {
                             .and_then(|s| s.as_str())
                             .unwrap_or("")
                             .to_string();
+                        let epoch = parsed.get("o").and_then(|o| o.as_f64());
+                        // A different document than the one we left. When the
+                        // pre-navigation read failed the guard stays inactive
+                        // (the URL match still has to hold).
+                        let new_document = match doc_epoch {
+                            Some(before) => epoch.is_some_and(|now| (now - before).abs() > 0.5),
+                            None => true,
+                        };
                         if current.starts_with("chrome-error://") {
                             // The document is Chromium's own error page: the
                             // navigation failed even though the browser stayed
@@ -372,7 +395,7 @@ impl Page {
                             }
                             _ => state.contains("complete"),
                         };
-                        if arrived && ready {
+                        if arrived && ready && new_document {
                             let resolved_frame =
                                 frame_id.clone().unwrap_or_else(|| self.frame_id.clone());
                             return Ok(NavigationResult {
@@ -1532,7 +1555,11 @@ impl Page {
         // Fetch.continueRequest that never comes — deadlocking the page.
         let client = self.client.clone();
         let session_id = self.session_id.clone();
-        tokio::spawn(async move {
+        // On the connection's own runtime, not the caller's: a handler tied to
+        // a caller runtime stops running as soon as that runtime is idle, and
+        // never runs at all if the caller later drives this page from another
+        // one (the register #105 defect class).
+        let _handler = self.client.spawn_background(async move {
             let mut rx = client.subscribe();
             loop {
                 match rx.recv().await {
@@ -2138,7 +2165,9 @@ impl Page {
 
         let client = self.client.clone();
         let session_id = self.session_id.clone();
-        tokio::spawn(async move {
+        // Same reasoning as the request blocker above: the dialog handler must
+        // outlive the caller's `block_on`.
+        let _handler = self.client.spawn_background(async move {
             let mut rx = client.subscribe();
             loop {
                 match rx.recv().await {

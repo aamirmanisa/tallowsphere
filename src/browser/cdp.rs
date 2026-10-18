@@ -219,6 +219,10 @@ pub struct CdpClient {
     pub recording_start: Arc<Mutex<Option<Instant>>>,
     /// Maximum frames to keep in memory (oldest are dropped when exceeded).
     pub recording_max_frames: Arc<std::sync::atomic::AtomicUsize>,
+    /// Handle to the dedicated runtime that owns this connection's read loop
+    /// and every background handler derived from it. See
+    /// [`CdpClient::spawn_background`] for why it is not `tokio::spawn`.
+    runtime: tokio::runtime::Handle,
 }
 
 impl std::fmt::Debug for CdpClient {
@@ -230,6 +234,69 @@ impl std::fmt::Debug for CdpClient {
 }
 
 impl CdpClient {
+    /// Spawn `fut` on a dedicated single-thread runtime belonging to this
+    /// connection and hand back that runtime's handle.
+    ///
+    /// The read loop must NOT be a task on the caller's runtime. `tokio::spawn`
+    /// binds a task to whichever runtime is current at spawn time and that
+    /// runtime polls it only while it is being driven; any later command issued
+    /// from a different runtime (or from a thread that is not inside
+    /// `block_on`) writes to the socket while nothing routes the replies. That
+    /// is register #105: `Page.navigate` timed out and every
+    /// `Runtime.evaluate` poll went unanswered while Chrome loaded the page.
+    /// Owning the runtime here makes reply routing independent of the caller.
+    ///
+    /// The thread lives until `fut` returns, which for the read loop is the
+    /// connection closing.
+    fn spawn_owned_runtime<F>(
+        name: &'static str,
+        fut: F,
+    ) -> Result<tokio::sync::oneshot::Receiver<tokio::runtime::Handle>, BrowserError>
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name(name.to_string())
+            .spawn(move || {
+                // Built here, dropped here: a `Runtime` cannot be dropped from
+                // inside an async context, and this thread is not one.
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => {
+                        // Sent before the first poll, so the caller's await
+                        // resolves immediately.
+                        let _ = tx.send(rt.handle().clone());
+                        rt.block_on(fut);
+                    }
+                    Err(e) => {
+                        eprintln!("[tallow] cdp: {name} runtime could not start: {e}");
+                    }
+                }
+            })
+            .map_err(|e| {
+                BrowserError::ConnectionFailed(format!("failed to spawn {name} thread: {e}"))
+            })?;
+        Ok(rx)
+    }
+
+    /// Spawn a long-lived handler task on this connection's own runtime.
+    ///
+    /// Page-level handlers (dialog handling, blocking paused requests) must
+    /// keep running after the caller's `block_on` returns and while the caller
+    /// is not driving any runtime at all. `tokio::spawn` ties them to the
+    /// caller's runtime, which is the same defect class as #105 — the handler
+    /// then silently never runs between bridge calls.
+    pub fn spawn_background<F>(&self, fut: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.runtime.spawn(fut)
+    }
+
     /// Connect to a running browser via WebSocket at the given URL.
     ///
     /// Spawns a background read loop that demultiplexes responses and events.
@@ -277,8 +344,9 @@ impl CdpClient {
         // is used by the task. This is correct — we pass write_clone to the
         // task for sending acks, and the main CdpClient also uses write_clone.
 
-        // Spawn background read loop.
-        tokio::spawn(async move {
+        // Own the read loop's runtime: replies must be routed regardless of
+        // which runtime later drives a command (register #105).
+        let reader = Self::spawn_owned_runtime("cdp-reader", async move {
             Self::read_loop(
                 read,
                 responses_clone,
@@ -290,7 +358,10 @@ impl CdpClient {
                 max_frames_clone,
             )
             .await;
-        });
+        })?;
+        let runtime = reader.await.map_err(|_| {
+            BrowserError::ConnectionFailed("cdp reader runtime failed to start".to_string())
+        })?;
 
         let client = CdpClient {
             write: write_clone,
@@ -305,6 +376,7 @@ impl CdpClient {
             recording_start: Arc::new(Mutex::new(None)),
             recording_max_frames,
             runtime_enabled: Arc::new(AtomicBool::new(false)),
+            runtime,
         };
 
         // NOTE: `Runtime.enable` is intentionally NOT sent here. It is a
@@ -970,7 +1042,7 @@ impl CdpClient {
         let active_route = recording_active.clone();
         let max_frames_route = recording_max_frames.clone();
         let ack_id = Arc::new(AtomicU64::new(10_000_000));
-        tokio::spawn(async move {
+        let reader = Self::spawn_owned_runtime("cdp-pipe-reader", async move {
             while let Some(frame) = frame_rx.recv().await {
                 Self::route_frame(
                     frame,
@@ -985,7 +1057,10 @@ impl CdpClient {
                 )
                 .await;
             }
-        });
+        })?;
+        let runtime = reader.await.map_err(|_| {
+            BrowserError::ConnectionFailed("cdp pipe reader runtime failed to start".to_string())
+        })?;
 
         Ok(CdpClient {
             write,
@@ -1000,6 +1075,7 @@ impl CdpClient {
             recording_start,
             recording_max_frames,
             runtime_enabled: Arc::new(AtomicBool::new(false)),
+            runtime,
         })
     }
 

@@ -1564,7 +1564,15 @@ mod tests {
     /// ordinal. Closes each connection after one response.
     struct MockServer {
         url: String,
+        /// Every accepted connection, including robots.txt probes.
         hits: Arc<std::sync::atomic::AtomicUsize>,
+        /// Requests for the page path only — the counter a re-fetch assertion
+        /// must use. `hits` also counts the pipeline's robots.txt probe, and
+        /// whether that probe happens depends on the process-global robots
+        /// cache: shared with other tests in the same process it shows up on
+        /// some runs and not others, which made `no re-fetch across runs` fail
+        /// under the full suite while passing in isolation.
+        page_hits: Arc<std::sync::atomic::AtomicUsize>,
         shutdown: Arc<std::sync::atomic::AtomicUsize>,
         handle: Option<std::thread::JoinHandle<()>>,
     }
@@ -1651,6 +1659,7 @@ mod tests {
             Self {
                 url: format!("http://{addr}/p"),
                 hits,
+                page_hits: page,
                 shutdown,
                 handle: Some(handle),
             }
@@ -1658,6 +1667,10 @@ mod tests {
 
         fn hits(&self) -> usize {
             self.hits.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn page_hits(&self) -> usize {
+            self.page_hits.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
 
@@ -1844,7 +1857,7 @@ mod tests {
         let r1 = pipeline.fetch(&server.url, None).await.unwrap();
         assert!(!r1.unchanged);
         assert_eq!(pipeline.delta_stats().fetched_changed, 1);
-        let hits_after_first = server.hits();
+        let hits_after_first = server.page_hits();
 
         // Second fetch: stored hash + validator → skip, no transport.
         pipeline.reset_delta_stats();
@@ -1852,7 +1865,7 @@ mod tests {
         assert!(r2.unchanged, "delta run must skip already-fetched-unchanged URL");
         assert!(r2.body.is_empty(), "skipped URL yields no body (caller skips extraction)");
         assert_eq!(
-            server.hits(),
+            server.page_hits(),
             hits_after_first,
             "skipped URL must not reach the transport"
         );
@@ -1881,13 +1894,13 @@ mod tests {
             .build();
         let r1 = pipeline.fetch(&server.url, None).await.unwrap();
         assert!(!r1.unchanged);
-        let hits_after_first = server.hits();
+        let hits_after_first = server.page_hits();
         let r2 = pipeline.fetch(&server.url, None).await.unwrap();
         assert!(
             !r2.body.is_empty(),
             "non-delta run must actually fetch a body (no skip)"
         );
-        assert_eq!(server.hits(), hits_after_first + 1, "re-fetch happened");
+        assert_eq!(server.page_hits(), hits_after_first + 1, "re-fetch happened");
         let stats = pipeline.delta_stats();
         assert_eq!(stats.skipped_cached, 0, "skip is gated off without delta mode");
         assert_eq!(stats.attempted, 2);
@@ -1928,13 +1941,13 @@ mod tests {
         assert!(!r2.unchanged, "changed body must surface as changed");
         let stats = pipeline.delta_stats();
         assert_eq!(stats.fetched_changed, 1);
-        let hits_after_r2 = server.hits();
+        let hits_after_r2 = server.page_hits();
 
         // Third fetch: v2 hash + ETag recorded → now skippable.
         pipeline.reset_delta_stats();
         let r3 = pipeline.fetch(&server.url, None).await.unwrap();
         assert!(r3.unchanged);
-        assert_eq!(server.hits(), hits_after_r2, "third fetch must be skipped");
+        assert_eq!(server.page_hits(), hits_after_r2, "third fetch must be skipped");
         assert_eq!(pipeline.delta_stats().skipped_cached, 1);
     }
 
@@ -1978,7 +1991,12 @@ mod tests {
         }
         assert!(queue_path.exists(), "checkpoint must be persisted for the next run");
         assert!(stats_path.exists(), "per-run delta stats must be persisted");
-        let hits_after_run1 = server.hits();
+        let hits_after_run1 = server.page_hits();
+        eprintln!(
+            "[delta-test] page requests after run 1: {hits_after_run1} \
+             (all connections: {})",
+            server.hits()
+        );
 
         // "Run 2": a fresh pipeline (fresh in-memory queue) loads the
         // checkpoint and skips the unchanged URL — no new transport hit.
@@ -1988,7 +2006,16 @@ mod tests {
                 .build();
             let r = p2.fetch(&server.url, None).await.unwrap();
             assert!(r.unchanged, "second scheduled run must skip the unchanged URL");
-            assert_eq!(server.hits(), hits_after_run1, "no re-fetch across runs");
+            let hits_after_run2 = server.page_hits();
+            eprintln!(
+                "[delta-test] page requests after run 2: {hits_after_run2} \
+                 (run 1 = {hits_after_run1}, all connections: {})",
+                server.hits()
+            );
+            assert_eq!(
+                hits_after_run2, hits_after_run1,
+                "no re-fetch across runs (run 1 = {hits_after_run1}, run 2 = {hits_after_run2})"
+            );
             let stats = p2.delta_stats();
             assert_eq!(stats.skipped_cached, 1);
         }
