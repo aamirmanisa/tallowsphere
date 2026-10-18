@@ -3,7 +3,8 @@
 //! Provides file hashing, encryption/decryption, copy, and delta scanning
 //! for compiled Tallow binaries via the runtime FFI system.
 
-use std::os::raw::c_char;
+use std::io::{BufReader, Read};
+use std::os::raw::{c_char, c_void};
 
 use super::{cstr_to_str, set_last_error, string_to_cstr};
 
@@ -411,4 +412,183 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
+}
+
+// ── Chunking ───────────────────────────────────────────────────────────────
+
+/// Mirror of `ChunkInfo` from `stdlib/transfer.tl`.
+///
+/// `#[repr(C)]` on purpose: codegen lowers the Tallow struct to
+/// `%struct.ChunkInfo = type { i64, i64, i64, ptr }` and reads fields with a
+/// GEP in declaration order, so the compiled program interprets this memory
+/// directly. Any layout difference would not crash — it would return a field
+/// belonging to a different member, which is the silent-wrong-answer class the
+/// register exists for.
+#[repr(C)]
+struct FfiChunkInfo {
+    index: i64,
+    offset: i64,
+    size: i64,
+    hash: *mut c_char,
+}
+
+const DEFAULT_CHUNK_SIZE: i64 = 262144;
+
+/// `Transfer.chunk(path, chunk_size?)` — native array of `ChunkInfo`, layout
+/// `[count][ptrtoint(ChunkInfo)…]` (`native_array`). Null + `tallow_last_error`
+/// on failure. A `chunk_size <= 0` is an error, matching `transfer.chunk_file`
+/// in the interpreter rather than silently substituting the default.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_transfer_chunk(path: *const c_char, chunk_size: i64) -> *mut c_void {
+    let Some(p) = (unsafe { cstr_to_str(path) }) else {
+        set_last_error("transfer.chunk: null path".into());
+        return std::ptr::null_mut();
+    };
+    if chunk_size <= 0 {
+        set_last_error("transfer.chunk_file: chunk_size must be > 0".into());
+        return std::ptr::null_mut();
+    }
+    let file = match std::fs::File::open(p) {
+        Ok(f) => f,
+        Err(e) => {
+            set_last_error(format!("transfer.chunk_file: cannot open '{}': {e}", p));
+            return std::ptr::null_mut();
+        }
+    };
+    let size = chunk_size as usize;
+    let mut reader = BufReader::with_capacity(size, file);
+    let mut buf = vec![0u8; size];
+    let mut slots: Vec<i64> = Vec::new();
+    let mut offset: i64 = 0;
+    let mut index: i64 = 0;
+    loop {
+        // Fill the chunk completely: `read` returns what is available, and a
+        // short read must not become a chunk boundary (same rule as
+        // src/stdlib/transfer.rs — the two must agree chunk for chunk).
+        let mut n = 0usize;
+        while n < size {
+            match reader.read(&mut buf[n..]) {
+                Ok(0) => break,
+                Ok(k) => n += k,
+                Err(e) => {
+                    set_last_error(format!("transfer.chunk_file: read error: {e}"));
+                    return std::ptr::null_mut();
+                }
+            }
+        }
+        if n == 0 {
+            break;
+        }
+        let hash = blake3::hash(&buf[..n]).to_hex().to_string();
+        let info = Box::new(FfiChunkInfo {
+            index,
+            offset,
+            size: n as i64,
+            hash: string_to_cstr(&hash),
+        });
+        slots.push(Box::into_raw(info) as i64);
+        offset += n as i64;
+        index += 1;
+    }
+    crate::runtime::browser::native_array(slots)
+}
+
+/// Read `[count][ChunkInfo…]` and return the per-chunk hash strings.
+/// Shared by `tree_hash` and `manifest` so both see the same leaves.
+fn chunk_hashes(arr: *const c_void) -> Result<Vec<String>, String> {
+    if arr.is_null() {
+        return Err("transfer: null chunk array".into());
+    }
+    let base = arr as *const i64;
+    let len = unsafe { *base };
+    if len <= 0 {
+        return Err("transfer.tree_hash: empty hash array".into());
+    }
+    let mut out = Vec::with_capacity(len as usize);
+    for i in 0..len as usize {
+        let slot = unsafe { *base.add(1 + i) };
+        if slot == 0 {
+            return Err(format!("transfer: chunk {i} has no hash"));
+        }
+        let info = slot as *const FfiChunkInfo;
+        let hash_ptr = unsafe { (*info).hash };
+        let Some(h) = (unsafe { cstr_to_str(hash_ptr) }) else {
+            return Err(format!("transfer: chunk {i} has a null hash"));
+        };
+        out.push(h.to_string());
+    }
+    Ok(out)
+}
+
+/// `Transfer.tree_hash(chunks)` — binary Merkle root over the chunk hashes.
+///
+/// Same shape as `transfer::tree_hash` in the interpreter: pair adjacent
+/// leaves, hash `left || right`, carry an odd trailing node up unchanged.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_transfer_tree_hash(arr: *const c_void) -> *mut c_char {
+    let leaves = match chunk_hashes(arr) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    if leaves.len() == 1 {
+        return string_to_cstr(&leaves[0]);
+    }
+    let mut level = leaves;
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity((level.len() + 1) / 2);
+        let mut i = 0;
+        while i < level.len() {
+            if i + 1 < level.len() {
+                let combined = format!("{}{}", level[i], level[i + 1]);
+                next.push(blake3::hash(combined.as_bytes()).to_hex().to_string());
+                i += 2;
+            } else {
+                next.push(level[i].clone());
+                i += 1;
+            }
+        }
+        level = next;
+    }
+    string_to_cstr(&level[0])
+}
+
+/// `Transfer.manifest(root_hash, size, chunks)` — the JSON manifest string.
+///
+/// Key order and formatting match the interpreter's `serde_json` output
+/// (`{"root_hash":…,"size":…,"chunk_count":…,"timestamp":…}`, no spaces) so a
+/// manifest produced by a compiled binary parses identically. `timestamp` is
+/// wall-clock seconds and therefore the only field that legitimately differs
+/// between two runs.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_transfer_manifest(
+    root_hash: *const c_char,
+    size: i64,
+    arr: *const c_void,
+) -> *mut c_char {
+    let Some(root) = (unsafe { cstr_to_str(root_hash) }) else {
+        set_last_error("Transfer.manifest: null root_hash".into());
+        return std::ptr::null_mut();
+    };
+    let leaves = match chunk_hashes(arr) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let json = format!(
+        "{{\"root_hash\":{},\"size\":{},\"chunk_count\":{},\"timestamp\":{}}}",
+        serde_json::to_string(root).unwrap_or_else(|_| "\"\"".to_string()),
+        size,
+        leaves.len(),
+        ts
+    );
+    string_to_cstr(&json)
 }

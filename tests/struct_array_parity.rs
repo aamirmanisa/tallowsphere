@@ -57,13 +57,12 @@ fn run(args: &[String], cwd: &Path) -> Out {
 }
 
 fn run_interp(file: &Path) -> Out {
+    // `--interpret` is the explicit tree-walking path. `--target` was used here
+    // before and is not the same thing: it cross-compiles, and on a target the
+    // host cannot execute the run falls back to the interpreter anyway, so the
+    // leg reported "parity" without ever naming which engine ran.
     run(
-        &[
-            "run".into(),
-            file.display().to_string(),
-            "--target".into(),
-            "x86_64-linux".into(),
-        ],
+        &["run".into(), "--interpret".into(), file.display().to_string()],
         &repo_root(),
     )
 }
