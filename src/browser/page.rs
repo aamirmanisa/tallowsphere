@@ -227,19 +227,40 @@ impl Page {
         // (wrapped sessions, proxies) may never deliver it even though the
         // navigation proceeds. Fall back to observing navigation events to
         // recover the frame id and completion.
-        let result = match self
-            .client
-            .send_command_with_session(
+        let nav_debug = std::env::var("TALLOW_DEBUG_NAV").is_ok_and(|v| v == "1");
+        let nav_started = std::time::Instant::now();
+        if nav_debug {
+            eprintln!("[nav] -> Page.navigate {url} (t+0ms)");
+        }
+        // Bound the command itself. `Page.navigate`'s REPLY is not required for
+        // the navigation to happen — the browser has already been told to go —
+        // but awaiting it cost the full 30 s command timeout on every load that
+        // worked (measured 2026-10-18: "Page.navigate responded (timeout) at
+        // t+30000ms", after which the readiness loop had no time left). Five
+        // seconds is enough for a healthy reply; when it is missing the poll
+        // below observes the document instead.
+        let result = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.client.send_command_with_session(
                 "Page.navigate",
                 Some(json!({"url": url})),
                 &self.session_id,
-            )
-            .await
+            ),
+        )
+        .await
         {
-            Ok(r) => Some(r),
-            Err(BrowserError::Timeout { .. }) => None,
-            Err(e) => return Err(e),
+            Ok(Ok(r)) => Some(r),
+            Ok(Err(BrowserError::Timeout { .. })) | Err(_) => None,
+            Ok(Err(e)) => return Err(e),
         };
+
+        if nav_debug {
+            eprintln!(
+                "[nav] <- Page.navigate responded ({:?}) at t+{}ms",
+                result.as_ref().map(|_| "ok").unwrap_or("timeout"),
+                nav_started.elapsed().as_millis()
+            );
+        }
 
         // Check for errorText in navigation response
         if let Some(result) = &result {
@@ -263,11 +284,114 @@ impl Page {
         // Track HTTP status code from Network.responseReceived events
         let mut status_code: Option<u16> = None;
 
-        // Wait for the lifecycle event with timeout
-        let deadline = tokio::time::Instant::now() + self.timeout;
+        // Wait for the lifecycle event with timeout. Expiry is kept on the wall
+        // clock: the async timer driver did not service a 250 ms `timeout_at`
+        // inside this loop (measured 2026-10-18), and a quiet event channel must
+        // not be able to hold the loop past its budget.
+        let std_deadline = std::time::Instant::now() + self.timeout;
+        // Poll fallback (register #105). `Page.setLifecycleEventsEnabled` is
+        // best-effort above; when it does not take effect NO `Page.lifecycleEvent`
+        // is ever delivered, so every *successful* navigation waited out the full
+        // timeout (measured: 120 s, then "waiting for DOMContentLoaded") while a
+        // navigation that errored returned instantly — the response path was
+        // fine and only the completion signal was missing. `Runtime.evaluate`
+        // does not need lifecycle events, so the document itself can answer.
+        let poll_every = std::time::Duration::from_millis(250);
+        let mut next_poll = tokio::time::Instant::now() + poll_every;
+        let mut iterations: u64 = 0;
         loop {
-            match tokio::time::timeout_at(deadline, events.recv()).await {
-                Ok(Ok(evt)) => {
+            iterations += 1;
+            if nav_debug && iterations <= 5 {
+                eprintln!(
+                    "[nav] loop iter {iterations} at t+{}ms (poll_due={})",
+                    nav_started.elapsed().as_millis(),
+                    tokio::time::Instant::now() >= next_poll
+                );
+            }
+            if tokio::time::Instant::now() >= next_poll {
+                next_poll = tokio::time::Instant::now() + poll_every;
+                // Ask the document BOTH questions in one round trip: a
+                // `readyState` read alone answers for whatever document is
+                // current — right after `Page.navigate` that is still the OLD
+                // page (already "complete"), which makes the poll report
+                // success before the navigation happens at all. Measured
+                // 2026-10-18: goto returned in 0.26 s with the navigation still
+                // in flight, and the error page that followed was never seen.
+                // Bounded: a command sent while the document is being torn
+                // down can hang instead of answering, and an unbounded await
+                // here stalls the whole wait loop until the navigation timeout
+                // (measured: the poll never once completed in 90 s). A missed
+                // sample is free; the next tick tries again.
+                let probe = tokio::time::timeout(
+                    std::time::Duration::from_millis(750),
+                    self.evaluate_expression(
+                        "JSON.stringify({u: location.href, s: document.readyState})",
+                    ),
+                )
+                .await;
+                if nav_debug {
+                    eprintln!(
+                        "[nav] poll at t+{}ms (answered={})",
+                        nav_started.elapsed().as_millis(),
+                        matches!(probe, Ok(Ok(_)))
+                    );
+                }
+                if let Ok(Ok(v)) = probe {
+                    let raw = v
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| v.to_string());
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        let current = parsed
+                            .get("u")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let state = parsed
+                            .get("s")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if current.starts_with("chrome-error://") {
+                            // The document is Chromium's own error page: the
+                            // navigation failed even though the browser stayed
+                            // up. Reporting Ok here is what made a broken load
+                            // look like a successful crawl.
+                            return Err(BrowserError::NavigationFailed(
+                                super::error::NavigationError::ChromeNetError(
+                                    "page did not load — Chromium rendered an error page"
+                                        .to_string(),
+                                ),
+                            ));
+                        }
+                        let arrived = current.trim_end_matches('/')
+                            == url.trim_end_matches('/');
+                        let ready = match wait_until {
+                            WaitUntil::DomContentLoaded => {
+                                state.contains("interactive") || state.contains("complete")
+                            }
+                            _ => state.contains("complete"),
+                        };
+                        if arrived && ready {
+                            let resolved_frame =
+                                frame_id.clone().unwrap_or_else(|| self.frame_id.clone());
+                            return Ok(NavigationResult {
+                                url: current,
+                                frame_id: resolved_frame,
+                                status_code,
+                            });
+                        }
+                    }
+                }
+            }
+            // Drain whatever CDP events have already arrived. `recv().await`
+            // inside `timeout_at` is what stalled: the future blocked with the
+            // timer unserviced, so no poll tick ever ran between t+5 s and the
+            // 60 s deadline. `try_recv` cannot block, and the explicit
+            // `std::thread::sleep` below paces the loop.
+            loop {
+                match events.try_recv() {
+                    Ok(evt) => {
                     // Recover the frame id from navigation events when the
                     // Page.navigate response was missing (event fallback).
                     if frame_id.is_none()
@@ -326,28 +450,43 @@ impl Page {
                         }
                     }
                 }
-                Ok(Err(_)) => {
-                    // Broadcast lagged or closed, re-subscribe
-                    events = self.client.subscribe();
-                }
-                Err(_) => {
-                    if soft_timeout {
-                        // Return partial result — page loaded but lifecycle event never fired
-                        // (e.g. Wordfence JS challenge spinner prevents DOMContentLoaded)
-                        let resolved_frame =
-                            frame_id.unwrap_or_else(|| self.frame_id.clone());
-                        return Ok(NavigationResult {
-                            url: url.to_string(),
-                            frame_id: resolved_frame,
-                            status_code,
-                        });
+                    Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => break,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                        // Broadcast closed or lagged: re-subscribe and keep
+                        // polling — recency of the receiver is not correctness.
+                        events = self.client.subscribe();
+                        break;
                     }
-                    return Err(BrowserError::Timeout {
-                        operation: "navigate",
-                        detail: format!("waiting for {target_event}"),
-                    });
                 }
             }
+
+            // Expiry on the wall clock, so a quiet event channel cannot hold
+            // the loop past its budget.
+            if std::time::Instant::now() >= std_deadline {
+                if soft_timeout {
+                    // Partial result — the page may be usable even though the
+                    // lifecycle event never fired (JS challenge spinners).
+                    let resolved_frame =
+                        frame_id.clone().unwrap_or_else(|| self.frame_id.clone());
+                    return Ok(NavigationResult {
+                        url: url.to_string(),
+                        frame_id: resolved_frame,
+                        status_code,
+                    });
+                }
+                return Err(BrowserError::Timeout {
+                    operation: "navigate",
+                    detail: format!("waiting for {target_event}"),
+                });
+            }
+
+            // Yield to the runtime, not to the OS thread: the CDP reader task
+            // delivers every command response, so a blocking sleep here starves
+            // it and `Runtime.evaluate` never answers (measured 2026-10-18:
+            // every poll timed out at its 750 ms bound while the reader was
+            // pending). A tokio sleep yields exactly as needed.
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
     }
 
