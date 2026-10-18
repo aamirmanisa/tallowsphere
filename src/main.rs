@@ -2588,6 +2588,18 @@ fn print_version() {
 }
 
 fn main() {
+    // Restore the default SIGPIPE disposition before anything writes: Rust
+    // ignores SIGPIPE, so `tallow examples | head` had its second write fail
+    // with EPIPE and `println!` turned that into a panic the panic hook
+    // reports as an ICE ("failed printing to stdout: Broken pipe"), exit 101.
+    // Every other Unix tool dies quietly on a closed pipe; so do we now.
+    // Intermittent by nature: it depends on whether `head` exits before the
+    // next write (observed 2/10 runs of `tallow --version | head -1`).
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     // Process hardening (T-125): core dumps off + NOFILE soft floor.
     // Best-effort - warn and continue when the environment denies setrlimit.
     if let Err(err) = tallow::runtime::hardening::apply_process_hardening() {
