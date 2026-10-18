@@ -1370,22 +1370,27 @@ fn plan_mirror_deletes(
             .unwrap_or(&destination_path)
             .to_path_buf();
         let source_path = source_root.join(&relative_path);
-        let metadata = entry.metadata().map_err(|err| {
+        // `lstat`, not `stat`: the question is what the destination entry *is*,
+        // not what it points at. A dangling symlink fails `stat` outright (the
+        // whole plan then errored) and a live one reports the target's type, so
+        // a stale link was never deleted (register #53).
+        let metadata = fs::symlink_metadata(&destination_path).map_err(|err| {
             io_error(
                 Some(destination_path.clone()),
                 format!("cannot stat destination entry: {err}"),
                 true,
             )
         })?;
+        let is_symlink = metadata.file_type().is_symlink();
 
-        if !source_path.exists() {
-            if metadata.is_file() {
+        if !source_path.exists() && !symlink_source_exists(source_root, &relative_path) {
+            if metadata.is_file() || is_symlink || is_special(&metadata) {
                 actions.push(CopyAction {
                     kind: CopyActionKind::Delete,
                     source: None,
                     destination: destination_path,
                     relative_path,
-                    bytes: metadata.len(),
+                    bytes: if is_symlink { 0 } else { metadata.len() },
                     reason: "mirror target has no matching source".to_string(),
                 });
             }
@@ -1395,6 +1400,28 @@ fn plan_mirror_deletes(
     }
 
     Ok(())
+}
+
+/// Does the *source* side have an entry at this relative path, counting a
+/// symlink (even a dangling one) as present? `Path::exists` follows links and
+/// answers `false` for a dangling source link, which would make mirror delete a
+/// link the source still has.
+fn symlink_source_exists(source_root: &Path, relative_path: &Path) -> bool {
+    fs::symlink_metadata(source_root.join(relative_path)).is_ok()
+}
+
+fn is_special(metadata: &fs::Metadata) -> bool {
+    let ft = metadata.file_type();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ft;
+        false
+    }
 }
 
 fn destination_matches(
@@ -2256,6 +2283,40 @@ mod tests {
     }
 
     #[cfg(unix)]
+
+    /// Register #53: `Mirror` must remove destination entries the source no
+    /// longer has. A *symlink* is the case that slipped through — `DirEntry
+    /// ::metadata()` follows the link, so a dangling link fails the stat and a
+    /// live one reports the target's type, which made the delete branch answer
+    /// the wrong question. The link itself is what mirror has to remove.
+    #[test]
+    fn mirror_deletes_a_destination_symlink_missing_from_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("src");
+        let destination = tmp.path().join("dst");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("kept.txt"), b"hi").unwrap();
+        std::os::unix::fs::symlink("/nonexistent/target", destination.join("stale.link")).unwrap();
+
+        let mut job = CopyJob::copy(&source, &destination);
+        job.mode = CopyMode::Mirror;
+        job.link_policy = LinkPolicy::Preserve;
+        let plan = plan(job).unwrap();
+
+        let deleted: Vec<_> = plan
+            .actions
+            .iter()
+            .filter(|a| matches!(a.kind, CopyActionKind::Delete))
+            .map(|a| a.destination.clone())
+            .collect();
+        assert_eq!(
+            deleted,
+            vec![destination.join("stale.link")],
+            "the stale symlink must be deleted by the plan"
+        );
+    }
+
     #[test]
     fn plan_dir_skips_special_files_explicitly() {
         let tmp = tempfile::tempdir().unwrap();
