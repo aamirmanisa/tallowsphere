@@ -16960,8 +16960,24 @@ impl Interpreter {
                     drop(object);
                     Ok(Value::Nil)
                 }
+                Value::BrowserObject(bh) if bh.kind == "Page" => {
+                    // Deliver first: the session dies with the target, so a
+                    // buffered event delivered afterwards would be lost.
+                    self.pump_page_handlers(bh)?;
+                    let page = bh
+                        .handle
+                        .downcast_ref::<crate::browser::Page>()
+                        .ok_or_else(|| {
+                            RuntimeError::TypeError("invalid page handle".to_string())
+                        })?;
+                    let rt = get_browser_runtime();
+                    match rt.block_on(page.close()) {
+                        Ok(()) => Ok(Value::Nil),
+                        Err(e) => Err(RuntimeError::Error(format!("page.close failed: {e}"))),
+                    }
+                }
                 _ => Err(RuntimeError::TypeError(
-                    "close() requires DbConnection or Browser".to_string(),
+                    "close() requires DbConnection, Browser or Page".to_string(),
                 )),
             },
 
@@ -21365,24 +21381,6 @@ impl Interpreter {
                         match rt.block_on(page.enable_runtime_events()) {
                             Ok(()) => Ok(Value::Ok(Box::new(Value::Bool(true)))),
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
-                        }
-                    }
-                    ("Page", "close") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        // Deliver first: the session dies with the target, so
-                        // anything still buffered would never reach its handler.
-                        self.pump_page_handlers(bh)?;
-                        let rt = get_browser_runtime();
-                        match rt.block_on(page.close()) {
-                            Ok(()) => Ok(Value::Nil),
-                            Err(e) => {
-                                Err(RuntimeError::Error(format!("page.close failed: {e}")))
-                            }
                         }
                     }
                     ("Page", m @ ("on_console" | "on_error" | "on_request" | "on_response" | "on_filechooser" | "on_download")) => {

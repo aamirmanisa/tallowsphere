@@ -369,6 +369,24 @@ pub extern "C" fn tallow_page_url(page: *mut c_void) -> *mut c_char {
     }
 }
 
+/// Close this page's target. Returns 0 on success, -1 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_close(page: *mut c_void) -> i32 {
+    if page.is_null() {
+        set_last_error("close: null page handle".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.close()) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_last_error(format!("close: {e}"));
+            -1
+        }
+    }
+}
+
 /// The CDP target id behind this page.
 ///
 /// `Page.goto` returns `NavigationResult { url, frame_id, status_code }`; the

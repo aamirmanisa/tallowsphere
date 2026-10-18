@@ -48,6 +48,7 @@ fn main() {{
     print("TITLE=" + page.title())
     print("URL=" + page.url())
     print(page.content())
+    page.close()
     browser.close()
 }}
 "#
