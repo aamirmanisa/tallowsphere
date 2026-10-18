@@ -194,7 +194,7 @@ class DocsTruthMaintenanceTests(unittest.TestCase):
             self.assertNotIn(number, rows, f"row {number} appears twice")
             rows[number] = line
         # Rows are numbered 1..=N with no gaps; N is the highest id in the table.
-        self.assertEqual(sorted(rows), list(range(1, 103)))
+        self.assertEqual(sorted(rows), list(range(1, 104)))
 
 
 if __name__ == "__main__":
