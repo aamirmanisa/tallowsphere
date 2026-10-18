@@ -19,7 +19,14 @@ fn run(cmd: &str, args: &[&str]) -> Option<String> {
 fn main() {
     let sha = run("git", &["rev-parse", "--short=10", "HEAD"]).unwrap_or_else(|| "unknown".into());
     // No git at all -> do not claim clean provenance.
-    let dirty = match run("git", &["status", "--porcelain"]) {
+    //
+    // `--untracked-files=no`: untracked scratch (`artifacts/`, build output
+    // buckets) is not a modification of the tree that was built, so counting it
+    // made every binary from a working directory with one untracked folder
+    // report "(dirty)" even at a clean commit — the stamp lying in the
+    // direction that trains people to ignore it. Same convention as
+    // `git describe --dirty`, which looks only at tracked content.
+    let dirty = match run("git", &["status", "--porcelain", "--untracked-files=no"]) {
         Some(s) => !s.is_empty(),
         None => true,
     };
