@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 
 const PAGE: &str = "<!doctype html><html><head><title>native-parity-page</title></head>\
-<body><p id=\"x\">hello</p></body></html>";
+<body><p id='x'>hello</p></body></html>";
 
 fn serve(body: &'static str) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
@@ -47,6 +47,7 @@ fn main() {{
     page.goto("{url}")
     print("TITLE=" + page.title())
     print("URL=" + page.url())
+    print(page.content())
     browser.close()
 }}
 "#
@@ -104,6 +105,12 @@ fn goto_loads_the_same_page_in_both_engines() {
         assert!(
             out.contains(&url),
             "{leg} reported the wrong URL (expected {url}):\n{out}"
+        );
+        // `content()` is a second lowered method: both planes must read the
+        // same DOM, not merely the same URL.
+        assert!(
+            out.contains("hello</p>"),
+            "{leg} did not read the body through content():\n{out}"
         );
     }
 }
