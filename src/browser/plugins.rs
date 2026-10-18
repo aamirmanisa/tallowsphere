@@ -114,6 +114,16 @@ impl Default for BrowserPlugins {
     }
 }
 
+/// The single pre-navigation URL rewrite: strip tracking parameters
+/// (ClearURLs) and upgrade plain HTTP to HTTPS where it is safe (#108).
+///
+/// Both engines call this through `Page::navigate`, so a change here cannot
+/// make the interpreter and the native FFI disagree.
+pub fn normalize_navigation_url(raw: &str) -> String {
+    let plugins = BrowserPlugins::default();
+    plugins.force_https(&plugins.clean_url(raw))
+}
+
 impl BrowserPlugins {
     /// All plugins enabled (maximum privacy).
     pub fn max_privacy() -> Self {

@@ -17398,9 +17398,9 @@ impl Interpreter {
                                 RuntimeError::TypeError("invalid page handle".to_string())
                             })?;
                         let raw_url = args.first().map(|v| v.as_string()).unwrap_or_default();
-                        // Auto-apply ClearURLs (strip tracking params) + HTTPS Everywhere
-                        let plugins = crate::browser::plugins::BrowserPlugins::default();
-                        let url = plugins.force_https(&plugins.clean_url(&raw_url));
+                        // URL normalization (ClearURLs + HTTPS Everywhere) lives
+                        // in Page::navigate so the native FFI applies it too.
+                        let url = raw_url;
                         match rt.block_on(
                             page.navigate(&url, crate::browser::WaitUntil::DomContentLoaded),
                         ) {
@@ -17434,10 +17434,8 @@ impl Interpreter {
                                 RuntimeError::TypeError("invalid page handle".to_string())
                             })?;
                         let raw_url = args.first().map(|v| v.as_string()).unwrap_or_default();
-                        let plugins = crate::browser::plugins::BrowserPlugins::default();
-                        let url = plugins.force_https(&plugins.clean_url(&raw_url));
                         match rt.block_on(
-                            page.navigate_soft(&url, crate::browser::WaitUntil::DomContentLoaded),
+                            page.navigate_soft(&raw_url, crate::browser::WaitUntil::DomContentLoaded),
                         ) {
                             Ok(nav) => Ok(Value::Ok(Box::new(Value::Struct {
                                 name: "NavigationResult".to_string(),

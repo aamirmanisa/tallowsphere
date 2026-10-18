@@ -410,6 +410,13 @@ impl Page {
         wait_until: WaitUntil,
         soft_timeout: bool,
     ) -> Result<NavigationResult, BrowserError> {
+        // One normalization pass for every caller: the interpreter used to
+        // apply ClearURLs + HTTPS Everywhere in its own goto arm, so the native
+        // FFI (which calls this method) navigated to a different URL than the
+        // interpreter for the same source. Local/private hosts are exempt from
+        // the HTTPS upgrade (#108).
+        let normalized = crate::browser::plugins::normalize_navigation_url(url);
+        let url = normalized.as_str();
         // Subscribe to events BEFORE enabling any domain or navigating. The
         // broadcast channel drops events broadcast while zero subscribers are
         // attached (`send()` → `Err(SendError)`). Enabling lifecycle events on

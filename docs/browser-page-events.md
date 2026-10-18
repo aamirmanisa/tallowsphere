@@ -73,9 +73,25 @@ pair twice is a no-op.
 
 ## Native plane
 
-The browser API has no native lowering. `tallow run` on a browser program prints
-`native build unavailable (page.goto/navigate …)` and runs it in the
-interpreter; `tallow build` reports the same. This is deliberate: the backend
-cannot construct `NavigationResult`, and returning a wrong value would be worse
-than falling back. The interpreter is the supported execution plane for browser
-programs.
+`Page.goto` is lowered. It calls `tallow_page_goto`, which runs the same
+`Page::navigate` the interpreter runs — including the one URL-normalization pass
+(ClearURLs + HTTPS Everywhere) that used to live only in the interpreter arm —
+and builds `NavigationResult { url, frame_id, status_code }` from the page
+afterwards, wrapped in `Result`. If the layout is absent the arm refuses rather
+than emitting a struct with unknown offsets.
+
+Everything else in the browser API still refuses natively: `tallow build` fails
+with `no native lowering` naming the method, and `tallow run` states the
+fallback. That refusal is deliberate — a partial plane that returns a plausible
+but wrong value is worse than an honest fallback.
+
+Two known divergences between the planes, both pre-existing and unrelated to the
+lowering:
+
+- `print` of a `Result` shows `Ok("…")` natively and the bare value in the
+  interpreter (register #116).
+- A browser `Result` cannot be `Ok`/`Err`-matched natively (the backend treats
+  the handle as opaque); native programs use the value directly.
+
+Parity is gated by `tests/browser_native_parity.rs`, which runs one program under
+both engines and requires the same document read and the same URL.
