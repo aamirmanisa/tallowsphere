@@ -425,6 +425,10 @@ impl<'a> PrivacyPass<'a> {
                                 "secret types cannot be exposed in any form — use .verify() for comparison",
                             ),
                         );
+                    } else if !ty.is_private() {
+                        // A container is not itself private/secret, but
+                        // printing it prints what is inside (#49).
+                        self.flag_sensitive_value(expr.span, ty, &format!("`{name}`"));
                     }
                 }
             }
@@ -457,19 +461,16 @@ impl<'a> PrivacyPass<'a> {
                     );
                 }
             }
-            // Field access on a sensitive object
-            ExprKind::FieldAccess { object, .. } => {
-                let obj_ty = self.infer_type(object, locals);
-                if obj_ty.is_secret() {
-                    self.diags.push(
-                        Diagnostic::error(
-                            "E0201",
-                            "secret type field cannot be logged or printed".to_string(),
-                            expr.span,
-                        )
-                        .with_help("secret types cannot be exposed in any form"),
-                    );
-                }
+            // Field access — the *field's* type is what gets printed, not the
+            // receiver's. `print(session.token)` was previously judged by the
+            // Session type (plain), so a secret field passed clean (#49).
+            ExprKind::FieldAccess { field, .. } => {
+                let field_ty = self.infer_type(expr, locals);
+                self.flag_sensitive_value(
+                    expr.span,
+                    &field_ty,
+                    &format!("`{field}`"),
+                );
             }
             // Call as the printed value — the *result* carries the callee's
             // return type, so `print(fetch_email())` must be as illegal as
@@ -516,12 +517,61 @@ impl<'a> PrivacyPass<'a> {
             ExprKind::Try(inner) | ExprKind::Await(inner) => {
                 self.check_not_sensitive_raw(inner, locals);
             }
+            // Projections and aggregates (register #49). The arms above cover
+            // the shapes the pass could already type; these are the ones it now
+            // can — an index into a collection, an array/map literal, a struct
+            // literal — and computing their type is only useful if the sink
+            // consults it. Containers are checked for *contained* secrets too:
+            // `print(tokens)` prints every token in the list.
+            ExprKind::Index { .. }
+            | ExprKind::Array(_)
+            | ExprKind::MapLit(_)
+            | ExprKind::StructLit { .. } => {
+                let ty = self.infer_type(expr, locals);
+                self.flag_sensitive_value(expr.span, &ty, "this value");
+            }
             // Everything else — not flagged at this level
             _ => {}
         }
     }
 
-    /// Simplified type inference for privacy checking.
+    /// Push E0200/E0201 for an expression whose inferred type is sensitive,
+    /// including a container that merely holds one.
+    fn flag_sensitive_value(&mut self, span: crate::lexer::Span, ty: &Type, what: &str) {
+        let secret = matches!(ty, Type::Secret(_)) || type_contains(ty, true);
+        let private = matches!(ty, Type::Private(_)) || type_contains(ty, false);
+        if secret {
+            self.diags.push(
+                Diagnostic::error(
+                    "E0201",
+                    format!("{what} is (or contains) a secret type and can NEVER be logged, printed, or serialized"),
+                    span,
+                )
+                .with_help("secret types cannot be exposed in any form — use .verify() for comparison"),
+            );
+        } else if private {
+            self.diags.push(
+                Diagnostic::error(
+                    "E0200",
+                    format!("{what} is (or contains) a private type and cannot be logged or printed directly"),
+                    span,
+                )
+                .with_help("use .redact(), .hash(), or .mask() instead"),
+            );
+        }
+    }
+
+    /// Type inference for privacy checking.
+    ///
+    /// Register #49: this used to answer only for identifiers, calls and
+    /// method calls, so a value arriving through a **field**, a **collection
+    /// element** or an **alias of either** inferred as `Unknown` and reached a
+    /// sink unflagged — a false negative in a security rule, the direction that
+    /// matters. The arms below project the declared type through those shapes.
+    ///
+    /// Deliberately conservative where the answer is unknown: an unresolved
+    /// receiver keeps its own sensitivity rather than decaying to `Unknown`,
+    /// because losing taint is the failure mode that hides a leak.
     fn infer_type(&self, expr: &Expr, locals: &HashMap<String, Type>) -> Type {
         match &expr.kind {
             ExprKind::Ident(name) => locals.get(name).cloned().unwrap_or(Type::Unknown),
@@ -534,9 +584,55 @@ impl<'a> PrivacyPass<'a> {
                     obj_ty
                 }
             }
-            ExprKind::FieldAccess { object, .. } => {
-                // Fields of private structs could be private too
-                self.infer_type(object, locals)
+            // `user.token` — a projection, not an escape: the field's own
+            // declared type is the answer, so a safe field of a struct that
+            // also holds a secret stays safe, and a secret field stays flagged
+            // wherever it is selected from.
+            ExprKind::FieldAccess { object, field } => {
+                let obj_ty = self.infer_type(object, locals);
+                if let Type::Named(name) = strip_sensitivity(&obj_ty) {
+                    if let Some(info) = self.env.structs.get(name) {
+                        if let Some((_, field_ty)) =
+                            info.fields.iter().find(|(f, _)| f == field)
+                        {
+                            return field_ty.clone();
+                        }
+                    }
+                }
+                if obj_ty.is_sensitive() {
+                    obj_ty
+                } else {
+                    Type::Unknown
+                }
+            }
+            // `tokens[0]` — element type of the container, re-wrapped when the
+            // container itself is sensitive so `[secret]` cannot launder one
+            // through an index.
+            ExprKind::Index { object, .. } => {
+                index_element_type(&self.infer_type(object, locals))
+            }
+            // `[a, b]` / `{k: v}` literals: the widest element sensitivity wins,
+            // so `[token]` is an array of secrets and `[name]` stays plain.
+            ExprKind::Array(items) => {
+                let elem = widest_type(
+                    items.iter().map(|item| self.infer_type(item, locals)),
+                );
+                Type::Array(Box::new(elem))
+            }
+            ExprKind::MapLit(entries) => {
+                let key = widest_type(entries.iter().map(|(k, _)| self.infer_type(k, locals)));
+                let value =
+                    widest_type(entries.iter().map(|(_, v)| self.infer_type(v, locals)));
+                Type::Map(Box::new(key), Box::new(value))
+            }
+            // `User { token: t }` — the literal's type is the struct name, and
+            // the struct itself is as sensitive as its most sensitive field:
+            // printing the aggregate prints the secret inside it.
+            ExprKind::StructLit { name, fields, .. } => {
+                let worst = widest_sensitivity(
+                    fields.iter().map(|f| self.infer_type(&f.value, locals)),
+                );
+                wrap_sensitivity(Type::Named(name.clone()), worst)
             }
             ExprKind::Call { callee, .. } => {
                 if let ExprKind::Ident(name) = &callee.kind {
@@ -553,6 +649,98 @@ impl<'a> PrivacyPass<'a> {
             ExprKind::Await(inner) => self.infer_type(inner, locals),
             _ => Type::Unknown,
         }
+    }
+}
+
+// ── Type projection helpers (#49) ────────────────────────────────────────────
+
+/// Does this type wrap, or contain in a collection, a secret (when
+/// `want_secret`) / private (otherwise) value?
+fn type_contains(ty: &Type, want_secret: bool) -> bool {
+    let hit = |t: &Type| {
+        if want_secret {
+            matches!(t, Type::Secret(_))
+        } else {
+            matches!(t, Type::Private(_))
+        }
+    };
+    match ty {
+        Type::Secret(inner) | Type::Private(inner) => {
+            hit(ty) || type_contains(inner, want_secret)
+        }
+        Type::Array(inner) | Type::Set(inner) | Type::Chan(inner) | Type::Optional(inner)
+        | Type::Result(inner) | Type::Consent(inner) | Type::Erasable(inner)
+        | Type::Trusted(inner) | Type::Unverified(inner) | Type::Boxed(inner)
+        | Type::Fresh(inner, _) => type_contains(inner, want_secret),
+        Type::Map(key, value) => {
+            type_contains(key, want_secret) || type_contains(value, want_secret)
+        }
+        Type::Tuple(items) => items.iter().any(|t| type_contains(t, want_secret)),
+        _ => false,
+    }
+}
+
+/// Strip `private`/`secret` so a projection can look at the shape underneath
+/// without losing the wrapper for the caller.
+fn strip_sensitivity(ty: &Type) -> &Type {
+    match ty {
+        Type::Private(inner) | Type::Secret(inner) => strip_sensitivity(inner),
+        other => other,
+    }
+}
+
+/// Sensitivity rank: 0 plain, 1 private, 2 secret (secret dominates).
+fn sensitivity_rank(ty: &Type) -> u8 {
+    match ty {
+        Type::Secret(_) => 2,
+        Type::Private(_) => 1,
+        _ => 0,
+    }
+}
+
+fn wrap_sensitivity(ty: Type, rank: u8) -> Type {
+    match rank {
+        2 => Type::Secret(Box::new(ty)),
+        1 => Type::Private(Box::new(ty)),
+        _ => ty,
+    }
+}
+
+/// The most sensitive of the given types, keeping that type's shape.
+fn widest_type(types: impl Iterator<Item = Type>) -> Type {
+    let mut best = Type::Unknown;
+    let mut best_rank = 0u8;
+    for ty in types {
+        let rank = sensitivity_rank(&ty);
+        if rank >= best_rank && !matches!(ty, Type::Unknown) {
+            best_rank = rank;
+            best = ty;
+        }
+    }
+    best
+}
+
+/// Only the rank of the most sensitive value, for struct literals where the
+/// shape is the struct name and only the taint matters.
+fn widest_sensitivity(types: impl Iterator<Item = Type>) -> u8 {
+    types.map(|t| sensitivity_rank(&t)).max().unwrap_or(0)
+}
+
+/// Element type of a container, preserving the container's own sensitivity.
+fn index_element_type(container: &Type) -> Type {
+    let rank = sensitivity_rank(container);
+    let element = match strip_sensitivity(container) {
+        Type::Array(inner) | Type::Set(inner) | Type::Chan(inner) => (**inner).clone(),
+        Type::Map(_, value) => (**value).clone(),
+        Type::String => Type::Char,
+        // Not a container we model: if it was sensitive, keep it sensitive
+        // rather than answer `Unknown` and lose the taint.
+        other => other.clone(),
+    };
+    if element.is_sensitive() {
+        element
+    } else {
+        wrap_sensitivity(element, rank)
     }
 }
 
@@ -1176,4 +1364,111 @@ fn bad(uid: UserID) { print(uid) }"#,
             "spawn print(secret) is the same sink on another thread: {diags:?}"
         );
     }
+    // ── Fields, collections and aliases (#49) ──────────────────────────────
+
+    #[test]
+    fn secret_field_of_a_struct_is_flagged_at_the_sink() {
+        let diags = run_privacy_pass(
+            r#"
+            struct Session { name: String, token: Token }
+            fn leak(s: Session) { print(s.token) }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0201"),
+            "a secret field must be flagged where it is printed, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn safe_field_of_a_struct_that_holds_a_secret_is_not_flagged() {
+        // A projection is not an escape, but neither is the struct infectious:
+        // reading `name` out of a Session does not print the token.
+        let diags = run_privacy_pass(
+            r#"
+            struct Session { name: String, token: Token }
+            fn ok(s: Session) { print(s.name) }
+        "#,
+        );
+        assert!(
+            !diags.has_errors(),
+            "a declared-safe field must stay clean, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn struct_literal_holding_a_secret_is_flagged_when_printed_whole() {
+        let diags = run_privacy_pass(
+            r#"
+            struct Session { name: String, token: Token }
+            fn leak(t: Token) { let s = Session { name: "n", token: t }; print(s) }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0201"),
+            "printing the aggregate prints the secret inside it, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn secret_element_of_an_array_is_flagged_through_the_index() {
+        let diags = run_privacy_pass(
+            r#"
+            fn leak(t: Token) { let xs = [t]; print(xs[0]) }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0201"),
+            "an indexed secret must not launder through a collection, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn printing_a_list_of_secrets_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            fn leak(t: Token) { let xs = [t]; print(xs) }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0201"),
+            "printing the list prints every secret in it, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn alias_of_a_secret_field_is_flagged() {
+        let diags = run_privacy_pass(
+            r#"
+            struct Session { token: Token }
+            fn leak(s: Session) { let t = s.token; print(t) }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0201"),
+            "an alias must carry the field's sensitivity, got: {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn plain_collection_and_field_stay_clean() {
+        let diags = run_privacy_pass(
+            r#"
+            struct Session { name: String }
+            fn ok(n: String, s: Session) { let xs = [n]; print(xs[0]); print(s.name) }
+        "#,
+        );
+        assert!(
+            !diags.has_errors(),
+            "no secret involved, nothing may be flagged, got: {:?}",
+            diags.items
+        );
+    }
+
 }
