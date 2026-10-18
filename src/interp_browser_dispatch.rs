@@ -1035,7 +1035,7 @@ fn observations_from_value(
 
 /// Static-call dispatch (e.g. `ProductMatcher.new()`).
 ///
-/// Returns `Some(result)` if `name` matches a HackTheCart builtin, otherwise
+/// Returns `Some(result)` if `name` matches a Tallow builtin, otherwise
 /// `None` so the caller can fall through to other dispatchers.
 /// True when `name` is one of the static entries this dispatcher serves.
 ///
@@ -1162,10 +1162,10 @@ pub fn dispatch_browser_static(
     Some(Ok(result))
 }
 
-/// Instance method dispatch for HackTheCart-wrapped objects.
+/// Instance method dispatch for Tallow-wrapped objects.
 ///
 /// Called from the method-call dispatcher when the object is a
-/// `BrowserObject` whose `kind` is one of the HackTheCart type tags but the
+/// `BrowserObject` whose `kind` is one of the Tallow type tags but the
 /// existing browser dispatch didn't recognize the method.
 ///
 /// Wired methods call the real browser implementations (crawl queue, crawl
@@ -1243,7 +1243,7 @@ pub fn dispatch_browser_method(
             let tri = bh
                 .handle
                 .downcast_ref::<browser::triangulation::Triangulator>()?;
-            // R2-5-HTC / R2-6: observations are marshalled from Tallow values.
+            // R2-5 / R2-6: observations are marshalled from Tallow values.
             // Never silently substitute an empty slice — a consensus computed
             // over zero observations is a fabricated result.
             let Some(raw) = args.first() else {
@@ -1840,7 +1840,7 @@ pub fn dispatch_browser_method(
     }
 
     Some(Err(RuntimeError::Error(format!(
-        "HackTheCart method not wired: {kind}.{method}() — this kind exists but has no Tallow binding for that method"
+        "Tallow method not wired: {kind}.{method}() — this kind exists but has no Tallow binding for that method"
     ))))
 }
 
@@ -2297,7 +2297,7 @@ mod tests {
 
     #[test]
     fn triangulator_triangulate_requires_real_observations() {
-        // Regression (R2-5-HTC / R2-6): the arm used to discard its input and
+        // Regression (R2-5 / R2-6): the arm used to discard its input and
         // triangulate over an empty slice, fabricating a consensus over zero
         // observations. Missing/empty/malformed input must now be an honest
         // error, never a silent empty call.
@@ -2338,7 +2338,7 @@ mod tests {
 
     #[test]
     fn triangulator_triangulate_uses_passed_observations() {
-        // Regression (R2-5-HTC): the consensus must be computed from the
+        // Regression (R2-5): the consensus must be computed from the
         // observations actually passed in (Struct and Map forms both work).
         let v = dispatch_browser_static("Triangulator.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);

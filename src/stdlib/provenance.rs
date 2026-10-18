@@ -11,7 +11,7 @@
 //! # Model reuse (no fork)
 //!
 //! The freshness and validation vocabulary is *aliased* from the existing
-//! HackTheCart provenance model in `src/browser/provenance.rs` — the
+//! Tallow provenance model in `src/browser/provenance.rs` — the
 //! [`FreshnessTier`] enum and [`ValidationStep`] struct are re-exported
 //! here (`pub use`), not duplicated. Confidence is folded with the same
 //! arithmetic as `ProvenanceRecord::compute_final_confidence` there:

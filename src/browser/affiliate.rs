@@ -54,15 +54,18 @@ impl AffiliateManager {
         let mut networks = HashMap::new();
         let mut user_tags = HashMap::new();
 
+        // Placeholder tags. No affiliate account exists under this name, so a
+        // wrapped link carrying one of these earns nothing — deployments must
+        // override them through `set_tag` before serving traffic.
         let defaults = [
-            ("amazon",    "Amazon Associates",   "tag",         "hackthecart-20",      4.0),
-            ("walmart",   "Walmart Affiliate",   "wmlspartner", "hackthecart",         4.0),
-            ("target",    "Target Affiliate",    "afsrc",       "hackthecart",         5.0),
-            ("bestbuy",   "Best Buy Affiliate",  "ref",         "hackthecart",         1.0),
-            ("skimlinks", "Skimlinks",           "sref",        "hackthecart",         5.0),
-            ("rakuten",   "Rakuten Advertising", "u1",          "hackthecart",         5.0),
-            ("impact",    "Impact.com",          "irclickid",   "hackthecart",         5.0),
-            ("cj",        "CJ Affiliate",        "sid",         "hackthecart",         5.0),
+            ("amazon",    "Amazon Associates",   "tag",         "tallow-20",      4.0),
+            ("walmart",   "Walmart Affiliate",   "wmlspartner", "tallow",         4.0),
+            ("target",    "Target Affiliate",    "afsrc",       "tallow",         5.0),
+            ("bestbuy",   "Best Buy Affiliate",  "ref",         "tallow",         1.0),
+            ("skimlinks", "Skimlinks",           "sref",        "tallow",         5.0),
+            ("rakuten",   "Rakuten Advertising", "u1",          "tallow",         5.0),
+            ("impact",    "Impact.com",          "irclickid",   "tallow",         5.0),
+            ("cj",        "CJ Affiliate",        "sid",         "tallow",         5.0),
         ];
 
         for (code, name, param, tag, pct) in defaults {
@@ -132,7 +135,7 @@ impl AffiliateManager {
             .user_tags
             .get(&network)
             .cloned()
-            .unwrap_or_else(|| "hackthecart".to_string());
+            .unwrap_or_else(|| "tallow".to_string());
 
         let wrapped = match network.as_str() {
             "amazon"    => Self::wrap_amazon(url, &tag),
@@ -163,12 +166,12 @@ impl AffiliateManager {
         }
     }
 
-    /// Amazon: append `?tag=hackthecart-20` (or replace if present).
+    /// Amazon: append `?tag=tallow-20` (or replace if present).
     pub fn wrap_amazon(url: &str, tag: &str) -> String {
         Self::append_param(url, "tag", tag)
     }
 
-    /// Walmart: append `?wmlspartner=hackthecart`.
+    /// Walmart: append `?wmlspartner=tallow`.
     pub fn wrap_walmart(url: &str, tag: &str) -> String {
         Self::append_param(url, "wmlspartner", tag)
     }
@@ -283,7 +286,7 @@ mod tests {
     fn wraps_amazon_tag() {
         let m = AffiliateManager::new();
         let w = m.wrap("https://shop-06.example/dp/B0XYZ", 10_00);
-        assert!(w.wrapped_url.contains("tag=hackthecart-20"));
+        assert!(w.wrapped_url.contains("tag=tallow-20"));
         assert_eq!(w.network, "amazon");
         assert_eq!(w.estimated_commission_cents, 40); // 4% of $10
     }
@@ -292,7 +295,7 @@ mod tests {
     fn replaces_existing_tag() {
         let m = AffiliateManager::new();
         let w = m.wrap("https://shop-06.example/dp/B0XYZ?tag=other-20&foo=bar", 0);
-        assert!(w.wrapped_url.contains("tag=hackthecart-20"));
+        assert!(w.wrapped_url.contains("tag=tallow-20"));
         assert!(!w.wrapped_url.contains("tag=other-20"));
         assert!(w.wrapped_url.contains("foo=bar"));
     }

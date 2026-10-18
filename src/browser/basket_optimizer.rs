@@ -1,4 +1,4 @@
-//! Basket optimizer — the killer feature of HackTheCart.
+//! Basket optimizer — the killer feature of Tallow.
 //!
 //! Given a parsed `Recipe` and a set of nearby stores with priced listings,
 //! computes:

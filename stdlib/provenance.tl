@@ -4,7 +4,7 @@
 // it is, which egress path fetched it, the HTTP outcome, a content
 // fingerprint, a validation chain, a folded numeric confidence, and a final
 // letter grade. Built on the same freshness/validation model as the
-// HackTheCart provenance tracker (src/browser/provenance.rs) — those types
+// Tallow provenance tracker (src/browser/provenance.rs) — those types
 // are aliased, not duplicated.
 //
 // Capitalized namespace:   Provenance.record(...)  /  Provenance.grade(...)

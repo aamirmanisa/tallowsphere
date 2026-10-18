@@ -9,7 +9,7 @@ Phase 11 proves that Tallow-produced local artifacts can be interpreted by two d
 Accepted Phase 11 scope is limited to:
 
 - a tiny Tallow Search route-mix proof over synthetic `fixture://` targets;
-- a HackTheCart artifact-to-product import preview fixture;
+- a Tallow artifact-to-product import preview fixture;
 - hash-checked local artifacts under `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/`;
 - Rust contract tests in the owning subproject workspaces.
 
@@ -19,14 +19,14 @@ Primary proof bundle:
 
 - `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/tallow-search/route_mix_report.json`
 - `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/tallow-search/local_targets.json`
-- `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/hackthecart/tallow_import_preview.json`
-- `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/hackthecart/import_contract_fixture.json`
+- `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/tallow/tallow_import_preview.json`
+- `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/tallow/import_contract_fixture.json`
 - `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/hash-checks.json`
 - `artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001/artifact_manifest.json`
 
 The Tallow Search proof records `network_io=none`, `target_scope=fixture-only`, `T4=0`, and `browser_budget_used_count=0`.
 
-The HackTheCart proof records `database_writes=false`, `search_index_writes=false`, `remote_calls=false`, one accepted product preview, and one quarantined invalid fixture row.
+The Tallow proof records `database_writes=false`, `search_index_writes=false`, `remote_calls=false`, one accepted product preview, and one quarantined invalid fixture row.
 
 ## Local commands
 
@@ -37,11 +37,11 @@ cd ~/Nixe/tallow-search
 cargo test -p tallow-search-api --test phase11_route_mix_artifact_contract -- --nocapture
 ```
 
-Run from the HackTheCart workspace:
+Run from the Tallow workspace:
 
 ```bash
-cd ~/Nixe/hackthecart
-cargo test -p hackthecart-api --test phase11_tallow_import_contract -- --nocapture
+cd ~/Nixe/tallow
+cargo test -p tallow-api --test phase11_tallow_import_contract -- --nocapture
 ```
 
 Regenerate the proof sub-artifacts with an explicit local output root:
@@ -52,10 +52,10 @@ PHASE11_PROOF_ROOT=~/Nixe/artifacts/phase11/controlled-local-proof/phase11-contr
   cargo test -p tallow-search-api --test phase11_route_mix_artifact_contract \
   phase11_route_mix_writes_hash_checked_local_artifacts -- --nocapture
 
-cd ~/Nixe/hackthecart
+cd ~/Nixe/tallow
 PHASE11_PROOF_ROOT=~/Nixe/artifacts/phase11/controlled-local-proof/phase11-controlled-local-proof-001 \
-  cargo test -p hackthecart-api --test phase11_tallow_import_contract \
-  phase11_hackthecart_import_writes_hash_checked_local_artifacts -- --nocapture
+  cargo test -p tallow-api --test phase11_tallow_import_contract \
+  phase11_tallow_import_writes_hash_checked_local_artifacts -- --nocapture
 ```
 
 ## Human-gated / non-claims
@@ -64,7 +64,7 @@ Phase 11 does not claim:
 
 - live external scraping or crawling;
 - production Tallow Search execution readiness;
-- production HackTheCart import readiness;
+- production Tallow import readiness;
 - production database or search-index writes;
 - all-sites or full-catalog rollout;
 - credential/vault/secret readiness;

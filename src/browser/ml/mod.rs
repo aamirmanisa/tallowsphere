@@ -1,4 +1,4 @@
-//! Machine learning foundation for HackTheCart.
+//! Machine learning foundation for Tallow.
 //!
 //! Provides text embeddings, vector search, and ML-based product matching.
 //! By default uses a deterministic mock embedding engine so tests are stable

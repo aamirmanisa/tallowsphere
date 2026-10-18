@@ -1,8 +1,8 @@
 //! Household sharing, pantry, expiration tracking, and SNAP/EBT filtering.
 //!
-//! Backs HackTheCart features T4.30 (household sharing) and T4.34/T4.39
+//! Backs Tallow features T4.30 (household sharing) and T4.34/T4.39
 //! (SNAP eligibility + expiration alerts). Pure logic — persistence
-//! is handled by the SQL migrations in `hackthecart/schema/004_*` and `005_*`.
+//! is handled by the product's SQL migrations (`schema/004_*`, `schema/005_*`).
 
 const SECS_PER_DAY: i64 = 86_400;
 

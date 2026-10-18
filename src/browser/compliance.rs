@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 /// Public FTC affiliate disclosure — must be shown anywhere affiliate
 /// links are surfaced to end users.
 pub const FTC_DISCLOSURE: &str =
-    "HackTheCart may earn commission from purchases made through links on this page. \
+    "Tallow may earn commission from purchases made through links on this page. \
      This helps keep our service free. Prices shown are independent of our commissions.";
 
 #[derive(Debug, Clone)]
@@ -139,7 +139,7 @@ impl ComplianceManager {
 
         Self {
             dmca_contacts: vec![DmcaContact {
-                email: "dmca@hackthecart.example".to_string(),
+                email: "dmca@tallow.example".to_string(),
                 registered_with_uspto: false,
                 response_sla_hours: 48,
             }],
@@ -348,7 +348,7 @@ mod tests {
             received_at: 0,
             complainant: "rights@example.com".into(),
             reason: TakedownReason::DmcaCopyright,
-            affected_resources: vec!["https://hackthecart.example/p/1".into()],
+            affected_resources: vec!["https://tallow.example/p/1".into()],
             status: TakedownStatus::Received,
             resolved_at: None,
         });
