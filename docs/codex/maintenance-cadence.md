@@ -68,6 +68,6 @@ Treat these as references or evidence:
 - [workspace-optimization.md](./workspace-optimization.md)
 - [noise-inventory.md](./noise-inventory.md)
 - [cleanup-execution.md](./cleanup-execution.md)
-- [verification-root-hackthecart.md](./verification-root-hackthecart.md)
+- [verification-root-tallow.md](./verification-root-tallow.md)
 - [verification-tallowsearch-firecrawl.md](./verification-tallowsearch-firecrawl.md)
 - `docs/codex/cleanup-manifests/`

@@ -20,33 +20,33 @@ Run from `~/Nixe`.
 
 Use `cargo check` first for small compiler/runtime edits. Move to `cargo test --lib` when behavior changes or when a root crate dependency moved. Use a named test when you are tightening one parser, lexer, type-checking, codegen, runtime, or legal-pass regression.
 
-## HackTheCart API
+## Tallow API
 
-Run from `~/Nixe/hackthecart`.
+Run from `~/Nixe/tallow`.
 
-- API-only verification: `cargo test -p hackthecart-api`
+- API-only verification: `cargo test -p tallow-api`
 - Broader Rust workspace verification: `cargo test`
 
-Start with `cargo test -p hackthecart-api` for route, handler, serialization, or API-only behavior. Move to full `cargo test` when the change also touches shared workspace crates such as storage, jobs, mailer, OCR, indexer, or other Rust packages used by the API.
+Start with `cargo test -p tallow-api` for route, handler, serialization, or API-only behavior. Move to full `cargo test` when the change also touches shared workspace crates such as storage, jobs, mailer, OCR, indexer, or other Rust packages used by the API.
 
-## HackTheCart web
+## Tallow web
 
-Run from `~/Nixe/hackthecart/web`.
+Run from `~/Nixe/tallow/web`.
 
 - Main web verification: `npm run build`
 - Light Astro sync sanity: `npm run check`
 
 Use `npm run build` as the normal proof for UI changes. `npm run check` is a lighter pass when you only need Astro sync/type generation sanity, but it does not replace `npm run build` for meaningful web changes. If the web change depends on an API contract change, also run the matching API command.
 
-## HackTheCart pipeline and import work
+## Tallow pipeline and import work
 
 Use the narrowest command that matches the part you changed.
 
-- Canonical import crate: `cd ~/Nixe/hackthecart/import && cargo test`
-- Standalone importer crate: `cd ~/Nixe/hackthecart/importers && cargo test`
-- Workspace-managed pipeline packages: `cd ~/Nixe/hackthecart && cargo test -p <package>`
+- Canonical import crate: `cd ~/Nixe/tallow/import && cargo test`
+- Standalone importer crate: `cd ~/Nixe/tallow/importers && cargo test`
+- Workspace-managed pipeline packages: `cd ~/Nixe/tallow && cargo test -p <package>`
 
-Use `hackthecart/import` when you changed the SQLite staging and merge flow. Use `hackthecart/importers` when you changed one of the standalone source importers. Use package-specific `cargo test -p <package>` from `hackthecart/` for workspace-managed pipeline code such as `jobs`, `indexer`, or other Rust pipeline components.
+Use `tallow/import` when you changed the SQLite staging and merge flow. Use `tallow/importers` when you changed one of the standalone source importers. Use package-specific `cargo test -p <package>` from `tallow/` for workspace-managed pipeline code such as `jobs`, `indexer`, or other Rust pipeline components.
 
 If the change affects pipeline scripts or contract files such as `pipeline*.{mjs,tl}`, `config/default_product_store_config.toml`, or `schema/postgres/25_pipeline_tables.sql`, pair the Rust test with the narrowest data or dry-run validation already documented next to that workflow instead of inventing a new one-off script.
 

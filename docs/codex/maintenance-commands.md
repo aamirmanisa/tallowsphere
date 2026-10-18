@@ -55,7 +55,7 @@ powershell -File scripts/codex/scoped-status.ps1 -Path docs/codex,scripts/codex
 Examples:
 
 ```powershell
-powershell -File scripts/codex/scoped-status.ps1 -Path hackthecart/import,hackthecart/infra/scripts
+powershell -File scripts/codex/scoped-status.ps1 -Path tallow/import,tallow/infra/scripts
 powershell -File scripts/codex/scoped-status.ps1 -Path tallow-search/extension,scripts -WithDiff
 ```
 
@@ -70,7 +70,7 @@ powershell -File scripts/codex/show-active-instructions.ps1
 Optional target paths:
 
 ```powershell
-powershell -File scripts/codex/show-active-instructions.ps1 -Path tallowsphere/hackthecart,tallowsphere/tallow-search
+powershell -File scripts/codex/show-active-instructions.ps1 -Path tallowsphere/tallow,tallowsphere/tallow-search
 ```
 
 This prints the repo-local instruction chain for each target directory. It is a filesystem/git-root inspection helper, not a full Codex prompt dump.

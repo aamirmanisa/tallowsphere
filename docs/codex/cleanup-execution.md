@@ -53,7 +53,7 @@ heb_products.json
 heb-milk-search.jpg
 hetzner-console.jpg
 hetzner-gen-token.jpg
-hetzner-htc-dashboard.jpg
+hetzner-tallow-dashboard.jpg
 hetzner-primaryips.jpg
 hetzner-rescue.jpg
 hetzner-server-overview.jpg

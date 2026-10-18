@@ -63,7 +63,7 @@ Truth boundary for the 2026-06-22 P2-009 sweep: accepted evidence currently cove
 | `docs/operations/tallow-request-plan-runner.md` | Implemented helper | Documents the native operator workflow plus Python compatibility runner for request-plan dry-run, local/mock execution, zero-I/O preflight, compliance-gated native live GET execution, and canonical `tallow.error_object.v1` report rows. | Proves local/mock execution plus approved native live GET only when all local source-manifest/compliance/isolation/fail-closed gates pass; real vault, browser execution, paid benchmarks, destructive retention, and broad live method parity remain later gates. |
 | `docs/operations/troubleshooting.md` | Implemented helper | Captures known operational failures and points Linux/CachyOS triage at doctor/smoke first. | Some runtime capability notes should become tests. |
 | `docs/operations/compliance-gate.md` | Implemented helper | Documents the Phase 9/P1-010 Linux-native local/no-secret compliance gate and canonical P2-008 error-object findings. | Required proof metadata for request-plan live-preflight/live gates, not legal approval, real-vault/secret resolution, destructive retention, live scraping permission, or deploy readiness. |
-| `docs/operations/phase11-proving-grounds.md` | Implemented helper / evidence | Documents the Phase 11 controlled proving-ground route-mix and HackTheCart import contract proof. | Fixture-only proof; no live scraping, production DB/search-index writes, all-sites rollout, or production product readiness. |
+| `docs/operations/phase11-proving-grounds.md` | Implemented helper / evidence | Documents the Phase 11 controlled proving-ground route-mix and Tallow import contract proof. | Fixture-only proof; no live scraping, production DB/search-index writes, all-sites rollout, or production product readiness. |
 | `docs/qa/launcher-integration-tests.md` | Implemented helper | Documents launcher integration test. | Keep as smoke, not production scheduler proof. |
 | `docs/qa/e2e-mock-targets.md` | Implemented helper | Documents mock-target E2E flow. | Should become Phase 1/2 verification gate after binary fix. |
 | `docs/qa/golden-files.md` | Implemented helper | Documents golden file generation. | Needs integration into schema/extraction gates. |
@@ -112,8 +112,8 @@ Truth boundary for the 2026-06-22 P2-009 sweep: accepted evidence currently cove
 | `tallow-search/AGENTS.md` | Local guidance | Project-specific rules and verification. | Prefer over root guidance inside `tallow-search/`. |
 | `tallow-search/docs/zacks_canonical_schema.md` | Contract | Finance/Zacks data schema. | Good later structured-data proof, not first platform smoke. |
 | `tallow-search/docs/zacks_pipeline_runbook.md` | Roadmap / evidence | Documents Zacks quality gates and current gaps. | Do not run broad rollout as first proof. |
-| `hackthecart/AGENTS.md` | Local guidance | Product correctness rules. | Must follow before touching HackTheCart. |
-| `hackthecart/config/default_product_store_config.toml` | Contract | Product index and quality contract. | Excellent second-stage proof after platform route proof. |
+| `tallow/AGENTS.md` | Local guidance | Product correctness rules. | Must follow before touching Tallow. |
+| `tallow/config/default_product_store_config.toml` | Contract | Product index and quality contract. | Excellent second-stage proof after platform route proof. |
 
 ## Current Accepted Phase Packets
 
@@ -128,7 +128,7 @@ Truth boundary for the 2026-06-22 P2-009 sweep: accepted evidence currently cove
 | Phase 7 artifacts/replay/observability | Local artifact bundle, dry-run replay, metrics, dashboard proof. | `docs/mega/phase7-artifacts-replay-observability-10agent/final-integration-report.md`; `docs/mega/phase7-artifacts-replay-observability-10agent/final-independent-qa-report.md` |
 | Phase 9 compliance/vault/retention | Local/no-secret compliance gate proof. | `docs/mega/phase9-compliance-vault-retention-10agent/final-integration-report.md`; `docs/mega/phase9-compliance-vault-retention-10agent/final-independent-qa-report.md` |
 | Phase 10 benchmarks/Firecrawl | Local/mock/offline benchmark protocol and Firecrawl fixture-comparison scaffolding. | `docs/mega/phase10-benchmarks-firecrawl-10agent/final-integration-report.md`; `docs/mega/phase10-benchmarks-firecrawl-10agent/final-independent-qa-report.md` |
-| Phase 11 controlled proving-ground | Fixture-only Tallow Search route-mix and HackTheCart import contract proof. | `docs/mega/phase11-proving-grounds-10agent/final-integration-report.md`; `docs/mega/phase11-proving-grounds-10agent/final-independent-qa-report.md` |
+| Phase 11 controlled proving-ground | Fixture-only Tallow Search route-mix and Tallow import contract proof. | `docs/mega/phase11-proving-grounds-10agent/final-integration-report.md`; `docs/mega/phase11-proving-grounds-10agent/final-independent-qa-report.md` |
 | `docs-truth-continuous` | Docs truth labels/map reconciliation for BLK-019 only. | `docs/mega/docs-truth-reconciliation-10agent/final-integration-report.md`; `docs/mega/docs-truth-reconciliation-10agent/final-independent-qa-report.md` after acceptance. |
 | P2 production-hardening lane through `P2-008` | Local/offline/no-secret hardening: scraper-critical stdlib parity, benchmark/CI scaffolding, native operator CLI, and canonical emitted error objects. | Current source/tests/scripts/docs listed in this map; P2-009 docs sweep keeps the map/capability/blocker docs aligned with executed gates. |
 

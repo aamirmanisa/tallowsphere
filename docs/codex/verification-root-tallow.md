@@ -1,10 +1,10 @@
-# Codex CLI Verification: `tallowsphere` and `tallowsphere/hackthecart`
+# Codex CLI Verification: `tallowsphere` and `tallowsphere/tallow`
 
 ## Scope
 
 - Goal: verify, with the real `codex` CLI, which repo instruction files are active from:
   - `tallowsphere`
-  - `tallowsphere/hackthecart`
+  - `tallowsphere/tallow`
 - Constraint followed: did not modify any `AGENTS.md` file.
 - Ownership followed: only this file was written.
 
@@ -14,20 +14,20 @@
 - CLI: `codex-cli 0.122.0`
 - Relevant repo files present:
   - `tallowsphere/AGENTS.md`
-  - `tallowsphere/hackthecart/AGENTS.md`
+  - `tallowsphere/tallow/AGENTS.md`
   - `tallowsphere/.codex/config.toml`
 
 ## Summary
 
 | Target cwd | Result | What was confirmed |
 | --- | --- | --- |
-| `tallowsphere` | PASS | Root session injected `tallowsphere/AGENTS.md` and did not inject `hackthecart\AGENTS.md`. |
-| `tallowsphere/hackthecart` | PASS with caveat | Session injected both `tallowsphere/AGENTS.md` and `tallowsphere/hackthecart/AGENTS.md`; nested file was appended after root guidance. |
+| `tallowsphere` | PASS | Root session injected `tallowsphere/AGENTS.md` and did not inject `tallow\AGENTS.md`. |
+| `tallowsphere/tallow` | PASS with caveat | Session injected both `tallowsphere/AGENTS.md` and `tallowsphere/tallow/AGENTS.md`; nested file was appended after root guidance. |
 
 Nearest `AGENTS.md` winning behavior is supported by two things:
 
 1. `codex exec` explicitly said the nearest `AGENTS.md` wins on conflicts.
-2. `codex debug prompt-input` showed the `hackthecart` session receiving both files, with `hackthecart\AGENTS.md` appended after the root file.
+2. `codex debug prompt-input` showed the `tallow` session receiving both files, with `tallow\AGENTS.md` appended after the root file.
 
 Caveat: I did not create an artificial conflict in `AGENTS.md` files, so precedence was verified by actual prompt injection plus CLI self-report, not by a destructive conflict test.
 
@@ -63,7 +63,7 @@ Important output:
 ```
 
 - That injected block contained the root `AGENTS.md` content.
-- No nested `hackthecart\AGENTS.md` content appeared in the root session dump.
+- No nested `tallow\AGENTS.md` content appeared in the root session dump.
 - No `CLAUDE.md` injection showed up in this filtered output.
 
 ```powershell
@@ -100,7 +100,7 @@ Yes: nearest `AGENTS.md` wins over broader workspace guidance for files in its s
 
 Verdict for `tallowsphere`: PASS.
 
-### `hackthecart` verification: `tallowsphere/hackthecart`
+### `tallow` verification: `tallowsphere/tallow`
 
 ```powershell
 codex debug prompt-input "Show which instruction files are active." | rg -n "AGENTS|CLAUDE|codex|instruction|policy|rules"
@@ -111,14 +111,14 @@ Important output:
 - Prompt input included a block starting with:
 
 ```text
-26:        "text": "# AGENTS.md instructions for /mnt/Personal/Nixe\\hackthecart
+26:        "text": "# AGENTS.md instructions for /mnt/Personal/Nixe\\tallow
 ```
 
 - Inside that single injected block, the CLI included:
   - the full root `tallowsphere/AGENTS.md`
-  - then the full nested `tallowsphere/hackthecart/AGENTS.md`
+  - then the full nested `tallowsphere/tallow/AGENTS.md`
 
-This is the strongest direct evidence that both files are active for `hackthecart`, with the nested file layered after root guidance.
+This is the strongest direct evidence that both files are active for `tallow`, with the nested file layered after root guidance.
 
 ```powershell
 codex exec --sandbox read-only --color never "Show which instruction files are active. Include exact paths if you know them, and state whether the nearest AGENTS.md wins over broader workspace guidance."
@@ -130,7 +130,7 @@ Important output:
 Active instruction sources for this session are:
 
 1. `tallowsphere/AGENTS.md` (workspace-level guidance)
-2. `tallowsphere/hackthecart/AGENTS.md` (repo/subproject-level guidance, nearest to current cwd)
+2. `tallowsphere/tallow/AGENTS.md` (repo/subproject-level guidance, nearest to current cwd)
 ...
 For precedence: yes, the nearest `AGENTS.md` wins on conflicts.
 ```
@@ -146,7 +146,7 @@ Result:
 - Aborted by user before completion.
 - I did not retry after the user requested that I stop forcing long-running CLI prompts.
 
-Verdict for `tallowsphere/hackthecart`: PASS with caveat.
+Verdict for `tallowsphere/tallow`: PASS with caveat.
 
 The caveat is only that the final "quiet" rerun was aborted; the earlier `debug prompt-input` and `exec` runs already produced the needed evidence.
 
@@ -177,8 +177,8 @@ The main root cause of friction was a noisy local Codex environment, not missing
 ## Final Finding
 
 - From `tallowsphere`, the active repo instruction file was `tallowsphere/AGENTS.md`.
-- From `tallowsphere/hackthecart`, the active repo instruction files were:
+- From `tallowsphere/tallow`, the active repo instruction files were:
   - `tallowsphere/AGENTS.md`
-  - `tallowsphere/hackthecart/AGENTS.md`
+  - `tallowsphere/tallow/AGENTS.md`
 - The nearest `AGENTS.md` appears to win, while broader root guidance still remains active when non-conflicting.
 

@@ -18,7 +18,7 @@ This phase is non-destructive. It establishes a complete map for "full Codex opt
 ### Core managed products
 
 - Root Tallow runtime/compiler (`src/`, `tests/`, `examples/`, `stdlib/`, `crates/`)
-- `hackthecart/`
+- `tallow/`
 - `tallow-search/`
 - `firecrawl-self-hosted/` (nested repo)
 - `hermes-agent/` (nested repo)

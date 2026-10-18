@@ -40,7 +40,7 @@ Reduce tracked review noise, make the remaining artifact policy explicit, and ad
 
 ## Phase 5: Tighten Subproject Guidance Where It Still Matters
 
-- [x] Decide whether `hackthecart/import/`, `hackthecart/infra/scripts/`, and `hackthecart/data/` need narrower local overrides beyond the current `AGENTS` files
+- [x] Decide whether `tallow/import/`, `tallow/infra/scripts/`, and `tallow/data/` need narrower local overrides beyond the current `AGENTS` files
 - [x] Decide whether `tallow-search/extension/` needs its own override because browser-extension work has a different verification loop than the API and web apps
 - [x] Decide whether root `scripts/` or `docs/` need local overrides for operational tooling and reference maintenance
 - [x] Add overrides only where behavior or verification actually diverges; avoid blanket instruction sprawl

@@ -64,7 +64,7 @@ Risks:
 
 Relevant neighbors:
 
-- `hackthecart/`: grocery data/search platform with Rust services, import pipelines, configs, schema contracts, and Astro/Svelte UI.
+- `tallow/`: grocery data/search platform with Rust services, import pipelines, configs, schema contracts, and Astro/Svelte UI.
 - `tallow-search/`: Rust API plus Astro/Svelte search frontend.
 - `firecrawl-self-hosted/`: vendored Firecrawl monorepo used as a comparison point and possible integration target.
 - `docs/operations/`, `docs/qa/`, `docs/architecture/`: run metrics, output convention, replay, schema validation, golden files, alerting, dashboards, and operational contracts.
@@ -72,7 +72,7 @@ Relevant neighbors:
 Strategic relationship:
 
 - Tallow should be the controlled language/runtime and scraper platform.
-- HackTheCart is a product/data proving ground.
+- Tallow is a product/data proving ground.
 - Tallow Search is a search/API consumer surface.
 - Firecrawl self-hosted is a baseline open-source scraper API comparison, not the core platform.
 
@@ -112,7 +112,7 @@ Coordination rules:
 - Shared contracts are edited first, implementation second.
 - No agent broad-scans noisy roots such as `target/`, `node_modules/`, `dist/`, `tmp/`, `artifacts/`, or `.playwright-mcp/` unless the task is specifically about them.
 - Any source changes under `src/`, `crates/`, `stdlib/`, `tests/`, or `examples/` follow the root Tallow review checklist.
-- Any HackTheCart changes preserve product provenance and data quality contracts.
+- Any Tallow changes preserve product provenance and data quality contracts.
 - Any Tallow Search changes preserve public route and payload contracts.
 
 ## Phase 0: Baseline Inventory And Reality Check
@@ -128,7 +128,7 @@ Agent tasks:
 5. Inventory tests and benchmarks relevant to parser, runtime, browser, scraper, output, and copy/transfer.
 6. Inventory docs and roadmap files: `docs/tallow-scraper-full-task-list.md`, `docs/browser-specs.md`, `docs/MEGA_SCRAPER_ENGINE_RESEARCH.md`, `docs/operations/`, and `docs/qa/`.
 7. Inventory Firecrawl self-hosted API, Playwright service, SDKs, and self-host limitations.
-8. Inventory HackTheCart and Tallow Search integration points.
+8. Inventory Tallow and Tallow Search integration points.
 9. Inventory current local build/runtime/toolchain blockers.
 10. Produce one consolidated capability matrix: implemented, partial, stubbed, missing, and unknown.
 

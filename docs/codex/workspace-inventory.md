@@ -38,7 +38,7 @@ Root: tallowsphere
 | examples | root-product-source | False | False | False | False | False |
 | firecrawl-self-hosted | nested-git-project | True | True | False | False | False |
 | fuzz | root-product-source | False | False | True | False | False |
-| hackthecart | project-with-local-guidance | False | True | True | False | False |
+| tallow | project-with-local-guidance | False | True | True | False | False |
 | hermes-agent | nested-git-project | True | True | False | True | False |
 | kroger_data | auxiliary-or-unclassified | False | False | False | False | False |
 | node_modules | generated-or-noise | False | False | False | False | False |

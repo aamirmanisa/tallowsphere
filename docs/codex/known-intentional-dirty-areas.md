@@ -68,7 +68,7 @@ These should not be silently absorbed into Codex migration work:
 
 - root `Cargo.lock` unless a migration task intentionally changes Rust manifests
 - mixed product manifest drift under `tallow-search/web/`
-- broad active feature work under `src/`, `hackthecart/`, `tallow-search/`, `tests/`, and related runtime/product trees
+- broad active feature work under `src/`, `tallow/`, `tallow-search/`, `tests/`, and related runtime/product trees
 
 ## High-Noise Buckets
 

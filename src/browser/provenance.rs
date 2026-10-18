@@ -1,4 +1,4 @@
-//! Price provenance tracking for HackTheCart.
+//! Price provenance tracking for Tallow.
 //!
 //! Every price carries a chain showing source, timestamp, extraction
 //! method, validator chain, and a final confidence score with breakdown.

@@ -142,7 +142,7 @@ is intentionally dirty and it is the operator's to commit.
 |---|---|---|
 | #52 | `src/interp.rs` Phase-54 descriptive-echo arms (`Keyboard.*`, `Mouse.*`, `Dialog.on_confirm`, `page_throttle_network`, …) | Confirms the **123 of 146** empty `.tl` bodies that *do* have handlers: the empty body is the declaration side of a registered echo arm that makes no outcome claim |
 | #84 | `fs.file_size` declared but unwired | **Reproduced by probe:** `runtime error: undefined function: fs.file_size`, rc=1 — the register's claim is accurate |
-| #33 / #61 | HTC dispatch miss | Loud: `Err("HackTheCart method not yet dispatched: Kind.method() — constructor wired, method stub pending")` |
+| #33 / #61 | Tallow dispatch miss | Loud: `Err("Tallow method not yet dispatched: Kind.method() — constructor wired, method stub pending")` |
 | #59 | TURN `allocate()` sends an unauthenticated Allocate (no MESSAGE-INTEGRITY), returns the server address as the relay address | Registered v1 scope; the code is as described |
 | #62 | `LightweightCrypto.encrypt/decrypt` accepts `ascon`/`photon`/`gift` but is AES-256-GCM | **The strongest "Fake" in the tree and it is registered:** the algorithm is not the one requested and the *API name does not say so* (the in-code comment does). Round-trip works, so it can be mistaken for the requested cipher |
 | #65 | `real-ml` not shipped; default is a deterministic FNV-1a mock | Loud, documented; consistent with the decision to declare `real-ml` rather than ship it |

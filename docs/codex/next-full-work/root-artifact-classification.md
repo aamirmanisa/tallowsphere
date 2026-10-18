@@ -8,7 +8,7 @@ Audit result: `git ls-files -- <listed root files>` returned all `70` listed fil
 
 | Category | Count | Recommended policy | Basis |
 | --- | ---: | --- | --- |
-| Active seed/import data files with hardcoded repo-root workflow paths | 11 | Keep at root | Referenced by `hackthecart/infra/scripts/*.js` with explicit `e:/Nixe/<file>` reads/writes; moving them now would be a workflow change, not just cleanup. |
+| Active seed/import data files with hardcoded repo-root workflow paths | 11 | Keep at root | Referenced by `tallow/infra/scripts/*.js` with explicit `e:/Nixe/<file>` reads/writes; moving them now would be a workflow change, not just cleanup. |
 | Hetzner/infrastructure walkthrough screenshots | 11 | Move to tracked reference-assets | Human-reference deployment/setup captures; tracked, but not runtime inputs. |
 | Vendor/onboarding walkthrough screenshots | 12 | Move to tracked reference-assets | Human-reference captures for Kroger/USDA/HEB flows; useful context, but root placement adds clutter. |
 | Curated app-state reference screenshots | 16 | Move to tracked reference-assets | Visual baselines for app/search/detail states; worth keeping tracked, but not at repo root. |
@@ -34,7 +34,7 @@ Files:
 `combined_products.json`, `heb_products.json`, `kroger_enriched.sql`, `kroger_enriched_meili.json`, `kroger_final.sql`, `kroger_final_meili.json`, `kroger_meili.json`, `kroger_products.json`, `kroger_seed.sql`, `seed_meili.json`, `seed_production.sql`
 
 Why:
-These are the only remaining loose-clutter files with confirmed tracked-text references in the repo. The `hackthecart/infra/scripts` workflow currently reads from and writes to explicit repo-root paths for these files. Until that workflow is relocated or parameterized, cleanup should not move them.
+These are the only remaining loose-clutter files with confirmed tracked-text references in the repo. The `tallow/infra/scripts` workflow currently reads from and writes to explicit repo-root paths for these files. Until that workflow is relocated or parameterized, cleanup should not move them.
 
 ### 2. Hetzner/infrastructure walkthrough screenshots
 
@@ -43,7 +43,7 @@ Count: `11`
 Recommended policy: `Move to tracked reference-assets`
 
 Files:
-`hetzner-console.jpg`, `hetzner-gen-token.jpg`, `hetzner-htc-dashboard.jpg`, `hetzner-primaryips.jpg`, `hetzner-rescue.jpg`, `hetzner-server-overview.jpg`, `hetzner-servers.jpg`, `hetzner-sshkeys.jpg`, `hetzner-token-created.jpg`, `hetzner-token-reveal.jpg`, `hetzner-tokens.jpg`
+`hetzner-console.jpg`, `hetzner-gen-token.jpg`, `hetzner-tallow-dashboard.jpg`, `hetzner-primaryips.jpg`, `hetzner-rescue.jpg`, `hetzner-server-overview.jpg`, `hetzner-servers.jpg`, `hetzner-sshkeys.jpg`, `hetzner-token-created.jpg`, `hetzner-token-reveal.jpg`, `hetzner-tokens.jpg`
 
 Why:
 These appear to be operator/reference screenshots for hosting setup. They may still be useful, but they behave like documentation assets, not root-level project files.
@@ -88,7 +88,7 @@ These filenames read like ad hoc test evidence, prompt-flow captures, and interm
 
 Treat the remaining tracked repo-root loose clutter as three buckets:
 
-1. Keep the `11` active seed/import files at the repo root for now because current `hackthecart` scripts hardcode those paths.
+1. Keep the `11` active seed/import files at the repo root for now because current `tallow` scripts hardcode those paths.
 2. Move the `39` documentation/reference screenshots into a tracked reference-assets home during the next full cleanup pass.
 3. Review the `20` test/proof screenshots for demotion into ignored artifacts instead of preserving them as tracked files.
 

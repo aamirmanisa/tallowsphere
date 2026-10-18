@@ -1,4 +1,4 @@
-//! Multi-source price triangulation and trust scoring for HackTheCart.
+//! Multi-source price triangulation and trust scoring for Tallow.
 //!
 //! Combines observations from multiple sources (APIs, scrapes, user reports)
 //! into a single consensus price with confidence scoring. Trust scores adapt

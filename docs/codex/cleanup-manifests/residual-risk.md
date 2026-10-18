@@ -26,7 +26,7 @@ Definition: "untracked-only" means deleting paths that are not tracked by Git wi
 | Area | Dirty tracked entries |
 | --- | ---: |
 | `src/` | 176 |
-| `hackthecart/` | 56 |
+| `tallow/` | 56 |
 | `tallow-search/` | 53 |
 | `tests/` | 19 |
 | `[root]` | 7 |

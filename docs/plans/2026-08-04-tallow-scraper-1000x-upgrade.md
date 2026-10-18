@@ -5,7 +5,7 @@
 ## Architecture survey
 - 100 browser modules, 84,219 LoC
 - Distributed scraper: 2,090 LoC (coordinator, discovery, registry, relay, scheduler)
-- HackTheCart: 44 retail scraping modules (declared, partially wired)
+- Tallow: 44 retail scraping modules (declared, partially wired)
 - 24 TODO/FIXME items across browser/net
 - 5 CDP TODOs (fd inheritance, pipes, socket paths)
 
@@ -25,7 +25,7 @@ Wire the distributed browser pool into the runtime.
 - Add connection pooling for browser tabs
 - Add browser crash recovery
 
-## Phase D3 — HackTheCart Expansion (5x coverage)
+## Phase D3 — Tallow Expansion (5x coverage)
 - Wire 44 retail scraping modules into dispatch
 - ProductMatcher, QualityValidator, PriceTracker, InventoryMonitor
 - Add end-to-end retail scraper test

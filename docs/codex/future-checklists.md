@@ -41,7 +41,7 @@ Run this after the automation layer exists.
 Make the busiest products easier for Codex to work on safely.
 
 - [ ] Add deeper local guidance only in the directories that repeatedly need it
-- [ ] For `hackthecart`, document the narrowest trustworthy loops for API, import, data-quality, and search-index work
+- [ ] For `tallow`, document the narrowest trustworthy loops for API, import, data-quality, and search-index work
 - [ ] For `tallow-search`, document the narrowest trustworthy loops for API, web, and extension work
 - [ ] For root Tallow/compiler work, document the benchmark and regression-test rules closest to the actual hot paths
 - [ ] Add "do not touch casually" lists to any subproject that still has vendor-like or evidence-heavy directories

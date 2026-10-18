@@ -1,4 +1,4 @@
-//! Typesense search client for HackTheCart product search.
+//! Typesense search client for Tallow product search.
 //!
 //! Wraps the Typesense HTTP API to manage collections, index product
 //! documents, and execute faceted search queries with typo tolerance.
@@ -369,7 +369,7 @@ impl TypesenseClient {
         Ok(out)
     }
 
-    /// Create the HackTheCart products collection schema.
+    /// Create the Tallow products collection schema.
     pub fn products_schema() -> Collection {
         Collection {
             name: "products".into(),

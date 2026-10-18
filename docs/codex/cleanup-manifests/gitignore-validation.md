@@ -27,7 +27,7 @@ Scope: validate whether the current root `.gitignore` already hides the proposed
 
 ## Gaps
 
-- The existing rules are root-anchored. They cover repo-root `/tmp/` and `/artifacts/`, but they do not cover nested destinations such as `hackthecart/tmp/` or `docs/artifacts/`.
+- The existing rules are root-anchored. They cover repo-root `/tmp/` and `/artifacts/`, but they do not cover nested destinations such as `tallow/tmp/` or `docs/artifacts/`.
 - `.gitignore` only hides untracked paths. If the currently committed `/.playwright-mcp/` archive is relocated with history-preserving Git moves, the destination can remain tracked even under `artifacts/`. That relocation would need an explicit de-indexing step or an external archive destination.
 
 ## Conclusion

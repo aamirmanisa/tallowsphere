@@ -29,7 +29,7 @@
 
 ### 2.2 Access & accounts — OK (MFA open)
 - SSH effective: `PasswordAuthentication no`, `PermitRootLogin without-password`, `KbdInteractiveAuthentication no`, `X11Forwarding no`, `MaxAuthTries 6`; drop-ins `50-cloud-init.conf`, `99-opsec.conf`.
-- 1 keypair registered twice (duplicate lines, same fingerprint `SHA256:ykX/OK7sOip1l6a3NEXGVBFWZwbdEbErMZtsbMPKTtA`, comment `hackthecart-deploy` — dedupe candidate); `sudo` group empty; no regular login accounts on the box; console = Hetzner break-glass.
+- 1 keypair registered twice (duplicate lines, same fingerprint `SHA256:ykX/OK7sOip1l6a3NEXGVBFWZwbdEbErMZtsbMPKTtA`, comment `tallow-deploy` — dedupe candidate); `sudo` group empty; no regular login accounts on the box; console = Hetzner break-glass.
 - Brute-force noise: ~4 060 auth-attempt lines / 7 days (internet noise; handled by key-only + fail2ban). **No second factor on SSH — the one real access gap (§5/P1).**
 
 ### 2.3 Patch state — OK-ish

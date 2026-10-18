@@ -7,7 +7,7 @@ This checklist is the next execution queue for improving `~/Nixe` as a Codex-fir
 ## Phase 1: Verify The New Codex Setup
 
 - [x] Run `codex --ask-for-approval never "Summarize the current instructions."` from `~/Nixe`
-- [x] Run `codex --cd hackthecart --ask-for-approval never "Show which instruction files are active."`
+- [x] Run `codex --cd tallow --ask-for-approval never "Show which instruction files are active."`
 - [x] Run `codex --cd tallow-search --ask-for-approval never "Show which instruction files are active."`
 - [x] Run `codex --cd firecrawl-self-hosted/apps/api --ask-for-approval never "Show which instruction files are active."`
 - [x] Confirm the nearest `AGENTS.md` or `AGENTS.override.md` wins in each subproject
@@ -15,8 +15,8 @@ This checklist is the next execution queue for improving `~/Nixe` as a Codex-fir
 
 ## Phase 2: Add Missing Local Overrides
 
-- [x] Add `hackthecart/api/AGENTS.override.md`
-- [x] Add `hackthecart/web/AGENTS.override.md`
+- [x] Add `tallow/api/AGENTS.override.md`
+- [x] Add `tallow/web/AGENTS.override.md`
 - [x] Add `tallow-search/api/AGENTS.override.md`
 - [x] Add `tallow-search/web/AGENTS.override.md`
 - [x] Add a root `src/AGENTS.override.md` for Tallow compiler/runtime work
@@ -33,14 +33,14 @@ This checklist is the next execution queue for improving `~/Nixe` as a Codex-fir
 ## Phase 4: Standardize Verification Commands
 
 - [x] Add a root helper doc for the most common verify commands by subproject
-- [x] Add a `hackthecart` verification script or doc wrapper for API, web, and pipeline checks
+- [x] Add a `tallow` verification script or doc wrapper for API, web, and pipeline checks
 - [x] Add a `tallow-search` verification script or doc wrapper for API and web checks
 - [x] Add a root Tallow verification wrapper for focused Rust compiler/runtime checks
 - [x] Document when to run targeted checks versus full-suite checks
 
 ## Phase 5: Improve Review And Safety Rules
 
-- [x] Add a Codex review checklist for data-sensitive `hackthecart` changes
+- [x] Add a Codex review checklist for data-sensitive `tallow` changes
 - [x] Add a Codex review checklist for API contract changes in `tallow-search`
 - [x] Add a Codex review checklist for performance- or safety-sensitive Tallow runtime/compiler changes
 - [x] Document "do not touch without explicit intent" paths if there are unstable or vendor-like areas

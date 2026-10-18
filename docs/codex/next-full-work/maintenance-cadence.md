@@ -73,7 +73,7 @@ Treat these as references or evidence, not evergreen contracts.
 - [workspace-optimization.md](../workspace-optimization.md): rationale and setup background.
 - [noise-inventory.md](../noise-inventory.md): audit snapshot that informs policy but does not replace policy.
 - [cleanup-execution.md](../cleanup-execution.md): execution record and evidence snapshot.
-- [verification-root-hackthecart.md](../verification-root-hackthecart.md) and [verification-tallowsearch-firecrawl.md](../verification-tallowsearch-firecrawl.md): verification evidence, not recurring operating contracts.
+- [verification-root-tallow.md](../verification-root-tallow.md) and [verification-tallowsearch-firecrawl.md](../verification-tallowsearch-firecrawl.md): verification evidence, not recurring operating contracts.
 - `docs/codex/cleanup-manifests/`: cleanup evidence and supporting manifests unless a later policy doc explicitly promotes one into a contract.
 
 ## Smallest useful next additions

@@ -53,7 +53,7 @@ Consumed in `tallow-search/api/src/config.rs`.
 | `CORS_ORIGINS` | `http://localhost:4322,http://localhost:3000` | stale vs the ports in use (web dev 4322, web unit 4323, Astro default 4321). Behind the Caddy same-origin proxy CORS is not exercised; for direct/dev access set `http://localhost:4321,http://localhost:4322,http://localhost:4323`. `*` is refused by design |
 | `AUTH_SECRET` | `tallow-dev-secret-change-in-production` | dev default; **must be a real secret** wherever the authed surface is reachable. No startup guard exists — operator's responsibility |
 | `MEILI_URL` / `MEILI_KEY` | `http://127.0.0.1:7700` / empty | main Meili client (`/search`, `/search/unified`). Empty `MEILI_KEY` ⇒ requests sent unauthenticated (warn logged) |
-| `HTC_MEILI_URL` / `HTC_MEILI_KEY` / `HTC_MEILI_INDEX` | `http://127.0.0.1:7700` / empty / `products` | **second, duplicate family** consumed only by `/product-search` (audit F4; `HTC_` is HackTheCart-era). Set BOTH families or half the stack silently degrades |
+| `HTC_MEILI_URL` / `HTC_MEILI_KEY` / `HTC_MEILI_INDEX` | `http://127.0.0.1:7700` / empty / `products` | **second, duplicate family** consumed only by `/product-search` (audit F4; `HTC_` is Tallow-era). Set BOTH families or half the stack silently degrades |
 | `TALLOW_PROXY` | `socks5://127.0.0.1:9050` (Tor) | used by `proxy.rs` + finance/execute paths. With Tor down those routes fail; set explicitly (empty string = direct) |
 | `RUST_LOG` | unset → `info` | |
 
@@ -213,7 +213,7 @@ Verified matrix against the locally booted API (`q=milk&limit=5`; evidence
 |---|---|---|---|
 | A | Meili unreachable (transport) | `true` | `Meilisearch request failed (transport): error sending request for url (http://127.0.0.1:7799/indexes/products/search)` |
 | B | Meili HTTP 401 | `true` | `Meilisearch returned HTTP 401 Unauthorized for index 'products'` |
-| C | Meili ok, 2 hits | `false` | `null` (results parsed incl. `best_price`, per-store prices, `source:"hackthecart"`) |
+| C | Meili ok, 2 hits | `false` | `null` (results parsed incl. `best_price`, per-store prices, `source:"tallow"`) |
 | D | Meili ok, 0 hits | `false` | `null` (`total:0` — genuine empty) |
 | E | Meili 200, non-JSON body | `true` | `Meilisearch response could not be parsed as JSON: error decoding response body` |
 
@@ -231,7 +231,7 @@ envelope shape is the obvious follow-up (belongs to the API test surface, not R7
 | API exits: `Failed to initialize` | Postgres unreachable / bad `DATABASE_URL` (default password is a literal placeholder) | `pg_isready`; check `DATABASE_URL`; §5 |
 | API exits: `Postgres migrations failed` | DB reachable but DDL failed (role lacks CREATE on schema, disk full) | `psql "$DATABASE_URL" -c '\dn'`; PG logs |
 | API up but `/search` is keyword-only | Meili client init failed/timed out (5 s bound) — logged `falling back to Postgres search` | check `MEILI_URL`/`MEILI_KEY`; response carries `source` |
-| `/product-search` `degraded:true` | Meili down/401/parse failure for `HTC_MEILI_*` | reason string names the cause; check the *HTC* family (§2) |
+| `/product-search` `degraded:true` | Meili down/401/parse failure for `HTC_MEILI_*` | reason string names the cause; check the *Tallow* family (§2) |
 | Web 404 on `/api/v1/*` | Caddy has no upstream for the search stack (§1) | add the `handle` blocks (§6.4) |
 | Web SSR 502 after deploy | `/opt/tallow-search/web/dist/server/entry.mjs` missing (unit points there) | rebuild + copy (§6.3) |
 | Browser CORS errors (direct access) | `CORS_ORIGINS` defaults to 4322/3000 only; ports in play: 4321/4322/4323 | set `CORS_ORIGINS` explicitly (§2) |

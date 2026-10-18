@@ -2,18 +2,18 @@
 
 Use this with the root `AGENTS.md`: start in the smallest relevant directory, keep verification narrow, and treat `Nixe` as multiple products rather than one repo-wide app.
 
-## HackTheCart: data-sensitive changes
+## Tallow: data-sensitive changes
 
-Apply this when touching `hackthecart/api/`, `hackthecart/import/`, `hackthecart/importers/`, `hackthecart/config/`, `hackthecart/schema/`, `hackthecart/infra/scripts/`, or `hackthecart/pipeline*.{mjs,tl}`.
+Apply this when touching `tallow/api/`, `tallow/import/`, `tallow/importers/`, `tallow/config/`, `tallow/schema/`, `tallow/infra/scripts/`, or `tallow/pipeline*.{mjs,tl}`.
 
 - Product data correctness beats throughput. Do not invent product fields, dietary flags, nutrition, or cross-store matches.
 - Preserve store/source provenance. If a change alters matching, enrichment, or rollups, confirm the provenance still survives into indexed documents.
-- Treat `hackthecart/config/default_product_store_config.toml` and `hackthecart/config/default_product_store_config.checklist.md` as contract files, not optional notes.
-- If schema or pipeline behavior changes, review the matching tables and route dependencies in `hackthecart/schema/postgres/25_pipeline_tables.sql`.
+- Treat `tallow/config/default_product_store_config.toml` and `tallow/config/default_product_store_config.checklist.md` as contract files, not optional notes.
+- If schema or pipeline behavior changes, review the matching tables and route dependencies in `tallow/schema/postgres/25_pipeline_tables.sql`.
 - Re-check price and recency invariants before signoff: `min_price_cents <= max_price_cents`, no silent zero/negative-price acceptance, and no stale `last_seen_unix` assumptions.
 - If a change touches user, household, audit, or legal flows, review it as privacy-sensitive. Do not add raw personal data logging, raw secret serialization, or undocumented data retention behavior.
-- `hackthecart/legal/` is draft legal/compliance material. Only edit it when the task explicitly includes legal/compliance docs or evidence.
-- Minimum verification should match the change: targeted `cargo test -p hackthecart-api` for API work, plus any narrow data validation or product-quality check needed by the changed pipeline/config path.
+- `tallow/legal/` is draft legal/compliance material. Only edit it when the task explicitly includes legal/compliance docs or evidence.
+- Minimum verification should match the change: targeted `cargo test -p tallow-api` for API work, plus any narrow data validation or product-quality check needed by the changed pipeline/config path.
 
 ## Tallow Search: API contract changes
 
@@ -47,7 +47,7 @@ These paths are either vendor-like, generated, noisy, or evidence-oriented. Do n
 - `vendor/`: third-party source copies.
 - `node_modules/`, `target/`, `dist/`, `.playwright-mcp/`, `artifacts/`, `tmp/`, `tmp_*`, `probe_*`, `.tallow-schemas*`, `pytest-cache-files-*`: generated, disposable, or high-noise paths.
 - `tallow-search/docs/signoff/`: release/signoff evidence, not normal product source.
-- `hackthecart/legal/launch-evidence/generated/`: generated launch evidence artifacts.
+- `tallow/legal/launch-evidence/generated/`: generated launch evidence artifacts.
 - Large committed dumps or one-off data roots such as `kroger_data/` should be treated as read-only context unless the task explicitly calls for data regeneration or cleanup.
 
 ## Phase 6 recommendation

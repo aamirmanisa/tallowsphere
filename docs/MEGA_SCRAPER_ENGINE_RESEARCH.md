@@ -3,7 +3,7 @@
 > **Docs truth label:** Historical research / aspirational architecture. This April 2026 briefing is useful design input, not current acceptance evidence. Treat capability counts, "production-ready" language, speed/superiority claims, anti-bot claims, and compliance claims as research leads unless they are confirmed by `.hermes/project-memory.md`, `docs/mega/tallow-1000x-*.md`, accepted phase reports, and executed gates. Current accepted scope remains Linux/CachyOS local/non-live/offline/fixture/no-secret proof through `docs-truth-continuous`; live scraping, real credentials/vaults, production compliance/legal approval, paid/live benchmark superiority, deploy/release readiness, and Windows support remain unclaimed/human-gated.
 
 > **Date**: 2026-04-18
-> **Author**: 8 parallel research agents (browser, language, HTC, config, competitors, anti-bot, perf, memory)
+> **Author**: 8 parallel research agents (browser, language, Tallow, config, competitors, anti-bot, perf, memory)
 > **Scope**: Complete codebase audit + competitive intelligence + state-of-the-art anti-bot research
 > **Purpose**: Foundation for building the most powerful self-hosted scraping engine ever created
 
@@ -19,7 +19,7 @@
 6. [The 10 Pillars of the Mega Engine](#6-the-10-pillars-of-the-mega-engine)
 7. [Deep Dive: Browser Engine Inventory](#7-deep-dive-browser-engine-inventory)
 8. [Deep Dive: Tallow Language Implementation](#8-deep-dive-tallow-language-implementation)
-9. [Deep Dive: HackTheCart Pipeline](#9-deep-dive-hackthecart-pipeline)
+9. [Deep Dive: Tallow Pipeline](#9-deep-dive-tallow-pipeline)
 10. [Deep Dive: Configuration & Dependencies](#10-deep-dive-configuration--dependencies)
 11. [Deep Dive: Competitor Analysis](#11-deep-dive-competitor-analysis)
 12. [Deep Dive: Anti-Bot Evasion State of the Art](#12-deep-dive-anti-bot-evasion-state-of-the-art)
@@ -87,7 +87,7 @@
 - Keystroke: Gaussian 95ms mean, 30ms stddev, clamped [32, 285ms]
 - Traffic profile: 12% reading pauses, 15% rapid clicks, 73% normal (Gaussian 2.5s mean)
 
-### 1.3 HackTheCart Pipeline (Proven in Production)
+### 1.3 Tallow Pipeline (Proven in Production)
 
 > **Label (2026-09-13):** Historical research claim — "Proven in Production" / "3 stores live" are April-2026 research statements, not accepted evidence; current accepted scope remains local/non-live/offline/fixture (see the docs truth label at the top of this file).
 
@@ -834,7 +834,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 ---
 
-## 9. DEEP DIVE: HACKTHECART PIPELINE
+## 9. DEEP DIVE: TALLOW PIPELINE
 
 ### 9.1 Store-Specific Scraping Strategies
 
@@ -871,7 +871,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 ```
 Scrape (Tallow .tl scripts)
   → Raw HTML/JSON per store
-  → hackthecart/pipeline_data/{store}/
+  → tallow/pipeline_data/{store}/
 
 Process (pipeline_process.mjs, 98KB)
   → Department classification (15+ categories, regex)

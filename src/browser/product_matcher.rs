@@ -1,4 +1,4 @@
-//! Product matching engine for HackTheCart price comparison.
+//! Product matching engine for Tallow price comparison.
 //!
 //! Maps scraped store listings to canonical products using a tiered strategy:
 //!   1. UPC/GTIN exact match       (confidence ~0.99)

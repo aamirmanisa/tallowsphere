@@ -32,7 +32,7 @@ These files currently have root-path workflow value and should not move until th
 
 Reason:
 
-- current `hackthecart/infra/scripts/*` workflows use explicit repo-root paths for this seed/import data
+- current `tallow/infra/scripts/*` workflows use explicit repo-root paths for this seed/import data
 - moving them now would be a behavior change, not just cleanup
 
 ## Move Later To Tracked Reference Assets
@@ -43,7 +43,7 @@ These files are worth keeping tracked, but not at the repo root. They should mov
 
 - `hetzner-console.jpg`
 - `hetzner-gen-token.jpg`
-- `hetzner-htc-dashboard.jpg`
+- `hetzner-tallow-dashboard.jpg`
 - `hetzner-primaryips.jpg`
 - `hetzner-rescue.jpg`
 - `hetzner-server-overview.jpg`

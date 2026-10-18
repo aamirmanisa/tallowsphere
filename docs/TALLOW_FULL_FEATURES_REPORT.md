@@ -245,7 +245,7 @@ Astro + Svelte app with feature areas including:
 
 - Scope-wide `.tl` files discovered: 600
 - Root stdlib `.tl` modules in `tallowsphere/stdlib`: 33 (agent/browser/cloud/crypto/db/http/net/osint/forensics/transfer/etc.)
-- Additional `.tl` workloads exist across examples, scripts, hackthecart pipelines, and `openclaw-tallow/tallow`
+- Additional `.tl` workloads exist across examples, scripts, tallow pipelines, and `openclaw-tallow/tallow`
 
 ## 9) OpenClaw-Tallow Workspace (`tallowsphere/openclaw-tallow`)
 

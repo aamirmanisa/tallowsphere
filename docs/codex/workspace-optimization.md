@@ -14,7 +14,7 @@
 ## What Was Optimized
 
 - Added a root `AGENTS.md` instead of relying on `CLAUDE.md`
-- Added subproject guidance for `hackthecart/`, `tallow-search/`, and `firecrawl-self-hosted/`
+- Added subproject guidance for `tallow/`, `tallow-search/`, and `firecrawl-self-hosted/`
 - Added an API-local override for `firecrawl-self-hosted/apps/api/`
 - Added `.codex/config.toml` with pragmatic defaults and clearer project-root markers
 - Moved reusable UI guidance into `docs/codex/`
@@ -45,7 +45,7 @@
 
 ## Verified Instruction Notes
 
-- `~/Nixe/hackthecart` correctly layers `~/Nixe/AGENTS.md` and `~/Nixe/hackthecart/AGENTS.md`, with the nearer file winning on conflicts.
+- `~/Nixe/tallow` correctly layers `~/Nixe/AGENTS.md` and `~/Nixe/tallow/AGENTS.md`, with the nearer file winning on conflicts.
 - `~/Nixe/tallow-search` correctly layers `~/Nixe/AGENTS.md` and `~/Nixe/tallow-search/AGENTS.md`, with the nearer file winning on conflicts.
 - `~/Nixe/firecrawl-self-hosted/apps/api` does not inherit `~/Nixe/AGENTS.md` because `firecrawl-self-hosted/` is its own nested Git root. Its effective chain is `firecrawl-self-hosted/AGENTS.md` then `apps/api/AGENTS.override.md`.
 - `codex debug prompt-input` is the most direct way to inspect model-visible instruction payloads, but it can be materially slower than `codex exec` because it emits a larger JSON dump.
@@ -54,5 +54,5 @@
 ## Verification
 
 - `codex --ask-for-approval never "Summarize the current instructions."`
-- `codex --cd hackthecart --ask-for-approval never "Show which instruction files are active."`
+- `codex --cd tallow --ask-for-approval never "Show which instruction files are active."`
 - `codex --cd firecrawl-self-hosted/apps/api --ask-for-approval never "Show which instruction files are active."`
