@@ -9216,6 +9216,17 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_line(&format!("store i64 2, ptr {vtype_gep}"));
                 Ok(LLValue::new(result_ptr, LLType::ResultPtr))
             }
+            ("Page", "content") => {
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_page_content(ptr {})",
+                    obj.reg
+                ));
+                // Declared Result<String>: null is the FFI failure sentinel, so
+                // the wrapper produces Err(last_error) exactly like the
+                // interpreter's Err(e.to_string()).
+                Ok(self.wrap_ptr_in_result(&reg))
+            }
             ("Page", "title") => {
                 let reg = self.fresh_reg();
                 self.emit_line(&format!(
