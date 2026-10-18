@@ -232,8 +232,19 @@ fn chunk_file(args: &[Value]) -> StdlibResult {
     let mut offset: usize = 0;
     let mut index: usize = 0;
     loop {
-        let bytes_read = reader.read(&mut buf)
-            .map_err(|e| format!("transfer.chunk_file: read error: {}", e))?;
+        // Fill the chunk completely before hashing it. `read` returns as much
+        // as is available, not as much as was asked for, so a short read would
+        // silently become a chunk boundary — the same file then produced
+        // different chunk lists (and different Merkle roots) depending on I/O
+        // timing. Only a 0-byte read means end of file.
+        let mut bytes_read = 0usize;
+        while bytes_read < chunk_size {
+            match reader.read(&mut buf[bytes_read..]) {
+                Ok(0) => break,
+                Ok(n) => bytes_read += n,
+                Err(e) => return Err(format!("transfer.chunk_file: read error: {}", e)),
+            }
+        }
         if bytes_read == 0 { break; }
         let hash = blake3::hash(&buf[..bytes_read]);
         chunks.push(Value::Struct {

@@ -1474,6 +1474,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_decrypt_file(ptr, ptr, ptr)\n");
         ir.push_str("declare i64 @tallow_copy_file(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_delta_scan(ptr)\n");
+        ir.push_str("declare ptr @tallow_transfer_chunk(ptr, i64)\n");
+        ir.push_str("declare ptr @tallow_transfer_tree_hash(ptr)\n");
+        ir.push_str("declare ptr @tallow_transfer_manifest(ptr, i64, ptr)\n");
         ir.push('\n');
 
         // Privacy enforcement: inline tallow_redact_private
@@ -1866,6 +1869,34 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ContentFingerprint".to_string(),
+                }
+            });
+
+        // `ChunkInfo` — `Transfer.chunk()` returns `[]ChunkInfo`, declared in
+        // stdlib/transfer.tl which a program calling the module need not
+        // import. Synthesized for the same reason as the two above: without a
+        // layout there is no `%struct.ChunkInfo` type, so `cs[0].size` cannot
+        // GEP and falls through to 0. Field order must match
+        // `FfiChunkInfo` in src/runtime/transfer_ffi.rs, which fills the
+        // records the compiled code reads.
+        self.struct_layouts
+            .entry("ChunkInfo".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("index".to_string(), (0usize, LLType::I64));
+                field_map.insert("offset".to_string(), (1usize, LLType::I64));
+                field_map.insert("size".to_string(), (2usize, LLType::I64));
+                field_map.insert("hash".to_string(), (3usize, LLType::I8Ptr));
+                StructLayout {
+                    fields: vec![
+                        "index".to_string(),
+                        "offset".to_string(),
+                        "size".to_string(),
+                        "hash".to_string(),
+                    ],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.ChunkInfo".to_string(),
                 }
             });
 
@@ -3506,6 +3537,24 @@ void tallow_async_runtime_shutdown(void) {
                                     .insert(name.clone(), "StringArray".to_string());
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_is_array.insert(name.clone(), true);
+                            }
+
+                            // Transfer.chunk(...) → []ChunkInfo: a NATIVE array
+                            // of heap `%struct.ChunkInfo` records built by
+                            // runtime/transfer_ffi.rs. Three flags are needed and
+                            // each prevents a distinct silent wrong answer:
+                            // `variable_is_array` keeps `.len()` off strlen (a
+                            // 2-element array strlen'd to 1), `elem_is_ptr` makes
+                            // `cs[i]` inttoptr the slot, and `elem_struct` lets
+                            // `cs[i].size` GEP into the struct instead of
+                            // returning a literal 0.
+                            if matches!(obj_name.as_str(), "Transfer" | "transfer")
+                                && method == "chunk"
+                            {
+                                self.variable_is_array.insert(name.clone(), true);
+                                self.variable_array_elem_is_ptr.insert(name.clone(), true);
+                                self.variable_array_elem_struct
+                                    .insert(name.clone(), "ChunkInfo".to_string());
                             }
                             // fs.read_bytes(...) → "Bytes" (t_70cad4f2): the
                             // native value is the base64 text the FFI returns,
@@ -6788,18 +6837,18 @@ void tallow_async_runtime_shutdown(void) {
                         return Ok(result);
                     }
                 }
-                // Transfer.* — `hash` is lowered; `chunk`/`tree_hash` carry
-                // `[]ChunkInfo`, which the native value model cannot represent
-                // (no struct). Refuse by name here: falling through would emit
-                // the module ident as an undefined global and hash it with the
-                // wrong algorithm, which only clang catches.
+                // Transfer.* — `hash`, `chunk`, `tree_hash` and `manifest`
+                // are lowered (chunk returns a native array of `%struct
+                // .ChunkInfo` records built by src/runtime/transfer_ffi.rs).
+                // Anything else refuses by name here: falling through would
+                // emit the module ident as an undefined global, which only
+                // clang catches.
                 "Transfer" | "transfer" => {
                     if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
                         return Ok(result);
                     }
                     return Err(format!(
-                        "native backend has no lowering for Transfer.{method}: the native value \
-                         model has no struct, so []ChunkInfo cannot be represented; failing \
+                        "native backend has no lowering for Transfer.{method}; failing \
                          loudly so the interpreter runs it"
                     ));
                 }
@@ -20330,15 +20379,16 @@ impl<'a> CodeGen<'a> {
 
     /// `Transfer` module (stdlib/transfer.tl) — the file-level surface.
     ///
-    /// Only scalar-returning members are lowered here. `Transfer.hash` is the
-    /// BLAKE3 file hash, so it maps to `tallow_file_hash`; before this arm
-    /// existed the call fell through to a generic method path that emitted
+    /// `hash`, `chunk`, `tree_hash` and `manifest` lower here. `Transfer.hash`
+    /// is the BLAKE3 file hash, so it maps to `tallow_file_hash`; before that
+    /// arm existed the call fell through to a generic method path that emitted
     /// `call ptr @tallow_sha256(ptr @tallow.Transfer)` — the module name as an
     /// undefined global, hashed under the wrong algorithm, caught only by
-    /// clang. `chunk` returns `[]ChunkInfo` and `tree_hash` consumes it; the
-    /// native value model has no struct, so those fall through and fail loudly
-    /// by name (the interpreter then runs the program) instead of emitting IR
-    /// that cannot be right.
+    /// clang. `chunk` returns `[]ChunkInfo` as a native array of heap
+    /// `#[repr(C)]` records that match `%struct.ChunkInfo` field for field;
+    /// `tree_hash` and `manifest` read the hashes back out of that array.
+    /// Members with no arm still fail loudly by name so the interpreter runs
+    /// the program instead of emitting IR that cannot be right.
     fn emit_stdlib_transfer(
         &mut self,
         method: &str,
@@ -20354,6 +20404,77 @@ impl<'a> CodeGen<'a> {
                 let result = self.fresh_reg();
                 self.emit_line(&format!(
                     "{result} = call ptr @tallow_file_hash(ptr {path})"
+                ));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            // `Transfer.chunk(path, chunk_size = 262144)` -> []ChunkInfo.
+            //
+            // The runtime builds the array as `[count][ptrtoint(ChunkInfo)…]`
+            // and fills `#[repr(C)] FfiChunkInfo` records whose layout is
+            // exactly codegen's `%struct.ChunkInfo`, so field reads work
+            // through the ordinary GEP path. The default is spelled here
+            // because the .tl signature cannot be consulted at this point.
+            "chunk" => {
+                let Some(arg) = args.first() else {
+                    return Ok(None);
+                };
+                let val = self.emit_expr(&arg.value)?;
+                let path = self.coerce_to_string(&val)?;
+                let size = match args.get(1) {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce_to_i64(&v)?
+                    }
+                    None => "262144".to_string(),
+                };
+                let result = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{result} = call ptr @tallow_transfer_chunk(ptr {path}, i64 {size})"
+                ));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            // `Transfer.tree_hash(chunks: []ChunkInfo) -> String`
+            "tree_hash" => {
+                let Some(arg) = args.first() else {
+                    return Ok(None);
+                };
+                let arr = self.emit_expr(&arg.value)?;
+                let arr_ptr = if arr.ty == LLType::I64 {
+                    let r = self.fresh_reg();
+                    self.emit_line(&format!("{r} = inttoptr i64 {} to ptr", arr.reg));
+                    r
+                } else {
+                    arr.reg
+                };
+                let result = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{result} = call ptr @tallow_transfer_tree_hash(ptr {arr_ptr})"
+                ));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            // `Transfer.manifest(root_hash, size, chunks: []ChunkInfo) -> String`
+            "manifest" => {
+                if args.len() < 3 {
+                    return Ok(None);
+                }
+                let root_val = self.emit_expr(&args[0].value)?;
+                let root = self.coerce_to_string(&root_val)?;
+                let size_val = self.emit_expr(&args[1].value)?;
+                let size = self.coerce_to_i64(&size_val)?;
+                let arr = self.emit_expr(&args[2].value)?;
+                let arr_ptr = if arr.ty == LLType::I64 {
+                    let r = self.fresh_reg();
+                    self.emit_line(&format!("{r} = inttoptr i64 {} to ptr", arr.reg));
+                    r
+                } else {
+                    arr.reg
+                };
+                let result = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{result} = call ptr @tallow_transfer_manifest(ptr {root}, i64 {size}, ptr {arr_ptr})"
                 ));
                 self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
                 Ok(Some(LLValue::new(result, LLType::I8Ptr)))
@@ -22143,6 +22264,7 @@ mod tests {
         let mut cg = CodeGen::new(&program, &env);
         cg.emit_module().expect("codegen error")
     }
+
 
     /// The invariant behind the `open_graph` fix, checked against the real stdlib surface.
     ///
