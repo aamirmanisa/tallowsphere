@@ -42,6 +42,21 @@ struct Page {
 }
 
 impl Page {
+    /// Opt this page into console/error capture.
+    ///
+    /// `drain_events("console", …)` and `on_console` need it; network events do
+    /// not. It sends Runtime.enable, which anti-bot systems can detect, so it is
+    /// not automatic. `on_console`, `on_error`, `expose_function` and
+    /// `expose_binding` call it themselves.
+    fn capture_console(self) -> Result<bool> {
+        // Runtime: Runtime.enable, idempotent per session
+    }
+
+    /// Close this tab. Pending `on_*` events are delivered before the close.
+    fn close(self) {
+        // Runtime: Target.closeTarget after delivering pending handlers
+    }
+
     /// Navigate to a URL and wait for page load.
     /// This is the correct way to access JS-rendered pages.
     /// For HTTP-only requests (no JS), use fetch() instead.

@@ -181,7 +181,7 @@ impl DualModeEngine {
                 .send_command_with_session("Network.enable", None, &session_id)
                 .await?;
 
-            let page = Page::from_cdp(client.clone(), session_id, None, None);
+            let page = Page::from_cdp(client.clone(), session_id, None, None).await;
             self.browser_process = Some(process);
             self.cdp_client = Some(client);
             self.page = Some(page);
@@ -298,7 +298,7 @@ impl DualModeEngine {
         })?;
 
         let client = CdpClient::connect(&session.ws_url).await?;
-        let page = Page::from_cdp(client.clone(), session.session_id.clone(), None, None);
+        let page = Page::from_cdp(client.clone(), session.session_id.clone(), None, None).await;
 
         // Sync any cookies accumulated in HTTP mode back to the browser
         let cdp_cookies: Vec<CdpCookie> = self

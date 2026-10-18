@@ -378,7 +378,19 @@ impl BrowserPlugins {
             }});
         }});
     }});
-    observer.observe(document.documentElement, {{ childList: true, subtree: true }});
+    // At document_start there is no documentElement yet; observing null throws
+    // and kills the rest of this script.
+    var root = document.documentElement;
+    if (root) {{
+        observer.observe(root, {{ childList: true, subtree: true }});
+    }} else {{
+        document.addEventListener('readystatechange', function once() {{
+            document.removeEventListener('readystatechange', once);
+            if (document.documentElement) {{
+                observer.observe(document.documentElement, {{ childList: true, subtree: true }});
+            }}
+        }});
+    }}
 }})();
 "#,
             domain_list = domain_list
@@ -901,14 +913,22 @@ if (navigator.getBattery) {
     navigator.getBattery = undefined;
 }
 
-// Hardware concurrency — normalize
-Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+// Normalizers. Each redefines a property the browser may have made
+// non-configurable; a throw here aborts the whole init script, so the
+// evasions after it never run and `on_error` reports an exception the page
+// never caused. Swallow the failure instead: the property keeps its real
+// (already plausible) value, which is the correct outcome.
+function __tallowNormalize(target, prop, value) {
+    try {
+        Object.defineProperty(target, prop, { get: () => value, configurable: true });
+    } catch (e) {
+        // non-configurable — leave the real value in place
+    }
+}
 
-// Device memory — normalize
-Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-
-// Screen resolution — normalize
-Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+__tallowNormalize(navigator, 'hardwareConcurrency', 4);
+__tallowNormalize(navigator, 'deviceMemory', 8);
+__tallowNormalize(screen, 'colorDepth', 24);
 "#;
 
 // ─────────────────────────────────────────────────────────────────────────────

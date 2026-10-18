@@ -875,7 +875,14 @@ impl<'a> TypeChecker<'a> {
                     "DataBatch" | "EncryptedBatch" | "EncryptedResult" |
                     "Report" | "Price" | "DataRecord" | "HTMLDoc" |
                     "HTTPConn" | "Resource" | "Data" | "EncryptedReport" |
-                    "InputData" | "User"
+                    "InputData" | "User" |
+                    // Declared in stdlib/browser.tl but not registered as
+                    // structs here, so the documented handler signature
+                    // `fn on_console(ev: PageEvent)` warned on every program.
+                    "PageEvent" | "EventListener" | "ExposedFunction" |
+                    "ExposedBinding" | "ScriptTag" | "StyleTag" |
+                    "MediaEmulation" | "NetworkThrottle" | "WaitResult" |
+                    "NavigationResult"
                 )
             {
                 self.diags.warning(

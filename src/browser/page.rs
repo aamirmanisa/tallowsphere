@@ -146,14 +146,40 @@ pub struct Page {
     pub(crate) pool_index: Option<usize>,
     /// Reference back to the BrowserPool that owns this page (enables pool.release)
     pub(crate) pool: Option<Arc<super::pool::BrowserPool>>,
-    /// Events seen on this page's session, waiting to be drained.
-    pub(crate) events: Arc<Mutex<VecDeque<PageEvent>>>,
+    /// `.tl` handlers registered for this page's event kinds, as
+    /// `(kind, handler_function)`. Stored on the page, not in the interpreter:
+    /// a registry keyed by session outlives the page and grows for the life of
+    /// the process (register #112).
+    pub(crate) handlers: Arc<Mutex<Vec<(String, String)>>>,
+    /// `Runtime.addBinding` bindings as `(js_name, handler_function)`.
+    pub(crate) bindings: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl Page {
     /// Create a Page from an existing CDP client and session ID.
     /// Used by BrowserPool to wrap acquired pool handles as Page objects.
-    pub fn from_cdp(
+    pub async fn from_cdp(
+        client: CdpClient,
+        session_id: String,
+        pool_index: Option<usize>,
+        pool: Option<Arc<super::pool::BrowserPool>>,
+    ) -> Self {
+        let page = Self::from_cdp_raw(client, session_id, pool_index, pool);
+        page.start_event_pump().await;
+        // A pooled session carries whatever the previous lease left behind.
+        // Those events belong to a page that is gone; delivering them to this
+        // page's handlers would attribute another run's traffic to this one.
+        page.drain_events("", 0);
+        page
+    }
+
+    /// Build a Page without starting its event pump.
+    ///
+    /// Only for call sites that cannot await (unit tests constructing a page
+    /// around a stub client). Production constructors must use [`from_cdp`],
+    /// otherwise `drain_events` is permanently empty and every `on_*` handler
+    /// is silently dead.
+    pub fn from_cdp_raw(
         client: CdpClient,
         session_id: String,
         pool_index: Option<usize>,
@@ -167,7 +193,8 @@ impl Page {
             iframe_doc_object_id: None,
             pool_index,
             pool,
-            events: Arc::new(Mutex::new(VecDeque::new())),
+            handlers: Arc::new(Mutex::new(Vec::new())),
+            bindings: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -175,6 +202,77 @@ impl Page {
     /// under, because a Page value is cloned freely and has no stable address.
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// Close this page's target.
+    ///
+    /// Callers that registered `on_*` handlers should deliver pending events
+    /// first (`wait_for_timeout(0)` or the interpreter's `close` arm, which
+    /// pumps before closing): a close destroys the session, so nothing that
+    /// was buffered can be delivered afterwards.
+    pub async fn close(&self) -> Result<(), BrowserError> {
+        self.client.close_page(self).await
+    }
+
+    /// Enable console/error capture on this session (idempotent).
+    ///
+    /// `Runtime.enable` is a CDP-attachment signal, so the event pump does not
+    /// send it for every page; console and error events exist only after this.
+    pub async fn enable_runtime_events(&self) -> Result<(), BrowserError> {
+        if !self.client.claim_runtime_enable(&self.session_id) {
+            return Ok(());
+        }
+        self.client
+            .send_command_with_session("Runtime.enable", None, &self.session_id)
+            .await
+            .map_err(|e| BrowserError::CdpError {
+                code: -1,
+                message: format!("Runtime.enable failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Register a `.tl` handler for one event kind. Registering the same pair
+    /// twice is a no-op: a program that loops over a setup call must not make
+    /// the handler fire twice per event.
+    pub fn register_handler(&self, kind: &str, handler: &str) {
+        let mut guard = match self.handlers.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !guard
+            .iter()
+            .any(|(k, h)| k == kind && h == handler)
+        {
+            guard.push((kind.to_string(), handler.to_string()));
+        }
+    }
+
+    /// A snapshot of the registered handlers, so the caller can iterate while
+    /// calling back into the interpreter (which may register more).
+    pub fn handlers(&self) -> Vec<(String, String)> {
+        match self.handlers.lock() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Register a `Runtime.addBinding` binding as `(js_name, tl_handler)`.
+    pub fn register_binding(&self, name: &str, handler: &str) {
+        let mut guard = match self.bindings.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !guard.iter().any(|(n, h)| n == name && h == handler) {
+            guard.push((name.to_string(), handler.to_string()));
+        }
+    }
+
+    pub fn bindings(&self) -> Vec<(String, String)> {
+        match self.bindings.lock() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// Start recording this page's CDP events into a bounded buffer.
@@ -185,20 +283,28 @@ impl Page {
         // Subscribe BEFORE enabling: enabling the domains emits events of its
         // own (executionContextCreated), and anything that arrives between the
         // enable and the subscription is lost.
+        // One pump per session, not per Page value: a pooled page is wrapped
+        // in a fresh Page on every acquire, and a second pump would double
+        // every event while the first writes into a buffer nobody drains.
+        let (buffer, first) = self.client.claim_session_pump(&self.session_id);
+        if !first {
+            return;
+        }
         let mut events = self.client.subscribe();
         // Enable synchronously, not inside the spawned task: a task that
         // enables Runtime afterwards races the first navigation, and a page
         // that logs during load loses its console lines. Measured — with the
         // enable in the task, `console.log` at parse time never arrived, while
         // a log injected after load did.
-        for domain in ["Runtime.enable", "Page.enable"] {
+        // Network is cheap and is already enabled by navigation; Runtime is
+        // not sent here — see `enable_runtime_events`.
+        for domain in ["Page.enable", "Network.enable"] {
             let _ = self
                 .client
                 .send_command_with_session(domain, None, &self.session_id)
                 .await;
         }
         let session = self.session_id.clone();
-        let buffer = Arc::clone(&self.events);
         self.client.spawn_background(async move {
             loop {
                 match events.recv().await {
@@ -244,7 +350,8 @@ impl Page {
     /// Taking removes them, so a caller that forgets to drain does not
     /// reprocess the same console message forever.
     pub fn drain_events(&self, kind: &str, limit: usize) -> Vec<PageEvent> {
-        let mut guard = match self.events.lock() {
+        let buffer = self.client.session_buffer(&self.session_id);
+        let mut guard = match buffer.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
@@ -1764,7 +1871,8 @@ impl Page {
             timeout: self.timeout,
             pool_index: self.pool_index,
             pool: self.pool.clone(),
-            events: Arc::new(Mutex::new(VecDeque::new())),
+            handlers: Arc::new(Mutex::new(Vec::new())),
+            bindings: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -2750,7 +2858,8 @@ impl Page {
                             iframe_doc_object_id: None,
                             pool_index: self.pool_index,
                             pool: self.pool.clone(),
-                            events: Arc::new(Mutex::new(VecDeque::new())),
+                            handlers: Arc::new(Mutex::new(Vec::new())),
+            bindings: Arc::new(Mutex::new(Vec::new())),
                         };
                         popup.start_event_pump().await;
                         return Ok(popup);
@@ -3259,13 +3368,17 @@ Object.defineProperty(navigator, 'plugins', {
 });
 
 // Fix languages — headless often returns empty
-Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-
-// Fix hardware concurrency
-Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
-
-// Fix device memory
-Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+function __tallowSet(target, prop, value) {
+    try {
+        Object.defineProperty(target, prop, {get: () => value, configurable: true});
+    } catch (e) {
+        // Non-configurable in this build: the real value stays, and a throw
+        // here would abort the rest of the init script.
+    }
+}
+__tallowSet(navigator, 'languages', ['en-US', 'en']);
+__tallowSet(navigator, 'hardwareConcurrency', 8);
+__tallowSet(navigator, 'deviceMemory', 8);
 
 // Override permissions API
 const originalQuery = window.navigator.permissions?.query;
@@ -4172,7 +4285,7 @@ mod tests {
         use crate::browser::cdp::pipe_test_peer::{loopback_client, wait_for_observed};
 
         let (client, observed) = loopback_client().await;
-        let page = Page::from_cdp(client, "sess-b5".to_string(), None, None);
+        let page = Page::from_cdp_raw(client, "sess-b5".to_string(), None, None);
         let config = RecordingConfig {
             width: 1280,
             height: 720,

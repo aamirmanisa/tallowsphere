@@ -69,19 +69,6 @@ pub struct BrowserHandle {
     pub handle: std::sync::Arc<dyn std::any::Any + Send + Sync>,
 }
 
-/// A `.tl` handler registered for one kind of page event.
-///
-/// Delivery is deferred: the interpreter is single-threaded, so the CDP event
-/// goes into the page's buffer and the handler is called on the next Page
-/// method call rather than from the browser's runtime.
-#[derive(Clone, Debug)]
-pub struct BrowserEventHandler {
-    /// Event category, matching `PageEvent.kind` (`console`, `request`, …).
-    pub kind: String,
-    /// Name of the `.tl` function to call with the `PageEvent`.
-    pub handler: String,
-}
-
 impl fmt::Debug for BrowserHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BrowserHandle({})", self.kind)
@@ -1130,9 +1117,7 @@ fn struct_int_field(fields: &[(String, Value)], key: &str, default: i128) -> i12
 
 pub struct Interpreter {
     /// Page event handlers, keyed by page session id.
-    browser_handlers: HashMap<String, Vec<BrowserEventHandler>>,
     /// JS binding name → `.tl` handler, keyed by page session id.
-    browser_bindings: HashMap<String, Vec<(String, String)>>,
     /// Stack of deferred blocks per function call frame (LIFO within each frame).
     pub deferred_stack: Vec<Vec<Block>>,
     /// Opt-in runtime capability policy (deny-lists) consulted by the builtin
@@ -1232,11 +1217,12 @@ struct InterpreterCore {
     program_args: Vec<String>,
 }
 
+/// `TALLOW_DEBUG_PUMP=1` traces event delivery. Resolved once per process.
+static DEBUG_PUMP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
 impl Interpreter {
     pub fn new() -> Self {
         Self {
-            browser_handlers: HashMap::new(),
-            browser_bindings: HashMap::new(),
             deferred_stack: Vec::new(),
             functions: Arc::new(HashMap::new()),
             methods: Arc::new(HashMap::new()),
@@ -13333,41 +13319,34 @@ impl Interpreter {
         let Some(page) = bh.handle.downcast_ref::<crate::browser::Page>() else {
             return Ok(());
         };
-        let session = page.session_id().to_string();
-        let handlers = self.browser_handlers.get(&session).cloned();
-        let debug = std::env::var("TALLOW_DEBUG_PUMP").is_ok();
-        if debug {
-            eprintln!(
-                "[pump] session={session} registered={:?}",
-                handlers.as_ref().map(|h| h.iter().map(|x| x.kind.clone()).collect::<Vec<_>>())
-            );
-        }
-        if let Some(handlers) = handlers {
-            for h in handlers {
-                let drained = page.drain_events(&h.kind, 0);
-                if debug {
-                    eprintln!("[pump] kind={} drained={}", h.kind, drained.len());
-                }
-                for ev in drained {
-                    let value = page_event_value(ev);
-                    self.call_fn_with_args(&h.handler, vec![value])?;
-                }
+        // Handlers live on the page, so a pooled page (wrapped in a fresh
+        // Page on every acquire) and a page built from an existing session
+        // both deliver, and nothing outlives the page that registered it.
+        let handlers = page.handlers();
+        // Read once: the pump runs at the head of every Page call, and
+        // `env::var` takes the environment lock and allocates.
+        let debug = *DEBUG_PUMP.get_or_init(|| std::env::var("TALLOW_DEBUG_PUMP").is_ok());
+        for (kind, handler) in handlers {
+            let drained = page.drain_events(&kind, 0);
+            if debug {
+                eprintln!("[pump] kind={kind} drained={}", drained.len());
+            }
+            for ev in drained {
+                let value = page_event_value(ev);
+                self.call_fn_with_args(&handler, vec![value])?;
             }
         }
-        self.pump_bindings(page, &session)
+        self.pump_bindings(page)
     }
 
     /// Deliver `Runtime.bindingCalled` events to the handler registered by
     /// `expose_function`/`expose_binding`. The binding name is inside the
     /// payload, so one drain can serve several bindings.
-    fn pump_bindings(
-        &mut self,
-        page: &crate::browser::Page,
-        session: &str,
-    ) -> Result<(), RuntimeError> {
-        let Some(bindings) = self.browser_bindings.get(session).cloned() else {
+    fn pump_bindings(&mut self, page: &crate::browser::Page) -> Result<(), RuntimeError> {
+        let bindings = page.bindings();
+        if bindings.is_empty() {
             return Ok(());
-        };
+        }
         for ev in page.drain_events("binding", 0) {
             let name = serde_json::from_str::<serde_json::Value>(&ev.payload)
                 .ok()
@@ -21377,6 +21356,37 @@ impl Interpreter {
                     // ── Page event handlers ──────────────────────────────────
                     // Registration only: the event is buffered by the page and
                     // delivered by pump_page_handlers on the next Page call.
+                    ("Page", "capture_console") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let rt = get_browser_runtime();
+                        match rt.block_on(page.enable_runtime_events()) {
+                            Ok(()) => Ok(Value::Ok(Box::new(Value::Bool(true)))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "close") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        // Deliver first: the session dies with the target, so
+                        // anything still buffered would never reach its handler.
+                        self.pump_page_handlers(bh)?;
+                        let rt = get_browser_runtime();
+                        match rt.block_on(page.close()) {
+                            Ok(()) => Ok(Value::Nil),
+                            Err(e) => {
+                                Err(RuntimeError::Error(format!("page.close failed: {e}")))
+                            }
+                        }
+                    }
                     ("Page", m @ ("on_console" | "on_error" | "on_request" | "on_response" | "on_filechooser" | "on_download")) => {
                         let page = bh
                             .handle
@@ -21393,14 +21403,14 @@ impl Interpreter {
                         if self.functions.get(&handler).is_none() {
                             return Err(RuntimeError::UndefinedFn(handler));
                         }
+                        // Console and error events do not exist without
+                        // Runtime.enable; request/response/filechooser/download
+                        // do, but enabling once is harmless and the caller asked
+                        // for delivery either way.
+                        let rt = get_browser_runtime();
+                        let _ = rt.block_on(page.enable_runtime_events());
                         let kind = m.trim_start_matches("on_").to_string();
-                        self.browser_handlers
-                            .entry(page.session_id().to_string())
-                            .or_default()
-                            .push(BrowserEventHandler {
-                                kind: kind.clone(),
-                                handler: handler.clone(),
-                            });
+                        page.register_handler(&kind, &handler);
                         Ok(Value::Ok(Box::new(Value::Struct {
                             name: "EventListener".to_string(),
                             fields: vec![
@@ -21429,16 +21439,16 @@ impl Interpreter {
                             return Err(RuntimeError::UndefinedFn(handler));
                         }
                         let as_function = m == "expose_function";
+                        // bindingCalled arrives on the Runtime domain.
+                        let rt = get_browser_runtime();
+                        let _ = rt.block_on(page.enable_runtime_events());
                         match rt.block_on(page.client.send_command_with_session(
                             "Runtime.addBinding",
                             Some(serde_json::json!({ "name": name })),
                             &page.session_id,
                         )) {
                             Ok(_) => {
-                                self.browser_bindings
-                                    .entry(page.session_id().to_string())
-                                    .or_default()
-                                    .push((name.clone(), handler.clone()));
+                                page.register_binding(&name, &handler);
                                 let struct_name = if as_function {
                                     "ExposedFunction"
                                 } else {
@@ -23092,12 +23102,15 @@ impl Interpreter {
                 match rt.block_on(pool.acquire()) {
                     Ok(pool_handle_result) => {
                         // Create a Page from the acquired handle's client + session
-                        let page = crate::browser::Page::from_cdp(
+                        // Started here, not by the caller: a pooled page is
+                        // wrapped in a fresh Page on every acquire, and a page
+                        // without a pump has an empty event buffer forever.
+                        let page = rt.block_on(crate::browser::Page::from_cdp(
                             pool_handle_result.client.clone(),
                             pool_handle_result.session_id.clone(),
                             Some(pool_handle_result.index),
                             Some(pool_arc),
-                        );
+                        ));
                         let page_handle: std::sync::Arc<dyn std::any::Any + Send + Sync> =
                             std::sync::Arc::new(page);
                         Some(Ok(Value::Ok(Box::new(Value::BrowserObject(
