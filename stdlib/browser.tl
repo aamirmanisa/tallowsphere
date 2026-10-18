@@ -111,6 +111,28 @@ impl Page {
         // Runtime: Runtime.evaluate poll at 50 ms
     }
 
+    /// Wait until `location.href` matches `pattern` (`*` wildcards).
+    fn wait_for_url(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
+        // Runtime: polls window.location.href at 50 ms
+    }
+
+    /// Wait for a CDP event — full method (`Page.loadEventFired`) or bare
+    /// name (`loadEventFired`). Subscribe before the triggering action:
+    /// events are not replayed.
+    fn wait_for_event(self, event_name: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
+        // Runtime: CDP event subscription with a deadline
+    }
+
+    /// Wait for an outgoing request whose URL matches `pattern`.
+    fn wait_for_request(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
+        // Runtime: Network.requestWillBeSent filtered by URL
+    }
+
+    /// Wait for a response whose URL matches `pattern`.
+    fn wait_for_response(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
+        // Runtime: Network.responseReceived filtered by URL
+    }
+
     /// Find the first element matching a CSS selector.
     /// Returns Err if no element matches.
     fn query_selector(self, selector: String) -> Result<Element> {

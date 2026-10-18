@@ -17464,7 +17464,7 @@ impl Interpreter {
                         let elapsed = rt.block_on(page.wait_for_timeout(ms));
                         Ok(Value::Ok(Box::new(Value::Struct {
                             name: "WaitResult".to_string(),
-                            fields: wait_result_fields(None, None, elapsed, ms),
+                            fields: wait_result_fields(None, elapsed, ms, &[]),
                         })))
                     }
                     ("Page", "wait_for_function") => {
@@ -17490,7 +17490,129 @@ impl Interpreter {
                         ) {
                             Ok((found, elapsed)) => Ok(Value::Ok(Box::new(Value::Struct {
                                 name: "WaitResult".to_string(),
-                                fields: wait_result_fields(Some(found), Some(found), elapsed, timeout_ms),
+                                fields: wait_result_fields(Some(found), elapsed, timeout_ms, &[]),
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "wait_for_url") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let pattern = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        if pattern.trim().is_empty() {
+                            return Err(RuntimeError::Error(
+                                "wait_for_url requires a URL or pattern".into(),
+                            ));
+                        }
+                        let timeout_ms = match args.get(1) {
+                            Some(Value::Int(n)) if *n > 0 => *n as u64,
+                            Some(Value::Float(f)) if *f > 0.0 => *f as u64,
+                            _ => 30_000,
+                        };
+                        match rt.block_on(
+                            page.wait_for_url(&pattern, std::time::Duration::from_millis(timeout_ms)),
+                        ) {
+                            Ok((found, elapsed, url)) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "WaitResult".to_string(),
+                                fields: wait_result_fields(
+                                    Some(found),
+                                    elapsed,
+                                    timeout_ms,
+                                    &[("url", Value::String(url))],
+                                ),
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "wait_for_event") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let name = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        if name.trim().is_empty() {
+                            return Err(RuntimeError::Error(
+                                "wait_for_event requires an event name".into(),
+                            ));
+                        }
+                        let timeout_ms = match args.get(1) {
+                            Some(Value::Int(n)) if *n > 0 => *n as u64,
+                            Some(Value::Float(f)) if *f > 0.0 => *f as u64,
+                            _ => 30_000,
+                        };
+                        match rt.block_on(
+                            page.wait_for_event(&name, std::time::Duration::from_millis(timeout_ms)),
+                        ) {
+                            Ok((seen, elapsed, method)) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "WaitResult".to_string(),
+                                fields: wait_result_fields(
+                                    Some(seen),
+                                    elapsed,
+                                    timeout_ms,
+                                    &[("event", Value::String(method))],
+                                ),
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "wait_for_request") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let pattern = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        let timeout_ms = match args.get(1) {
+                            Some(Value::Int(n)) if *n > 0 => *n as u64,
+                            Some(Value::Float(f)) if *f > 0.0 => *f as u64,
+                            _ => 30_000,
+                        };
+                        match rt.block_on(
+                            page.wait_for_request(&pattern, std::time::Duration::from_millis(timeout_ms)),
+                        ) {
+                            Ok((seen, elapsed, url)) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "WaitResult".to_string(),
+                                fields: wait_result_fields(
+                                    Some(seen),
+                                    elapsed,
+                                    timeout_ms,
+                                    &[("url", Value::String(url))],
+                                ),
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "wait_for_response") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let pattern = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        let timeout_ms = match args.get(1) {
+                            Some(Value::Int(n)) if *n > 0 => *n as u64,
+                            Some(Value::Float(f)) if *f > 0.0 => *f as u64,
+                            _ => 30_000,
+                        };
+                        match rt.block_on(
+                            page.wait_for_response(&pattern, std::time::Duration::from_millis(timeout_ms)),
+                        ) {
+                            Ok((seen, elapsed, url)) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "WaitResult".to_string(),
+                                fields: wait_result_fields(
+                                    Some(seen),
+                                    elapsed,
+                                    timeout_ms,
+                                    &[("url", Value::String(url)), ("received", Value::Bool(seen))],
+                                ),
                             }))),
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }
@@ -32153,17 +32275,17 @@ fn value_to_json(val: &Value) -> String {
 ///
 /// Optional fields stay `Nil` rather than being invented: a timeout result has
 /// no `url`, `status` or `event`, and a caller can tell "not set" from "false"
-/// because the types are optional in `stdlib/browser.tl`.
+/// because the types are optional in `stdlib/browser.tl`. `extra` overrides a
+/// base field by name (an empty name is ignored).
 fn wait_result_fields(
     result: Option<bool>,
-    matched: Option<bool>,
     elapsed_ms: u64,
     waited_ms: u64,
+    extra: &[(&str, Value)],
 ) -> Vec<(String, Value)> {
-    let opt = |v: Option<bool>| v.map(Value::Bool).unwrap_or(Value::Nil);
-    vec![
-        ("result".to_string(), opt(result)),
-        ("matched".to_string(), opt(matched)),
+    let mut fields = vec![
+        ("result".to_string(), result.map(Value::Bool).unwrap_or(Value::Nil)),
+        ("matched".to_string(), result.map(Value::Bool).unwrap_or(Value::Nil)),
         ("received".to_string(), Value::Nil),
         ("elapsed_ms".to_string(), Value::Int(elapsed_ms as i128)),
         ("waited_ms".to_string(), Value::Int(waited_ms as i128)),
@@ -32171,7 +32293,16 @@ fn wait_result_fields(
         ("method".to_string(), Value::Nil),
         ("status".to_string(), Value::Nil),
         ("event".to_string(), Value::Nil),
-    ]
+    ];
+    for (name, value) in extra {
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(slot) = fields.iter_mut().find(|(n, _)| n == name) {
+            slot.1 = value.clone();
+        }
+    }
+    fields
 }
 
 fn json_to_value(input: &str) -> Result<Value, String> {

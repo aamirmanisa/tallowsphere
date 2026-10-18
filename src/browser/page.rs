@@ -22,7 +22,7 @@ fn rand_u32() -> u32 {
 
 use serde_json::{json, Value};
 
-use super::cdp::{CdpClient, ConsoleMessage};
+use super::cdp::{CdpClient, CdpEvent, ConsoleMessage};
 use super::element::ElementHandle;
 use super::error::{map_chrome_net_error, BrowserError};
 use super::frame::{parse_frame_tree, FrameInfo};
@@ -821,6 +821,135 @@ impl Page {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+    }
+
+    /// Wait until `location.href` matches `pattern` (`*` is a wildcard).
+    ///
+    /// Polls the URL rather than listening for `Page.frameNavigated`: the
+    /// caller usually asks "is it there yet", and a navigation that already
+    /// finished would never deliver the event again.
+    /// Returns `(matched, elapsed_ms, url)`.
+    pub async fn wait_for_url(
+        &self,
+        pattern: &str,
+        timeout: Duration,
+    ) -> Result<(bool, u64, String), BrowserError> {
+        let started = std::time::Instant::now();
+        loop {
+            let current = self.url().await.unwrap_or_default();
+            if glob_match(pattern, &current) {
+                return Ok((true, started.elapsed().as_millis() as u64, current));
+            }
+            if started.elapsed() >= timeout {
+                return Ok((false, started.elapsed().as_millis() as u64, current));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for a CDP event on this page.
+    ///
+    /// Accepts the full method (`"Page.loadEventFired"`) or the bare name
+    /// (`"loadEventFired"`). Events are only delivered from the moment the
+    /// wait starts, so subscribe before the action that triggers them.
+    /// Returns `(seen, elapsed_ms, method)`.
+    pub async fn wait_for_event(
+        &self,
+        event_name: &str,
+        timeout: Duration,
+    ) -> Result<(bool, u64, String), BrowserError> {
+        let started = std::time::Instant::now();
+        let deadline = tokio::time::Instant::now() + timeout;
+        let suffix = format!(".{event_name}");
+        let mut events = self.client.subscribe();
+
+        loop {
+            match tokio::time::timeout_at(deadline, events.recv()).await {
+                Ok(Ok(evt)) => {
+                    if self.is_other_session(&evt) {
+                        continue;
+                    }
+                    if evt.method == event_name || evt.method.ends_with(&suffix) {
+                        return Ok((
+                            true,
+                            started.elapsed().as_millis() as u64,
+                            evt.method.clone(),
+                        ));
+                    }
+                }
+                // Dropped events are not a failure: keep waiting for the next
+                // one rather than reporting a timeout that never happened.
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+        Ok((false, started.elapsed().as_millis() as u64, String::new()))
+    }
+
+    /// Wait for an outgoing request whose URL matches `pattern`.
+    pub async fn wait_for_request(
+        &self,
+        url_pattern: &str,
+        timeout: Duration,
+    ) -> Result<(bool, u64, String), BrowserError> {
+        self.wait_for_network_url("Network.requestWillBeSent", url_pattern, timeout)
+            .await
+    }
+
+    /// Wait for a response whose URL matches `pattern`.
+    pub async fn wait_for_response(
+        &self,
+        url_pattern: &str,
+        timeout: Duration,
+    ) -> Result<(bool, u64, String), BrowserError> {
+        self.wait_for_network_url("Network.responseReceived", url_pattern, timeout)
+            .await
+    }
+
+    /// Shared body of the two network waits: same subscription, same deadline,
+    /// only the event method and the payload key differ.
+    async fn wait_for_network_url(
+        &self,
+        method: &str,
+        url_pattern: &str,
+        timeout: Duration,
+    ) -> Result<(bool, u64, String), BrowserError> {
+        let started = std::time::Instant::now();
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut events = self.client.subscribe();
+
+        loop {
+            match tokio::time::timeout_at(deadline, events.recv()).await {
+                Ok(Ok(evt)) => {
+                    if evt.method != method || self.is_other_session(&evt) {
+                        continue;
+                    }
+                    let url = evt
+                        .params
+                        .as_ref()
+                        .and_then(|p| {
+                            p.get("request")
+                                .and_then(|r| r.get("url"))
+                                .or_else(|| p.get("response").and_then(|r| r.get("url")))
+                        })
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if glob_match(url_pattern, url) {
+                        return Ok((true, started.elapsed().as_millis() as u64, url.to_string()));
+                    }
+                }
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+        Ok((false, started.elapsed().as_millis() as u64, String::new()))
+    }
+
+    /// True when the event belongs to a different page's session.
+    fn is_other_session(&self, evt: &CdpEvent) -> bool {
+        evt.session_id
+            .as_deref()
+            .is_some_and(|sid| sid != self.session_id)
     }
 
     /// Query a single element by CSS selector.
@@ -3940,3 +4069,59 @@ mod tests {
     }
 }
 
+/// `*`-only glob match: every other character is literal.
+///
+/// Deliberately not a full glob: `?` and character classes are not supported,
+/// so a pattern never silently means something the caller did not intend.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+    let mut rest = text;
+    if let Some(first) = parts.first().filter(|p| !p.is_empty()) {
+        match rest.strip_prefix(first) {
+            Some(r) => rest = r,
+            None => return false,
+        }
+    }
+    for part in &parts[1..parts.len().saturating_sub(1)] {
+        if part.is_empty() {
+            continue;
+        }
+        match rest.find(part) {
+            Some(i) => rest = &rest[i + part.len()..],
+            None => return false,
+        }
+    }
+    match parts.last() {
+        Some(last) if !last.is_empty() => rest.ends_with(last),
+        _ => true,
+    }
+}
+
+#[cfg(test)]
+mod glob_tests {
+    use super::glob_match;
+
+    #[test]
+    fn patterns_match_only_what_they_name() {
+        assert!(glob_match("http://127.0.0.1:8080/", "http://127.0.0.1:8080/"));
+        assert!(!glob_match("http://127.0.0.1:8080/", "http://127.0.0.1:8081/"));
+
+        // Wildcards in each position.
+        assert!(glob_match("*/api/*", "http://x/api/items?id=1"));
+        assert!(glob_match("http://x/*", "http://x/anything"));
+        assert!(glob_match("*suffix", "prefix-suffix"));
+        assert!(!glob_match("*suffix", "prefix-suffixed"));
+        assert!(glob_match("a*b*c", "a--b--c"));
+        assert!(!glob_match("a*b*c", "a--c--b"));
+
+        // No accidental regex semantics: '.' is a literal dot.
+        assert!(!glob_match("a.c", "abc"));
+        assert!(glob_match("*", "anything at all"));
+    }
+}
