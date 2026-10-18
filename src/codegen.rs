@@ -482,6 +482,9 @@ pub struct CodeGen<'a> {
 
     // Variable → struct type name tracking (for instance method dispatch)
     variable_struct_types: HashMap<String, String>,
+    /// Element struct name for a variable bound to an array of structs, so
+    /// `xs[0].field` can GEP into `%struct.Name` instead of returning 0.
+    variable_array_elem_struct: HashMap<String, String>,
 
     // Variable → true if this variable holds an array (not a string), for .len disambiguation
     variable_is_array: HashMap<String, bool>,
@@ -637,6 +640,7 @@ impl<'a> CodeGen<'a> {
             enum_variant_fields: HashMap::new(),
             enum_max_payload: HashMap::new(),
             variable_struct_types: HashMap::new(),
+            variable_array_elem_struct: HashMap::new(),
             variable_is_array: HashMap::new(),
             variable_array_elem_is_ptr: HashMap::new(),
             variable_result_payload_kind: HashMap::new(),
@@ -2739,6 +2743,7 @@ void tallow_async_runtime_shutdown(void) {
         self.next_label = 0;
         self.variables.clear();
         self.variable_struct_types.clear();
+        self.variable_array_elem_struct.clear();
         self.variable_is_array.clear();
         self.variable_array_element_type.clear();
         self.variable_privacy.clear();
@@ -3420,6 +3425,33 @@ void tallow_async_runtime_shutdown(void) {
                 {
                     self.variable_struct_types
                         .insert(name.clone(), struct_name.clone());
+                }
+
+                // Track the element struct of an array binding: `xs[0].field`
+                // has an Index receiver, so the Ident-only lookup below cannot
+                // type it and the field read used to fall through to a literal
+                // 0 (silently wrong). Covers `[Thing { .. }, ..]` and
+                // `[a, b]` where `a` is a known struct binding.
+                let elem_struct = match &value.kind {
+                    ExprKind::Array(items) => match items.first().map(|e| &e.kind) {
+                        Some(ExprKind::StructLit { name: s, .. }) => Some(s.clone()),
+                        Some(ExprKind::Ident(v)) => self.variable_struct_types.get(v).cloned(),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+                .or_else(|| match ty.as_ref().map(|t| &t.kind) {
+                    Some(TypeExprKind::Slice(inner)) => match &inner.kind {
+                        TypeExprKind::Named(n) if self.struct_layouts.contains_key(n) => {
+                            Some(n.clone())
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                });
+                if let Some(struct_name) = elem_struct {
+                    self.variable_array_elem_struct
+                        .insert(name.clone(), struct_name);
                 }
 
                 // Track browser object types for FFI dispatch
@@ -4309,6 +4341,55 @@ void tallow_async_runtime_shutdown(void) {
                                     self.emit_line(&format!(
                                         "{struct_ptr} = load ptr, ptr {alloca}"
                                     ));
+                                    let gep = self.fresh_reg();
+                                    self.emit_line(&format!(
+                                        "{gep} = getelementptr inbounds {struct_ty}, ptr {struct_ptr}, i32 0, i32 {idx}"
+                                    ));
+                                    let loaded = self.fresh_reg();
+                                    self.emit_line(&format!(
+                                        "{loaded} = load {}, ptr {gep}",
+                                        field_ty.to_ir()
+                                    ));
+                                    return Ok(LLValue::new(loaded, field_ty));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 1b. Field access on an array element whose element type is a
+                // known struct — `xs[0].size`. The receiver is an Index, so the
+                // Ident lookup above cannot type it, and the fallthrough below
+                // returns a literal 0: a silent wrong answer, not an error.
+                if let ExprKind::Index {
+                    object: arr,
+                    index,
+                } = &object.kind
+                {
+                    if let ExprKind::Ident(arr_name) = &arr.kind {
+                        if let Some(struct_name) =
+                            self.variable_array_elem_struct.get(arr_name).cloned()
+                        {
+                            if let Some(layout) = self.struct_layouts.get(&struct_name).cloned() {
+                                if let Some((idx, field_ty)) = layout.field_map.get(field).cloned() {
+                                    let base = self.emit_expr(arr)?;
+                                    let idx_val = self.emit_expr(index)?;
+                                    let idx_i64 = self.coerce_to_i64(&idx_val)?;
+                                    // Element slot: index+1 (slot 0 is the length).
+                                    let slot = self.fresh_reg();
+                                    self.emit_line(&format!("{slot} = add i64 {idx_i64}, 1"));
+                                    let elem_ptr = self.fresh_reg();
+                                    self.emit_line(&format!(
+                                        "{elem_ptr} = getelementptr i64, ptr {}, i64 {slot}",
+                                        base.reg
+                                    ));
+                                    let raw = self.fresh_reg();
+                                    self.emit_line(&format!("{raw} = load i64, ptr {elem_ptr}"));
+                                    let struct_ptr = self.fresh_reg();
+                                    self.emit_line(&format!(
+                                        "{struct_ptr} = inttoptr i64 {raw} to ptr"
+                                    ));
+                                    let struct_ty = format!("%struct.{struct_name}");
                                     let gep = self.fresh_reg();
                                     self.emit_line(&format!(
                                         "{gep} = getelementptr inbounds {struct_ty}, ptr {struct_ptr}, i32 0, i32 {idx}"

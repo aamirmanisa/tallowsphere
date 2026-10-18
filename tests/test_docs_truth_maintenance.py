@@ -181,7 +181,9 @@ class DocsTruthMaintenanceTests(unittest.TestCase):
         text = self.read("docs/operations/stub-register.md")
         rows: dict[int, str] = {}
         for line in text.splitlines():
-            match = re.match(r"^\|\s*(\d{1,2})\s*\|", line)
+            # Three-digit ids are real (row 100 onward); `{1,2}` silently
+            # skipped them and then failed the contiguity check below.
+            match = re.match(r"^\|\s*(\d{1,3})\s*\|", line)
             if not match:
                 continue
             number = int(match.group(1))
@@ -192,7 +194,7 @@ class DocsTruthMaintenanceTests(unittest.TestCase):
             self.assertNotIn(number, rows, f"row {number} appears twice")
             rows[number] = line
         # Rows are numbered 1..=N with no gaps; N is the highest id in the table.
-        self.assertEqual(sorted(rows), list(range(1, 99)))
+        self.assertEqual(sorted(rows), list(range(1, 101)))
 
 
 if __name__ == "__main__":
