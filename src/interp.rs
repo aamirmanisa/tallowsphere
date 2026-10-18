@@ -2820,12 +2820,12 @@ impl Interpreter {
                     }
                 }
 
-                // HackTheCart static namespaces: `AdaptiveCrawler.new()` is a
+                // Browser static namespaces: `AdaptiveCrawler.new()` is a
                 // call on a *kind name*, not on a value. Name resolution has no
                 // binding for the kind ident, so without this the receiver eval
                 // below fails with `undefined variable: AdaptiveCrawler` and the
                 // dispatcher — which keys on the dotted name — is never
-                // consulted. Guarded by `is_hackthecart_static` so the arguments
+                // consulted. Guarded by `is_browser_static` so the arguments
                 // are evaluated exactly once and nothing else changes shape.
                 if let ExprKind::Ident(name) = &object.kind {
                     let qualified = format!("{name}.{method}");
@@ -2833,14 +2833,14 @@ impl Interpreter {
                         && !self.structs.contains_key(name.as_str())
                         && !self.enums.contains_key(name.as_str());
                     if unbound
-                        && crate::interp_hackthecart_dispatch::is_hackthecart_static(&qualified)
+                        && crate::interp_browser_dispatch::is_browser_static(&qualified)
                     {
                         let evaluated: Vec<Value> = args
                             .iter()
                             .map(|a| self.eval_expr(&a.value, env))
                             .collect::<Result<Vec<_>, RuntimeError>>()?;
                         if let Some(result) =
-                            crate::interp_hackthecart_dispatch::dispatch_hackthecart_static(
+                            crate::interp_browser_dispatch::dispatch_browser_static(
                                 &qualified,
                                 &evaluated,
                             )
@@ -12309,10 +12309,10 @@ impl Interpreter {
                 if let Some(result) = Self::call_browser_v2_sentinel(name, &positional) {
                     return result;
                 }
-                // HackTheCart module dispatcher: surfaces 44 browser/* helper modules
+                // Browser helper-module dispatcher: surfaces 44 browser/* helper modules
                 // (ProductMatcher, QualityValidator, …) as static `.new()` calls.
                 if let Some(result) =
-                    crate::interp_hackthecart_dispatch::dispatch_hackthecart_static(
+                    crate::interp_browser_dispatch::dispatch_browser_static(
                         name,
                         &positional,
                     )
@@ -21709,10 +21709,10 @@ impl Interpreter {
                         }
                     }
 
-                    // Unknown browser method — try HackTheCart module dispatcher first
+                    // Unknown browser method — try Browser helper-module dispatcher first
                     (kind, m) => {
                         if let Some(r) =
-                            crate::interp_hackthecart_dispatch::dispatch_hackthecart_method(
+                            crate::interp_browser_dispatch::dispatch_browser_method(
                                 bh, m, &args,
                             )
                         {

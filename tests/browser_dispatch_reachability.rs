@@ -1,6 +1,6 @@
-//! HackTheCart kinds must be constructible from Tallow source (register #96).
+//! Browser helper kinds must be constructible from Tallow source (register #96).
 //!
-//! `dispatch_hackthecart_static` keys on a dotted call name such as
+//! `dispatch_browser_static` keys on a dotted call name such as
 //! `AdaptiveCrawler.new`. Before the interpreter's method-call path learned to
 //! route an unbound, capitalised receiver there, every program that wrote
 //! `AdaptiveCrawler.new()` died with `undefined variable: AdaptiveCrawler` and

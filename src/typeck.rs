@@ -1267,7 +1267,7 @@ impl<'a> TypeChecker<'a> {
                 args,
                 ..
             } => {
-                // A HackTheCart kind name (`AdaptiveCrawler.new()`) is a static
+                // A browser helper kind name (`AdaptiveCrawler.new()`) is a static
                 // namespace, not a value: the interpreter dispatches on the
                 // dotted name, so warning that the receiver is "possibly
                 // undefined" would be exactly wrong. Every other receiver is
@@ -1276,7 +1276,7 @@ impl<'a> TypeChecker<'a> {
                     &object.kind,
                     ExprKind::Ident(name)
                         if !locals.contains_key(name)
-                            && crate::interp_hackthecart_dispatch::is_hackthecart_static(
+                            && crate::interp_browser_dispatch::is_browser_static(
                                 &format!("{name}.{method}"),
                             )
                 );
