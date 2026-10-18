@@ -87,7 +87,7 @@ pub mod injection_scan;
 pub mod intake_review;
 pub mod interp;
 pub use interp::Value;
-pub mod interp_hackthecart_dispatch;
+pub mod interp_browser_dispatch;
 pub mod ipc_auth;
 #[cfg(feature = "jit")]
 pub mod jit;

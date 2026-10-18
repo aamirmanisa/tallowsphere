@@ -1,13 +1,13 @@
-//! HackTheCart module dispatcher for the Tallow interpreter.
+//! Browser helper-module dispatcher for the Tallow interpreter.
 //!
 //! Surfaces 18 browser/* helper modules to Tallow scripts via static
 //! dotted-name calls (e.g. `ProductMatcher.new()`).
 //!
 //! The interpreter routes unknown builtin names through
-//! [`dispatch_hackthecart_static`]. Constructors return a `Value::BrowserObject`
+//! [`dispatch_browser_static`]. Constructors return a `Value::BrowserObject`
 //! whose `kind` is the type name and whose `handle` is the wrapped Rust
 //! object. Instance methods on those objects are routed via
-//! [`dispatch_hackthecart_method`] from the method-call dispatcher.
+//! [`dispatch_browser_method`] from the method-call dispatcher.
 //!
 //! Scope: this is a *surfacing* layer. Constructors are wired for the 18
 //! modules that have real methods behind them. The other 25 kinds were
@@ -1043,7 +1043,7 @@ fn observations_from_value(
 /// arguments: `AdaptiveCrawler.new()` is a static namespace call, not a method
 /// on a value, and args must not be evaluated twice when it turns out not to
 /// be one.
-pub fn is_hackthecart_static(name: &str) -> bool {
+pub fn is_browser_static(name: &str) -> bool {
     matches!(
         name,
           "AdaptiveCrawler.new"
@@ -1070,7 +1070,7 @@ pub fn is_hackthecart_static(name: &str) -> bool {
     )
 }
 
-pub fn dispatch_hackthecart_static(
+pub fn dispatch_browser_static(
     name: &str,
     args: &[Value],
 ) -> Option<Result<Value, RuntimeError>> {
@@ -1173,7 +1173,7 @@ pub fn dispatch_hackthecart_static(
 /// types return an honest `Err` naming the Rust API to use instead. An
 /// unwired method on a live kind returns a clear "not wired" error — never a
 /// fake success.
-pub fn dispatch_hackthecart_method(
+pub fn dispatch_browser_method(
     bh: &BrowserHandle,
     method: &str,
     args: &[Value],
@@ -1850,7 +1850,7 @@ mod tests {
 
     #[test]
     fn product_matcher_new_returns_object() {
-        let r = dispatch_hackthecart_static("ProductMatcher.new", &[])
+        let r = dispatch_browser_static("ProductMatcher.new", &[])
             .expect("ProductMatcher.new should be recognized")
             .expect("dispatch should succeed");
         // Result is wrapped in Ok(...)
@@ -1877,9 +1877,9 @@ mod tests {
 
     #[test]
     fn product_matcher_match_listing_dispatch() {
-        let v = dispatch_hackthecart_static("ProductMatcher.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("ProductMatcher.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
-        let r = dispatch_hackthecart_method(
+        let r = dispatch_browser_method(
             &bh,
             "match_listing",
             &[
@@ -1903,7 +1903,7 @@ mod tests {
 
     #[test]
     fn product_matcher_accepts_full_listing_map() {
-        let v = dispatch_hackthecart_static("ProductMatcher.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("ProductMatcher.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
         let listing = Value::Map(vec![
             (
@@ -1927,7 +1927,7 @@ mod tests {
                 Value::String("Acme".to_string()),
             ),
         ]);
-        let r = dispatch_hackthecart_method(&bh, "match_listing", &[listing])
+        let r = dispatch_browser_method(&bh, "match_listing", &[listing])
             .expect("dispatched")
             .expect("ok");
         assert!(
@@ -1938,7 +1938,7 @@ mod tests {
 
     #[test]
     fn triangulator_threshold_override_applies_per_call() {
-        let v = dispatch_hackthecart_static("Triangulator.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("Triangulator.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1956,7 +1956,7 @@ mod tests {
             obs("a", 10_000),
             obs("b", 20_000), // 100% spread: rejected at 0.20, admitted at 1.0
         ]);
-        let consensus = |args: &[Value]| match dispatch_hackthecart_method(&bh, "triangulate", args)
+        let consensus = |args: &[Value]| match dispatch_browser_method(&bh, "triangulate", args)
             .expect("dispatched")
             .expect("ok")
         {
@@ -1986,7 +1986,7 @@ mod tests {
 
     #[test]
     fn quality_validator_accepts_map_records() {
-        let v = dispatch_hackthecart_static("QualityValidator.new", &[])
+        let v = dispatch_browser_static("QualityValidator.new", &[])
             .unwrap()
             .unwrap();
         let bh = unwrap_browser_handle(v);
@@ -2012,7 +2012,7 @@ mod tests {
             (Value::String("category".to_string()), Value::String("produce".to_string())),
             (Value::String("title".to_string()), Value::String("Bananas".to_string())),
         ]);
-        let r = dispatch_hackthecart_method(&bh, "validate", &[observation, product])
+        let r = dispatch_browser_method(&bh, "validate", &[observation, product])
             .expect("dispatched")
             .expect("ok");
         match r {
@@ -2027,7 +2027,7 @@ mod tests {
 
     #[test]
     fn fingerprint_validator_accepts_partial_profile() {
-        let v = dispatch_hackthecart_static("FingerprintValidator.new", &[])
+        let v = dispatch_browser_static("FingerprintValidator.new", &[])
             .unwrap()
             .unwrap();
         let bh = unwrap_browser_handle(v);
@@ -2044,7 +2044,7 @@ mod tests {
                 Value::String("MacIntel".to_string()),
             ),
         ]);
-        let r = dispatch_hackthecart_method(&bh, "validate", &[profile])
+        let r = dispatch_browser_method(&bh, "validate", &[profile])
             .expect("dispatched")
             .expect("ok");
         match r {
@@ -2058,7 +2058,7 @@ mod tests {
 
     #[test]
     fn basket_optimizer_accepts_inline_catalog() {
-        let v = dispatch_hackthecart_static("BasketOptimizer.new", &[])
+        let v = dispatch_browser_static("BasketOptimizer.new", &[])
             .unwrap()
             .unwrap();
         let bh = unwrap_browser_handle(v);
@@ -2108,7 +2108,7 @@ mod tests {
                 ]),
             ),
         ]);
-        let r = dispatch_hackthecart_method(&bh, "optimize", &[config])
+        let r = dispatch_browser_method(&bh, "optimize", &[config])
             .expect("dispatched")
             .expect("ok");
         let Value::Struct { name, fields } = r else {
@@ -2143,14 +2143,14 @@ mod tests {
 
     #[test]
     fn circuit_breaker_allow_request_dispatch() {
-        let v = dispatch_hackthecart_static(
+        let v = dispatch_browser_static(
             "CircuitBreaker.new",
             &[Value::String("example.com".into())],
         )
         .unwrap()
         .unwrap();
         let bh = unwrap_browser_handle(v);
-        let r = dispatch_hackthecart_method(
+        let r = dispatch_browser_method(
             &bh,
             "allow_request",
             &[Value::String("example.com".into())],
@@ -2162,17 +2162,17 @@ mod tests {
 
     #[test]
     fn unknown_name_returns_none() {
-        assert!(dispatch_hackthecart_static("NotAThing.new", &[]).is_none());
+        assert!(dispatch_browser_static("NotAThing.new", &[]).is_none());
     }
 
     #[test]
     fn crawl_queue_push_pop_roundtrip() {
         // Regression: push/pop must operate a REAL in-process queue — a URL
         // pushed must come back out, and dup pushes must report false.
-        let v = dispatch_hackthecart_static("CrawlQueue.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("CrawlQueue.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
 
-        let r = dispatch_hackthecart_method(
+        let r = dispatch_browser_method(
             &bh,
             "push",
             &[Value::String("https://example.com/p1".into())],
@@ -2182,7 +2182,7 @@ mod tests {
         assert!(matches!(r, Value::Bool(true)), "first push must succeed");
 
         // Duplicate push → false (dedup), not a silent true.
-        let r = dispatch_hackthecart_method(
+        let r = dispatch_browser_method(
             &bh,
             "push",
             &[Value::String("https://example.com/p1".into())],
@@ -2191,12 +2191,12 @@ mod tests {
         .expect("ok");
         assert!(matches!(r, Value::Bool(false)), "duplicate push must report false");
 
-        let r = dispatch_hackthecart_method(&bh, "len", &[])
+        let r = dispatch_browser_method(&bh, "len", &[])
             .expect("dispatched")
             .expect("ok");
         assert!(matches!(r, Value::Int(1)));
 
-        let r = dispatch_hackthecart_method(&bh, "pop", &[])
+        let r = dispatch_browser_method(&bh, "pop", &[])
             .expect("dispatched")
             .expect("ok");
         match r {
@@ -2208,7 +2208,7 @@ mod tests {
             other => panic!("expected CrawlJob struct, got {other:?}"),
         }
 
-        let r = dispatch_hackthecart_method(&bh, "is_empty", &[])
+        let r = dispatch_browser_method(&bh, "is_empty", &[])
             .expect("dispatched")
             .expect("ok");
         assert!(matches!(r, Value::Bool(true)), "queue drained after pop");
@@ -2216,11 +2216,11 @@ mod tests {
 
     #[test]
     fn job_queue_enqueue_dequeue_roundtrip() {
-        let v = dispatch_hackthecart_static("JobQueue.new", &[Value::Int(100)])
+        let v = dispatch_browser_static("JobQueue.new", &[Value::Int(100)])
             .unwrap()
             .unwrap();
         let bh = unwrap_browser_handle(v);
-        let r = dispatch_hackthecart_method(
+        let r = dispatch_browser_method(
             &bh,
             "enqueue",
             &[
@@ -2232,7 +2232,7 @@ mod tests {
         .expect("ok");
         assert!(matches!(r, Value::Bool(true)));
 
-        let r = dispatch_hackthecart_method(&bh, "dequeue", &[Value::String("w1".into())])
+        let r = dispatch_browser_method(&bh, "dequeue", &[Value::String("w1".into())])
             .expect("dispatched")
             .expect("ok");
         match r {
@@ -2250,13 +2250,13 @@ mod tests {
     fn smart_extractor_extract_is_wired() {
         // Regression: SmartExtractor must call the real extraction cascade,
         // not return a type-tag error.
-        let v = dispatch_hackthecart_static("SmartExtractor.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("SmartExtractor.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
         let html = r#"<html><head>
 <script type="application/ld+json">
 {"@type":"Product","name":"Echo Dot (5th Gen)","offers":{"price":"49.99","priceCurrency":"USD"}}
 </script></head><body></body></html>"#;
-        let r = dispatch_hackthecart_method(&bh, "extract", &[Value::String(html.into())])
+        let r = dispatch_browser_method(&bh, "extract", &[Value::String(html.into())])
             .expect("dispatched")
             .expect("ok");
         match r {
@@ -2275,18 +2275,18 @@ mod tests {
     fn rust_only_methods_return_honest_errors() {
         // QualityValidator.validate takes Rust-only types — must error with a
         // clear message, never fake success.
-        let v = dispatch_hackthecart_static("QualityValidator.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("QualityValidator.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
-        let r = dispatch_hackthecart_method(&bh, "validate", &[])
+        let r = dispatch_browser_method(&bh, "validate", &[])
             .expect("dispatched");
         assert!(r.is_err(), "validate must be an honest error, not fake success");
 
         // SitemapParser.parse is stateless and wired — must succeed.
-        let v = dispatch_hackthecart_static("SitemapParser.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("SitemapParser.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
         let xml = r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 <url><loc>https://example.com/a</loc></url></urlset>"#;
-        let r = dispatch_hackthecart_method(&bh, "parse", &[Value::String(xml.into())])
+        let r = dispatch_browser_method(&bh, "parse", &[Value::String(xml.into())])
             .expect("dispatched")
             .expect("ok");
         match r {
@@ -2301,27 +2301,27 @@ mod tests {
         // triangulate over an empty slice, fabricating a consensus over zero
         // observations. Missing/empty/malformed input must now be an honest
         // error, never a silent empty call.
-        let v = dispatch_hackthecart_static("Triangulator.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("Triangulator.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
 
         // No observations argument at all.
-        let r = dispatch_hackthecart_method(&bh, "triangulate", &[]).expect("dispatched");
+        let r = dispatch_browser_method(&bh, "triangulate", &[]).expect("dispatched");
         assert!(r.is_err(), "missing observations must be an honest error");
 
         // Empty array.
         let r =
-            dispatch_hackthecart_method(&bh, "triangulate", &[Value::Array(vec![])])
+            dispatch_browser_method(&bh, "triangulate", &[Value::Array(vec![])])
                 .expect("dispatched");
         assert!(r.is_err(), "empty observations must be an honest error");
 
         // Not an array.
         let r =
-            dispatch_hackthecart_method(&bh, "triangulate", &[Value::String("nope".into())])
+            dispatch_browser_method(&bh, "triangulate", &[Value::String("nope".into())])
                 .expect("dispatched");
         assert!(r.is_err(), "non-array observations must be an honest error");
 
         // Observation missing the required 'source' field.
-        let r = dispatch_hackthecart_method(
+        let r = dispatch_browser_method(
             &bh,
             "triangulate",
             &[Value::Array(vec![Value::Struct {
@@ -2340,7 +2340,7 @@ mod tests {
     fn triangulator_triangulate_uses_passed_observations() {
         // Regression (R2-5-HTC): the consensus must be computed from the
         // observations actually passed in (Struct and Map forms both work).
-        let v = dispatch_hackthecart_static("Triangulator.new", &[]).unwrap().unwrap();
+        let v = dispatch_browser_static("Triangulator.new", &[]).unwrap().unwrap();
         let bh = unwrap_browser_handle(v);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2371,7 +2371,7 @@ mod tests {
             ),
         ]);
 
-        let r = dispatch_hackthecart_method(
+        let r = dispatch_browser_method(
             &bh,
             "triangulate",
             &[Value::Array(vec![
@@ -2417,7 +2417,7 @@ mod tests {
             "Http2Fingerprint.chrome",
         ] {
             assert!(
-                dispatch_hackthecart_static(name, &[]).is_none(),
+                dispatch_browser_static(name, &[]).is_none(),
                 "{name} should no longer dispatch: the constructor-only surface was pruned"
             );
         }
@@ -2427,7 +2427,7 @@ mod tests {
     fn live_kinds_still_construct() {
         for name in ["CrawlQueue.new", "ProductMatcher.new", "JobQueue.new"] {
             assert!(
-                matches!(dispatch_hackthecart_static(name, &[]), Some(Ok(_))),
+                matches!(dispatch_browser_static(name, &[]), Some(Ok(_))),
                 "{name} must still construct"
             );
         }
