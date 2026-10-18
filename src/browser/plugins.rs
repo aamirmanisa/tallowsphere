@@ -253,11 +253,18 @@ impl BrowserPlugins {
     /// Force HTTPS on a URL (HTTPS Everywhere).
     pub fn force_https(&self, url: &str) -> String {
         if !self.https_everywhere { return url.to_string(); }
-        if url.starts_with("http://") {
-            format!("https://{}", &url[7..])
-        } else {
-            url.to_string()
+        if let Some(rest) = url.strip_prefix("http://") {
+            // Loopback and private-range hosts are not "upgradeable": they
+            // usually serve plain HTTP on purpose, and rewriting them to
+            // https:// produces a TLS error page instead of the target
+            // (chrome-error://chromewebdata/), which reads like a network
+            // failure rather than a policy decision. Local test pages,
+            // sidecars and LAN services must stay reachable.
+            if !is_local_or_private_host(rest) {
+                return format!("https://{rest}");
+            }
         }
+        url.to_string()
     }
 
     /// Get a combined JS injection script for all active plugins.
@@ -1001,6 +1008,41 @@ fn extract_domain(url: &str) -> Option<&str> {
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// True when the authority part of a URL points at loopback, a private
+/// network, or a `.local` name — hosts HTTPS Everywhere must not rewrite.
+///
+/// `authority` is everything after `http://`: `host[:port][/path…]`, possibly
+/// with `user:pass@`. IPv6 literals keep their brackets.
+fn is_local_or_private_host(authority: &str) -> bool {
+    // Drop path/query/fragment, then userinfo, then the port.
+    let host_port = authority.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest) // [::1]:8080
+    } else if host_port.matches(':').count() == 1 {
+        host_port.split(':').next().unwrap_or(host_port)
+    } else {
+        host_port
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
+        return true;
+    }
+    // Parse, do not pattern-match octets: "127.0.0.1.example.com" has four
+    // numeric-looking labels and is not an address.
+    if let Ok(v4) = host.parse::<std::net::Ipv4Addr>() {
+        return v4.is_loopback() || v4.is_private() || v4.is_link_local();
+    }
+    if let Ok(v6) = host.parse::<std::net::Ipv6Addr>() {
+        let first = v6.segments()[0];
+        return v6.is_loopback()
+            || (first & 0xfe00) == 0xfc00 // fc00::/7 unique-local
+            || (first & 0xffc0) == 0xfe80; // fe80::/10 link-local
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1082,6 +1124,28 @@ mod tests {
         let p = BrowserPlugins::default();
         assert_eq!(p.force_https("http://example.com"), "https://example.com");
         assert_eq!(p.force_https("https://example.com"), "https://example.com");
+    }
+
+    #[test]
+    fn force_https_leaves_loopback_and_private_hosts_alone() {
+        let p = BrowserPlugins::default();
+        for url in [
+            "http://127.0.0.1:18101/",
+            "http://localhost:8080/x?y=1",
+            "http://[::1]:9000/",
+            "http://10.1.2.3/",
+            "http://192.168.1.10/",
+            "http://172.16.0.5/",
+            "http://172.31.255.1/",
+            "http://169.254.1.1/",
+            "http://printer.local/",
+            "http://user:pass@127.0.0.1:3000/",
+        ] {
+            assert_eq!(p.force_https(url), url, "{url} must not be upgraded");
+        }
+        // Public hosts still upgrade, including ones that merely look close.
+        assert_eq!(p.force_https("http://172.32.0.1/"), "https://172.32.0.1/");
+        assert_eq!(p.force_https("http://127.0.0.1.example.com/"), "https://127.0.0.1.example.com/");
     }
 
     #[test]

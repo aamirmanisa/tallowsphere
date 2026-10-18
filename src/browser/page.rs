@@ -749,6 +749,80 @@ impl Page {
         Ok(extract_string_result(&result).unwrap_or_default())
     }
 
+    /// Full HTML of the current document, serialized from the live DOM.
+    ///
+    /// `Page.getResourceContent` returns the bytes as the server sent them;
+    /// this serializes what the page looks like after scripts ran, which is
+    /// what a scraper needs.
+    pub async fn content(&self) -> Result<String, BrowserError> {
+        let value = self
+            .evaluate_expression("document.documentElement.outerHTML")
+            .await?;
+        Ok(value
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| value.to_string()))
+    }
+
+    /// Replace the document with `html` (`document.open/write/close`).
+    ///
+    /// The current document is discarded; the target, session and event
+    /// handlers stay bound, so later navigation on this `Page` still works.
+    /// Returns the number of HTML bytes written.
+    pub async fn set_content(&self, html: &str) -> Result<usize, BrowserError> {
+        // JSON string escaping is the only correct way to get arbitrary HTML
+        // into a JavaScript literal: quoting by hand loses backslashes,
+        // newlines and `</script>`.
+        let literal = serde_json::to_string(html)
+            .map_err(|e| BrowserError::JsonError(format!("set_content: {e}")))?;
+        self.evaluate_expression(&format!(
+            "document.open();document.write({literal});document.close();true"
+        ))
+        .await?;
+        Ok(html.len())
+    }
+
+    /// Sleep for `ms`. An explicit wait, not an inference.
+    ///
+    /// Returns the elapsed milliseconds so the caller can see that the sleep
+    /// actually happened instead of trusting the requested value.
+    pub async fn wait_for_timeout(&self, ms: u64) -> u64 {
+        let started = std::time::Instant::now();
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+        started.elapsed().as_millis() as u64
+    }
+
+    /// Poll `js_expression` until it is truthy or `timeout` elapses.
+    ///
+    /// CDP has no "wait for arbitrary expression" primitive, so this polls
+    /// `Runtime.evaluate` every 50 ms. Returns `(found, elapsed_ms)`; a timeout
+    /// is a normal `false`, not an error, because the caller asked a question
+    /// the page is allowed to answer "not yet".
+    pub async fn wait_for_function(
+        &self,
+        js_expression: &str,
+        timeout: Duration,
+    ) -> Result<(bool, u64), BrowserError> {
+        let started = std::time::Instant::now();
+        loop {
+            let value = self.evaluate_expression(js_expression).await?;
+            let truthy = match &value {
+                serde_json::Value::Bool(b) => *b,
+                serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+                serde_json::Value::String(s) => !s.is_empty(),
+                serde_json::Value::Null => false,
+                _ => true,
+            };
+            if truthy {
+                return Ok((true, started.elapsed().as_millis() as u64));
+            }
+            if started.elapsed() >= timeout {
+                return Ok((false, started.elapsed().as_millis() as u64));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     /// Query a single element by CSS selector.
     ///
     /// Returns `Ok(None)` if no element matches.
