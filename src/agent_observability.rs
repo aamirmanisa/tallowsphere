@@ -932,8 +932,20 @@ mod tests {
         );
     }
 
+    /// Serializes the span-id tests: `generate_span_id` increments one global
+    /// counter, so with the suite's default parallelism another test's call
+    /// can land between the two reads and break "increments by 1". Measured:
+    /// the test passed in two full runs and failed in a third with a delta of
+    /// 1 taken from a different thread's call.
+    static SPAN_ID_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn span_id_guard() -> std::sync::MutexGuard<'static, ()> {
+        SPAN_ID_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn generate_span_id_returns_16_hex_chars() {
+        let _guard = span_id_guard();
         let id = generate_span_id();
         assert_eq!(id.len(), 16, "span_id length: {}", id.len());
         assert!(
@@ -951,6 +963,7 @@ mod tests {
 
     #[test]
     fn generate_span_id_unique() {
+        let _guard = span_id_guard();
         let a = generate_span_id();
         let b = generate_span_id();
         assert_ne!(a, b, "two span IDs should differ");
@@ -958,6 +971,7 @@ mod tests {
 
     #[test]
     fn generate_span_id_unique_across_many_calls() {
+        let _guard = span_id_guard();
         let n = 4096usize;
         let ids: std::collections::HashSet<String> =
             (0..n).map(|_| generate_span_id()).collect();
@@ -974,6 +988,7 @@ mod tests {
 
     #[test]
     fn generate_span_id_monotonically_increments() {
+        let _guard = span_id_guard();
         let a = u64::from_str_radix(&generate_span_id(), 16).unwrap();
         let b = u64::from_str_radix(&generate_span_id(), 16).unwrap();
         // Fixed-width zero-padded hex; wrapping add preserves order even at u64::MAX.

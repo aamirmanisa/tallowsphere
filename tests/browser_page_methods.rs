@@ -487,11 +487,11 @@ fn stealth_init_scripts_do_not_raise_page_errors() {
     }
 }
 
-/// The browser API has no native lowering. That is a contract, not an accident:
-/// a native build must fail loudly rather than emit a binary that returns a
-/// wrong value for `goto`, and `tallow run` must say it fell back.
+/// The browser API is only partly lowered. `goto`, `content` and `close` build
+/// natively (see tests/browser_native_parity.rs); everything else must fail the
+/// build loudly rather than emit a binary that silently does nothing.
 #[test]
-fn browser_program_refuses_silent_native_build_and_says_so_at_runtime() {
+fn unlowered_browser_methods_refuse_the_native_build() {
     let program = r#"import tallow.browser
 @cra_class(.default)
 @legal(basis: .research, purpose: "native-plane contract check", personal_data: false)
@@ -502,7 +502,7 @@ fn browser_program_refuses_silent_native_build_and_says_so_at_runtime() {
 fn main() {
     let browser = Browser.launch(true)
     let page = browser.new_page()
-    page.goto("http://127.0.0.1:9/")
+    page.add_init_script("window.__x = 1")
     browser.close()
 }
 "#;
@@ -518,15 +518,14 @@ fn main() {
 
     assert!(
         !build.status.success(),
-        "tallow build produced a binary for a browser program; a native goto would return a value the \
-         interpreter never produces:\n{build_err}"
+        "tallow build produced a binary for an unlowered browser method:\n{build_err}"
     );
     assert!(
-        build_err.contains("no native lowering"),
+        build_err.contains("no lowering"),
         "build failed for an unrelated reason:\n{build_err}"
     );
     assert!(
-        build_err.contains("goto"),
+        build_err.contains("add_init_script"),
         "the diagnostic does not name the method that has no lowering:\n{build_err}"
     );
 }
