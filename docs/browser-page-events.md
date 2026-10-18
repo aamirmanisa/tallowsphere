@@ -80,6 +80,9 @@ and builds `NavigationResult { url, frame_id, status_code }` from the page
 afterwards, wrapped in `Result`. If the layout is absent the arm refuses rather
 than emitting a struct with unknown offsets.
 
+Lowered today: `goto`/`navigate`, `content`, `close` (plus `set_content` and
+`wait_for_timeout`, which predate this work).
+
 Everything else in the browser API still refuses natively: `tallow build` fails
 with `no native lowering` naming the method, and `tallow run` states the
 fallback. That refusal is deliberate — a partial plane that returns a plausible
