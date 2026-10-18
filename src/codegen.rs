@@ -29959,10 +29959,13 @@ mod tests {
     }
 
     #[test]
-    fn codegen_goto_refuses_without_navigation_result() {
-        // `page.goto` is declared `Result<NavigationResult>` and `NavigationResult`
-        // has no native layout, so the arm must REFUSE rather than return the bare
-        // integer it used to (a silently-wrong value for a struct-returning method).
+    fn codegen_goto_builds_navigation_result() {
+        // `page.goto` is declared `Result<NavigationResult>`. The arm used to
+        // return a bare status (a silently-wrong value) and then refused while
+        // the struct had no layout. `NavigationResult` is now synthesized into
+        // struct_layouts, so the arm must build the struct: url and frame id
+        // read back from the page, status from the navigation call, wrapped in
+        // the tagged result.
         let source = r#"
             fn main() {
                 let browser = Browser.launch(true)
@@ -29976,12 +29979,22 @@ mod tests {
         let program = parser::Parser::parse(tokens).expect("parse error");
         let (env, _) = TypeChecker::new(&program).check();
         let mut cg = CodeGen::new(&program, &env);
-        let err = cg
-            .emit_module()
-            .expect_err("goto must refuse while NavigationResult has no native layout");
+        let ir = cg.emit_module().expect("goto must lower now that the struct has a layout");
         assert!(
-            err.contains("NavigationResult"),
-            "the refusal must name the missing struct: {err}"
+            ir.contains("%struct.NavigationResult = type { ptr, ptr, i64 }"),
+            "NavigationResult layout is not emitted:\n{ir}"
+        );
+        assert!(
+            ir.contains("call i32 @tallow_page_goto"),
+            "goto does not call the navigation FFI:\n{ir}"
+        );
+        assert!(
+            ir.contains("call ptr @tallow_page_frame_id"),
+            "the struct's frame_id is not read from the page:\n{ir}"
+        );
+        assert!(
+            ir.contains("getelementptr inbounds %struct.NavigationResult"),
+            "the struct is not filled field by field:\n{ir}"
         );
     }
 
@@ -29992,8 +30005,7 @@ mod tests {
             fn main() {
                 let browser = Browser.launch(true)
                 let page = browser.new_page()
-                // No goto: `page.goto` refuses natively (NavigationResult has no
-                // native layout), and this test only needs a page to act on.
+                // No goto: this test only needs a page to act on.
                 page.set_content("<h1>t</h1>")
                 let title = page.title()
                 let url = page.url()
