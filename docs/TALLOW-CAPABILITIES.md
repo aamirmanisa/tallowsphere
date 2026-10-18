@@ -815,7 +815,6 @@ examples/
 ├── hello_simple.tl           # Hello world
 ├── structs.tl                # Struct and method syntax
 ├── enums.tl                  # Enum and match patterns
-├── closures.tl               # Closure syntax
 ├── error_handling.tl         # Result and ? operator
 ├── interpolation.tl          # String interpolation
 ├── legal_valid.tl            # @legal annotation examples
@@ -823,11 +822,14 @@ examples/
 ├── agent_valid.tl            # @agent_task examples
 ├── pqc_crypto.tl             # Post-quantum crypto demo
 ├── browser_demo.tl           # Browser automation
-├── contracts.tl              # Formal contract verification
-├── ai_act.tl                 # AI Act compliance
-├── anonymize.tl              # Data anonymization
-├── stealth_net.tl            # Stealth networking
 └── ... (48 more)
+
+tests/fixtures/               # five programs from the original list live here,
+├── closures.tl               # as compiler fixtures rather than examples
+├── contracts.tl
+├── ai_act.tl
+├── anonymize.tl
+└── stealth_net.tl
 ```
 
 ---
