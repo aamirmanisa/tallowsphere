@@ -17418,6 +17418,83 @@ impl Interpreter {
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }
                     }
+                    ("Page", "content") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        match rt.block_on(page.content()) {
+                            Ok(html) => Ok(Value::Ok(Box::new(Value::String(html)))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "set_content") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let html = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        match rt.block_on(page.set_content(&html)) {
+                            Ok(len) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "PageContentResult".to_string(),
+                                fields: vec![
+                                    ("loaded".to_string(), Value::Bool(true)),
+                                    ("content_length".to_string(), Value::Int(len as i128)),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "wait_for_timeout") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let ms = match args.first() {
+                            Some(Value::Int(n)) if *n >= 0 => *n as u64,
+                            Some(Value::Float(f)) if *f >= 0.0 => *f as u64,
+                            _ => 0,
+                        };
+                        let elapsed = rt.block_on(page.wait_for_timeout(ms));
+                        Ok(Value::Ok(Box::new(Value::Struct {
+                            name: "WaitResult".to_string(),
+                            fields: wait_result_fields(None, None, elapsed, ms),
+                        })))
+                    }
+                    ("Page", "wait_for_function") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let expr = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        if expr.trim().is_empty() {
+                            return Err(RuntimeError::Error(
+                                "wait_for_function requires a JS expression".into(),
+                            ));
+                        }
+                        let timeout_ms = match args.get(1) {
+                            Some(Value::Int(n)) if *n > 0 => *n as u64,
+                            Some(Value::Float(f)) if *f > 0.0 => *f as u64,
+                            _ => 30_000,
+                        };
+                        match rt.block_on(
+                            page.wait_for_function(&expr, std::time::Duration::from_millis(timeout_ms)),
+                        ) {
+                            Ok((found, elapsed)) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "WaitResult".to_string(),
+                                fields: wait_result_fields(Some(found), Some(found), elapsed, timeout_ms),
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
                     ("Page", "query_selector") => {
                         let page = bh
                             .handle
@@ -32072,6 +32149,31 @@ fn value_to_json(val: &Value) -> String {
 }
 
 /// Parse a JSON string into a Value.
+/// Build the `WaitResult` field vector shared by the Page wait methods.
+///
+/// Optional fields stay `Nil` rather than being invented: a timeout result has
+/// no `url`, `status` or `event`, and a caller can tell "not set" from "false"
+/// because the types are optional in `stdlib/browser.tl`.
+fn wait_result_fields(
+    result: Option<bool>,
+    matched: Option<bool>,
+    elapsed_ms: u64,
+    waited_ms: u64,
+) -> Vec<(String, Value)> {
+    let opt = |v: Option<bool>| v.map(Value::Bool).unwrap_or(Value::Nil);
+    vec![
+        ("result".to_string(), opt(result)),
+        ("matched".to_string(), opt(matched)),
+        ("received".to_string(), Value::Nil),
+        ("elapsed_ms".to_string(), Value::Int(elapsed_ms as i128)),
+        ("waited_ms".to_string(), Value::Int(waited_ms as i128)),
+        ("url".to_string(), Value::Nil),
+        ("method".to_string(), Value::Nil),
+        ("status".to_string(), Value::Nil),
+        ("event".to_string(), Value::Nil),
+    ]
+}
+
 fn json_to_value(input: &str) -> Result<Value, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {

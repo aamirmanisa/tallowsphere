@@ -87,6 +87,30 @@ impl Page {
         // Runtime: evaluates window.location.href via CDP
     }
 
+    /// Full HTML of the current document, serialized from the live DOM
+    /// (post-JS), not the bytes the server sent.
+    fn content(self) -> Result<String> {
+        // Runtime: document.documentElement.outerHTML via CDP
+    }
+
+    /// Replace the document with `html`. The current DOM is discarded; the
+    /// page handle stays bound, so later navigation still works.
+    fn set_content(self, html: String) -> Result<PageContentResult> {
+        // Runtime: document.open/write/close via CDP
+    }
+
+    /// Sleep for `ms`. Explicit wait; `elapsed_ms` reports what actually
+    /// elapsed rather than echoing the request.
+    fn wait_for_timeout(self, ms: i64) -> Result<WaitResult> {
+        // Runtime: tokio sleep, no CDP round trip
+    }
+
+    /// Poll a JS expression until it is truthy or `timeout_ms` elapses
+    /// (default 30000). A timeout is `result: false`, not an error.
+    fn wait_for_function(self, js_expression: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
+        // Runtime: Runtime.evaluate poll at 50 ms
+    }
+
     /// Find the first element matching a CSS selector.
     /// Returns Err if no element matches.
     fn query_selector(self, selector: String) -> Result<Element> {
