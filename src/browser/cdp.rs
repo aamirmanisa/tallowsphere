@@ -3,7 +3,7 @@
 //! Provides a JSON-RPC client that communicates with Chromium via the CDP protocol.
 //! Handles command/response correlation, event broadcasting, and session multiplexing.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -224,6 +224,26 @@ pub struct CdpClient {
     /// and every background handler derived from it. See
     /// [`CdpClient::spawn_background`] for why it is not `tokio::spawn`.
     runtime: tokio::runtime::Handle,
+    /// Event buffers keyed by CDP session (register #112).
+    ///
+    /// One buffer and one pump per *session*, not per `Page` value. A `Page`
+    /// is cloned freely and a pooled page is wrapped in a fresh `Page` on
+    /// every acquire; a per-value buffer means the pump started at creation
+    /// writes into a buffer nobody reads any more, and each re-acquire leaks
+    /// another task.
+    sessions: Arc<StdMutex<HashMap<String, SessionEvents>>>,
+}
+
+/// Buffered CDP events for one session, plus whether a pump is already
+/// listening. Shared by every `Page` value that refers to the session.
+pub(crate) struct SessionEvents {
+    pub(crate) buffer: Arc<StdMutex<VecDeque<crate::browser::page::PageEvent>>>,
+    pub(crate) pump_started: bool,
+    /// Whether `Runtime.enable` has been sent on this session. Deliberately
+    /// not automatic: `Runtime.enable` is a strong CDP-attachment signal, and
+    /// the pump runs for every page. Capture is opted into by registering a
+    /// console/error handler, exposing a binding, or calling `capture_console`.
+    pub(crate) runtime_enabled: bool,
 }
 
 impl std::fmt::Debug for CdpClient {
@@ -303,6 +323,77 @@ impl CdpClient {
     /// Spawns a background read loop that demultiplexes responses and events.
     /// Sends `Runtime.enable` immediately after connecting so that
     /// `Runtime.consoleAPICalled` events are delivered (Gap 1).
+    /// Opt this session into `Runtime.enable`, once.
+    ///
+    /// Console and error events do not exist without it; network events do.
+    /// Returns `true` when the caller must send the enable, `false` when it was
+    /// already enabled — the caller awaits the CDP command, this only claims it.
+    pub(crate) fn claim_runtime_enable(&self, session: &str) -> bool {
+        let mut guard = match self.sessions.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let entry = guard.entry(session.to_string()).or_insert_with(|| SessionEvents {
+            buffer: Arc::new(StdMutex::new(VecDeque::new())),
+            pump_started: false,
+            runtime_enabled: false,
+        });
+        if entry.runtime_enabled {
+            return false;
+        }
+        entry.runtime_enabled = true;
+        true
+    }
+
+    /// The event buffer for `session`, creating an empty one if the session has
+    /// never been pumped. Draining must never start a pump or claim it.
+    pub(crate) fn session_buffer(
+        &self,
+        session: &str,
+    ) -> Arc<StdMutex<VecDeque<crate::browser::page::PageEvent>>> {
+        let mut guard = match self.sessions.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Arc::clone(
+            &guard
+                .entry(session.to_string())
+                .or_insert_with(|| SessionEvents {
+                    buffer: Arc::new(StdMutex::new(VecDeque::new())),
+                    pump_started: false,
+                    runtime_enabled: false,
+                })
+                .buffer,
+        )
+    }
+
+    /// Return the event buffer for `session`, creating it if needed, and say
+    /// whether the caller is the one that must start the pump.
+    ///
+    /// `first == false` means a pump for this session already exists and the
+    /// caller must not spawn a second one: two pumps on one session double
+    /// every event and never terminate, since neither task observes the other.
+    pub(crate) fn claim_session_pump(
+        &self,
+        session: &str,
+    ) -> (
+        Arc<StdMutex<VecDeque<crate::browser::page::PageEvent>>>,
+        bool,
+    ) {
+        let mut guard = match self.sessions.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let entry = guard.entry(session.to_string()).or_insert_with(|| SessionEvents {
+            buffer: Arc::new(StdMutex::new(VecDeque::new())),
+            pump_started: false,
+            runtime_enabled: false,
+        });
+        let first = !entry.pump_started;
+        entry.pump_started = true;
+        (Arc::clone(&entry.buffer), first)
+    }
+
     pub async fn connect(ws_url: &str) -> Result<Self, BrowserError> {
         // T-207 browser-zone lockdown: the CDP target is the in-zone relay
         // (loopback WebSocket or pipe). A non-loopback endpoint would be
@@ -378,6 +469,7 @@ impl CdpClient {
             recording_max_frames,
             runtime_enabled: Arc::new(AtomicBool::new(false)),
             runtime,
+            sessions: Arc::new(StdMutex::new(HashMap::new())),
         };
 
         // NOTE: `Runtime.enable` is intentionally NOT sent here. It is a
@@ -832,7 +924,8 @@ impl CdpClient {
             iframe_doc_object_id: None,
             pool_index: None,
             pool: None,
-            events: Arc::new(StdMutex::new(VecDeque::new())),
+            handlers: Arc::new(StdMutex::new(Vec::new())),
+            bindings: Arc::new(StdMutex::new(Vec::new())),
         };
         page.start_event_pump().await;
         Ok(page)
@@ -886,7 +979,8 @@ impl CdpClient {
             iframe_doc_object_id: None,
             pool_index: None,
             pool: None,
-            events: Arc::new(StdMutex::new(VecDeque::new())),
+            handlers: Arc::new(StdMutex::new(Vec::new())),
+            bindings: Arc::new(StdMutex::new(Vec::new())),
         };
         page.start_event_pump().await;
         Ok(page)
@@ -1083,6 +1177,7 @@ impl CdpClient {
             recording_max_frames,
             runtime_enabled: Arc::new(AtomicBool::new(false)),
             runtime,
+            sessions: Arc::new(StdMutex::new(HashMap::new())),
         })
     }
 

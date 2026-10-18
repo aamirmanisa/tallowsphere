@@ -299,6 +299,8 @@ fn events_program(url: &str) -> String {
 fn main() {{
     let browser = Browser.launch(true)
     let page = browser.new_page()
+    // Runtime capture is opt-in: console events do not exist without it.
+    print("CAPTURE=" + page.capture_console())
     page.goto("{url}")
     page.wait_for_timeout(600)
     let all = page.drain_events("", 0)
@@ -426,4 +428,105 @@ fn page_handlers_and_bindings_fire_from_tallow_source() {
     for broken in ["undefined function", "invalid page handle", "runtime error"] {
         assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
     }
+}
+
+fn stealth_errors_program(url: &str) -> String {
+    format!(
+        r#"import tallow.browser
+@cra_class(.default)
+@legal(basis: .research, purpose: "stealth init-script check on a loopback page", personal_data: false)
+@persona(id: "stealth-errors-test", cover_class: .researcher, compartment: "stealtherrors", fingerprint_seed: "stealth-errors-1018")
+@burn_plan(persona: "stealth-errors-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowStealthErrorsTest/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {{
+    let browser = Browser.launch(true)
+    let page = browser.new_page()
+    print("CAPTURE=" + page.capture_console())
+    page.goto("{url}")
+    page.wait_for_timeout(500)
+    print("ERRORS=" + page.drain_events("error", 0))
+    browser.close()
+}}
+"#
+    )
+}
+
+#[test]
+fn stealth_init_scripts_do_not_raise_page_errors() {
+    let port = serve("<!doctype html><html><body><p>plain</p></body></html>");
+    let url = format!("http://127.0.0.1:{port}/");
+    let path = std::env::temp_dir().join(format!("tallow-stealtherr-{}.tl", std::process::id()));
+    std::fs::write(&path, stealth_errors_program(&url)).expect("write program");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["run", "--interpret", path.to_str().unwrap()])
+        .env("TALLOW_ALLOW_DIRECT", "1")
+        .env("TALLOW_NO_STEALTH", "1")
+        .output()
+        .expect("run tallow");
+    let _ = std::fs::remove_file(&path);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "program failed\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The toolkit's own init scripts must not surface as page errors: an
+    // on_error handler would otherwise report exceptions the page never threw.
+    assert!(
+        stdout.contains("ERRORS=[]"),
+        "stealth init scripts raised page errors:\n{stdout}"
+    );
+    for marker in ["MutationObserver", "Cannot redefine property"] {
+        assert!(
+            !stdout.contains(marker),
+            "init-script exception reached the page: {marker}\n{stdout}"
+        );
+    }
+}
+
+/// The browser API has no native lowering. That is a contract, not an accident:
+/// a native build must fail loudly rather than emit a binary that returns a
+/// wrong value for `goto`, and `tallow run` must say it fell back.
+#[test]
+fn browser_program_refuses_silent_native_build_and_says_so_at_runtime() {
+    let program = r#"import tallow.browser
+@cra_class(.default)
+@legal(basis: .research, purpose: "native-plane contract check", personal_data: false)
+@persona(id: "native-check", cover_class: .researcher, compartment: "nativecheck", fingerprint_seed: "native-check-1018")
+@burn_plan(persona: "native-check", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowNativeCheck/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {
+    let browser = Browser.launch(true)
+    let page = browser.new_page()
+    page.goto("http://127.0.0.1:9/")
+    browser.close()
+}
+"#;
+    let path = std::env::temp_dir().join(format!("tallow-nativecheck-{}.tl", std::process::id()));
+    std::fs::write(&path, program).expect("write program");
+
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["build", path.to_str().unwrap()])
+        .output()
+        .expect("run tallow build");
+    let build_err = String::from_utf8_lossy(&build.stderr);
+    let _ = std::fs::remove_file(&path);
+
+    assert!(
+        !build.status.success(),
+        "tallow build produced a binary for a browser program; a native goto would return a value the \
+         interpreter never produces:\n{build_err}"
+    );
+    assert!(
+        build_err.contains("no native lowering"),
+        "build failed for an unrelated reason:\n{build_err}"
+    );
+    assert!(
+        build_err.contains("goto"),
+        "the diagnostic does not name the method that has no lowering:\n{build_err}"
+    );
 }
