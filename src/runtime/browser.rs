@@ -369,6 +369,21 @@ pub extern "C" fn tallow_page_url(page: *mut c_void) -> *mut c_char {
     }
 }
 
+/// The CDP target id behind this page.
+///
+/// `Page.goto` returns `NavigationResult { url, frame_id, status_code }`; the
+/// native lowering builds that struct from this and `tallow_page_url` rather
+/// than inventing values.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_frame_id(page: *mut c_void) -> *mut c_char {
+    if page.is_null() {
+        set_last_error("frame_id: null page handle".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    string_to_cstr(&page_ref.frame_id)
+}
+
 /// Reload the current page. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_reload(page: *mut c_void) -> i32 {

@@ -1406,6 +1406,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_browser_launch(i32)\n");
         ir.push_str("declare void @tallow_browser_close(ptr)\n");
         ir.push_str("declare ptr @tallow_browser_new_page(ptr)\n");
+        ir.push_str("declare ptr @tallow_page_frame_id(ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_title(ptr)\n");
         ir.push_str("declare ptr @tallow_page_url(ptr)\n");
@@ -1869,6 +1870,32 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ContentFingerprint".to_string(),
+                }
+            });
+
+        // `NavigationResult` — `Page.goto` is declared `Result<NavigationResult>`
+        // in stdlib/browser.tl, and a program that imports the module still
+        // does not get stdlib structs merged into `struct_layouts`. Without a
+        // layout the goto arm cannot build the struct and refuses (the native
+        // plane then has no entry point at all). `status_code` is i64, not the
+        // declared i32: the native value model is i64 for every int, as with
+        // `ContentFingerprint.word_count`.
+        self.struct_layouts
+            .entry("NavigationResult".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("url".to_string(), (0usize, LLType::I8Ptr));
+                field_map.insert("frame_id".to_string(), (1usize, LLType::I8Ptr));
+                field_map.insert("status_code".to_string(), (2usize, LLType::I64));
+                StructLayout {
+                    fields: vec![
+                        "url".to_string(),
+                        "frame_id".to_string(),
+                        "status_code".to_string(),
+                    ],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.NavigationResult".to_string(),
                 }
             });
 
@@ -9096,16 +9123,98 @@ void tallow_async_runtime_shutdown(void) {
 
             // ── Page methods ────────────────────────────────────────────
             ("Page", "goto") | ("Page", "navigate") => {
-                // Declared `Result<NavigationResult>`; `NavigationResult` has no native
-                // layout (it appears nowhere in this backend). This arm used to return a
-                // bare `sext i32` — an integer where the interpreter yields
-                // `Ok(NavigationResult { .. })`, i.e. a silently-wrong VALUE. So it
-                // refuses: `tallow run` falls back to the interpreter (the only engine
-                // that can build the struct) and `tallow build` reports it. The
-                // interpreter's pre-navigation plugin pass (ClearURLs clean_url +
-                // HTTPS-Everywhere force_https) also has no native equivalent, so this
-                // is not merely a struct-registration job.
-                Err("page.goto/navigate: the declared Result<NavigationResult> has no native lowering — refusing to return a silently-wrong value (the interpreter implements it)".to_string())
+                // Declared `Result<NavigationResult>`. The backend builds the
+                // struct here instead of returning a bare status:i32, which is
+                // what used to make this arm a silently-wrong value. It refuses
+                // (rather than guessing) when the layout is not in the program,
+                // because a wrong field offset would read garbage.
+                let layout = match self.struct_layouts.get("NavigationResult").cloned() {
+                    Some(l) => l,
+                    None => {
+                        return Err("page.goto/navigate: NavigationResult layout is not in this                                     program (import tallow.browser) — refusing to build a struct                                     with unknown layout"
+                            .to_string())
+                    }
+                };
+                if args.is_empty() {
+                    return Err("page.goto requires a URL".to_string());
+                }
+                let url = self.emit_expr(&args[0].value)?;
+                let url_c = self.coerce(&url, &LLType::I8Ptr)?;
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_goto(ptr {}, ptr {url_c})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+
+                // NavigationResult { url, frame_id, status_code }
+                let struct_ty = layout.llvm_name.clone();
+                let size_ptr = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{size_ptr} = getelementptr {struct_ty}, ptr null, i32 1"
+                ));
+                let size_i64 = self.fresh_reg();
+                self.emit_line(&format!("{size_i64} = ptrtoint ptr {size_ptr} to i64"));
+                let nav = self.fresh_reg();
+                self.emit_line(&format!("{nav} = call ptr @malloc(i64 {size_i64})"));
+
+                let url_ptr = self.fresh_reg();
+                self.emit_line(&format!("{url_ptr} = call ptr @tallow_page_url(ptr {})", obj.reg));
+                let frame_ptr = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{frame_ptr} = call ptr @tallow_page_frame_id(ptr {})",
+                    obj.reg
+                ));
+
+                for (field, value, ty) in [
+                    ("url", url_ptr.clone(), LLType::I8Ptr),
+                    ("frame_id", frame_ptr.clone(), LLType::I8Ptr),
+                    ("status_code", status.clone(), LLType::I32),
+                ] {
+                    let Some((idx, field_ty)) = layout.field_map.get(field).cloned() else {
+                        return Err(format!(
+                            "page.goto/navigate: NavigationResult has no field `{field}` — refusing                              to emit a partially-initialized struct"
+                        ));
+                    };
+                    let val = LLValue::new(value, ty);
+                    let coerced = self.coerce(&val, &field_ty)?;
+                    let gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{gep} = getelementptr inbounds {struct_ty}, ptr {nav}, i32 0, i32 {idx}"
+                    ));
+                    self.emit_line(&format!("store {} {coerced}, ptr {gep}", field_ty.to_ir()));
+                }
+
+                // Wrap: Ok(struct) / Err(last_error), tagged 24-byte result.
+                let result_ptr = self.fresh_reg();
+                self.emit_line(&format!("{result_ptr} = call ptr @malloc(i64 24)"));
+                let tag_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{tag_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 0"
+                ));
+                let tag = self.fresh_reg();
+                self.emit_line(&format!("{tag} = select i1 {ok}, i64 0, i64 1"));
+                self.emit_line(&format!("store i64 {tag}, ptr {tag_gep}"));
+                let val_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{val_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 1"
+                ));
+                let nav_i = self.fresh_reg();
+                self.emit_line(&format!("{nav_i} = ptrtoint ptr {nav} to i64"));
+                let err_ptr = self.fresh_reg();
+                self.emit_line(&format!("{err_ptr} = call ptr @tallow_last_error()"));
+                let err_i = self.fresh_reg();
+                self.emit_line(&format!("{err_i} = ptrtoint ptr {err_ptr} to i64"));
+                let payload = self.fresh_reg();
+                self.emit_line(&format!("{payload} = select i1 {ok}, i64 {nav_i}, i64 {err_i}"));
+                self.emit_line(&format!("store i64 {payload}, ptr {val_gep}"));
+                let vtype_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{vtype_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 2"
+                ));
+                self.emit_line(&format!("store i64 2, ptr {vtype_gep}"));
+                Ok(LLValue::new(result_ptr, LLType::ResultPtr))
             }
             ("Page", "title") => {
                 let reg = self.fresh_reg();
