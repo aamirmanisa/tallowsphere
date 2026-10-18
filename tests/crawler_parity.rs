@@ -58,11 +58,19 @@ fn tallow_bin() -> PathBuf {
             return PathBuf::from(p);
         }
     }
+    // Prefer the NEWEST binary. A stale release build silently makes a parity
+    // test testify about a tree from days ago: measured 2026-10-17, the release
+    // binary was 2026-10-16 18:46 while the debug binary carrying the fix was
+    // 2026-10-18 00:45, so the "regression" was the harness, not the code.
     let release = repo_root().join("target/release/tallow");
-    if release.is_file() {
-        release
-    } else {
-        repo_root().join("target/debug/tallow")
+    let debug = repo_root().join("target/debug/tallow");
+    let mtime = |p: &PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (mtime(&release), mtime(&debug)) {
+        (Some(r), Some(d)) if r >= d => release,
+        (Some(_), Some(_)) => debug,
+        (Some(_), None) => release,
+        (None, Some(_)) => debug,
+        (None, None) => debug,
     }
 }
 
