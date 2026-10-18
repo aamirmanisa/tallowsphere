@@ -6,8 +6,16 @@
 //! call returns well inside its own deadline.
 //!
 //! Run with:
-//!   cargo test --test nav_direct -- --nocapture --test-threads=1
+//!   TALLOW_ALLOW_DIRECT=1 cargo test --test nav_direct -- --nocapture --test-threads=1
 //! and with `TALLOW_DEBUG_NAV=1` for the `[nav]` markers.
+//!
+//! `TALLOW_ALLOW_DIRECT=1` is mandatory, not a convenience. The browser zone
+//! launches Chrome with `--proxy-bypass-list=<-loopback>`, which routes
+//! loopback through the zone's SOCKS proxy on purpose (it stops page JS from
+//! reaching services on this host), and Tor refuses loopback destinations
+//! (`curl --socks5-hostname 127.0.0.1:9050 http://127.0.0.1:PORT/` fails with
+//! SOCKS code 2). Without the flag every load here dies with
+//! `net::ERR_SOCKS_CONNECTION_FAILED` before navigation starts.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;

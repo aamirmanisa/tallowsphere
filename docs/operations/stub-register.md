@@ -269,7 +269,7 @@ against this register, with the loud-refusal / silent-fake distinction settled b
 ## Open work (audited 2026-10-17)
 
 Everything else in this register is FIXED, REMOVED, RETIRED, CLOSED or ACCEPTED.
-These ten are the rows that still have an action attached (rows #32 and #49 were fixed on 2026-10-18 and removed).
+These nine are the rows that still have an action attached (#71 was closed 2026-10-17 and is still listed here by mistake) (rows #32 and #49 were fixed on 2026-10-18 and removed).
 
 **Engineering (code, scoped):**
 
@@ -284,5 +284,4 @@ These ten are the rows that still have an action attached (rows #32 and #49 were
 - **38** — which tallowsync transport: tokio-tungstenite or tallow-net QUIC.
 - **55** — mount the five tallow-search route modules or delete them.
 - **70** — 49 `site_profiles*` tables + six orphan helpers: wire or register.
-- **71** — implement fingerprint header validation or finalise the trimmed assertions.
 - **73** — implement the zacks dispatch or descope the parked spec.
