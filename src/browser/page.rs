@@ -171,24 +171,35 @@ impl Page {
         }
     }
 
+    /// This page's CDP session id — the key event handlers are registered
+    /// under, because a Page value is cloned freely and has no stable address.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
     /// Start recording this page's CDP events into a bounded buffer.
     ///
     /// Idempotent per Page value; called once when the page is created. The
     /// task ends when the client's event channel closes (browser gone).
-    pub(crate) fn start_event_pump(&self) {
+    pub(crate) async fn start_event_pump(&self) {
+        // Subscribe BEFORE enabling: enabling the domains emits events of its
+        // own (executionContextCreated), and anything that arrives between the
+        // enable and the subscription is lost.
         let mut events = self.client.subscribe();
+        // Enable synchronously, not inside the spawned task: a task that
+        // enables Runtime afterwards races the first navigation, and a page
+        // that logs during load loses its console lines. Measured — with the
+        // enable in the task, `console.log` at parse time never arrived, while
+        // a log injected after load did.
+        for domain in ["Runtime.enable", "Page.enable"] {
+            let _ = self
+                .client
+                .send_command_with_session(domain, None, &self.session_id)
+                .await;
+        }
         let session = self.session_id.clone();
         let buffer = Arc::clone(&self.events);
-        let client = self.client.clone();
         self.client.spawn_background(async move {
-            // Console and uncaught-error events are only delivered when the
-            // Runtime domain is enabled — without this the buffer would hold
-            // network traffic but silently miss everything the page logged.
-            for domain in ["Runtime.enable", "Page.enable"] {
-                let _ = client
-                    .send_command_with_session(domain, None, &session)
-                    .await;
-            }
             loop {
                 match events.recv().await {
                     Ok(evt) => {
@@ -220,8 +231,6 @@ impl Page {
                         }
                         guard.push_back(record);
                     }
-                    // Lag only means some events were dropped before we read
-                    // them; the buffer's purpose is best-effort delivery.
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => break,
                 }
@@ -2743,7 +2752,7 @@ impl Page {
                             pool: self.pool.clone(),
                             events: Arc::new(Mutex::new(VecDeque::new())),
                         };
-                        popup.start_event_pump();
+                        popup.start_event_pump().await;
                         return Ok(popup);
                     }
                 }

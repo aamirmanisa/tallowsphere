@@ -363,3 +363,67 @@ fn page_events_are_buffered_and_drained_from_tallow_source() {
         assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
     }
 }
+
+fn handlers_program(url: &str) -> String {
+    format!(
+        r#"import tallow.browser
+fn on_msg(ev: PageEvent) {{
+    print("HANDLER:console:" + ev.payload)
+}}
+fn on_bind(ev: PageEvent) {{
+    print("HANDLER:binding:" + ev.payload)
+}}
+@cra_class(.default)
+@legal(basis: .research, purpose: "local loopback handler test; no external egress", personal_data: false)
+@persona(id: "pagehandlers-test", cover_class: .researcher, compartment: "pagehandlers", fingerprint_seed: "pagehandlers-test-1018")
+@burn_plan(persona: "pagehandlers-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowPageHandlersTest/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {{
+    let browser = Browser.launch(true)
+    let page = browser.new_page()
+    page.goto("{url}")
+    print("REG=" + page.on_console("on_msg"))
+    print("EXPOSE=" + page.expose_function("tlNotify", "on_bind"))
+    page.add_script_tag("if (window.tlNotify) \{{ tlNotify('from-js'); \}}")
+    page.wait_for_timeout(400)
+    browser.close()
+}}
+"#
+    )
+}
+
+#[test]
+fn page_handlers_and_bindings_fire_from_tallow_source() {
+    let port = serve(PAGE_EVENTS);
+    let url = format!("http://127.0.0.1:{port}/");
+    let path = std::env::temp_dir().join(format!("tallow-pagehandlers-{}.tl", std::process::id()));
+    std::fs::write(&path, handlers_program(&url)).expect("write program");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["run", "--interpret", path.to_str().unwrap()])
+        .env("TALLOW_ALLOW_DIRECT", "1")
+        .env("TALLOW_NO_STEALTH", "1")
+        .output()
+        .expect("run tallow");
+    let _ = std::fs::remove_file(&path);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "program failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    assert!(
+        stdout.contains("HANDLER:console:") && stdout.contains("hello-from-page"),
+        "console handler never ran:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("HANDLER:binding:") && stdout.contains("from-js"),
+        "binding handler never ran:\n{stdout}"
+    );
+    for broken in ["undefined function", "invalid page handle", "runtime error"] {
+        assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
+    }
+}

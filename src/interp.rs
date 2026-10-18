@@ -69,6 +69,19 @@ pub struct BrowserHandle {
     pub handle: std::sync::Arc<dyn std::any::Any + Send + Sync>,
 }
 
+/// A `.tl` handler registered for one kind of page event.
+///
+/// Delivery is deferred: the interpreter is single-threaded, so the CDP event
+/// goes into the page's buffer and the handler is called on the next Page
+/// method call rather than from the browser's runtime.
+#[derive(Clone, Debug)]
+pub struct BrowserEventHandler {
+    /// Event category, matching `PageEvent.kind` (`console`, `request`, …).
+    pub kind: String,
+    /// Name of the `.tl` function to call with the `PageEvent`.
+    pub handler: String,
+}
+
 impl fmt::Debug for BrowserHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BrowserHandle({})", self.kind)
@@ -1116,6 +1129,10 @@ fn struct_int_field(fields: &[(String, Value)], key: &str, default: i128) -> i12
 }
 
 pub struct Interpreter {
+    /// Page event handlers, keyed by page session id.
+    browser_handlers: HashMap<String, Vec<BrowserEventHandler>>,
+    /// JS binding name → `.tl` handler, keyed by page session id.
+    browser_bindings: HashMap<String, Vec<(String, String)>>,
     /// Stack of deferred blocks per function call frame (LIFO within each frame).
     pub deferred_stack: Vec<Vec<Block>>,
     /// Opt-in runtime capability policy (deny-lists) consulted by the builtin
@@ -1218,6 +1235,8 @@ struct InterpreterCore {
 impl Interpreter {
     pub fn new() -> Self {
         Self {
+            browser_handlers: HashMap::new(),
+            browser_bindings: HashMap::new(),
             deferred_stack: Vec::new(),
             functions: Arc::new(HashMap::new()),
             methods: Arc::new(HashMap::new()),
@@ -13304,6 +13323,65 @@ impl Interpreter {
         Ok(Value::Array(records))
     }
 
+    /// Deliver buffered page events to the `.tl` handlers registered for it.
+    ///
+    /// Runs before each `Page` method so handler output appears in program
+    /// order, immediately before the call that follows the event. A handler
+    /// that itself calls a Page method re-enters here, but its kind is already
+    /// drained, so it terminates unless the page produced new events.
+    fn pump_page_handlers(&mut self, bh: &BrowserHandle) -> Result<(), RuntimeError> {
+        let Some(page) = bh.handle.downcast_ref::<crate::browser::Page>() else {
+            return Ok(());
+        };
+        let session = page.session_id().to_string();
+        let handlers = self.browser_handlers.get(&session).cloned();
+        let debug = std::env::var("TALLOW_DEBUG_PUMP").is_ok();
+        if debug {
+            eprintln!(
+                "[pump] session={session} registered={:?}",
+                handlers.as_ref().map(|h| h.iter().map(|x| x.kind.clone()).collect::<Vec<_>>())
+            );
+        }
+        if let Some(handlers) = handlers {
+            for h in handlers {
+                let drained = page.drain_events(&h.kind, 0);
+                if debug {
+                    eprintln!("[pump] kind={} drained={}", h.kind, drained.len());
+                }
+                for ev in drained {
+                    let value = page_event_value(ev);
+                    self.call_fn_with_args(&h.handler, vec![value])?;
+                }
+            }
+        }
+        self.pump_bindings(page, &session)
+    }
+
+    /// Deliver `Runtime.bindingCalled` events to the handler registered by
+    /// `expose_function`/`expose_binding`. The binding name is inside the
+    /// payload, so one drain can serve several bindings.
+    fn pump_bindings(
+        &mut self,
+        page: &crate::browser::Page,
+        session: &str,
+    ) -> Result<(), RuntimeError> {
+        let Some(bindings) = self.browser_bindings.get(session).cloned() else {
+            return Ok(());
+        };
+        for ev in page.drain_events("binding", 0) {
+            let name = serde_json::from_str::<serde_json::Value>(&ev.payload)
+                .ok()
+                .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string));
+            let Some(name) = name else { continue };
+            let Some((_, handler)) = bindings.iter().find(|(n, _)| *n == name) else {
+                continue;
+            };
+            let value = page_event_value(ev);
+            self.call_fn_with_args(handler, vec![value])?;
+        }
+        Ok(())
+    }
+
     fn call_method(
         &mut self,
         object: Value,
@@ -17245,6 +17323,9 @@ impl Interpreter {
                     _ => unreachable!(),
                 };
                 let rt = get_browser_runtime();
+                if bh.kind == "Page" {
+                    self.pump_page_handlers(bh)?;
+                }
                 match (bh.kind.as_str(), method) {
                     // ── Browser methods ──
                     ("Browser", "new_page") => {
@@ -20989,222 +21070,13 @@ impl Interpreter {
                     }
 
                     // Expose function (register JS binding)
-                    ("Page", "expose_function") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let name = args.first().map(|v| v.as_string()).unwrap_or_default();
-                        let result = rt.block_on(page.client.send_command_with_session(
-                            "Runtime.addBinding",
-                            Some(serde_json::json!({ "name": name })),
-                            &page.session_id,
-                        ));
-                        match result {
-                            Ok(_) => Ok(Value::Ok(Box::new(Value::Struct {
-                                name: "ExposedFunction".to_string(),
-                                fields: vec![
-                                    ("name".to_string(), Value::String(name)),
-                                    ("exposed".to_string(), Value::Bool(true)),
-                                ],
-                            }))),
-                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
-                        }
-                    }
-
                     // Expose binding (same as expose_function for CDP)
-                    ("Page", "expose_binding") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let name = args.first().map(|v| v.as_string()).unwrap_or_default();
-                        let result = rt.block_on(page.client.send_command_with_session(
-                            "Runtime.addBinding",
-                            Some(serde_json::json!({ "name": name })),
-                            &page.session_id,
-                        ));
-                        match result {
-                            Ok(_) => Ok(Value::Ok(Box::new(Value::Struct {
-                                name: "ExposedBinding".to_string(),
-                                fields: vec![
-                                    ("name".to_string(), Value::String(name)),
-                                    ("bound".to_string(), Value::Bool(true)),
-                                ],
-                            }))),
-                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
-                        }
-                    }
-
                     // Console event listener via CDP Runtime.enable
-                    ("Page", "on_console") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let _ = rt.block_on(page.client.send_command_with_session(
-                            "Runtime.enable",
-                            None,
-                            &page.session_id,
-                        ));
-                        let handler = args
-                            .first()
-                            .map(|v| v.as_string())
-                            .unwrap_or_else(|| "default_console_handler".to_string());
-                        Ok(Value::Ok(Box::new(Value::Struct {
-                            name: "EventListener".to_string(),
-                            fields: vec![
-                                ("kind".to_string(), Value::String("console".to_string())),
-                                ("handler".to_string(), Value::String(handler)),
-                                ("active".to_string(), Value::Bool(true)),
-                            ],
-                        })))
-                    }
-
                     // Page error event listener via CDP Runtime.enable
-                    ("Page", "on_error") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let _ = rt.block_on(page.client.send_command_with_session(
-                            "Runtime.enable",
-                            None,
-                            &page.session_id,
-                        ));
-                        let handler = args
-                            .first()
-                            .map(|v| v.as_string())
-                            .unwrap_or_else(|| "default_error_handler".to_string());
-                        Ok(Value::Ok(Box::new(Value::Struct {
-                            name: "EventListener".to_string(),
-                            fields: vec![
-                                ("kind".to_string(), Value::String("pageerror".to_string())),
-                                ("handler".to_string(), Value::String(handler)),
-                                ("active".to_string(), Value::Bool(true)),
-                            ],
-                        })))
-                    }
-
                     // Network request event listener
-                    ("Page", "on_request") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let _ = rt.block_on(page.client.send_command_with_session(
-                            "Network.enable",
-                            None,
-                            &page.session_id,
-                        ));
-                        let handler = args
-                            .first()
-                            .map(|v| v.as_string())
-                            .unwrap_or_else(|| "default_request_handler".to_string());
-                        Ok(Value::Ok(Box::new(Value::Struct {
-                            name: "EventListener".to_string(),
-                            fields: vec![
-                                ("kind".to_string(), Value::String("request".to_string())),
-                                ("handler".to_string(), Value::String(handler)),
-                                ("active".to_string(), Value::Bool(true)),
-                            ],
-                        })))
-                    }
-
                     // Network response event listener
-                    ("Page", "on_response") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let _ = rt.block_on(page.client.send_command_with_session(
-                            "Network.enable",
-                            None,
-                            &page.session_id,
-                        ));
-                        let handler = args
-                            .first()
-                            .map(|v| v.as_string())
-                            .unwrap_or_else(|| "default_response_handler".to_string());
-                        Ok(Value::Ok(Box::new(Value::Struct {
-                            name: "EventListener".to_string(),
-                            fields: vec![
-                                ("kind".to_string(), Value::String("response".to_string())),
-                                ("handler".to_string(), Value::String(handler)),
-                                ("active".to_string(), Value::Bool(true)),
-                            ],
-                        })))
-                    }
-
                     // File chooser event listener
-                    ("Page", "on_filechooser") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let _ = rt.block_on(page.client.send_command_with_session(
-                            "Page.setInterceptFileChooserDialog",
-                            Some(serde_json::json!({ "enabled": true })),
-                            &page.session_id,
-                        ));
-                        let handler = args
-                            .first()
-                            .map(|v| v.as_string())
-                            .unwrap_or_else(|| "default_filechooser_handler".to_string());
-                        Ok(Value::Ok(Box::new(Value::Struct {
-                            name: "EventListener".to_string(),
-                            fields: vec![
-                                ("kind".to_string(), Value::String("filechooser".to_string())),
-                                ("handler".to_string(), Value::String(handler)),
-                                ("active".to_string(), Value::Bool(true)),
-                            ],
-                        })))
-                    }
-
                     // Download event listener
-                    ("Page", "on_download") => {
-                        let page = bh
-                            .handle
-                            .downcast_ref::<crate::browser::Page>()
-                            .ok_or_else(|| {
-                                RuntimeError::TypeError("invalid page handle".to_string())
-                            })?;
-                        let _ = rt.block_on(page.client.send_command_with_session(
-                            "Browser.setDownloadBehavior",
-                            Some(serde_json::json!({
-                                "behavior": "allowAndName",
-                                "downloadPath": std::env::temp_dir().to_string_lossy().to_string(),
-                            })),
-                            &page.session_id,
-                        ));
-                        let handler = args
-                            .first()
-                            .map(|v| v.as_string())
-                            .unwrap_or_else(|| "default_download_handler".to_string());
-                        Ok(Value::Ok(Box::new(Value::Struct {
-                            name: "EventListener".to_string(),
-                            fields: vec![
-                                ("kind".to_string(), Value::String("download".to_string())),
-                                ("handler".to_string(), Value::String(handler)),
-                                ("active".to_string(), Value::Bool(true)),
-                            ],
-                        })))
-                    }
-
                     // Screenshot to file (alias)
                     ("Page", "screenshot_to_file") | ("Page", "save_screenshot") => {
                         let page = bh
@@ -21502,6 +21374,89 @@ impl Interpreter {
                         }
                     }
 
+                    // ── Page event handlers ──────────────────────────────────
+                    // Registration only: the event is buffered by the page and
+                    // delivered by pump_page_handlers on the next Page call.
+                    ("Page", m @ ("on_console" | "on_error" | "on_request" | "on_response" | "on_filechooser" | "on_download")) => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let handler = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        if handler.trim().is_empty() {
+                            return Err(RuntimeError::Error(format!(
+                                "{m} requires a handler function name"
+                            )));
+                        }
+                        if self.functions.get(&handler).is_none() {
+                            return Err(RuntimeError::UndefinedFn(handler));
+                        }
+                        let kind = m.trim_start_matches("on_").to_string();
+                        self.browser_handlers
+                            .entry(page.session_id().to_string())
+                            .or_default()
+                            .push(BrowserEventHandler {
+                                kind: kind.clone(),
+                                handler: handler.clone(),
+                            });
+                        Ok(Value::Ok(Box::new(Value::Struct {
+                            name: "EventListener".to_string(),
+                            fields: vec![
+                                ("kind".to_string(), Value::String(kind)),
+                                ("handler".to_string(), Value::String(handler)),
+                                ("active".to_string(), Value::Bool(true)),
+                            ],
+                        })))
+                    }
+                    // ── JS → .tl bindings ────────────────────────────────────
+                    ("Page", m @ ("expose_function" | "expose_binding")) => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let name = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        let handler = args.get(1).map(|v| v.as_string()).unwrap_or_default();
+                        if name.trim().is_empty() || handler.trim().is_empty() {
+                            return Err(RuntimeError::Error(format!(
+                                "{m} requires a binding name and a handler function name"
+                            )));
+                        }
+                        if self.functions.get(&handler).is_none() {
+                            return Err(RuntimeError::UndefinedFn(handler));
+                        }
+                        let as_function = m == "expose_function";
+                        match rt.block_on(page.client.send_command_with_session(
+                            "Runtime.addBinding",
+                            Some(serde_json::json!({ "name": name })),
+                            &page.session_id,
+                        )) {
+                            Ok(_) => {
+                                self.browser_bindings
+                                    .entry(page.session_id().to_string())
+                                    .or_default()
+                                    .push((name.clone(), handler.clone()));
+                                let struct_name = if as_function {
+                                    "ExposedFunction"
+                                } else {
+                                    "ExposedBinding"
+                                };
+                                let flag = if as_function { "exposed" } else { "bound" };
+                                Ok(Value::Ok(Box::new(Value::Struct {
+                                    name: struct_name.to_string(),
+                                    fields: vec![
+                                        ("name".to_string(), Value::String(name)),
+                                        ("handler".to_string(), Value::String(handler)),
+                                        (flag.to_string(), Value::Bool(true)),
+                                    ],
+                                })))
+                            }
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
                     // Unknown browser method — try Browser helper-module dispatcher first
                     (kind, m) => {
                         if let Some(r) =
@@ -56221,5 +56176,17 @@ fn main() {
             output[0].contains("::::nope"),
             "refusal must name the offending proxy URL: {output:?}"
         );
+    }
+}
+
+/// One buffered page event as the `.tl` `PageEvent` struct.
+fn page_event_value(ev: crate::browser::page::PageEvent) -> Value {
+    Value::Struct {
+        name: "PageEvent".to_string(),
+        fields: vec![
+            ("kind".to_string(), Value::String(ev.kind)),
+            ("method".to_string(), Value::String(ev.method)),
+            ("payload".to_string(), Value::String(ev.payload)),
+        ],
     }
 }
