@@ -84,22 +84,23 @@ fn ok(v: Value) -> Value {
 
 /// Run a future to completion from the synchronous interpreter thread.
 ///
-/// Mirrors `interp::get_browser_runtime`: if this thread is already inside a
-/// tokio runtime, block on its handle; otherwise use a lazily-initialized
-/// current-thread runtime. Only bounded futures are bridged here (the
-/// interpreter is single-threaded per script).
+/// Uses the SAME runtime that owns the interpreter's browser objects
+/// (`interp::get_browser_runtime`). This is load-bearing, not tidiness:
+/// `CdpClient::connect` spawns its WebSocket read loop as a task on whichever
+/// runtime is current at connect time, and that task is what routes every
+/// command reply. Driving a `Page` from a *second* runtime writes the command
+/// but never polls the reader, so `Page.navigate`'s reply never arrives and
+/// every `Runtime.evaluate` goes unanswered — while Chrome happily loads the
+/// page. That was register #105: 5 s command timeout, then a 90 s navigation
+/// timeout in which every readiness poll reported `answered=false`.
+///
+/// The `Handle::try_current` branch covers a caller that is already inside a
+/// runtime (re-entering a runtime by `block_on` panics).
 fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.block_on(fut)
     } else {
-        static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-        RT.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to create HackTheCart dispatch tokio runtime")
-        })
-        .block_on(fut)
+        crate::interp::get_browser_runtime().block_on(fut)
     }
 }
 
@@ -143,6 +144,28 @@ fn crawl_job_to_value(job: &browser::crawl_queue::CrawlJob) -> Value {
 }
 
 /// Marshal a `CrawlResult` into a Tallow Struct.
+/// Extract an optional `Page` from the arguments after the URL (register #32).
+///
+/// `Ok(None)` when the caller passes nothing (HTTP-only, unchanged behaviour),
+/// `Ok(Some(page))` when it passes the handle `Browser.new_page()` returned,
+/// and an error message otherwise — a silently-ignored wrong argument would
+/// put the caller back in the "no browser page available" path with no
+/// explanation of why the page it passed had no effect.
+fn browser_page_arg(rest: &[Value]) -> Result<Option<&crate::browser::Page>, String> {
+    match rest.first() {
+        None | Some(Value::Nil) => Ok(None),
+        Some(Value::BrowserObject(bh)) if bh.kind == "Page" => bh
+            .handle
+            .downcast_ref::<crate::browser::Page>()
+            .map(Some)
+            .ok_or_else(|| "invalid page handle".to_string()),
+        Some(other) => Err(format!(
+            "fetch(url, page) expects a Page from Browser.new_page(), got {}",
+            crate::interp::type_name(other)
+        )),
+    }
+}
+
 fn crawl_result_to_value(r: &browser::adaptive_crawler::CrawlResult) -> Value {
     Value::Struct {
         name: "CrawlResult".to_string(),
@@ -1647,11 +1670,23 @@ pub fn dispatch_hackthecart_method(
                     "AdaptiveCrawler.fetch requires a URL argument".to_string(),
                 )))));
             }
-            // No browser Page is constructible from Tallow values — this is
-            // the honest HTTP-only path; JS-rendered pages are not escalated.
-            let result = block_on(crawler.fetch(&url, None));
+            // Register #32: escalation was implemented in Rust but unreachable
+            // from Tallow — the `page` argument was hard-wired to `None`, so a
+            // JS-rendered page could only ever return the "no browser page
+            // available" error. Accept the Page handle the caller already got
+            // from `Browser.new_page()` and hand it to the crawler.
+            let page_arg = match browser_page_arg(&args[1..]) {
+                Ok(p) => p,
+                Err(msg) => return Some(Ok(Value::Err(Box::new(Value::String(msg))))),
+            };
+            let result = block_on(crawler.fetch(&url, page_arg));
+            // The language-level return type is `Result<CrawlResult, String>`
+            // (every error path below returns `Value::Err`), so success must be
+            // `Value::Ok` — a bare `Struct` matches neither arm of
+            // `match c.fetch(...) { Ok(r) -> …, Err(e) -> … }` and the
+            // interpreter aborts with "non-exhaustive match".
             return Some(Ok(match result {
-                Ok(cr) => crawl_result_to_value(&cr),
+                Ok(cr) => Value::Ok(Box::new(crawl_result_to_value(&cr))),
                 Err(e) => Value::Err(Box::new(Value::String(format!("{e}")))),
             }));
         }
@@ -1672,11 +1707,16 @@ pub fn dispatch_hackthecart_method(
                     )))))
                 }
             };
-            // HTTP-only (no Tallow Page object); retries/backoff are governed
-            // by the pipeline's RetryConfig.
-            let result = block_on(guard.fetch(&url, None));
+            // Register #32: same escalation gap as AdaptiveCrawler above;
+            // retries/backoff remain governed by the pipeline's RetryConfig.
+            let page_arg = match browser_page_arg(&args[1..]) {
+                Ok(p) => p,
+                Err(msg) => return Some(Ok(Value::Err(Box::new(Value::String(msg))))),
+            };
+            let result = block_on(guard.fetch(&url, page_arg));
+            // Same Result contract as AdaptiveCrawler.fetch above.
             return Some(Ok(match result {
-                Ok(cr) => crawl_result_to_value(&cr),
+                Ok(cr) => Value::Ok(Box::new(crawl_result_to_value(&cr))),
                 Err(e) => Value::Err(Box::new(Value::String(format!("{e}")))),
             }));
         }

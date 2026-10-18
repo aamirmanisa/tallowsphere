@@ -162,7 +162,33 @@ impl AdaptiveCrawler {
         page: &Page,
         url: &str,
     ) -> Result<CrawlResult, BrowserError> {
-        let nav = page.navigate(url, WaitUntil::NetworkIdle).await?;
+        // Bounded, not `NetworkIdle`: a page that keeps a request open (long
+        // poll, SSE, analytics retry) never reaches network idle, so the crawl
+        // sat on the navigation timeout for two minutes and returned nothing —
+        // measured on a static loopback page (register #32). DomContentLoaded
+        // with a soft timeout plus an explicit readiness settle returns the
+        // rendered DOM for those pages instead of a timeout error.
+        let nav = page.navigate(url, WaitUntil::DomContentLoaded).await?;
+        // Bounded settle: give DOMContentLoaded handlers (the ones that fill
+        // the skeleton) a chance to finish before the DOM is read.
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(2_000);
+        loop {
+            let ready = page
+                .evaluate_expression("document.readyState")
+                .await
+                .ok()
+                .map(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| v.to_string())
+                })
+                .unwrap_or_default();
+            if ready.contains("complete") || std::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
 
         let status = nav.status_code.unwrap_or(200);
 
@@ -171,12 +197,14 @@ impl AdaptiveCrawler {
             .evaluate_expression("document.documentElement.outerHTML")
             .await?;
 
+        // `evaluate_expression` already returns the `Runtime.evaluate`
+        // result's `value`; unwrapping `result.result.value` again (the raw
+        // CDP envelope) reads through a String and yields "" — the crawl then
+        // reports `source=Browser` with an empty body.
         let body = result
-            .get("result")
-            .and_then(|r| r.get("value"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| result.to_string());
 
         Ok(CrawlResult {
             url: nav.url,
