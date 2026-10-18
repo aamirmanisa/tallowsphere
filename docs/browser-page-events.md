@@ -63,6 +63,10 @@ pair twice is a no-op.
 ## Buffer
 
 - Capacity 512 events per session; the oldest are dropped when full.
+- Delivery is best-effort. The pump reads a broadcast channel of capacity 256;
+  if a page emits faster than the pump drains, `Lagged` is treated as "skip
+  forward" rather than an error, so a burst can lose events without failing the
+  program. Nothing in the API reports a drop count.
 - Draining removes: a second drain of the same kind returns `[]`.
 - Kinds: `console`, `error`, `request`, `response`, `filechooser`, `download`,
   `binding`.
