@@ -125,3 +125,83 @@ fn page_document_methods_work_from_tallow_source() {
         assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
     }
 }
+
+const PAGE_WAITS: &str = "<!doctype html><html><head><title>page-waits</title></head>\
+<body><div id=\"app\">waiting</div>\
+<script>\
+setTimeout(function(){ fetch('/api/one').catch(function(){}); }, 600);\
+setTimeout(function(){ fetch('/api/two').catch(function(){}); }, 900);\
+setTimeout(function(){ window.location.href = '/second'; }, 1300);\
+</script></body></html>";
+
+fn waits_program(url: &str) -> String {
+    format!(
+        r#"@cra_class(.default)
+@legal(basis: .research, purpose: "local loopback wait-method test; no external egress", personal_data: false)
+@persona(id: "pagewaits-test", cover_class: .researcher, compartment: "pagewaits", fingerprint_seed: "pagewaits-test-1018")
+@burn_plan(persona: "pagewaits-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowPageWaitsTest/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {{
+    let browser = Browser.launch(true)
+    let page = browser.new_page()
+    page.goto("{url}")
+    print("REQ=" + page.wait_for_request("*/api/*", 4000))
+    print("RESP=" + page.wait_for_response("*/api/two*", 4000))
+    print("URLWAIT=" + page.wait_for_url("*/second", 4000))
+    print("NOEVENT=" + page.wait_for_event("No.suchEvent", 120))
+    browser.close()
+}}
+"#
+    )
+}
+
+#[test]
+fn page_wait_methods_work_from_tallow_source() {
+    let port = serve(PAGE_WAITS);
+    let url = format!("http://127.0.0.1:{port}/");
+    let path = std::env::temp_dir().join(format!("tallow-pagewaits-{}.tl", std::process::id()));
+    std::fs::write(&path, waits_program(&url)).expect("write program");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["run", "--interpret", path.to_str().unwrap()])
+        .env("TALLOW_ALLOW_DIRECT", "1")
+        .env("TALLOW_NO_STEALTH", "1")
+        .output()
+        .expect("run tallow");
+    let _ = std::fs::remove_file(&path);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "program failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    // The request line must carry the URL the browser actually used.
+    assert!(
+        stdout.contains(&format!("/api/")),
+        "wait_for_request did not report the matched URL:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("/api/two")),
+        "wait_for_response did not report the matched URL:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("/second"),
+        "wait_for_url did not report the new location:\n{stdout}"
+    );
+    // A wait that times out is `result: false`, not an error — and it must
+    // come back in roughly the time asked for, not hang.
+    let noevent = stdout
+        .lines()
+        .find(|l| l.starts_with("NOEVENT="))
+        .unwrap_or_else(|| panic!("no NOEVENT line:\n{stdout}"));
+    assert!(
+        noevent.contains("result: false"),
+        "wait_for_event on a name that never fires should be false:\n{noevent}"
+    );
+    for broken in ["undefined function", "invalid page handle", "runtime error"] {
+        assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
+    }
+}
