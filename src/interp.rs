@@ -17617,6 +17617,163 @@ impl Interpreter {
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }
                     }
+                    ("Page", "add_init_script") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let script = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        if script.trim().is_empty() {
+                            return Err(RuntimeError::Error(
+                                "add_init_script requires a script".into(),
+                            ));
+                        }
+                        match rt.block_on(page.add_init_script(&script)) {
+                            Ok(id) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "ScriptTag".to_string(),
+                                fields: vec![
+                                    ("script_hash".to_string(), Value::Nil),
+                                    ("tag_id".to_string(), Value::String(id)),
+                                    ("injected".to_string(), Value::Bool(true)),
+                                    ("kind".to_string(), Value::String("init_script".to_string())),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "add_script_tag") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let source = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        match rt.block_on(page.add_script_tag(&source)) {
+                            Ok(id) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "ScriptTag".to_string(),
+                                fields: vec![
+                                    ("script_hash".to_string(), Value::Nil),
+                                    ("tag_id".to_string(), Value::String(id)),
+                                    ("injected".to_string(), Value::Bool(true)),
+                                    ("kind".to_string(), Value::String("script".to_string())),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "add_style_tag") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let source = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        match rt.block_on(page.add_style_tag(&source)) {
+                            Ok((id, kind)) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "StyleTag".to_string(),
+                                fields: vec![
+                                    ("tag_id".to_string(), Value::String(id)),
+                                    ("kind".to_string(), Value::String(kind)),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "emulate_media") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let media = args.first().map(|v| v.as_string()).unwrap_or_else(|| "screen".to_string());
+                        let scheme = args.get(1).map(|v| v.as_string()).unwrap_or_else(|| "light".to_string());
+                        let motion = args.get(2).map(|v| v.as_string()).unwrap_or_else(|| "no-preference".to_string());
+                        match rt.block_on(page.emulate_media(&media, &scheme, &motion)) {
+                            Ok(()) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "MediaEmulation".to_string(),
+                                fields: vec![
+                                    ("media_type".to_string(), Value::String(media)),
+                                    ("color_scheme".to_string(), Value::String(scheme)),
+                                    ("reduced_motion".to_string(), Value::String(motion)),
+                                    ("applied".to_string(), Value::Bool(true)),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "emulate_vision") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let kind = args.first().map(|v| v.as_string()).unwrap_or_else(|| "none".to_string());
+                        match rt.block_on(page.emulate_vision(&kind)) {
+                            Ok(()) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "VisionEmulation".to_string(),
+                                fields: vec![
+                                    ("kind".to_string(), Value::String(kind)),
+                                    ("applied".to_string(), Value::Bool(true)),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "throttle_network") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let preset = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        let Some((down, up, latency)) = network_preset(&preset) else {
+                            return Err(RuntimeError::Error(format!(
+                                "throttle_network: unknown preset '{preset}' (slow-3g, fast-3g, 4g, none)"
+                            )));
+                        };
+                        match rt.block_on(page.throttle_network(down, up, latency)) {
+                            Ok(()) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "NetworkThrottle".to_string(),
+                                fields: vec![
+                                    ("preset".to_string(), Value::String(preset.to_ascii_lowercase())),
+                                    ("latency_ms".to_string(), Value::Int(latency as i128)),
+                                    ("download_kbps".to_string(), Value::Int(down as i128)),
+                                    ("upload_kbps".to_string(), Value::Int(up as i128)),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "throttle_cpu") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let rate = match args.first() {
+                            Some(Value::Float(f)) => *f,
+                            Some(Value::Int(n)) => *n as f64,
+                            _ => 1.0,
+                        };
+                        match rt.block_on(page.throttle_cpu(rate)) {
+                            Ok(applied) => Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "CpuThrottle".to_string(),
+                                fields: vec![
+                                    ("rate".to_string(), Value::Float(applied)),
+                                    ("applied".to_string(), Value::Bool(true)),
+                                ],
+                            }))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
                     ("Page", "query_selector") => {
                         let page = bh
                             .handle
@@ -32271,6 +32428,21 @@ fn value_to_json(val: &Value) -> String {
 }
 
 /// Parse a JSON string into a Value.
+/// DevTools network presets: `(download_kbps, upload_kbps, latency_ms)`.
+///
+/// Kept in the dispatch layer rather than `page.rs` because the `Page` method
+/// takes raw numbers; a preset name is a scripting convenience, and an unknown
+/// name must fail loudly instead of throttling nothing.
+fn network_preset(preset: &str) -> Option<(f64, f64, f64)> {
+    match preset.trim().to_ascii_lowercase().as_str() {
+        "slow-3g" | "slow3g" => Some((400.0, 400.0, 500.0)),
+        "fast-3g" | "fast3g" => Some((1_600.0, 750.0, 150.0)),
+        "4g" => Some((9_000.0, 3_000.0, 50.0)),
+        "none" | "off" | "reset" => Some((0.0, 0.0, 0.0)),
+        _ => None,
+    }
+}
+
 /// Build the `WaitResult` field vector shared by the Page wait methods.
 ///
 /// Optional fields stay `Nil` rather than being invented: a timeout result has

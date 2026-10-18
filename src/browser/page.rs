@@ -945,6 +945,104 @@ impl Page {
         Ok((false, started.elapsed().as_millis() as u64, String::new()))
     }
 
+    // ── Script/style injection ──────────────────────────────────────────────
+
+    /// Add a `<script>` to the current document.
+    ///
+    /// `url_or_content` is treated as a URL when it looks like one (a scheme
+    /// or a protocol-relative prefix), otherwise as inline source. Returns the
+    /// generated element id so the caller can find or remove it.
+    pub async fn add_script_tag(&self, url_or_content: &str) -> Result<String, BrowserError> {
+        let literal = serde_json::to_string(url_or_content)
+            .map_err(|e| BrowserError::JsonError(format!("add_script_tag: {e}")))?;
+        let as_url = looks_like_url(url_or_content);
+        let expression = format!(
+            "(() => {{ const s = document.createElement('script');              {} = {literal}; s.id = 'tallow-script-' + Date.now().toString(36);              (document.head || document.documentElement).appendChild(s); return s.id; }})()",
+            if as_url { "s.src" } else { "s.text" }
+        );
+        let value = self.evaluate_expression(&expression).await?;
+        Ok(value.as_str().map(str::to_string).unwrap_or_default())
+    }
+
+    /// Add a `<style>` to the current document; same URL/contents heuristic.
+    pub async fn add_style_tag(&self, url_or_content: &str) -> Result<(String, String), BrowserError> {
+        let literal = serde_json::to_string(url_or_content)
+            .map_err(|e| BrowserError::JsonError(format!("add_style_tag: {e}")))?;
+        let as_url = looks_like_url(url_or_content);
+        let expression = format!(
+            "(() => {{ const s = document.createElement('style');              {} = {literal}; s.id = 'tallow-style-' + Date.now().toString(36);              (document.head || document.documentElement).appendChild(s); return s.id; }})()",
+            if as_url {
+                "s.setAttribute('data-href', {literal})"
+            } else {
+                "s.textContent"
+            }
+        );
+        let value = self.evaluate_expression(&expression).await?;
+        let id = value.as_str().map(str::to_string).unwrap_or_default();
+        Ok((id, if as_url { "link" } else { "inline" }.to_string()))
+    }
+
+    // ── Emulation ───────────────────────────────────────────────────────────
+
+    /// Emulate a media type plus colour-scheme and reduced-motion preferences.
+    ///
+    /// These are CSS media features, not UA strings: `prefers-colour-scheme`
+    /// is what a site's dark-mode branch reads.
+    pub async fn emulate_media(
+        &self,
+        media_type: &str,
+        color_scheme: &str,
+        reduced_motion: &str,
+    ) -> Result<(), BrowserError> {
+        let media = if media_type.is_empty() { "screen" } else { media_type };
+        let scheme = if color_scheme.is_empty() { "light" } else { color_scheme };
+        let motion = if reduced_motion.is_empty() {
+            "no-preference"
+        } else {
+            reduced_motion
+        };
+        self.client
+            .send_command_with_session(
+                "Emulation.setEmulatedMedia",
+                Some(json!({
+                    "media": media,
+                    "features": [
+                        { "name": "prefers-color-scheme", "value": scheme },
+                        { "name": "prefers-reduced-motion", "value": motion },
+                    ],
+                })),
+                &self.session_id,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Emulate a vision deficiency (`none`, `blurredVision`, `deuteranopia`, …).
+    pub async fn emulate_vision(&self, deficiency: &str) -> Result<(), BrowserError> {
+        let kind = if deficiency.is_empty() { "none" } else { deficiency };
+        self.client
+            .send_command_with_session(
+                "Emulation.setEmulatedVisionDeficiency",
+                Some(json!({ "type": kind })),
+                &self.session_id,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Throttle CPU by `rate` (1.0 = native, 4.0 = 4× slower). Returns the rate.
+    pub async fn throttle_cpu(&self, rate: f64) -> Result<f64, BrowserError> {
+        let rate = if rate <= 0.0 { 1.0 } else { rate };
+        self.client
+            .send_command_with_session(
+                "Emulation.setCPUThrottlingRate",
+                Some(json!({ "rate": rate })),
+                &self.session_id,
+            )
+            .await?;
+        Ok(rate)
+    }
+
     /// True when the event belongs to a different page's session.
     fn is_other_session(&self, evt: &CdpEvent) -> bool {
         evt.session_id
@@ -2981,6 +3079,14 @@ impl Page {
     ///
     /// Returns a script identifier that can be used to remove the script later.
     pub async fn add_init_script(&self, script: &str) -> Result<String, BrowserError> {
+        // The Page domain must be enabled on this session: without it the
+        // registration is accepted (an identifier comes back) and the source
+        // runs once under `runImmediately`, but it is not applied to the next
+        // document — measured. Idempotent.
+        let _ = self
+            .client
+            .send_command_with_session("Page.enable", None, &self.session_id)
+            .await;
         let result = self
             .client
             .send_command_with_session(
@@ -4124,4 +4230,14 @@ mod glob_tests {
         assert!(!glob_match("a.c", "abc"));
         assert!(glob_match("*", "anything at all"));
     }
+}
+/// Heuristic used by the tag injectors: a value with a scheme or a
+/// protocol-relative prefix is a URL; everything else is element text.
+fn looks_like_url(value: &str) -> bool {
+    let v = value.trim_start();
+    v.starts_with("//")
+        || v.starts_with("http://")
+        || v.starts_with("https://")
+        || v.starts_with("data:")
+        || v.starts_with("blob:")
 }

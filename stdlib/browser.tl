@@ -133,6 +133,43 @@ impl Page {
         // Runtime: Network.responseReceived filtered by URL
     }
 
+    /// Run `script` before every document in this page loads.
+    fn add_init_script(self, script: String) -> Result<ScriptTag> {
+        // Runtime: Page.addScriptToEvaluateOnNewDocument
+    }
+
+    /// Append a <script> to the current document. A value with a scheme is
+    /// treated as a URL, anything else as inline source.
+    fn add_script_tag(self, url_or_content: String) -> Result<ScriptTag> {
+        // Runtime: document.createElement('script') via CDP
+    }
+
+    /// Append a <style> to the current document; same URL/contents rule.
+    fn add_style_tag(self, url_or_content: String) -> Result<StyleTag> {
+        // Runtime: document.createElement('style') via CDP
+    }
+
+    /// Emulate media type, colour scheme and reduced-motion preference.
+    fn emulate_media(self, media_type: String = "screen", color_scheme: String = "light", reduced_motion: String = "no-preference") -> Result<MediaEmulation> {
+        // Runtime: Emulation.setEmulatedMedia
+    }
+
+    /// Emulate a vision deficiency (none, blurredVision, deuteranopia, …).
+    fn emulate_vision(self, deficiency: String) -> Result<VisionEmulation> {
+        // Runtime: Emulation.setEmulatedVisionDeficiency
+    }
+
+    /// Apply a network preset: slow-3g, fast-3g, 4g or none. An unknown
+    /// preset is an error, never a silent no-op.
+    fn throttle_network(self, preset: String) -> Result<NetworkThrottle> {
+        // Runtime: Network.emulateNetworkConditions
+    }
+
+    /// Slow the CPU by `rate` (1.0 native, 4.0 = 4x slower).
+    fn throttle_cpu(self, rate: f64) -> Result<CpuThrottle> {
+        // Runtime: Emulation.setCPUThrottlingRate
+    }
+
     /// Find the first element matching a CSS selector.
     /// Returns Err if no element matches.
     fn query_selector(self, selector: String) -> Result<Element> {

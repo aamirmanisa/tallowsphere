@@ -205,3 +205,77 @@ fn page_wait_methods_work_from_tallow_source() {
         assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
     }
 }
+
+fn injection_program(url: &str) -> String {
+    format!(
+        r#"@cra_class(.default)
+@legal(basis: .research, purpose: "local loopback injection/emulation test; no external egress", personal_data: false)
+@persona(id: "pageinject-test", cover_class: .researcher, compartment: "pageinject", fingerprint_seed: "pageinject-test-1018")
+@burn_plan(persona: "pageinject-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowPageInjectTest/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {{
+    let browser = Browser.launch(true)
+    let page = browser.new_page()
+    page.goto("{url}")
+    print("STYLE=" + page.add_style_tag("body \{{ background-color: rgb(1, 2, 3); \}}"))
+    print("STYLED=" + page.wait_for_function("getComputedStyle(document.body).backgroundColor === 'rgb(1, 2, 3)'", 2000))
+    print("SCRIPT=" + page.add_script_tag("window.__tallow_tag = 42;"))
+    print("TAGGED=" + page.wait_for_function("window.__tallow_tag === 42", 2000))
+    print("INIT=" + page.add_init_script("window.__init_marker = 7;"))
+    page.goto("{url}")
+    print("INITDONE=" + page.wait_for_function("window.__init_marker === 7", 2000))
+    print("MEDIA=" + page.emulate_media("screen", "dark", "reduce"))
+    print("DARK=" + page.wait_for_function("matchMedia('(prefers-color-scheme: dark)').matches", 2000))
+    print("VISION=" + page.emulate_vision("deuteranopia"))
+    print("CPU=" + page.throttle_cpu(4.0))
+    print("NET=" + page.throttle_network("slow-3g"))
+    browser.close()
+}}
+"#
+    )
+}
+
+#[test]
+fn page_injection_and_emulation_work_from_tallow_source() {
+    let port = serve(PAGE);
+    let url = format!("http://127.0.0.1:{port}/");
+    let path = std::env::temp_dir().join(format!("tallow-pageinject-{}.tl", std::process::id()));
+    std::fs::write(&path, injection_program(&url)).expect("write program");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["run", "--interpret", path.to_str().unwrap()])
+        .env("TALLOW_ALLOW_DIRECT", "1")
+        .env("TALLOW_NO_STEALTH", "1")
+        .output()
+        .expect("run tallow");
+    let _ = std::fs::remove_file(&path);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "program failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let line = |prefix: &str| {
+        stdout
+            .lines()
+            .find(|l| l.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix} line:\n{stdout}"))
+            .to_string()
+    };
+
+    // Each effect is proven by what the page computes, not by the return value.
+    assert!(line("STYLED=").contains("result: true"), "{}", line("STYLED="));
+    assert!(line("TAGGED=").contains("result: true"), "{}", line("TAGGED="));
+    assert!(line("INITDONE=").contains("result: true"), "{}", line("INITDONE="));
+    assert!(line("DARK=").contains("result: true"), "{}", line("DARK="));
+    assert!(line("VISION=").contains("applied: true"), "{}", line("VISION="));
+    assert!(line("CPU=").contains("rate: 4"), "{}", line("CPU="));
+    assert!(line("NET=").contains("slow-3g"), "{}", line("NET="));
+    assert!(line("NET=").contains("latency_ms: 500"), "{}", line("NET="));
+    for broken in ["undefined function", "invalid page handle", "runtime error"] {
+        assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
+    }
+}
