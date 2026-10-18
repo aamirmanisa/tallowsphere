@@ -3,8 +3,9 @@
 //! Provides a JSON-RPC client that communicates with Chromium via the CDP protocol.
 //! Handles command/response correlation, event broadcasting, and session multiplexing.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -823,7 +824,7 @@ impl CdpClient {
             })?
             .to_string();
 
-        Ok(super::page::Page {
+        let page = super::page::Page {
             client: self.clone(),
             session_id,
             frame_id: target_id,
@@ -831,7 +832,10 @@ impl CdpClient {
             iframe_doc_object_id: None,
             pool_index: None,
             pool: None,
-        })
+            events: Arc::new(StdMutex::new(VecDeque::new())),
+        };
+        page.start_event_pump();
+        Ok(page)
     }
 
     /// Create a new page (target) in the default browser context.
@@ -874,7 +878,7 @@ impl CdpClient {
             })?
             .to_string();
 
-        Ok(super::page::Page {
+        let page = super::page::Page {
             client: self.clone(),
             session_id,
             frame_id: target_id,
@@ -882,7 +886,10 @@ impl CdpClient {
             iframe_doc_object_id: None,
             pool_index: None,
             pool: None,
-        })
+            events: Arc::new(StdMutex::new(VecDeque::new())),
+        };
+        page.start_event_pump();
+        Ok(page)
     }
 
     /// Close a page (target).

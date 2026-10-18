@@ -3,8 +3,9 @@
 //! Provides the Page type representing a browser tab/target, with methods
 //! for navigation, lifecycle event waiting, and element querying.
 
+use std::collections::VecDeque;
 use std::io::Read;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Random delay between min_ms and max_ms (tokio sleep).
@@ -102,6 +103,31 @@ pub enum CookieConsentStrategy {
     Dismiss,
 }
 
+/// One buffered CDP event, kept until the interpreter drains it.
+///
+/// The buffer exists because the interpreter is single-threaded: a CDP event
+/// arrives on the browser's runtime and there is no safe way to call a `.tl`
+/// handler from there, so events are recorded and delivered on the next
+/// interpreter turn instead of being dropped.
+#[derive(Debug, Clone)]
+pub struct PageEvent {
+    /// Coarse category: `console`, `error`, `request`, `response`,
+    /// `filechooser`, `download`, `binding`.
+    pub kind: String,
+    /// The CDP method that produced it, verbatim.
+    pub method: String,
+    /// `params` as JSON. Kept as text so an event survives being handed to a
+    /// caller that has no schema for it yet.
+    pub payload: String,
+}
+
+/// How many events a page keeps before the oldest are dropped.
+///
+/// A page that is never drained must not grow without bound; 512 records is
+/// enough for a page load's console and network activity and small enough to
+/// stay in memory.
+const EVENT_BUFFER_CAP: usize = 512;
+
 /// A handle to a browser page (tab/target).
 ///
 /// Clone-friendly since CdpClient uses Arc internals.
@@ -120,6 +146,8 @@ pub struct Page {
     pub(crate) pool_index: Option<usize>,
     /// Reference back to the BrowserPool that owns this page (enables pool.release)
     pub(crate) pool: Option<Arc<super::pool::BrowserPool>>,
+    /// Events seen on this page's session, waiting to be drained.
+    pub(crate) events: Arc<Mutex<VecDeque<PageEvent>>>,
 }
 
 impl Page {
@@ -139,7 +167,89 @@ impl Page {
             iframe_doc_object_id: None,
             pool_index,
             pool,
+            events: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    /// Start recording this page's CDP events into a bounded buffer.
+    ///
+    /// Idempotent per Page value; called once when the page is created. The
+    /// task ends when the client's event channel closes (browser gone).
+    pub(crate) fn start_event_pump(&self) {
+        let mut events = self.client.subscribe();
+        let session = self.session_id.clone();
+        let buffer = Arc::clone(&self.events);
+        let client = self.client.clone();
+        self.client.spawn_background(async move {
+            // Console and uncaught-error events are only delivered when the
+            // Runtime domain is enabled — without this the buffer would hold
+            // network traffic but silently miss everything the page logged.
+            for domain in ["Runtime.enable", "Page.enable"] {
+                let _ = client
+                    .send_command_with_session(domain, None, &session)
+                    .await;
+            }
+            loop {
+                match events.recv().await {
+                    Ok(evt) => {
+                        if evt
+                            .session_id
+                            .as_deref()
+                            .is_some_and(|sid| sid != session)
+                        {
+                            continue;
+                        }
+                        let Some(kind) = classify_event(&evt.method) else {
+                            continue;
+                        };
+                        let record = PageEvent {
+                            kind: kind.to_string(),
+                            method: evt.method.clone(),
+                            payload: evt
+                                .params
+                                .as_ref()
+                                .map(|p| p.to_string())
+                                .unwrap_or_else(|| "{}".to_string()),
+                        };
+                        let mut guard = match buffer.lock() {
+                            Ok(g) => g,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        if guard.len() >= EVENT_BUFFER_CAP {
+                            guard.pop_front();
+                        }
+                        guard.push_back(record);
+                    }
+                    // Lag only means some events were dropped before we read
+                    // them; the buffer's purpose is best-effort delivery.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    /// Take buffered events, oldest first.
+    ///
+    /// `kind` filters by category when non-empty; `limit` of 0 means "all".
+    /// Taking removes them, so a caller that forgets to drain does not
+    /// reprocess the same console message forever.
+    pub fn drain_events(&self, kind: &str, limit: usize) -> Vec<PageEvent> {
+        let mut guard = match self.events.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut taken = Vec::new();
+        let mut index = 0;
+        while index < guard.len() && (limit == 0 || taken.len() < limit) {
+            if kind.is_empty() || guard[index].kind == kind {
+                taken.push(guard[index].clone());
+                guard.remove(index);
+            } else {
+                index += 1;
+            }
+        }
+        taken
     }
 
     /// Navigate to a URL and wait for the specified lifecycle event.
@@ -1645,6 +1755,7 @@ impl Page {
             timeout: self.timeout,
             pool_index: self.pool_index,
             pool: self.pool.clone(),
+            events: Arc::new(Mutex::new(VecDeque::new())),
         })
     }
 
@@ -2622,7 +2733,7 @@ impl Page {
                             )
                             .await;
 
-                        return Ok(Page {
+                        let popup = Page {
                             client: self.client.clone(),
                             session_id: new_session_id,
                             frame_id: String::new(),
@@ -2630,7 +2741,10 @@ impl Page {
                             iframe_doc_object_id: None,
                             pool_index: self.pool_index,
                             pool: self.pool.clone(),
-                            });
+                            events: Arc::new(Mutex::new(VecDeque::new())),
+                        };
+                        popup.start_event_pump();
+                        return Ok(popup);
                     }
                 }
                 Ok(Err(_)) => {
@@ -4240,4 +4354,20 @@ fn looks_like_url(value: &str) -> bool {
         || v.starts_with("https://")
         || v.starts_with("data:")
         || v.starts_with("blob:")
+}
+/// Map a CDP method to the category the `.tl` surface names.
+///
+/// Anything not listed is not recorded: a buffer of every CDP event would be
+/// mostly noise (`Network.dataReceived`, `Page.frameScheduledNavigation`).
+fn classify_event(method: &str) -> Option<&'static str> {
+    match method {
+        "Runtime.consoleAPICalled" => Some("console"),
+        "Runtime.exceptionThrown" => Some("error"),
+        "Network.requestWillBeSent" => Some("request"),
+        "Network.responseReceived" => Some("response"),
+        "Page.fileChooserOpened" => Some("filechooser"),
+        "Page.downloadWillBegin" | "Browser.downloadWillBegin" => Some("download"),
+        "Runtime.bindingCalled" => Some("binding"),
+        _ => None,
+    }
 }

@@ -165,6 +165,12 @@ impl Page {
         // Runtime: Network.emulateNetworkConditions
     }
 
+    /// Drain buffered page events, oldest first. `kind` empty means every
+    /// category; `limit` 0 means all currently buffered. Taking removes them.
+    fn drain_events(self, kind: String = "", limit: i64 = 0) -> []PageEvent {
+        // Runtime: bounded per-page buffer filled by the CDP event pump
+    }
+
     /// Slow the CPU by `rate` (1.0 native, 4.0 = 4x slower).
     fn throttle_cpu(self, rate: f64) -> Result<CpuThrottle> {
         // Runtime: Emulation.setCPUThrottlingRate
@@ -822,6 +828,12 @@ fn page_on_filechooser(handler_name: String) -> EventListener { }
 
 /// Listen for download events.
 fn page_on_download(handler_name: String) -> EventListener { }
+
+struct PageEvent {
+    kind:    String,
+    method:  String,
+    payload: String,
+}
 
 struct EventListener {
     kind:    String,
