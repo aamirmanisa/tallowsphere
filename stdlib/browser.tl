@@ -165,6 +165,49 @@ impl Page {
         // Runtime: Network.emulateNetworkConditions
     }
 
+    /// Register a `.tl` handler for page events. Delivery is deferred: the
+    /// handler runs at the start of the next Page method call, with a
+    /// `PageEvent` argument.
+    fn on_console(self, handler_name: String) -> Result<EventListener> {
+        // Runtime: buffered consoleAPICalled, delivered on the next Page call
+    }
+
+    /// Uncaught page errors (window.onerror / unhandled rejections).
+    fn on_error(self, handler_name: String) -> Result<EventListener> {
+        // Runtime: buffered exceptionThrown
+    }
+
+    /// Outgoing network requests.
+    fn on_request(self, handler_name: String) -> Result<EventListener> {
+        // Runtime: buffered requestWillBeSent
+    }
+
+    /// Network responses.
+    fn on_response(self, handler_name: String) -> Result<EventListener> {
+        // Runtime: buffered responseReceived
+    }
+
+    /// File chooser dialogs.
+    fn on_filechooser(self, handler_name: String) -> Result<EventListener> {
+        // Runtime: buffered fileChooserOpened
+    }
+
+    /// Download events.
+    fn on_download(self, handler_name: String) -> Result<EventListener> {
+        // Runtime: buffered downloadWillBegin
+    }
+
+    /// Expose a JS function `name` that calls the `.tl` handler with the
+    /// binding payload. Calls are buffered and delivered on the next Page call.
+    fn expose_function(self, name: String, handler_name: String) -> Result<ExposedFunction> {
+        // Runtime: Runtime.addBinding + buffered bindingCalled
+    }
+
+    /// Like `expose_function`, for bindings that also receive caller context.
+    fn expose_binding(self, name: String, handler_name: String) -> Result<ExposedBinding> {
+        // Runtime: Runtime.addBinding + buffered bindingCalled
+    }
+
     /// Drain buffered page events, oldest first. `kind` empty means every
     /// category; `limit` 0 means all currently buffered. Taking removes them.
     fn drain_events(self, kind: String = "", limit: i64 = 0) -> []PageEvent {

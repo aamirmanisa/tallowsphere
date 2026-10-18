@@ -834,7 +834,7 @@ impl CdpClient {
             pool: None,
             events: Arc::new(StdMutex::new(VecDeque::new())),
         };
-        page.start_event_pump();
+        page.start_event_pump().await;
         Ok(page)
     }
 
@@ -888,7 +888,7 @@ impl CdpClient {
             pool: None,
             events: Arc::new(StdMutex::new(VecDeque::new())),
         };
-        page.start_event_pump();
+        page.start_event_pump().await;
         Ok(page)
     }
 
