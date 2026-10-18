@@ -52,7 +52,12 @@ fn sma(prices: &[f64], period: usize) -> Vec<f64> {
 
 // ── Exponential Moving Average ──
 fn ema(prices: &[f64], period: usize) -> Vec<f64> {
-    if period == 0 || prices.is_empty() {
+    // `prices[..period]` below panics when the series is shorter than the
+    // period. `atr` reaches this with short input (2 bars at period 14), so
+    // the guard is not theoretical: it produced an ICE at this line
+    // (register #76). Match `sma`'s contract — a series shorter than the
+    // period yields NaN of the same length.
+    if period == 0 || prices.len() < period {
         return vec![f64::NAN; prices.len()];
     }
     let multiplier = 2.0 / (period as f64 + 1.0);
@@ -312,4 +317,27 @@ fn ta_stochastic(args: Vec<Value>) -> StdlibResult {
     let k_period = args.get(3).and_then(|v| if let Value::Int(i) = v { Some(*i as usize) } else { None }).unwrap_or(14);
     let d_period = args.get(4).and_then(|v| if let Value::Int(i) = v { Some(*i as usize) } else { None }).unwrap_or(3);
     Ok(stochastic(&high, &low, &close, k_period, d_period))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Register #76: `atr` with fewer bars than the period reached `ema` and
+    /// panicked on `prices[..period]` — a well-typed call producing an ICE
+    /// (rc 8) instead of a value. A short series is NaN of the input length,
+    /// the same contract `sma` already had.
+    #[test]
+    fn ema_shorter_than_period_is_nan_not_a_panic() {
+        let out = ema(&[1.0, 2.0], 14);
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().all(|v| v.is_nan()));
+    }
+
+    #[test]
+    fn atr_with_a_short_series_returns_nan() {
+        let out = atr(&[1.0, 2.0], &[0.5, 1.5], &[0.8, 1.8], 14);
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().all(|v| v.is_nan()));
+    }
 }
