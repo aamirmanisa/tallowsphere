@@ -1407,6 +1407,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare void @tallow_browser_close(ptr)\n");
         ir.push_str("declare ptr @tallow_browser_new_page(ptr)\n");
         ir.push_str("declare ptr @tallow_page_frame_id(ptr)\n");
+        ir.push_str("declare i32 @tallow_page_close(ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_title(ptr)\n");
         ir.push_str("declare ptr @tallow_page_url(ptr)\n");
@@ -9215,6 +9216,14 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 self.emit_line(&format!("store i64 2, ptr {vtype_gep}"));
                 Ok(LLValue::new(result_ptr, LLType::ResultPtr))
+            }
+            ("Page", "close") => {
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_close(ptr {})",
+                    obj.reg
+                ));
+                Ok(LLValue::new(status, LLType::I32))
             }
             ("Page", "content") => {
                 let reg = self.fresh_reg();
