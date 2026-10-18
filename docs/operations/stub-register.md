@@ -268,22 +268,18 @@ These twelve are the rows that still have an action attached.
 
 **Engineering (code, scoped):**
 
-| # | Item | Size |
-|---|------|------|
-| 32 | Crawl `fetch` escalation — needs a Tallow `Page` object so JS-rendered pages can be read; HTTP-only today | 1–2 weeks |
-| 49 | Privacy type map beyond params + let-bindings (fields, collections, aliasing) — changes Rule 1's reach | ~1 week |
-| 65 | `real-ml` is a declared-but-empty switch; needs a real embedding loader | days + dependency |
-| 69 | 17 root-`src` modules (~10.1k lines, 243 tests) reachable from nothing | integration decision |
-| 88 | 23 declared browser functions with no handler; three re-probed today still `undefined function` | days–weeks |
-| 53 | Residual: `Preserve` re-creates links each run (cost); `Attributes` carries POSIX bits only | hours |
-| 83 | Residual: `examples/financial_e2e_test.tl` does not parse (stale `export` syntax) | hours |
+- **32** — crawl `fetch` escalation needs a Tallow `Page` object so JS-rendered pages can be read; HTTP-only today. *1–2 weeks.*
+- **49** — privacy type map beyond params + let-bindings (fields, collections, aliasing); changes Rule 1's reach. *~1 week.*
+- **65** — `real-ml` is a declared-but-empty switch; needs a real embedding loader. *days + dependency.*
+- **69** — 17 root-`src` modules (~10.1k lines, 243 tests) reachable from nothing. *Integration decision.*
+- **88** — 23 declared browser functions with no handler; three re-probed 2026-10-17 still `undefined function`. *days–weeks.*
+- **53** — residual: `Preserve` re-creates links each run (cost); `Attributes` carries POSIX bits only. *hours.*
+- **83** — residual: `examples/financial_e2e_test.tl` does not parse (stale `export` syntax). *hours.*
 
 **Operator decisions (no code will settle them):**
 
-| # | Decision |
-|---|----------|
-| 38 | Which tallowsync transport — tokio-tungstenite or tallow-net QUIC |
-| 55 | Mount the five tallow-search route modules or delete them |
-| 70 | 49 `site_profiles*` tables + six orphan helpers: wire or register |
-| 71 | Implement fingerprint header validation or finalise the trimmed assertions |
-| 73 | Implement the zacks dispatch or descope the parked spec |
+- **38** — which tallowsync transport: tokio-tungstenite or tallow-net QUIC.
+- **55** — mount the five tallow-search route modules or delete them.
+- **70** — 49 `site_profiles*` tables + six orphan helpers: wire or register.
+- **71** — implement fingerprint header validation or finalise the trimmed assertions.
+- **73** — implement the zacks dispatch or descope the parked spec.
