@@ -279,3 +279,87 @@ fn page_injection_and_emulation_work_from_tallow_source() {
         assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
     }
 }
+
+const PAGE_EVENTS: &str = "<!doctype html><html><head><title>page-events</title></head><body>\
+<div id=\"app\">events</div>\
+<script>\
+console.log('hello-from-page');\
+setTimeout(function(){ fetch('/api/evt').catch(function(){}); }, 100);\
+setTimeout(function(){ throw new Error('boom-from-page'); }, 200);\
+</script></body></html>";
+
+fn events_program(url: &str) -> String {
+    format!(
+        r#"@cra_class(.default)
+@legal(basis: .research, purpose: "local loopback event-buffer test; no external egress", personal_data: false)
+@persona(id: "pageevents-test", cover_class: .researcher, compartment: "pageevents", fingerprint_seed: "pageevents-test-1018")
+@burn_plan(persona: "pageevents-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowPageEventsTest/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {{
+    let browser = Browser.launch(true)
+    let page = browser.new_page()
+    page.goto("{url}")
+    page.wait_for_timeout(600)
+    let all = page.drain_events("", 0)
+    print("ALL=" + all)
+    print("CONSOLE_AFTER=" + page.drain_events("console", 0))
+    print("REQ_ONLY=" + page.drain_events("request", 0))
+    browser.close()
+}}
+"#
+    )
+}
+
+#[test]
+fn page_events_are_buffered_and_drained_from_tallow_source() {
+    let port = serve(PAGE_EVENTS);
+    let url = format!("http://127.0.0.1:{port}/");
+    let path = std::env::temp_dir().join(format!("tallow-pageevents-{}.pid{}.tl", std::process::id(), std::process::id()));
+    std::fs::write(&path, events_program(&url)).expect("write program");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["run", "--interpret", path.to_str().unwrap()])
+        .env("TALLOW_ALLOW_DIRECT", "1")
+        .env("TALLOW_NO_STEALTH", "1")
+        .output()
+        .expect("run tallow");
+    let _ = std::fs::remove_file(&path);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "program failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let all = stdout
+        .lines()
+        .find(|l| l.starts_with("ALL="))
+        .unwrap_or_else(|| panic!("no ALL line:\n{stdout}"));
+    assert!(all.contains("hello-from-page"), "console event missing:\n{all}");
+    assert!(all.contains("/api/evt"), "request event missing:\n{all}");
+    assert!(all.contains("boom-from-page"), "error event missing:\n{all}");
+
+    // Draining removes: a second drain of the same kind must be empty.
+    let req_only = stdout
+        .lines()
+        .find(|l| l.starts_with("REQ_ONLY="))
+        .unwrap_or_else(|| panic!("no REQ_ONLY line:\n{stdout}"));
+    assert!(
+        req_only.contains("[]"),
+        "request events were not drained by the first call:\n{req_only}"
+    );
+
+    let console_after = stdout
+        .lines()
+        .find(|l| l.starts_with("CONSOLE_AFTER="))
+        .unwrap_or_else(|| panic!("no CONSOLE_AFTER line:\n{stdout}"));
+    assert!(
+        console_after.contains("[]"),
+        "drained events were not removed:\n{console_after}"
+    );
+    for broken in ["undefined function", "invalid page handle", "runtime error"] {
+        assert!(!stdout.contains(broken), "output contains {broken}:\n{stdout}");
+    }
+}
