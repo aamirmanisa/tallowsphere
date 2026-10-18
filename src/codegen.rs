@@ -6852,6 +6852,20 @@ void tallow_async_runtime_shutdown(void) {
                          loudly so the interpreter runs it"
                     ));
                 }
+                // RelayRoom.* — live room sessions over the product relay's WS
+                // wire (src/stdlib/relay_room.rs). Every member needs a live
+                // connection handle, which the native runtime does not keep, so
+                // refuse by name. Before this arm the call emitted the module
+                // ident as an undefined global and the only signal was clang's
+                // "use of undefined value '@tallow.RelayRoom'" — a build error
+                // naming LLVM internals instead of the missing capability.
+                "RelayRoom" | "relay_room" => {
+                    return Err(format!(
+                        "native backend has no lowering for RelayRoom.{method}: a room session \
+                         is a live relay connection and only the interpreter holds one; \
+                         failing loudly so the interpreter runs it"
+                    ));
+                }
                 // html.* / Extract.* — natively lowered where implemented
                 // (src/runtime/html_ffi.rs). Any method this module does not
                 // lower (Extract.jsonld/schema/all, html.PROBE...) must fail
