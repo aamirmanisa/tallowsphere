@@ -48,6 +48,11 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "write_file" => Some(do_write_file(args)),
         "rename" => Some(do_rename(args)),
         "stat" => Some(do_stat(args)),
+        // `fs.file_size(path) -> Result<u64>` was declared in stdlib/fs.tl with
+        // no arm in any dispatcher, so every call died as "undefined function"
+        // in the interpreter (register #84). One `metadata` call, same source
+        // of truth as `do_stat`.
+        "file_size" => Some(do_file_size(args)),
         "temp_file" => Some(do_temp_file(args)),
 
         // Filesystem watching
@@ -308,6 +313,17 @@ fn do_stat(args: Vec<Value>) -> StdlibResult {
             ("is_dir".to_string(), Value::Bool(is_dir)),
         ],
     })
+}
+
+/// `fs.file_size(path)` — byte length of a regular file. Symlinks are followed
+/// (`metadata`, not `symlink_metadata`), matching `fs.stat`'s `size` field.
+fn do_file_size(args: Vec<Value>) -> StdlibResult {
+    let path = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("fs.file_size: expected string path argument".into()),
+    };
+    let meta = std::fs::metadata(&path).map_err(|e| format!("fs.file_size: {e}"))?;
+    Ok(Value::Int(meta.len() as i128))
 }
 
 fn do_temp_file(args: Vec<Value>) -> StdlibResult {
