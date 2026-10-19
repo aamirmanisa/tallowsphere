@@ -12,12 +12,14 @@
 use std::path::PathBuf;
 
 /// `(program call, method name as it must appear in the refusal)`.
+// `resolve_antibot` was here until eb6144e gave it a native arm; the contract this
+// test enforces is "every method without a lowering refuses by name", so a method
+// leaving the list is the success case, not a loosened assertion.
 const GAPS: &[(&str, &str)] = &[
     (
         r#"let v = page.goto_antibot("http://127.0.0.1:9/")"#,
         "Page.goto_antibot",
     ),
-    ("let v = page.resolve_antibot()", "Page.resolve_antibot"),
 ];
 
 fn program(call: &str) -> String {
