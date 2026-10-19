@@ -567,6 +567,64 @@ pub extern "C" fn tallow_page_wait_for_url(
     }
 }
 
+/// Out-parameter shape for `wait_for_function`.
+#[repr(C)]
+pub struct WaitFnRaw {
+    pub found: i32,
+    pub elapsed_ms: i64,
+    pub ok: i32,
+}
+
+/// Wait until `js_expression` evaluates truthy. `timeout_ms <= 0` means 30 s.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_wait_for_function(
+    page: *mut c_void,
+    js_expression: *mut c_char,
+    timeout_ms: i64,
+    out: *mut WaitFnRaw,
+) -> i32 {
+    if out.is_null() {
+        set_last_error("wait_for_function: null out parameter".to_string());
+        return -1;
+    }
+    let fail = |msg: String| {
+        set_last_error(msg);
+        unsafe {
+            *out = WaitFnRaw {
+                found: 0,
+                elapsed_ms: 0,
+                ok: 0,
+            }
+        };
+        -1
+    };
+    if page.is_null() || js_expression.is_null() {
+        return fail("wait_for_function: null handle or expression".to_string());
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let js = unsafe { std::ffi::CStr::from_ptr(js_expression) }
+        .to_string_lossy()
+        .to_string();
+    if js.trim().is_empty() {
+        return fail("wait_for_function requires a JS expression".to_string());
+    }
+    let timeout = if timeout_ms > 0 { timeout_ms as u64 } else { 30_000 };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.wait_for_function(&js, std::time::Duration::from_millis(timeout))) {
+        Ok((found, elapsed)) => {
+            unsafe {
+                *out = WaitFnRaw {
+                    found: if found { 1 } else { 0 },
+                    elapsed_ms: elapsed as i64,
+                    ok: 1,
+                }
+            };
+            0
+        }
+        Err(e) => fail(format!("wait_for_function: {e}")),
+    }
+}
+
 /// Opt this page into console/error capture (`Runtime.enable`). Returns 0 on
 /// success. Idempotent per session.
 #[unsafe(no_mangle)]
