@@ -17468,6 +17468,29 @@ impl Interpreter {
                         }
                     }
 
+                    ("Page", "click") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let sel = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        match rt.block_on(page.query_selector(&sel)) {
+                            Ok(Some(el)) => {
+                                match rt.block_on(
+                                    el.click(crate::browser::ClickOptions::default()),
+                                ) {
+                                    Ok(()) => Ok(Value::Ok(Box::new(Value::Nil))),
+                                    Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                                }
+                            }
+                            Ok(None) => Ok(Value::Err(Box::new(Value::String(format!(
+                                "Page.click: no element matches `{sel}`"
+                            ))))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
                     ("Page", "title") => {
                         let page = bh
                             .handle
