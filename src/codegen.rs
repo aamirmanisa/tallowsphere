@@ -4139,6 +4139,12 @@ void tallow_async_runtime_shutdown(void) {
                     val.ty.to_ir(),
                     val.reg
                 ));
+                if std::env::var("TALLOW_DEBUG_PAYLOAD").is_ok() {
+                    eprintln!(
+                        "[payload] let {name}: ty={:?} payload={:?}",
+                        val.ty, val.payload_struct
+                    );
+                }
                 if let Some(payload) = val.payload_struct.clone() {
                     // A `Result<T>` binding keeps T so `r.field` can unwrap.
                     // This is deliberately NOT `variable_struct_types`: that map
@@ -4542,29 +4548,6 @@ void tallow_async_runtime_shutdown(void) {
 
             // ── Field Access ────────────────────────────────────────────
             ExprKind::FieldAccess { object, field } => {
-                // 0. Response field access on a fetch()/http.* result.
-                // A fetch returns a native FetchResponse handle (opaque ptr); codegen
-                // tracks it via browser_variables kind "Response". Field access like
-                // `fetch(url).body` or `resp.status` must read the handle through the
-                // FFI getters (tallow_response_*), not as an LLVM struct field — the
-                // previous fallthrough returned literal 0. Route the supported fields
-                // here so `.body`/`.status`/`.url`/`.text` behave like their method
-                // forms and match the interpreter (which returns a Response struct).
-                // The object may be a named Response var OR an inline fetch/http call.
-                let object_is_response = match &object.kind {
-                    ExprKind::Ident(var_name) => self
-                        .browser_variables
-                        .get(var_name)
-                        .map(|k| k == "Response")
-                        .unwrap_or(false),
-                    ExprKind::Call { callee, .. } => matches!(
-                        &callee.kind,
-                        ExprKind::Ident(f) if f == "fetch"
-                    ),
-                    _ => false,
-                };
-                if object_is_response {
-                    let obj = self.emit_expr(object)?;
                 // 1b. A Result<T> payload: unwrap behind a tag check. Both
                 // engines then refuse a failed call the same way instead of one
                 // printing Ok(...) and the other reading an unrelated offset
@@ -4574,17 +4557,14 @@ void tallow_async_runtime_shutdown(void) {
                 // not agree on the encoding), and reading it as a bare pointer
                 // is exactly the 0xa crash (#120). If a payload name is bound,
                 // unwrap regardless of the register type.
-                let payload_binding = obj.payload_struct.clone().or_else(|| match &object.kind {
+                // Only a bound variable carries a payload name without
+                // emitting the object twice (a fetch would fire twice).
+                let payload_binding = match &object.kind {
                     ExprKind::Ident(name) => self.var_payload_struct.get(name).cloned(),
                     _ => None,
-                });
-                if obj.ty == LLType::ResultPtr || payload_binding.is_some() {
-                    let name = payload_binding.ok_or_else(|| {
-                        format!(
-                            "cannot read `.{field}` from a Result whose payload type is unknown; \
-                             bind it to a variable first"
-                        )
-                    })?;
+                };
+                if let Some(name) = payload_binding {
+                    let obj = self.emit_expr(object)?;
                     let layout = self
                         .struct_layouts
                         .get(&name)
@@ -4625,6 +4605,30 @@ void tallow_async_runtime_shutdown(void) {
                     self.emit_line(&format!("{loaded} = load {}, ptr {fgep}", field_ty.to_ir()));
                     return Ok(LLValue::new(loaded, field_ty));
                 }
+
+                // 0. Response field access on a fetch()/http.* result.
+                // A fetch returns a native FetchResponse handle (opaque ptr); codegen
+                // tracks it via browser_variables kind "Response". Field access like
+                // `fetch(url).body` or `resp.status` must read the handle through the
+                // FFI getters (tallow_response_*), not as an LLVM struct field — the
+                // previous fallthrough returned literal 0. Route the supported fields
+                // here so `.body`/`.status`/`.url`/`.text` behave like their method
+                // forms and match the interpreter (which returns a Response struct).
+                // The object may be a named Response var OR an inline fetch/http call.
+                let object_is_response = match &object.kind {
+                    ExprKind::Ident(var_name) => self
+                        .browser_variables
+                        .get(var_name)
+                        .map(|k| k == "Response")
+                        .unwrap_or(false),
+                    ExprKind::Call { callee, .. } => matches!(
+                        &callee.kind,
+                        ExprKind::Ident(f) if f == "fetch"
+                    ),
+                    _ => false,
+                };
+                if object_is_response {
+                    let obj = self.emit_expr(object)?;
 
                     match field.as_str() {
                         "status" => {
