@@ -1148,6 +1148,14 @@ impl Page {
         timeout: Duration,
     ) -> Result<(bool, u64, String), BrowserError> {
         let started = std::time::Instant::now();
+        // `Network.*` events only arrive once the domain is enabled for this
+        // session. Without this the broadcast channel stays silent and the wait
+        // always returns false — measured with a page that fetches a URL 2.5 s
+        // after load, which the wait must see.
+        let _ = self
+            .client
+            .send_command_with_session("Network.enable", None, &self.session_id)
+            .await;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut events = self.client.subscribe();
 
