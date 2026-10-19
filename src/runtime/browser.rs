@@ -1017,17 +1017,31 @@ pub extern "C" fn tallow_page_resolve_antibot(
     url: *const c_char,
 ) -> *mut AntibotReportRaw {
     let rt = get_runtime();
+    // Every failure path returns a REPORT with `error` set, never null: the
+    // compiled side reads all seven fields unconditionally, so a null here is a
+    // segfault rather than an Err. The message is also written to stderr, because
+    // a Result-tagged failure exits before any `print` in the program runs — which
+    // is exactly how two earlier attempts looked like silent crashes.
+    let fail = |msg: String| -> *mut AntibotReportRaw {
+        eprintln!("[ffi] resolve_antibot error: {msg}");
+        set_last_error(format!("resolve_antibot: {msg}"));
+        Box::into_raw(Box::new(AntibotReportRaw {
+            url: string_to_cstr(""),
+            resolved: 0,
+            final_status: 0,
+            attempts: 0,
+            body_hint: string_to_cstr(""),
+            steps: native_array(Vec::new()),
+            error: string_to_cstr(&msg),
+        }))
+    };
     if page.is_null() {
-        set_last_error("resolve_antibot: null page handle".to_string());
-        return std::ptr::null_mut();
+        return fail("null page handle".to_string());
     }
     let page_ref = unsafe { &*(page as *const Page) };
     let url_str = match unsafe { cstr_to_str(url) } {
         Some(u) if !u.is_empty() => u.to_string(),
-        _ => {
-            set_last_error("resolve_antibot: url must not be empty".to_string());
-            return std::ptr::null_mut();
-        }
+        _ => return fail("url must not be empty".to_string()),
     };
     let settings = crate::browser::AntiBotSettings {
         warmup_enabled: false,
