@@ -126,3 +126,20 @@ complete, while `page.goto` immediately before it does.
 Diagnostic note worth keeping: without the `eprintln!` the whole failure looked
 like a silent `exit 1`, because the Result-tag guard exits on Err before any
 `print` runs. A failing FFI in this position reports nothing unless it prints.
+
+## Attempt 3 — narrowing, without touching the tree
+
+Cheapest discriminating probe first, using the committed binary (no rebuild):
+navigate twice through the ordinary native path.
+
+```
+let a = page.goto(url)   → "first"
+let b = page.goto(url)   → "second"      EXIT=0
+```
+
+So a second navigation is fine on the native plane. The fault is therefore not
+"navigate inside an FFI" and not "renavigating the same URL". Inside `resolve`
+the only differences are (a) the wait strategy — `WaitUntil::NetworkAlmostIdle`
+rather than whatever `Page.goto` uses — and (b) the 30 s `tokio::time::timeout`
+wrapper. Next probe should drive `navigate(url, NetworkAlmostIdle)` once through a
+throwaway FFI, with no orchestrator, and report which of the two is responsible.
