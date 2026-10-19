@@ -190,6 +190,8 @@ jobs:
           --test veil_connect_cli
           --test pkg_archive
           --test pkg_cache
+          --test stdlib_math_env
+          --test transfer_bwlimit
           --test artifact_sealing
           --test browser_contracts
           --test browser_dispatch_reachability
