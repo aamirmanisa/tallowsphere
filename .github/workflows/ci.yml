@@ -173,6 +173,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Capability registry matches the code
         run: python3 scripts/check_capability_registry.py
+      - name: Every test target is run or explicitly excluded
+        run: python3 scripts/check_test_coverage.py
       - run: >-
           cargo test --locked --no-fail-fast
           --test audit_cli_contract
@@ -186,6 +188,36 @@ jobs:
           --test transport_coherence_audit
           --test vault_enforcement_cli
           --test veil_connect_cli
+          --test artifact_sealing
+          --test browser_contracts
+          --test browser_dispatch_reachability
+          --test browser_fallback_service
+          --test closure_capture_return
+          --test copy_engine_basic
+          --test derived_recompute
+          --test export_gate_matrix
+          --test extraction_migration
+          --test fingerprint_coherence_suite
+          --test fingerprint_policy_pass_e2e
+          --test fixity_drill
+          --test kt_log_read_only
+          --test mcp_client
+          --test pkg_import
+          --test pkg_lockfile
+          --test pkg_manifest
+          --test pkg_registry
+          --test pkg_resolver
+          --test proxy_layers_integration
+          --test relay_ws_interop
+          --test sigpipe_pipeline
+          --test stdlib_dispatch
+          --test stdlib_fs
+          --test stdlib_json
+          --test stdlib_rand
+          --test stdlib_time_log
+          --test struct_array_parity
+          --test structured_data_parity
+          --test transfer_chunk_parity
           -- --test-threads=2
 
   # Behavioral parity: interpreter vs native codegen, byte-for-byte stdout + exit code.
