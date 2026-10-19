@@ -3,6 +3,11 @@
 
 @legal(basis: .research, purpose: "browser feature demonstration", retain_for: 7.days)
 @stealth(profile: .chrome_windows, evasions: .all)
+@cra_class(.default)
+@persona(id: "browser-full-demo", cover_class: .researcher, compartment: "browser-full-demo", fingerprint_seed: "browser-full-demo-1020")
+@burn_plan(persona: "browser-full-demo", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowDemo/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
 fn main() {
 
 print("=== TALLOW BROWSER DEMO ===")

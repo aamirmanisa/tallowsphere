@@ -7,7 +7,7 @@
 //
 // Usage:
 //   tallow run examples/relay_room_auth_demo.tl -- [ws_url] [code] [password]
-// Defaults: ws://127.0.0.1:4454/ws · relay-room-auth-demo · (no password)
+// Defaults: ws://127.0.0.1:4454/ws · K7M2QPHD · (no password)
 //
 // Exit: 0 = join accepted; non-zero = rejected/timeout (message on stderr).
 //
@@ -23,7 +23,7 @@
 fn main() {
     let args = env.args()
     let url = if args.len >= 1 { args[0] } else { "ws://127.0.0.1:4454/ws" }
-    let code = if args.len >= 2 { args[1] } else { "relay-room-auth-demo" }
+    let code = if args.len >= 2 { args[1] } else { "K7M2QPHD" }
     let password = if args.len >= 3 { args[2] } else { "" }
 
     print("== RelayRoom auth demo — product relay WS wire ==")

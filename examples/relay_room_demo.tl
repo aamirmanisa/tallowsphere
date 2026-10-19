@@ -11,7 +11,7 @@
 //
 // Usage:
 //   tallow run examples/relay_room_demo.tl -- [ws_url] [code]
-// Defaults: ws://127.0.0.1:4434/ws · relay-room-demo
+// Defaults: ws://127.0.0.1:4434/ws · K7M2QPHD
 //
 // Scope note: loopback-only interop demo (language client ↔ product relay on
 // 127.0.0.1) — no external egress, no personal data.
@@ -24,7 +24,7 @@
 fn main() {
     let args = env.args()
     let url = if args.len >= 1 { args[0] } else { "ws://127.0.0.1:4434/ws" }
-    let code = if args.len >= 2 { args[1] } else { "relay-room-demo" }
+    let code = if args.len >= 2 { args[1] } else { "K7M2QPHD" }
 
     print("== RelayRoom demo — product relay WS wire ==")
     print("relay : {url}")
