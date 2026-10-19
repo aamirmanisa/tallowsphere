@@ -143,3 +143,23 @@ the only differences are (a) the wait strategy — `WaitUntil::NetworkAlmostIdle
 rather than whatever `Page.goto` uses — and (b) the 30 s `tokio::time::timeout`
 wrapper. Next probe should drive `navigate(url, NetworkAlmostIdle)` once through a
 throwaway FFI, with no orchestrator, and report which of the two is responsible.
+
+## Attempt 4 — the wait strategy is exonerated too
+
+Temporarily switched `tests/nav_direct.rs`'s first case from
+`WaitUntil::DomContentLoaded` to `WaitUntil::NetworkAlmostIdle` and ran it
+(harness: pure Rust, multi_thread runtime, no interpreter, no FFI):
+
+```
+navigate ok in 37.817715ms: status=None
+body after navigate: "RENDERED-BY-JS"
+```
+
+`NetworkAlmostIdle` is fine. Probe reverted immediately; the test file is
+unchanged in the tree.
+
+That leaves exactly one difference between the working and failing cases: the
+FFI calls `get_browser_runtime().block_on(...)` from compiled code, while the
+interpreter and this test both drive navigation on a runtime they own. The
+failure is therefore a property of that block_on context, not of the navigation
+code it runs.
