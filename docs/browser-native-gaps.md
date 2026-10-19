@@ -4,7 +4,7 @@ Measured at HEAD `d65e3ba`+ by diffing `impl Page` in `stdlib/browser.tl` agains
 `("Page", "<method>")` arms in `src/codegen.rs` — including the grouped form
 `("Page", m @ ("on_console" | ...))`, which a literal-only diff misses:
 
-**48 methods declared, 45 lowered, 3 without a native lowering.**
+**48 methods declared, 46 lowered, 2 without a native lowering.**
 
 The 12 are not one problem. They fall into three groups, and only the first group
 needs new machinery in the compiler.

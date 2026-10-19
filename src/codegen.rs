@@ -385,6 +385,7 @@ fn array_elem_kind(array_kind: Option<&str>) -> Option<String> {
         "HtmlElementArray" => Some("HtmlElement".to_string()),
         "ElementArray" => Some("Element".to_string()),
         "PageEventArray" => Some("PageEvent".to_string()),
+        "CookieArray" => Some("CdpCookie".to_string()),
         _ => None,
     }
 }
@@ -455,6 +456,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // nonsense, so this registration is part of the lowering, not an extra.
         ("Page", "extract_all_text") => Some("StringArray".to_string()),
         ("Page", "drain_events") => Some("PageEventArray".to_string()),
+        ("Page", "get_cookies") => Some("CookieArray".to_string()),
         _ => None,
     }
 }
@@ -1490,6 +1492,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_authenticated_request(ptr, ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_wait_for_selector(ptr, ptr, i64)\n");
         ir.push_str("declare ptr @tallow_page_drain_events_array(ptr, ptr, i64)\n");
+        ir.push_str("declare ptr @tallow_page_get_cookies_array(ptr)\n");
         ir.push_str("declare i64 @tallow_page_wait_for_timeout_ms(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_page_register_handler(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_pump(ptr)\n");        ir.push_str("declare i32 @tallow_page_expose_binding(ptr, ptr, ptr)\n");
@@ -2031,6 +2034,30 @@ void tallow_async_runtime_shutdown(void) {
                     }
                 });
         }
+
+    // `CdpCookie` — the element struct of `get_cookies()`. The interpreter
+    // omits `expires` for session cookies; the native struct always has it
+    // (0.0), which is why a parity program prints only the stable fields.
+    self.struct_layouts
+        .entry("CdpCookie".to_string())
+        .or_insert_with(|| {
+            let names = ["name", "value", "domain", "path", "same_site", "expires", "http_only", "secure"];
+            let kinds = [
+                LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr,
+                LLType::F64, LLType::I1, LLType::I1,
+            ];
+            let mut field_map = HashMap::new();
+            for (i, name) in names.iter().enumerate() {
+                field_map.insert((*name).to_string(), (i, kinds[i].clone()));
+            }
+            StructLayout {
+                fields: names.iter().map(|n| (*n).to_string()).collect(),
+                field_map,
+                field_kinds: HashMap::new(),
+                llvm_name: "%struct.CdpCookie".to_string(),
+            }
+        });
+
 
         // `EventListener` — the registration receipt (`kind`, `handler`, `active`).
         // Same collection gap as PageEvent: a program never names the type, but
@@ -3950,6 +3977,18 @@ void tallow_async_runtime_shutdown(void) {
                                         self.variable_is_array.insert(name.clone(), true);
                                         self.variable_array_elem_struct
                                             .insert(name.clone(), "PageEvent".to_string());
+                                    }
+                                    // `page.get_cookies()` — same array shape, element
+                                    // struct `CdpCookie`.
+                                    ("Page", "get_cookies") => {
+                                        self.browser_variables.insert(
+                                            name.clone(),
+                                            "CookieArray".to_string(),
+                                        );
+                                        self.variable_array_elem_is_ptr.insert(name.clone(), true);
+                                        self.variable_is_array.insert(name.clone(), true);
+                                        self.variable_array_elem_struct
+                                            .insert(name.clone(), "CdpCookie".to_string());
                                     }
                                     ("Page", "query_selector_all") => {
                                         self.browser_variables
@@ -10122,6 +10161,17 @@ void tallow_async_runtime_shutdown(void) {
             // in, so codegen emits a wrapper that rebuilds PageEvent and calls
             // the function directly (docs/browser-callback-abi.md). A non-literal
             // name is refused rather than silently registering nothing.
+            ("Page", "get_cookies") => {
+                // Declared Result<[]CdpCookie>; the native plane returns the array
+                // itself, the same shape `query_selector_all` uses for
+                // Result<[]Element>. Documented in docs/browser-native-gaps.md.
+                let arr = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{arr} = call ptr @tallow_page_get_cookies_array(ptr {})",
+                    obj.reg
+                ));
+                Ok(LLValue::new(arr, LLType::I8Ptr))
+            }
             ("Page", "drain_events") => {
                 let kind_c = if let Some(arg) = args.first() {
                     let v = self.emit_expr(&arg.value)?;

@@ -983,6 +983,55 @@ pub fn native_array(items: Vec<i64>) -> *mut c_void {
     Box::into_raw(boxed) as *mut c_void
 }
 
+/// One `CdpCookie` in compiled layout: five strings, `expires` as f64, and the
+/// two flags widened to i64 so the struct stays 8-byte aligned.
+#[repr(C)]
+pub struct CdpCookieRaw {
+    name: *const c_char,
+    value: *const c_char,
+    domain: *const c_char,
+    path: *const c_char,
+    same_site: *const c_char,
+    expires: f64,
+    http_only: i64,
+    secure: i64,
+}
+
+/// `page.get_cookies()` → NATIVE array of `CdpCookie` pointers.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_get_cookies_array(page: *mut c_void) -> *mut c_void {
+    if page.is_null() {
+        set_last_error("get_cookies: null page handle".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let rt = get_runtime();
+    let cookies = match rt.block_on(page_ref.get_cookies()) {
+        Ok(c) => c,
+        Err(e) => {
+            set_last_error(format!("get_cookies: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let slots: Vec<i64> = cookies
+        .iter()
+        .map(|c| {
+            let raw = Box::new(CdpCookieRaw {
+                name: string_to_cstr(&c.name),
+                value: string_to_cstr(&c.value),
+                domain: string_to_cstr(&c.domain),
+                path: string_to_cstr(&c.path),
+                same_site: string_to_cstr(&c.same_site),
+                expires: c.expires,
+                http_only: i64::from(c.http_only),
+                secure: i64::from(c.secure),
+            });
+            Box::into_raw(raw) as i64
+        })
+        .collect();
+    native_array(slots)
+}
+
 /// One `PageEvent` as the compiled world sees it: three borrowed strings.
 /// `%struct.PageEvent` is `{ptr, ptr, ptr}` (registered in codegen), so the
 /// array slots hold pointers to this struct, never the structs themselves.
