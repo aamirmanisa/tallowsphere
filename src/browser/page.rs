@@ -153,6 +153,11 @@ pub struct Page {
     pub(crate) handlers: Arc<Mutex<Vec<(String, String)>>>,
     /// `Runtime.addBinding` bindings as `(js_name, handler_function)`.
     pub(crate) bindings: Arc<Mutex<Vec<(String, String)>>>,
+    /// Native-plane handlers as `(kind, function pointer)`. Separate from
+    /// `handlers` because the compiled world has no function table to look a
+    /// name up in: codegen hands over the address of a wrapper that rebuilds
+    /// `PageEvent` and calls the user's function. See docs/browser-callback-abi.md.
+    pub(crate) native_handlers: Arc<Mutex<Vec<(String, usize)>>>,
 }
 
 impl Page {
@@ -195,6 +200,7 @@ impl Page {
             pool,
             handlers: Arc::new(Mutex::new(Vec::new())),
             bindings: Arc::new(Mutex::new(Vec::new())),
+            native_handlers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -245,6 +251,25 @@ impl Page {
             .any(|(k, h)| k == kind && h == handler)
         {
             guard.push((kind.to_string(), handler.to_string()));
+        }
+    }
+
+    /// Register a compiled handler for `kind`. Idempotent per (kind, fnptr).
+    pub fn register_native_handler(&self, kind: &str, handler: usize) {
+        let mut guard = match self.native_handlers.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !guard.iter().any(|(k, h)| k == kind && *h == handler) {
+            guard.push((kind.to_string(), handler));
+        }
+    }
+
+    /// Snapshot of the native handlers for the pump.
+    pub fn native_handlers(&self) -> Vec<(String, usize)> {
+        match self.native_handlers.lock() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
         }
     }
 
@@ -1888,6 +1913,7 @@ impl Page {
             pool: self.pool.clone(),
             handlers: Arc::new(Mutex::new(Vec::new())),
             bindings: Arc::new(Mutex::new(Vec::new())),
+            native_handlers: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -2875,6 +2901,7 @@ impl Page {
                             pool: self.pool.clone(),
                             handlers: Arc::new(Mutex::new(Vec::new())),
             bindings: Arc::new(Mutex::new(Vec::new())),
+            native_handlers: Arc::new(Mutex::new(Vec::new())),
                         };
                         popup.start_event_pump().await;
                         return Ok(popup);

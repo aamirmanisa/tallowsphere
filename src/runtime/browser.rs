@@ -3008,6 +3008,85 @@ pub extern "C" fn tallow_page_go_forward(page: *mut c_void) -> i32 {
     }
 }
 
+/// `page.on_console("handler")` and siblings: store the compiled wrapper for a
+/// handler kind and make sure the CDP domains that feed it are enabled.
+/// See docs/browser-callback-abi.md: the compiled world has no function table to
+/// look a name up in, so codegen hands over the address of a wrapper.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_register_handler(
+    page: *mut c_void,
+    kind: *const c_char,
+    handler: *mut c_void,
+) -> i32 {
+    if page.is_null() || handler.is_null() {
+        set_last_error("register_handler: null page or handler".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let kind_str = match unsafe { cstr_to_str(kind) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("register_handler: null or invalid kind".to_string());
+            return -1;
+        }
+    };
+    // Console and error events do not exist without Runtime.enable; enabling
+    // once is harmless for the kinds that would arrive anyway.
+    let rt = get_runtime();
+    let _ = rt.block_on(page_ref.enable_runtime_events());
+    page_ref.register_native_handler(&kind_str, handler as usize);
+    0
+}
+
+thread_local! {
+    /// Depth of nested pump runs. A handler that calls a Page method re-enters
+    /// the pump; that is legitimate, but unbounded nesting is a stack overflow.
+    static PUMP_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Deliver buffered events to compiled handlers. Generated code calls this at the
+/// head of every `Page` method — the same place the interpreter pumps, which is
+/// what keeps handler output in program order on both planes.
+///
+/// Returns the number of events delivered, or -1 on nesting overflow.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_pump(page: *mut c_void) -> i32 {
+    if page.is_null() {
+        return 0;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let handlers = page_ref.native_handlers();
+    if handlers.is_empty() {
+        return 0;
+    }
+    let depth = PUMP_DEPTH.with(|d| d.get());
+    if depth >= 8 {
+        set_last_error(
+            "callback pump nested too deeply (a handler keeps producing its own kind)"
+                .to_string(),
+        );
+        return -1;
+    }
+    PUMP_DEPTH.with(|d| d.set(depth + 1));
+    let mut delivered = 0i32;
+    for (kind, fnptr) in handlers {
+        let events = page_ref.drain_events(&kind, 0);
+        for ev in events {
+            let kind_c = string_to_cstr(&ev.kind);
+            let method_c = string_to_cstr(&ev.method);
+            let payload_c = string_to_cstr(&ev.payload);
+            // SAFETY: the pointer came from a generated wrapper with this exact
+            // signature, emitted alongside the registration.
+            let cb: extern "C" fn(*const c_char, *const c_char, *const c_char) =
+                unsafe { std::mem::transmute(fnptr) };
+            cb(kind_c, method_c, payload_c);
+            delivered += 1;
+        }
+    }
+    PUMP_DEPTH.with(|d| d.set(depth));
+    delivered
+}
+
 /// Wait for a selector to appear. Returns an opaque element handle, or null on timeout/error.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_wait_for_selector(
@@ -3308,7 +3387,14 @@ pub extern "C" fn tallow_page_wait_for_timeout_ms(page: *mut c_void, ms: i64) ->
     }
     let started = std::time::Instant::now();
     if ms > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        // `std::thread::sleep` blocks the runtime thread, which starves the CDP
+        // event pump: a console event fired during the wait was only delivered
+        // at the *next* page call that happened after the sleep returned (in the
+        // probe, at page.close()). Sleeping on the tokio clock lets the pump run.
+        let rt = get_runtime();
+        rt.block_on(async {
+            tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
+        });
     }
     started.elapsed().as_millis() as i64
 }

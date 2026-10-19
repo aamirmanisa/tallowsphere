@@ -3,7 +3,7 @@
 Measured at HEAD `fe17def` by diffing `impl Page` in `stdlib/browser.tl` against the
 `("Page", "<method>")` arms in `src/codegen.rs`:
 
-**48 methods declared, 36 lowered, 12 without a native lowering.**
+**48 methods declared, 37 lowered, 11 without a native lowering.**
 
 The 12 are not one problem. They fall into three groups, and only the first group
 needs new machinery in the compiler.
@@ -28,10 +28,11 @@ What "array of struct" requires, concretely:
 4. One parity test per shape: field values printed from an indexed element must be
    byte-identical across engines.
 
-## Group 2 — callbacks (8)
+## Group 2 — callbacks (7 remaining of 8)
 
-`on_console`, `on_error`, `on_request`, `on_response`, `on_filechooser`,
-`on_download`, `expose_binding`, `expose_function`.
+`on_error`, `on_request`, `on_response`, `on_filechooser`, `on_download`,
+`expose_binding`, `expose_function` — plus `on_console`, which is lowered and is the
+reference implementation for the rest (see docs/browser-callback-abi.md).
 
 These take a Tallow function value and expect the runtime to call it later. The
 native plane has no callback plumbing: a compiled Tallow function is not a C
