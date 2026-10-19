@@ -9687,6 +9687,30 @@ void tallow_async_runtime_shutdown(void) {
                     ("event", "null".to_string(), LLType::Optional),
                 ], &ok)?)
             }
+            // `Page.click(sel)` is sugar for query_selector + Element.click; both
+            // FFI calls already exist, so no new runtime code is needed.
+            ("Page", "click") => {
+                let sel = self.emit_expr(&args[0].value)?;
+                let sel_c = self.coerce_to_string(&sel)?;
+                let el = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{el} = call ptr @tallow_page_query_selector(ptr {}, ptr {sel_c})",
+                    obj.reg
+                ));
+                let missing = self.fresh_reg();
+                self.emit_line(&format!("{missing} = icmp eq ptr {el}, null"));
+                let clicked = self.fresh_reg();
+                self.emit_line(&format!("{clicked} = call i32 @tallow_element_click(ptr {el})"));
+                // -1 when the selector matched nothing, so a silent no-op cannot
+                // look like success.
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = select i1 {missing}, i32 -1, i32 {clicked}"
+                ));
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = sext i32 {status} to i64"));
+                Ok(LLValue::new(result, LLType::I64))
+            }
             ("Page", "wait_for_event") => {
                 let event = self.emit_expr(&args[0].value)?;
                 let event_c = self.coerce(&event, &LLType::I8Ptr)?;
