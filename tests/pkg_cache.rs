@@ -137,10 +137,13 @@ fn test_cache_default_location() {
     let cache = GlobalCache::default_location();
     let path = cache.cache_path("deadbeef00112233deadbeef00112233deadbeef00112233deadbeef00112233");
     let path_str = path.to_string_lossy();
-    assert!(path_str.contains("tallow"));
-    assert!(path_str.contains("cache"));
-    assert!(path_str.contains("packages"));
-    assert!(path_str.contains("de")); // 2-char prefix shard
+    // Layout is `~/.tallow/store/v1/<2-char shard>/<hash>` — see the module docs
+    // and `GlobalCache::default_location`. The old assertions named `cache` and
+    // `packages`, a layout that exists nowhere in this crate.
+    assert!(path_str.contains("tallow"), "{path_str}");
+    assert!(path_str.contains("store"), "{path_str}");
+    assert!(path_str.contains("v1"), "{path_str}");
+    assert!(path_str.contains("de"), "{path_str}"); // 2-char prefix shard
 }
 
 #[test]

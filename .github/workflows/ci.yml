@@ -188,6 +188,8 @@ jobs:
           --test transport_coherence_audit
           --test vault_enforcement_cli
           --test veil_connect_cli
+          --test pkg_archive
+          --test pkg_cache
           --test artifact_sealing
           --test browser_contracts
           --test browser_dispatch_reachability

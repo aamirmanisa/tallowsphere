@@ -58,7 +58,13 @@ defect, not a policy:
       existed on any ref. Decide: implement or delete the CLI surface.
 - [ ] `deals_integration` — 6 failed.
 - [ ] `generated_tl_parity` — 2 failed.
-- [ ] `crawler_parity`, `interp_codegen_parity`, `pkg_archive`, `pkg_cache`,
+- [x] `pkg_archive` — FIXED: the archiver matched only `.nx`, the legacy
+      extension, so every package archived `tallow.toml` and no code. Now `.tl`
+      only, per operator direction. 4/4 pass, added to CI.
+- [x] `pkg_cache` — FIXED: the test asserted a `cache/packages` layout that does
+      not exist; implementation and its module docs both specify
+      `~/.tallow/store/v1/<shard>/<hash>`. Test corrected. 6/6 pass, added to CI.
+- [ ] `crawler_parity`, `interp_codegen_parity`,
       `stdlib_math_env`, `transfer_bwlimit` — 1 failed each.
 
 ## P1 — honesty of the machine-readable surface

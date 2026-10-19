@@ -91,7 +91,10 @@ fn add_nx_files_recursive(
 
         if path.is_dir() {
             add_nx_files_recursive(builder, &path, &relative)?;
-        } else if path.extension().is_some_and(|ext| ext == "nx") {
+        // `.tl` is the only source extension. Matching `.nx` (the legacy one)
+        // produced archives containing tallow.toml and no code at all; operator
+        // direction is that the language uses `.tl` exclusively.
+        } else if path.extension().is_some_and(|ext| ext == "tl") {
             let content = fs::read(&path)?;
             let mut header = tar::Header::new_gnu();
             header.set_size(content.len() as u64);
