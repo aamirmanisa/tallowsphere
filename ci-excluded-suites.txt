@@ -17,7 +17,6 @@ browser_page_methods: requires Chromium + loopback (runs locally with TALLOW_ALL
 browser_unlowered_gaps: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 compiler_bench: specialized suite (bench/perf/fuzz), not per-commit
 crawler_browser_escalation: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-deals_integration: FAILING TODAY (6 failed on 2026-10-19) - tracked in docs/production-readiness.md
 egress_census: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 fuzz_safety: specialized suite (bench/perf/fuzz), not per-commit
 injection_redteam: UNCLASSIFIED - needs triage
@@ -28,7 +27,7 @@ optional_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DI
 parity_runner: UNCLASSIFIED - needs triage
 perf_binary_startup: specialized suite (bench/perf/fuzz), not per-commit
 perf_install: specialized suite (bench/perf/fuzz), not per-commit
-request_plan_cli: FAILING TODAY (38 failed on 2026-10-19) - tracked in docs/production-readiness.md
+request_plan_cli: PARKED — verbs (run-plan/build-plan/lint/package-report, fmt --check) are not implemented; tests ignored with that reason (U-218)
 transfer_transport: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 wait_net_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 wait_url_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
