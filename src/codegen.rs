@@ -444,6 +444,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // http.batch(...) → native array of Result entries (one per URL).
         ("http", "batch") => Some("ResultArray".to_string()),
         ("Page", "query_selector") => Some("Element".to_string()),
+        ("Page", "wait_for_selector") => Some("Element".to_string()),
         ("Page", "query_selector_all") => Some("ElementArray".to_string()),
         // `page.extract_all_text(sel) -> []String`. Without this entry the native
         // array's slots are treated as plain i64: indexing printed the raw C
@@ -1474,6 +1475,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_cookie_string(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_set_cookies_from_header(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_authenticated_request(ptr, ptr, ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_page_wait_for_selector(ptr, ptr, i64)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -3837,7 +3839,8 @@ void tallow_async_runtime_shutdown(void) {
                                         self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                         self.variable_is_array.insert(name.clone(), true);
                                     }
-                                    ("Page", "query_selector") => {
+                                    ("Page", "query_selector")
+                                    | ("Page", "wait_for_selector") => {
                                         self.browser_variables
                                             .insert(name.clone(), "Element".to_string());
                                         self.variable_result_payload_kind
@@ -10286,6 +10289,25 @@ void tallow_async_runtime_shutdown(void) {
                 } else {
                     Ok(LLValue::new("null".into(), LLType::I8Ptr))
                 }
+            }
+            // Declared Result<Element>: same handle-wrapping as query_selector,
+            // but the wait is served by the runtime so both planes block the same
+            // way instead of one polling in generated code.
+            ("Page", "wait_for_selector") => {
+                let sel_val = self.emit_expr(&args[0].value)?;
+                let sel_str = self.coerce_to_string(&sel_val)?;
+                let timeout_reg = if let Some(t) = args.get(1) {
+                    let tv = self.emit_expr(&t.value)?;
+                    self.coerce_to_i64(&tv)?
+                } else {
+                    "0".to_string()
+                };
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_page_wait_for_selector(ptr {}, ptr {sel_str}, i64 {timeout_reg})",
+                    obj.reg
+                ));
+                Ok(self.wrap_handle_in_result(&reg))
             }
             ("Page", "query_selector_all") => {
                 if let Some(arg) = args.first() {
