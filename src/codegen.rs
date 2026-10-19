@@ -10251,6 +10251,18 @@ void tallow_async_runtime_shutdown(void) {
             // the function directly (docs/browser-callback-abi.md). A non-literal
             // name is refused rather than silently registering nothing.
             ("Page", "resolve_antibot") => {
+                // The interpreter consumes `opts {solver_key, solver_service}`;
+                // the native lowering does not, and silently accepting the map
+                // would report "captcha unsolved" with no explanation. Refuse at
+                // build time so the limitation is visible where it is decided.
+                if args.len() > 1 {
+                    return Err(
+                        "Page.resolve_antibot: opts {solver_key, solver_service} is not \
+                         supported by the native plane yet (the interpreter consumes it); \
+                         call it without opts, or run --interpret"
+                            .to_string(),
+                    );
+                }
                 let url = self.emit_expr(&args[0].value)?;
                 let url_c = self.coerce_to_string(&url)?;
                 let out = self.fresh_reg();
