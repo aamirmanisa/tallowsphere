@@ -2314,6 +2314,54 @@ pub extern "C" fn tallow_page_handle_cookie_consent(page: *mut c_void, strategy:
 ///
 /// Returns 1 if a banner was handled, 0 if none, -1 on error.
 #[unsafe(no_mangle)]
+/// `Page.fill(selector, value)`: query the element, clear it, then type the
+/// value. Composition of existing ElementHandle operations — no new CDP code —
+/// so the interpreted and native planes cannot diverge on what "fill" means.
+pub extern "C" fn tallow_page_fill(
+    page: *mut c_void,
+    selector: *const c_char,
+    text: *const c_char,
+) -> i32 {
+    if page.is_null() {
+        set_last_error("fill: null page handle".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let selector_str = match unsafe { cstr_to_str(selector) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("fill: null or invalid selector".to_string());
+            return -1;
+        }
+    };
+    let text_str = match unsafe { cstr_to_str(text) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("fill: null or invalid text".to_string());
+            return -1;
+        }
+    };
+    let rt = get_runtime();
+    let outcome = rt.block_on(async {
+        let el = page_ref
+            .query_selector(&selector_str)
+            .await
+            .map_err(|e| format!("fill: {e}"))?
+            .ok_or_else(|| format!("fill: no element matches `{selector_str}`"))?;
+        el.clear().await.map_err(|e| format!("fill(clear): {e}"))?;
+        el.type_text(&text_str, None)
+            .await
+            .map_err(|e| format!("fill(type): {e}"))
+    });
+    match outcome {
+        Ok(()) => 0,
+        Err(message) => {
+            set_last_error(message);
+            -1
+        }
+    }
+}
+
 pub extern "C" fn tallow_page_handle_cookie_consent_str(
     page: *mut c_void,
     strategy: *const c_char,

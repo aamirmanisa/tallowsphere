@@ -1467,6 +1467,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_dom_snapshot(ptr)\n");
         ir.push_str("declare ptr @tallow_page_structured_data(ptr)\n");
         ir.push_str("declare i32 @tallow_page_reload(ptr)\n");
+        ir.push_str("declare i32 @tallow_page_fill(ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -9686,6 +9687,22 @@ void tallow_async_runtime_shutdown(void) {
                     ("status", "null".to_string(), LLType::Optional),
                     ("event", "null".to_string(), LLType::Optional),
                 ], &ok)?)
+            }
+            // `Page.fill(sel, value)` — query, clear, type. The composition lives
+            // in the FFI so both planes share one definition.
+            ("Page", "fill") => {
+                let sel = self.emit_expr(&args[0].value)?;
+                let sel_c = self.coerce_to_string(&sel)?;
+                let val = self.emit_expr(&args[1].value)?;
+                let val_c = self.coerce_to_string(&val)?;
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_fill(ptr {}, ptr {sel_c}, ptr {val_c})",
+                    obj.reg
+                ));
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = sext i32 {status} to i64"));
+                Ok(LLValue::new(result, LLType::I64))
             }
             // `Page.click(sel)` is sugar for query_selector + Element.click; both
             // FFI calls already exist, so no new runtime code is needed.
