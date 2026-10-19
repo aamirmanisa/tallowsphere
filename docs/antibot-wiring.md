@@ -104,8 +104,9 @@ prime suspect — the interpreter arm drives `get_browser_runtime()`, the FFI us
 
 ### Testing lesson
 
-Every array parity probe so far has used an array of EXACTLY ONE element
-(one cookie, one console event, now one egress step). A length or slot-offset
-defect is invisible at N=1: `len` returning 1 and `len` returning the true count
-look identical. Multi-element fixtures are required before the array lowerings
-can be called proven.
+Every earlier array probe used exactly one element, where a broken length is
+invisible. Measured afterwards with two console events:
+`tests/browser_array_len.rs` → natives and interp both report `2`. So the array
+plumbing is correct at N>1, and the one-step report above is the FFI-side
+orchestrator's own output, not a truncated array. The runtime hypothesis stands:
+`get_runtime()` vs `get_browser_runtime()`.
