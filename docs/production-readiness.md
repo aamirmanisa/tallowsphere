@@ -49,6 +49,19 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       length bug; single-element fixtures hid ordering. Enforce a minimum of two
       elements wherever a collection is asserted.
 
+## P0 — red integration suites (measured 2026-10-19, not yet run by CI)
+
+Each was run locally; counts are failures observed. They are listed in
+`ci-excluded-suites.txt` so CI stays honest rather than red, but each one is a
+defect, not a policy:
+
+- [ ] `request_plan_cli` — 38 failed. Parked earlier as U-218: the verbs never
+      existed on any ref. Decide: implement or delete the CLI surface.
+- [ ] `deals_integration` — 6 failed.
+- [ ] `generated_tl_parity` — 2 failed.
+- [ ] `crawler_parity`, `interp_codegen_parity`, `pkg_archive`, `pkg_cache`,
+      `stdlib_math_env`, `transfer_bwlimit` — 1 failed each.
+
 ## P1 — honesty of the machine-readable surface
 
 - [ ] **Audit every capability status mechanically.** `goto_antibot` claimed
