@@ -1,6 +1,7 @@
 # Typing `Result<T>` payloads (closes #120)
 
-Status: **design agreed, not implemented.** Blocks the four remaining `wait_*` arms and any
+Status: **steps 1–2 landed (payload carried on the value and through `let`);
+step 3 attempted and reverted — measured crash, see below.** Blocks the four remaining `wait_*` arms and any
 native program that reads a field off a browser call's result.
 
 ## The defect, measured
@@ -50,3 +51,24 @@ catch — rejected.
    `result`/`url` values from a real page.
 5. Only then: `wait_for_function`, `wait_for_event`, `wait_for_request`, `wait_for_response`
    arms — same out-parameter shape as `tallow_page_wait_for_url`.
+
+## Measured attempt at step 3 (reverted)
+
+The unwrap branch was written and run against `wait_native.tl` with
+`--require-native`. It compiled and linked, and the native leg aborted:
+
+```
+panicked at src/runtime/mod.rs:132:17:
+misaligned pointer dereference: address must be a multiple of 0x8 but is 0xa
+```
+
+`0xa` is an integer payload read where a box pointer belongs, so the field load
+returned a value rather than a pointer: either the payload offset inside
+`%struct.TallowResult` is not the one the unwrap used, or `WaitResult`'s stored
+field list and the layout used to read it disagree. The next step is to dump the
+generated `.ll` for this program and compare the `store` offsets in
+`build_result_struct` with the `getelementptr` indices in the read path — do not
+re-guess, diff the IR.
+
+The unwrap branch is not in the tree; only the carrier (step 1) and the `let`
+recording (step 2) are, so nothing half-working ships.
