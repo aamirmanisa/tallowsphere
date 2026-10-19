@@ -171,6 +171,8 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Capability registry matches the code
+        run: python3 scripts/check_capability_registry.py
       - run: >-
           cargo test --locked --no-fail-fast
           --test audit_cli_contract
