@@ -1950,34 +1950,6 @@ void tallow_async_runtime_shutdown(void) {
                 }
             });
 
-        // `WaitResult` — every field optional, so every slot is a pointer: null
-        // for absent, a box for present. Order matches stdlib/browser.tl.
-        self.struct_layouts
-            .entry("WaitResult".to_string())
-            .or_insert_with(|| {
-                let names = [
-                    "result",
-                    "matched",
-                    "received",
-                    "elapsed_ms",
-                    "waited_ms",
-                    "url",
-                    "method",
-                    "status",
-                    "event",
-                ];
-                let mut field_map = HashMap::new();
-                for (i, name) in names.iter().enumerate() {
-                    field_map.insert((*name).to_string(), (i, LLType::Optional));
-                }
-                StructLayout {
-                    fields: names.iter().map(|n| (*n).to_string()).collect(),
-                    field_map,
-                    field_kinds: HashMap::new(),
-                    llvm_name: "%struct.WaitResult".to_string(),
-                }
-            });
-
         // `NetworkThrottle` — four fields, all written by the preset FFI.
         self.struct_layouts
             .entry("NetworkThrottle".to_string())
