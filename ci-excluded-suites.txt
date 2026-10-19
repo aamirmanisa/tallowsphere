@@ -20,7 +20,6 @@ crawler_browser_escalation: requires Chromium + loopback (runs locally with TALL
 deals_integration: FAILING TODAY (6 failed on 2026-10-19) - tracked in docs/production-readiness.md
 egress_census: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 fuzz_safety: specialized suite (bench/perf/fuzz), not per-commit
-generated_tl_parity: FAILING TODAY (2 failed on 2026-10-19) - tracked in docs/production-readiness.md
 injection_redteam: UNCLASSIFIED - needs triage
 juggler_smoke: UNCLASSIFIED - needs triage
 nav_direct: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)

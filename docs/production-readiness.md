@@ -57,7 +57,11 @@ defect, not a policy:
 - [ ] `request_plan_cli` — 38 failed. Parked earlier as U-218: the verbs never
       existed on any ref. Decide: implement or delete the CLI surface.
 - [ ] `deals_integration` — 6 failed.
-- [ ] `generated_tl_parity` — 2 failed.
+- [x] `generated_tl_parity` — FIXED: both tests asserted obsolete
+      boundaries (legal pass rejecting unannotated http.batch; codegen refusing
+      http.batch). Measured current behaviour: legal pass accepts it (W1900 is a
+      policy-pass advisory), and codegen now emits `tallow_http_batch`. Tests
+      rewritten and renamed to match; 4/4, in CI.
 - [x] `pkg_archive` — FIXED: the archiver matched only `.nx`, the legacy
       extension, so every package archived `tallow.toml` and no code. Now `.tl`
       only, per operator direction. 4/4 pass, added to CI.
