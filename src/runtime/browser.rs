@@ -2314,6 +2314,75 @@ pub extern "C" fn tallow_page_handle_cookie_consent(page: *mut c_void, strategy:
 ///
 /// Returns 1 if a banner was handled, 0 if none, -1 on error.
 #[unsafe(no_mangle)]
+/// `Page.select(selector, option, by)`: select an `<option>` by value, index or
+/// visible label. `by` is the same three-way name the stdlib signature exposes,
+/// resolved here so both planes agree on what an unknown name means (a loud
+/// error, not a silent default).
+pub extern "C" fn tallow_page_select(
+    page: *mut c_void,
+    selector: *const c_char,
+    option: *const c_char,
+    by: *const c_char,
+) -> i32 {
+    if page.is_null() {
+        set_last_error("select: null page handle".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let selector_str = match unsafe { cstr_to_str(selector) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("select: null or invalid selector".to_string());
+            return -1;
+        }
+    };
+    let option_str = match unsafe { cstr_to_str(option) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("select: null or invalid option".to_string());
+            return -1;
+        }
+    };
+    let by_str = unsafe { cstr_to_str(by) }
+        .unwrap_or("value")
+        .to_ascii_lowercase();
+    let select_by = match by_str.as_str() {
+        "value" => crate::browser::interaction::SelectBy::Value(option_str.clone()),
+        "label" => crate::browser::interaction::SelectBy::Label(option_str.clone()),
+        "index" => match option_str.trim().parse::<usize>() {
+            Ok(n) => crate::browser::interaction::SelectBy::Index(n),
+            Err(_) => {
+                set_last_error(format!("select: index `{option_str}` is not a number"));
+                return -1;
+            }
+        },
+        other => {
+            set_last_error(format!(
+                "select: unknown `by` value `{other}` (expected value, label or index)"
+            ));
+            return -1;
+        }
+    };
+    let rt = get_runtime();
+    let outcome = rt.block_on(async {
+        let el = page_ref
+            .query_selector(&selector_str)
+            .await
+            .map_err(|e| format!("select: {e}"))?
+            .ok_or_else(|| format!("select: no element matches `{selector_str}`"))?;
+        el.select_option(select_by)
+            .await
+            .map_err(|e| format!("select: {e}"))
+    });
+    match outcome {
+        Ok(()) => 0,
+        Err(message) => {
+            set_last_error(message);
+            -1
+        }
+    }
+}
+
 /// `Page.fill(selector, value)`: query the element, clear it, then type the
 /// value. Composition of existing ElementHandle operations — no new CDP code —
 /// so the interpreted and native planes cannot diverge on what "fill" means.
