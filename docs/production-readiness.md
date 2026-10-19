@@ -5,7 +5,7 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
 
 ## P0 — correctness gaps that produce wrong answers
 
-- [ ] **Native `resolve_antibot`** — blocked on one measured question: why
+- [x] **Native `resolve_antibot`** — DONE (eb6144e): root cause was field access on a non-variable receiver; both planes print identical output. Was blocked on one measured question: why
       `Page::navigate` stalls only when driven via `get_browser_runtime().block_on`
       from compiled code. Exonerated by run: re-navigation, FFI boundary,
       `NetworkAlmostIdle` (37.8 ms), array length at N=2.
@@ -14,7 +14,7 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       Done when: native and interp produce identical `resolved / final_status /
       attempts / steps[]` on the same page.
 
-- [ ] **`Page.goto_antibot`** — unimplemented on BOTH planes; surface now says
+- [ ] **`Page.goto_antibot`** — the only remaining Page method with no lowering on either plane; surface now says
       `declared_not_implemented`. Decide: implement the egress-map relaunch
       contract, or delete the declaration and the surface entry.
       Done when: the method either works on both planes or does not exist.
