@@ -85,9 +85,10 @@ impl Page {
     ///               "mobile". Classifies `proxy`, or "direct" pins this
     ///               navigation to direct egress (no Tor fallback attempts).
     /// With no map, historical behavior applies (default Tor fallback pool +
-    /// stealth relaunch). Real arm: interp.rs Page method dispatch
-    /// (goto_antibot); relaunch config.proxy carries the proxy to Chrome's
-    /// --proxy-server flag.
+    /// NOT wired on either plane: there is no interp arm and no native
+    /// lowering. The orchestrator itself exists in Rust
+    /// (src/browser/antibot.rs, invoked from src/stdlib/browser.rs) — what is
+    /// missing is the per-plane dispatch. See docs/browser-native-gaps.md.
     fn goto_antibot(self, url: String, egress: Map?) -> Result<NavigationResult> {
         // Runtime: AntiBotOrchestrator.execute_request + relaunch-on-proxy
     }

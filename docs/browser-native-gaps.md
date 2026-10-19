@@ -60,3 +60,16 @@ method**. Its canary target must move whenever a lowering lands — it has been
 retargeted three times (`add_init_script` → `wait_for_function` →
 `wait_for_selector` → `on_console`). Prefer deriving the target from this list on
 the next retarget, so the next lowering does not require editing the test.
+
+## The antibot pair — measured
+
+`goto_antibot` and `resolve_antibot` are not missing features. `src/browser/antibot.rs`
+holds the orchestrator, and `src/stdlib/browser.rs` calls it
+(`AntiBotOrchestrator::with_settings` + `resolve`). What is missing is dispatch:
+`grep -n antibot src/interp.rs` returns nothing, and codegen has no
+`("Page", ...)` arm for either, so the native plane refuses loudly and the
+interpreter answers `unknown browser method`.
+
+The stdlib doc comments claimed an interpreter arm existed; they were wrong and
+are corrected. Wiring these means calling the existing Rust path from both
+planes — interpreter first (it is the reference), then codegen.
