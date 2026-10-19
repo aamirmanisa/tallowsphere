@@ -625,6 +625,67 @@ pub extern "C" fn tallow_page_wait_for_function(
     }
 }
 
+/// Out-parameter shape for `wait_for_event`; `method` is owned by the caller.
+#[repr(C)]
+pub struct WaitEventRaw {
+    pub found: i32,
+    pub elapsed_ms: i64,
+    pub method: *mut c_char,
+    pub ok: i32,
+}
+
+/// Wait for a CDP event on this page. `timeout_ms <= 0` means 30 s.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_wait_for_event(
+    page: *mut c_void,
+    event_name: *mut c_char,
+    timeout_ms: i64,
+    out: *mut WaitEventRaw,
+) -> i32 {
+    if out.is_null() {
+        set_last_error("wait_for_event: null out parameter".to_string());
+        return -1;
+    }
+    let fail = |msg: String| {
+        set_last_error(msg);
+        unsafe {
+            *out = WaitEventRaw {
+                found: 0,
+                elapsed_ms: 0,
+                method: std::ptr::null_mut(),
+                ok: 0,
+            }
+        };
+        -1
+    };
+    if page.is_null() || event_name.is_null() {
+        return fail("wait_for_event: null handle or event name".to_string());
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let name = unsafe { std::ffi::CStr::from_ptr(event_name) }
+        .to_string_lossy()
+        .to_string();
+    if name.trim().is_empty() {
+        return fail("wait_for_event requires an event name".to_string());
+    }
+    let timeout = if timeout_ms > 0 { timeout_ms as u64 } else { 30_000 };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.wait_for_event(&name, std::time::Duration::from_millis(timeout))) {
+        Ok((found, elapsed, method)) => {
+            unsafe {
+                *out = WaitEventRaw {
+                    found: if found { 1 } else { 0 },
+                    elapsed_ms: elapsed as i64,
+                    method: string_to_cstr(&method),
+                    ok: 1,
+                }
+            };
+            0
+        }
+        Err(e) => fail(format!("wait_for_event: {e}")),
+    }
+}
+
 /// Opt this page into console/error capture (`Runtime.enable`). Returns 0 on
 /// success. Idempotent per session.
 #[unsafe(no_mangle)]
