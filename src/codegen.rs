@@ -1252,6 +1252,10 @@ void tallow_async_runtime_shutdown(void) {
         // Returned by value from tallow_page_throttle_network_preset; the
         // backend extracts the fields rather than taking out-parameters.
         ir.push_str("%struct.NetworkThrottleRaw = type { ptr, i64, i64, i64, i64 }\n");
+        // Optional box: {kind, payload}. kind follows LLType::type_tag (0 int,
+        // 1 string, 2 float, 3 bool). A null pointer means nil — the box exists
+        // so `false` and `nil` stop being the same number.
+        ir.push_str("%struct.Optional = type { i64, i64 }\n");
         ir.push_str("%struct.TaggedValue = type { i64, i64 }\n");
         ir.push('\n');
 
@@ -4144,6 +4148,19 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_defer_cleanup()?;
                 // Coerce return value to match the function's declared return type
                 if let Some(ref fn_ret) = self.current_fn_ret.clone() {
+                    if *fn_ret == LLType::Optional {
+                        // `return nil` is a null pointer; anything else is boxed
+                        // so presence survives the return.
+                        if matches!(expr.kind, ExprKind::Nil) {
+                            self.emit_line("ret ptr null");
+                        } else {
+                            let boxed = self.box_optional(&val)?;
+                            self.emit_line(&format!("ret ptr {boxed}"));
+                        }
+                        let unreachable_label = self.fresh_label("after.ret");
+                        self.body.push_str(&format!("{unreachable_label}:\n"));
+                        return Ok(Some(val));
+                    }
                     if *fn_ret == LLType::Void {
                         // A void function cannot carry the value — but a dropped
                         // `Err` (incl. the parser-desugared `bail`) must not read
@@ -18244,6 +18261,50 @@ void tallow_async_runtime_shutdown(void) {
 
     // ── Type Coercion Helpers ───────────────────────────────────────────────
 
+    /// Box a value for an optional slot: `%struct.Optional { i64 kind, i64 payload }`.
+    /// The kind follows `LLType::type_tag`, so a reader can render the payload
+    /// without knowing the static type. Nil is a null pointer and never reaches
+    /// here.
+    fn box_optional(&mut self, val: &LLValue) -> Result<String, String> {
+        let payload = match &val.ty {
+            LLType::I64 | LLType::I32 | LLType::I8 => val.reg.clone(),
+            LLType::I1 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = zext i1 {} to i64", val.reg));
+                r
+            }
+            LLType::I8Ptr => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = ptrtoint ptr {} to i64", val.reg));
+                r
+            }
+            LLType::F64 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = bitcast double {} to i64", val.reg));
+                r
+            }
+            other => {
+                return Err(format!(
+                    "cannot box {other:?} into an optional (see docs/optional-representation.md)"
+                ))
+            }
+        };
+        let kind = val.ty.type_tag();
+        let boxed = self.fresh_reg();
+        self.emit_line(&format!("{boxed} = call ptr @malloc(i64 16)"));
+        let kind_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{kind_gep} = getelementptr inbounds %struct.Optional, ptr {boxed}, i32 0, i32 0"
+        ));
+        self.emit_line(&format!("store i64 {kind}, ptr {kind_gep}"));
+        let payload_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{payload_gep} = getelementptr inbounds %struct.Optional, ptr {boxed}, i32 0, i32 1"
+        ));
+        self.emit_line(&format!("store i64 {payload}, ptr {payload_gep}"));
+        Ok(boxed)
+    }
+
     fn coerce(&mut self, val: &LLValue, target: &LLType) -> Result<String, String> {
         if val.ty == *target {
             return Ok(val.reg.clone());
@@ -18252,11 +18313,17 @@ void tallow_async_runtime_shutdown(void) {
         // Optionals are a distinct representation; nothing converts to or from
         // them implicitly yet. Refusing here keeps a program from compiling
         // into an integer reinterpreted as a pointer.
+        // The only implicit conversion allowed is the literal 0 used to
+        // initialize an optional slot: it is nil, not a boxed zero.
+        if matches!(target, LLType::Optional) && val.ty != LLType::Optional && val.reg == "0" {
+            return Ok("null".to_string());
+        }
         if matches!(val.ty, LLType::Optional) || matches!(target, LLType::Optional) {
-            return Err(
-                "optional values have no native lowering yet (see docs/optional-representation.md)"
-                    .to_string(),
-            );
+            return Err(format!(
+                "optional values have no native lowering yet ({:?} -> {:?}); \
+                 see docs/optional-representation.md",
+                val.ty, target
+            ));
         }
 
         let reg = self.fresh_reg();
@@ -30346,6 +30413,34 @@ mod tests {
             ir.contains("call void @tallow_browser_close(ptr"),
             "should call tallow_browser_close"
         );
+    }
+
+    #[test]
+    fn codegen_boxes_optional_returns() {
+        // `T?` is a pointer: nil is null, a value is a %struct.Optional box with
+        // a kind and a payload. Both return paths must produce a pointer, so a
+        // caller can tell "absent" from "false".
+        let ir = compile_to_ir(
+            r#"
+            fn pick(n: i64) -> bool? {
+                if n > 0 {
+                    return true
+                }
+                return nil
+            }
+            fn main() {
+                let a = pick(1)
+            }
+        "#,
+        );
+        for needle in [
+            "%struct.Optional = type { i64, i64 }",
+            "call ptr @malloc(i64 16)",
+            "store i64 3,",
+            "ret ptr null",
+        ] {
+            assert!(ir.contains(needle), "missing `{needle}` in:\n{ir}");
+        }
     }
 
     #[test]

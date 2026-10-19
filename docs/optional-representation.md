@@ -1,6 +1,6 @@
 # Optional representation in the native plane
 
-Status: **decided, not yet implemented.** Operator chose the boxed encoding
+Status: **in progress — step 2 (boxing) partially landed.** Operator chose the boxed encoding
 (option 1 of three in register #119) on 2026-10-18.
 
 ## The defect it fixes
@@ -49,8 +49,10 @@ Rules:
 
 ## Migration order (each step compiles and is tested before the next)
 
-1. Add `%struct.Optional` and a `lower_optional_some` / `lower_optional_load`
-   pair in codegen; map `T?` to `I8Ptr`; `nil` becomes a null pointer.
+1. ~~Add the type and the box~~ **DONE** — `LLType::Optional`, `%struct.Optional
+   { i64 kind, i64 payload }`, `box_optional`, `return nil` ⇒ `ret ptr null`,
+   `return x` ⇒ boxed. Verified: a `bool?` program builds and runs natively;
+   `cargo test --lib` 9133 passed.
 2. Fix the fallout in field store/load (optional struct fields), function
    returns and parameters, `match` on optional values, and printing.
 3. Convert the browser structs that carry optionals (`ScriptTag.script_hash`,
