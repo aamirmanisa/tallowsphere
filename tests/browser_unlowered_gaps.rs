@@ -13,7 +13,6 @@ use std::path::PathBuf;
 
 /// `(program call, method name as it must appear in the refusal)`.
 const GAPS: &[(&str, &str)] = &[
-    ("let v = page.get_cookies()", "Page.get_cookies"),
     (
         r#"let v = page.goto_antibot("http://127.0.0.1:9/")"#,
         "Page.goto_antibot",
