@@ -983,6 +983,47 @@ pub fn native_array(items: Vec<i64>) -> *mut c_void {
     Box::into_raw(boxed) as *mut c_void
 }
 
+/// One `PageEvent` as the compiled world sees it: three borrowed strings.
+/// `%struct.PageEvent` is `{ptr, ptr, ptr}` (registered in codegen), so the
+/// array slots hold pointers to this struct, never the structs themselves.
+#[repr(C)]
+pub struct PageEventRaw {
+    kind: *const c_char,
+    method: *const c_char,
+    payload: *const c_char,
+}
+
+/// `page.drain_events(kind, limit)` → NATIVE array of `PageEvent` pointers.
+/// Same `[count][slot…]` shape as every other native array, so `.len` and
+/// `arr[i]` work without a new calling convention.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_drain_events_array(
+    page: *mut c_void,
+    kind: *const c_char,
+    limit: i64,
+) -> *mut c_void {
+    if page.is_null() {
+        set_last_error("drain_events: null page handle".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let kind_str = unsafe { cstr_to_str(kind) }.unwrap_or("");
+    let max = if limit > 0 { limit as usize } else { 0 };
+    let events = page_ref.drain_events(kind_str, max);
+    let slots: Vec<i64> = events
+        .iter()
+        .map(|ev| {
+            let raw = Box::new(PageEventRaw {
+                kind: string_to_cstr(&ev.kind),
+                method: string_to_cstr(&ev.method),
+                payload: string_to_cstr(&ev.payload),
+            });
+            Box::into_raw(raw) as i64
+        })
+        .collect();
+    native_array(slots)
+}
+
 /// Query all elements matching a CSS selector. Returns a NATIVE array of
 /// element handles (`[count][handle…]`, see `native_array`).
 /// Returns null on error.
