@@ -9034,12 +9034,19 @@ void tallow_async_runtime_shutdown(void) {
             {
                 true
             }
+            // Payload-only array kinds belong here too. Omitting them sent
+            // `.len` on `rep.steps` (a field of a Result payload) to `strlen`
+            // over the count slot, which returns 1 for any count because the
+            // little-endian count is followed by a NUL byte.
             _ => matches!(
                 self.infer_kind(expr).as_deref(),
                 Some("StringArray")
                     | Some("HtmlElementArray")
                     | Some("ElementArray")
                     | Some("ResultArray")
+                    | Some("PageEventArray")
+                    | Some("CookieArray")
+                    | Some("AntibotStepArray")
             ),
         }
     }
@@ -10945,7 +10952,12 @@ void tallow_async_runtime_shutdown(void) {
             // now — `[count: i64][elem0: i64]…` — so `.len` reads the count
             // straight from slot 0. `tallow_array_len` would be wrong here: it
             // expects the legacy `Box<Vec<*mut c_void>>` handle.
-            ("ElementArray", "len") | ("HtmlElementArray", "len") | ("StringArray", "len") => {
+            ("ElementArray", "len")
+            | ("HtmlElementArray", "len")
+            | ("StringArray", "len")
+            | ("PageEventArray", "len")
+            | ("CookieArray", "len")
+            | ("AntibotStepArray", "len") => {
                 let len64 = self.fresh_reg();
                 self.emit_line(&format!("{len64} = load i64, ptr {}", obj.reg));
                 Ok(LLValue::new(len64, LLType::I64))
