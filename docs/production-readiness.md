@@ -39,11 +39,10 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       exits 1). The 9 red suites are real defects, tracked below, not excluded
       policy.
 
-- [ ] **Array parity above N=1 for every array lowering** (`query_selector_all`,
-      `extract_all_text`, `links`, `classes`, `drain_events`, `get_cookies`).
-      One test (`browser_array_len`) covers `drain_events` only.
-      Done when: each reports the true length and correct element contents at
-      N=0, 1, 3.
+- [ ] **Array parity at N=0/1/3 for every array lowering.** DONE for
+      `query_selector_all` (`tests/browser_array_parity_n.rs`: 0/1/3 lengths correct,
+      elements correct on both planes) and `drain_events` (N=2, `browser_array_len`).
+      Still owed: `extract_all_text`, `links`, `classes`, `get_cookies`.
 
 - [ ] **Parity tests must assert non-trivial values.** N=1 probes hid every
       length bug; single-element fixtures hid ordering. Enforce a minimum of two
