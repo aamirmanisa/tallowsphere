@@ -9,6 +9,11 @@ Measured at HEAD `d65e3ba`+ by diffing `impl Page` in `stdlib/browser.tl` agains
 The 12 are not one problem. They fall into three groups, and only the first group
 needs new machinery in the compiler.
 
+The refusal contract for everything still unlowered is pinned by
+`tests/browser_unlowered_gaps.rs`: exit non-zero, the method named in the
+message, and the program body never runs. The body assertion is the one that
+matters — a silent fallback would print plausible output.
+
 ## Group 1 — payload shapes not yet lowered (2)
 
 | method | declared return | what is missing |
