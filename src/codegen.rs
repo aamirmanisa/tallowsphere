@@ -386,6 +386,7 @@ fn array_elem_kind(array_kind: Option<&str>) -> Option<String> {
         "ElementArray" => Some("Element".to_string()),
         "PageEventArray" => Some("PageEvent".to_string()),
         "CookieArray" => Some("CdpCookie".to_string()),
+        "AntibotStepArray" => Some("AntibotResolveStep".to_string()),
         _ => None,
     }
 }
@@ -457,6 +458,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("Page", "extract_all_text") => Some("StringArray".to_string()),
         ("Page", "drain_events") => Some("PageEventArray".to_string()),
         ("Page", "get_cookies") => Some("CookieArray".to_string()),
+        ("Page", "resolve_antibot") => Some("AntibotResolveReport".to_string()),
         _ => None,
     }
 }
@@ -1286,6 +1288,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("%struct.Optional = type { i64, i64 }\n");
         // Flat payload for tallow_page_authenticated_request (see the arm).
         ir.push_str("%struct.AuthenticatedRaw = type { i64, ptr }\n");
+        ir.push_str("%struct.AntibotReportRaw = type { ptr, i64, i64, i64, ptr, ptr, ptr }\n");
         // PageEvent and EventListener already have collected types whenever a
         // program mentions them; only their LAYOUTS were missing, so emit no
         // duplicate type definitions here.
@@ -1493,6 +1496,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_wait_for_selector(ptr, ptr, i64)\n");
         ir.push_str("declare ptr @tallow_page_drain_events_array(ptr, ptr, i64)\n");
         ir.push_str("declare ptr @tallow_page_get_cookies_array(ptr)\n");
+        ir.push_str("declare ptr @tallow_page_resolve_antibot(ptr, ptr)\n");
         ir.push_str("declare i64 @tallow_page_wait_for_timeout_ms(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_page_register_handler(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_pump(ptr)\n");        ir.push_str("declare i32 @tallow_page_expose_binding(ptr, ptr, ptr)\n");
@@ -2034,6 +2038,44 @@ void tallow_async_runtime_shutdown(void) {
                     }
                 });
         }
+
+    // Antibot report shapes; `steps` is a native array of step pointers.
+    for (struct_name, names, kinds, extra_kind) in [
+        (
+            "AntibotResolveStep",
+            vec!["engine", "available", "ran", "note"],
+            vec![LLType::I8Ptr, LLType::I1, LLType::I1, LLType::I8Ptr],
+            None,
+        ),
+        (
+            "AntibotResolveReport",
+            vec!["url", "resolved", "final_status", "attempts", "body_hint", "steps"],
+            vec![
+                LLType::I8Ptr, LLType::I1, LLType::I64,
+                LLType::I64, LLType::I8Ptr, LLType::I8Ptr,
+            ],
+            Some(("steps", "AntibotStepArray")),
+        ),
+    ] {
+        self.struct_layouts
+            .entry(struct_name.to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, kinds[i].clone()));
+                }
+                let mut field_kinds = HashMap::new();
+                if let Some((field, kind)) = extra_kind {
+                    field_kinds.insert(field.to_string(), kind.to_string());
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds,
+                    llvm_name: format!("%struct.{struct_name}"),
+                }
+            });
+    }
 
     // `CdpCookie` — the element struct of `get_cookies()`. The interpreter
     // omits `expires` for session cookies; the native struct always has it
@@ -4976,6 +5018,43 @@ void tallow_async_runtime_shutdown(void) {
                     }
                 }
 
+                // Struct field on a non-variable receiver (`rep.steps[k].engine`).
+                // `infer_kind` cannot always type the element (a payload array whose
+                // field name is not unique), so fall back to a name scan across the
+                // registered layouts and REFUSE when two layouts disagree.
+                if obj.ty == LLType::I8Ptr {
+                    let elem_struct: Option<String> =
+                        array_elem_kind(self.infer_kind(object).as_deref()).or_else(|| {
+                            let mut names: Vec<String> = self
+                                .struct_layouts
+                                .iter()
+                                .filter(|(_, l)| l.field_map.contains_key(field))
+                                .map(|(n, _)| n.clone())
+                                .collect();
+                            names.sort();
+                            names.dedup();
+                            if names.len() == 1 { names.pop() } else { None }
+                        });
+                    if let Some(struct_name) = elem_struct {
+                        if let Some((idx, field_ty)) = self
+                            .struct_layouts
+                            .get(&struct_name)
+                            .and_then(|l| l.field_map.get(field))
+                            .cloned()
+                        {
+                            let struct_ty = format!("%struct.{struct_name}");
+                            let gep = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{gep} = getelementptr inbounds {struct_ty}, ptr {}, i32 0, i32 {idx}",
+                                obj.reg
+                            ));
+                            let loaded = self.fresh_reg();
+                            self.emit_line(&format!("{loaded} = load {}, ptr {gep}", field_ty.to_ir()));
+                            return Ok(LLValue::new(loaded, field_ty));
+                        }
+                    }
+                }
+
                 // 3/4. .len — differentiate array vs string vs Bytes
                 if field == "len" && obj.ty == LLType::I8Ptr {
                     // A `Bytes` receiver: the value is the base64 text, so
@@ -5762,7 +5841,10 @@ void tallow_async_runtime_shutdown(void) {
                 // Is this array known to hold pointer-backed elements (strings /
                 // opaque handles)? Native arrays store everything as i64, so the
                 // loaded slot must be converted back to a ptr for these.
-                let elem_is_ptr = self.array_expr_elem_is_ptr(object);
+                let elem_is_ptr = self.array_expr_elem_is_ptr(object)
+                    || array_elem_kind(self.infer_kind(object).as_deref())
+                        .map(|k| self.struct_layouts.contains_key(&k))
+                        .unwrap_or(false);
                 // `http.batch` arrays hold `%struct.TallowResult` boxes, which
                 // must come back typed as Results (tag/payload) — not strings.
                 let elem_is_result =
@@ -10168,6 +10250,53 @@ void tallow_async_runtime_shutdown(void) {
             // in, so codegen emits a wrapper that rebuilds PageEvent and calls
             // the function directly (docs/browser-callback-abi.md). A non-literal
             // name is refused rather than silently registering nothing.
+            ("Page", "resolve_antibot") => {
+                let url = self.emit_expr(&args[0].value)?;
+                let url_c = self.coerce_to_string(&url)?;
+                let out = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{out} = call ptr @tallow_page_resolve_antibot(ptr {}, ptr {url_c})",
+                    obj.reg
+                ));
+                // The FFI never returns null; a non-null `error` field marks Err.
+                let err_ptr = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{err_ptr} = getelementptr %struct.AntibotReportRaw, ptr {out}, i32 0, i32 6"
+                ));
+                let err_val = self.fresh_reg();
+                self.emit_line(&format!("{err_val} = load ptr, ptr {err_ptr}"));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq ptr {err_val}, null"));
+                let mut read = |idx: i64, llty: LLType| -> String {
+                    let gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{gep} = getelementptr %struct.AntibotReportRaw, ptr {out}, i32 0, i32 {idx}"
+                    ));
+                    let loaded = self.fresh_reg();
+                    self.emit_line(&format!("{loaded} = load {}, ptr {gep}", llty.to_ir()));
+                    loaded
+                };
+                let url_v = read(0, LLType::I8Ptr);
+                let resolved = read(1, LLType::I64);
+                let status = read(2, LLType::I64);
+                let attempts = read(3, LLType::I64);
+                let body_hint = read(4, LLType::I8Ptr);
+                let steps = read(5, LLType::I8Ptr);
+                let resolved_b = self.fresh_reg();
+                self.emit_line(&format!("{resolved_b} = icmp ne i64 {resolved}, 0"));
+                self.build_result_struct(
+                    "AntibotResolveReport",
+                    &[
+                        ("url", url_v, LLType::I8Ptr),
+                        ("resolved", resolved_b, LLType::I1),
+                        ("final_status", status, LLType::I64),
+                        ("attempts", attempts, LLType::I64),
+                        ("body_hint", body_hint, LLType::I8Ptr),
+                        ("steps", steps, LLType::I8Ptr),
+                    ],
+                    &ok,
+                )
+            }
             ("Page", "get_cookies") => {
                 // Declared Result<[]CdpCookie>; the native plane returns the array
                 // itself, the same shape `query_selector_all` uses for

@@ -740,11 +740,11 @@ fn surface_manifest(args: Vec<Value>) -> StdlibResult {
                     surface_entry(
                         "Page.resolve_antibot (opts map)",
                         "antibot",
-                        "implemented_interp_routed",
+                        "implemented_interp_and_native_parity_tested",
                         "antibot_orchestrator_resolve",
                         false,
                         true,
-                        "interp.rs Page.resolve_antibot drives AntiBotOrchestrator::resolve on get_browser_runtime() and returns Result<AntibotResolveReport> with per-engine {engine, available, ran, note} steps. Measured on a loopback page: resolved=true, final_status=200, steps=5. Native plane still refuses (no lowering). opts {solver_key, solver_service} accepted by the stdlib path but NOT yet consumed by this arm.",
+                        "interp.rs Page.resolve_antibot drives AntiBotOrchestrator::resolve on get_browser_runtime() and returns Result<AntibotResolveReport> with per-engine {engine, available, ran, note} steps. Measured on a loopback page: resolved=true, final_status=200, attempts=1, steps=5 on BOTH planes (egress, captcha.detect, warmup, escalation, classify), byte-identical output. opts {solver_key, solver_service} accepted by the stdlib path but NOT yet consumed by this arm.",
                     ),
                     surface_entry(
                         "Page.goto_antibot (egress map)",

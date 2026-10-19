@@ -983,6 +983,100 @@ pub fn native_array(items: Vec<i64>) -> *mut c_void {
     Box::into_raw(boxed) as *mut c_void
 }
 
+/// One per-engine step in compiled layout.
+#[repr(C)]
+pub struct AntibotStepRaw {
+    engine: *const c_char,
+    available: i64,
+    ran: i64,
+    note: *const c_char,
+}
+
+/// `AntibotResolveReport` in compiled layout; `steps` is a native array
+/// (`[count][ptr to AntibotStepRaw]...`).
+#[repr(C)]
+pub struct AntibotReportRaw {
+    url: *const c_char,
+    resolved: i64,
+    final_status: i64,
+    attempts: i64,
+    body_hint: *const c_char,
+    steps: *mut c_void,
+    /// Null on success; failure text otherwise.
+    error: *const c_char,
+}
+
+/// `page.resolve_antibot(url)` -> `AntibotReportRaw`.
+///
+/// Driven on `get_runtime()`: the runtime that owns the CDP reader and every
+/// other native browser FFI. `get_browser_runtime()` (the interpreter's) writes
+/// commands the reader never polls — register #105, measured as a 30 s timeout.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_resolve_antibot(
+    page: *mut c_void,
+    url: *const c_char,
+) -> *mut AntibotReportRaw {
+    let rt = get_runtime();
+    if page.is_null() {
+        set_last_error("resolve_antibot: null page handle".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let url_str = match unsafe { cstr_to_str(url) } {
+        Some(u) if !u.is_empty() => u.to_string(),
+        _ => {
+            set_last_error("resolve_antibot: url must not be empty".to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let settings = crate::browser::AntiBotSettings {
+        warmup_enabled: false,
+        cookie_farm_enabled: false,
+        allow_direct_egress: true,
+        ..Default::default()
+    };
+    let mut orchestrator = crate::browser::AntiBotOrchestrator::with_settings(settings);
+    match rt.block_on(orchestrator.resolve(page_ref, &url_str)) {
+        Ok(report) => {
+            let slots: Vec<i64> = report
+                .steps
+                .iter()
+                .map(|step| {
+                    Box::into_raw(Box::new(AntibotStepRaw {
+                        engine: string_to_cstr(&step.engine),
+                        available: i64::from(step.available),
+                        ran: i64::from(step.ran),
+                        note: string_to_cstr(&step.note),
+                    })) as i64
+                })
+                .collect();
+            Box::into_raw(Box::new(AntibotReportRaw {
+                url: string_to_cstr(&report.url),
+                resolved: i64::from(report.resolved),
+                final_status: report.final_status as i64,
+                attempts: report.attempts as i64,
+                body_hint: string_to_cstr(&report.body_hint),
+                steps: native_array(slots),
+                error: std::ptr::null(),
+            }))
+        }
+        Err(e) => {
+            let msg = format!("{e}");
+            eprintln!("[ffi] resolve_antibot error: {msg}");
+            set_last_error(format!("resolve_antibot: {msg}"));
+            Box::into_raw(Box::new(AntibotReportRaw {
+                url: string_to_cstr(&url_str),
+                resolved: 0,
+                final_status: 0,
+                attempts: 0,
+                body_hint: string_to_cstr(""),
+                steps: native_array(Vec::new()),
+                error: string_to_cstr(&msg),
+            }))
+        }
+    }
+}
+
 /// One `CdpCookie` in compiled layout: five strings, `expires` as f64, and the
 /// two flags widened to i64 so the struct stays 8-byte aligned.
 #[repr(C)]
