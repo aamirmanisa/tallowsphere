@@ -190,3 +190,18 @@ about this case; the difference between the two is the element kind (a struct th
 appears only as a report payload) rather than a plain registered event struct.
 
 Lowering reverted again; the interpreter arm remains the only wired plane.
+
+## Attempt 5 — a `.len` arm that changed nothing
+
+Hypothesis: `rep.steps.len` misses the native-array `len` arm (only
+`ElementArray`/`HtmlElementArray`/`StringArray` were listed), falls through to the
+generic path and returns a wrong number. Added `("AntibotStepArray", "len")`
+alongside them and re-applied the lowering.
+
+Result: unchanged. `resolved=true / 200 / attempts=1 / steps.len=1`, while the FFI
+(measured in attempt 4) hands back five step pointers in a `[count][ptr...]` array.
+
+Conclusion: `.len` on this expression is emitted somewhere other than the typed
+array-method arm — the struct-field access path is the remaining candidate — so the
+hypothesis was wrong and the arm alone is not the fix. Reverted; recorded so the
+next attempt does not start by adding that arm again.
