@@ -1,0 +1,12 @@
+{
+  "alerts_fired": 0,
+  "deals": [],
+  "deals_found": 0,
+  "errors": [
+    "example: stealth fetch failed: io: host unreachable"
+  ],
+  "scanned": 0,
+  "strategy": "auto",
+  "streaming": false,
+  "total_retailers": 1
+}

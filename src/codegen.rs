@@ -523,6 +523,9 @@ pub struct CodeGen<'a> {
     // map/filter of such arrays, and for the native-array FFI returns
     // (html.select / doc.links / Extract.pattern).
     variable_array_elem_is_ptr: HashMap<String, bool>,
+    /// Handler-name → wrapper symbol for native callbacks. Declared once per
+    /// name, emitted after the module body (see docs/browser-callback-abi.md).
+    callback_wrappers: Vec<(String, String)>,
     /// `value_type` of the `Ok` payload a `Result`-returning call will tag, when
     /// the codegen can know it statically: 2 = string, 4 = browser handle.
     /// Absent for user functions (`divide -> Result<i64>`), which keeps
@@ -669,6 +672,7 @@ impl<'a> CodeGen<'a> {
             variable_array_elem_struct: HashMap::new(),
             variable_is_array: HashMap::new(),
             variable_array_elem_is_ptr: HashMap::new(),
+            callback_wrappers: Vec::new(),
             variable_result_payload_kind: HashMap::new(),
             string_variables: HashSet::new(),
             variable_is_map: HashMap::new(),
@@ -742,6 +746,9 @@ impl<'a> CodeGen<'a> {
             cg.set_source_dir(dir);
         }
         let mut ir = cg.emit_module()?;
+        // Callback wrappers are appended after the module body so a handler
+        // declared anywhere in the program is already a known symbol.
+        ir.push_str(&cg.emit_callback_wrappers());
 
         // WASM: Tallow's codegen emits 64-bit libc signatures (malloc(i64),
         // strlen -> i64, ...) but wasm32's ABI is 32-bit (size_t = i32).
@@ -1275,6 +1282,10 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("%struct.Optional = type { i64, i64 }\n");
         // Flat payload for tallow_page_authenticated_request (see the arm).
         ir.push_str("%struct.AuthenticatedRaw = type { i64, ptr }\n");
+        // PageEvent and EventListener already have collected types whenever a
+        // program mentions them; only their LAYOUTS were missing, so emit no
+        // duplicate type definitions here.
+        // (EventListener already has a collected type; only its layout was missing.)
         ir.push_str("%struct.TaggedValue = type { i64, i64 }\n");
         ir.push('\n');
 
@@ -1477,6 +1488,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_authenticated_request(ptr, ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_wait_for_selector(ptr, ptr, i64)\n");
         ir.push_str("declare i64 @tallow_page_wait_for_timeout_ms(ptr, i64)\n");
+        ir.push_str("declare i32 @tallow_page_register_handler(ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_pump(ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -1992,6 +2005,45 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.WaitResult".to_string(),
+                }
+            });
+
+        // `EventListener` — the registration receipt (`kind`, `handler`, `active`).
+        // Same collection gap as PageEvent: a program never names the type, but
+        // the on_* arms build it.
+        self.struct_layouts
+            .entry("EventListener".to_string())
+            .or_insert_with(|| {
+                let names = ["kind", "handler", "active"];
+                let kinds = [LLType::I8Ptr, LLType::I8Ptr, LLType::I1];
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, kinds[i].clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.EventListener".to_string(),
+                }
+            });
+
+        // `PageEvent` — `{ kind, method, payload }`, all strings. Built inside the
+        // callback wrapper (docs/browser-callback-abi.md), so it needs a layout
+        // even though a program never names it.
+        self.struct_layouts
+            .entry("PageEvent".to_string())
+            .or_insert_with(|| {
+                let names = ["kind", "method", "payload"];
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, LLType::I8Ptr));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.PageEvent".to_string(),
                 }
             });
 
@@ -9427,6 +9479,16 @@ void tallow_async_runtime_shutdown(void) {
         method: &str,
         args: &[CallArg],
     ) -> Result<LLValue, String> {
+        // Deliver buffered page events to compiled handlers *before* the call, the
+        // same point the interpreter pumps (pump_page_handlers). Doing it here
+        // rather than inside each arm is what makes the ordering uniform.
+        if browser_kind == "Page" {
+            let pumped = self.fresh_reg();
+            self.emit_line(&format!(
+                "{pumped} = call i32 @tallow_page_pump(ptr {})",
+                obj.reg
+            ));
+        }
         match (browser_kind, method) {
             // ── Browser methods ─────────────────────────────────────────
             ("Browser", "new_page") => {
@@ -10015,6 +10077,42 @@ void tallow_async_runtime_shutdown(void) {
                     ("method", "null".to_string(), LLType::Optional),
                     ("status", "null".to_string(), LLType::Optional),
                     ("event", "null".to_string(), LLType::Optional),
+                ], &ok)?)
+            }
+            // Callback registration. The API registers a handler NAME; the
+            // compiled world has no function table to look a runtime string up
+            // in, so codegen emits a wrapper that rebuilds PageEvent and calls
+            // the function directly (docs/browser-callback-abi.md). A non-literal
+            // name is refused rather than silently registering nothing.
+            ("Page", "on_console") => {
+                let handler_name = match &args[0].value.kind {
+                    ExprKind::StringLit(n) => n.clone(),
+                    _ => {
+                        return Err(
+                            "on_console requires a handler function name literal on the native \
+                             plane: the compiled world cannot look a function up by runtime string"
+                                .to_string(),
+                        )
+                    }
+                };
+                let kind = "console";
+                let symbol = format!("tallow_cb_{}", mangle_name(&handler_name));
+                if !self.callback_wrappers.iter().any(|(sym, _)| *sym == symbol) {
+                    self.callback_wrappers.push((symbol.clone(), handler_name.clone()));
+                }
+                let kind_c = self.intern_string(kind);
+                let name_c = self.intern_string(&handler_name);
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_register_handler(ptr {}, ptr {kind_c}, ptr @{symbol})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                Ok(self.build_result_struct("EventListener", &[
+                    ("kind", kind_c.clone(), LLType::I8Ptr),
+                    ("handler", name_c, LLType::I8Ptr),
+                    ("active", "1".to_string(), LLType::I1),
                 ], &ok)?)
             }
             ("Page", "capture_console") => {
@@ -22562,6 +22660,39 @@ fn type_expr_to_lltype(ty: &TypeExpr) -> LLType {
         TypeExprKind::Boxed(_) => LLType::I8Ptr, // Box<T> is a pointer
         TypeExprKind::ImplTrait(_) => LLType::I8Ptr, // trait object pointer
         TypeExprKind::DynTrait(_) => LLType::I8Ptr, // dyn trait object pointer
+    }
+}
+
+impl<'a> CodeGen<'a> {
+    /// Emit one wrapper per registered callback name: three C strings in, a
+    /// rebuilt `PageEvent` out to the user's function. Appended after the module
+    /// body, so a handler defined later in the program is already a known symbol.
+    pub fn emit_callback_wrappers(&self) -> String {
+        let mut out = String::new();
+        for (symbol, handler) in &self.callback_wrappers {
+            // The compiled function is `@<mangled name>`; the `.body` variant
+            // belongs to async wrappers only and does not exist here (measured:
+            // clang said "use of undefined value '@tallow.on_msg.body'").
+            let mangled = mangle_name(handler);
+            out.push_str(&format!(
+                "define void @{symbol}(ptr %kind, ptr %method, ptr %payload) #0 {{\n"
+            ));
+            out.push_str("entry:\n");
+            out.push_str("  %ev = alloca %struct.PageEvent\n");
+            for (i, field) in ["kind", "method", "payload"].iter().enumerate() {
+                out.push_str(&format!(
+                    "  %cb_f{i} = getelementptr %struct.PageEvent, ptr %ev, i32 0, i32 {i}\n"
+                ));
+                out.push_str(&format!("  store ptr %{field}, ptr %cb_f{i}\n"));
+            }
+            // Struct parameters are pointers in this ABI (measured: the compiled
+            // handler is `define void @tallow.on_msg(ptr %param.e)`), so pass the
+            // event's address. Loading it by value crashed the process. The call
+            // takes no register either: clang rejects a named `call void`.
+            out.push_str(&format!("  call void @{mangled}(ptr %ev)\n"));
+            out.push_str("  ret void\n}\n\n");
+        }
+        out
     }
 }
 
