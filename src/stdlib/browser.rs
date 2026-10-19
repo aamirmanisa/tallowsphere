@@ -1292,7 +1292,7 @@ fn page_fill_form(args: Vec<Value>) -> StdlibResult {
 /// Convert an orchestrator `ResolveReport` into the .tl-facing struct shape
 /// shared by the module-level `browser.resolve_antibot` arm and (via
 /// `page_resolve_antibot`) callers.
-fn resolve_report_to_value(report: &crate::browser::antibot::ResolveReport) -> Value {
+pub(crate) fn resolve_report_to_value(report: &crate::browser::antibot::ResolveReport) -> Value {
     let steps: Vec<Value> = report
         .steps
         .iter()
