@@ -504,6 +504,69 @@ pub extern "C" fn tallow_page_emulate_media(
     }
 }
 
+/// Out-parameter shape for `wait_for_url`; `ok == 0` carries a failure whose
+/// text is in `tallow_last_error`.
+#[repr(C)]
+pub struct WaitUrlRaw {
+    pub found: i32,
+    pub elapsed_ms: i64,
+    pub url: *mut c_char,
+    pub ok: i32,
+}
+
+/// Wait until the page URL matches `pattern`. `timeout_ms <= 0` means 30 s, the
+/// stdlib default.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_wait_for_url(
+    page: *mut c_void,
+    pattern: *mut c_char,
+    timeout_ms: i64,
+    out: *mut WaitUrlRaw,
+) -> i32 {
+    if out.is_null() {
+        set_last_error("wait_for_url: null out parameter".to_string());
+        return -1;
+    }
+    let fail = |msg: String| {
+        set_last_error(msg);
+        unsafe {
+            *out = WaitUrlRaw {
+                found: 0,
+                elapsed_ms: 0,
+                url: std::ptr::null_mut(),
+                ok: 0,
+            }
+        };
+        -1
+    };
+    if page.is_null() || pattern.is_null() {
+        return fail("wait_for_url: null handle or pattern".to_string());
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let pattern = unsafe { std::ffi::CStr::from_ptr(pattern) }
+        .to_string_lossy()
+        .to_string();
+    if pattern.trim().is_empty() {
+        return fail("wait_for_url requires a URL or pattern".to_string());
+    }
+    let timeout = if timeout_ms > 0 { timeout_ms as u64 } else { 30_000 };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.wait_for_url(&pattern, std::time::Duration::from_millis(timeout))) {
+        Ok((found, elapsed, url)) => {
+            unsafe {
+                *out = WaitUrlRaw {
+                    found: if found { 1 } else { 0 },
+                    elapsed_ms: elapsed as i64,
+                    url: string_to_cstr(&url),
+                    ok: 1,
+                }
+            };
+            0
+        }
+        Err(e) => fail(format!("wait_for_url: {e}")),
+    }
+}
+
 /// Opt this page into console/error capture (`Runtime.enable`). Returns 0 on
 /// success. Idempotent per session.
 #[unsafe(no_mangle)]

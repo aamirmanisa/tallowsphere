@@ -301,3 +301,22 @@ These nine are the rows that still have an action attached (#71 was closed 2026-
 - **55** — mount the five tallow-search route modules or delete them.
 - **70** — 49 `site_profiles*` tables + six orphan helpers: wire or register.
 - **73** — implement the zacks dispatch or descope the parked spec.
+
+## #120 — Field access on a `Result` payload was guessed by field name
+
+**Opened:** 2026-10-19. **Status:** OPEN (native refuses; the idiom is not usable yet).
+
+**Measured:** with `wait_for_url` lowered, `let r = page.wait_for_url(url, 5000)` followed by
+`print(r.result)` / `print(r.url)` printed `0` and `0` on the native leg. The cause is the
+field-access fallback in `src/codegen.rs`: when a variable's struct type is unknown, it picked
+the *first* struct layout that happened to own the field name and loaded that offset. `r` holds a
+`Result`, not a `WaitResult`, so both loads read unrelated memory.
+
+**Fix in place:** the fallback now collects the candidate layouts and refuses when more than one
+struct owns the field, naming them. The same program now fails the build with
+`cannot resolve 'r.url': the field exists on 2 known structs (NavigationResult, WaitResult)…`.
+
+**Still missing:** a way to type the payload of a `Result` so `r.result` works natively at all
+(the interpreter raises `unknown method: .result() on Ok`). Until then `wait_*` results are
+callable but not inspectable in a native build — the arm returns a correct `Result`, and refusal
+is loud rather than wrong.
