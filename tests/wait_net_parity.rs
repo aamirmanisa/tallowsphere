@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 
 const PAGE: &str = "<!doctype html><html><head><title>slow-fetch</title></head><body>\
-<script>setTimeout(function(){ fetch('/slow.txt') }, 400)</script>\
+<script>setTimeout(function(){ fetch('/slow.txt') }, 2500)</script>\
 </body></html>";
 
 fn serve() -> u16 {
