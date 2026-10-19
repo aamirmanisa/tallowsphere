@@ -1469,6 +1469,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_reload(ptr)\n");
         ir.push_str("declare i32 @tallow_page_fill(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_select(ptr, ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_page_cookie_string(ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_set_cookies_from_header(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -9688,6 +9690,38 @@ void tallow_async_runtime_shutdown(void) {
                     ("status", "null".to_string(), LLType::Optional),
                     ("event", "null".to_string(), LLType::Optional),
                 ], &ok)?)
+            }
+            // Declared Result<String>: wrap_ptr_in_result so Ok/Err matching works
+            // natively instead of a bare ptr that matches neither arm.
+            ("Page", "cookie_string") => {
+                let url = self.emit_expr(&args[0].value)?;
+                let url_c = self.coerce_to_string(&url)?;
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_page_cookie_string(ptr {}, ptr {url_c})",
+                    obj.reg
+                ));
+                Ok(self.wrap_ptr_in_result(&reg))
+            }
+            ("Page", "set_cookies_from_header") => {
+                let header = self.emit_expr(&args[0].value)?;
+                let header_c = self.coerce_to_string(&header)?;
+                let domain = self.emit_expr(&args[1].value)?;
+                let domain_c = self.coerce_to_string(&domain)?;
+                let path_c = if let Some(path_arg) = args.get(2) {
+                    let path_val = self.emit_expr(&path_arg.value)?;
+                    self.coerce_to_string(&path_val)?
+                } else {
+                    self.intern_string("/")
+                };
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_set_cookies_from_header(ptr {}, ptr {header_c}, ptr {domain_c}, ptr {path_c})",
+                    obj.reg
+                ));
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = sext i32 {status} to i64"));
+                Ok(LLValue::new(result, LLType::I64))
             }
             // `Page.select(sel, option, by)` — the `by` name is resolved in the
             // FFI, so an unknown name fails loudly instead of guessing.

@@ -3570,32 +3570,64 @@ WebGLRenderingContext.prototype.getParameter = function(parameter) {
         domain: &str,
         path: &str,
     ) -> Result<(), BrowserError> {
-        let cookies: Vec<super::session::CdpCookie> = cookie_header
-            .split(';')
-            .filter_map(|pair| {
-                let pair = pair.trim();
-                if pair.is_empty() {
-                    return None;
+        // A Set-Cookie style header mixes cookies with attributes. Every
+        // `name=value` pair used to become a cookie, which is how `Path=/`
+        // turned into a cookie literally named "Path" — measured in
+        // `cookie_string` output. Attributes are now consumed as attributes:
+        // Path and Domain override the arguments, the rest are noted and skip.
+        let mut cookies: Vec<super::session::CdpCookie> = Vec::new();
+        let mut effective_path = path.to_string();
+        let mut effective_domain = domain.to_string();
+        // Flags may appear after the cookie pair, so read them in a first pass:
+        // dropping `Secure` would make a secure cookie get sent over plain HTTP.
+        let mut flag_secure = false;
+        let mut flag_http_only = false;
+        for pair in cookie_header.split(';') {
+            let lowered = pair.trim().to_ascii_lowercase();
+            match lowered.as_str() {
+                "secure" => flag_secure = true,
+                "httponly" => flag_http_only = true,
+                _ => {}
+            }
+        }
+        for pair in cookie_header.split(';') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let (raw_name, raw_value) = match pair.split_once('=') {
+                Some((n, v)) => (n.trim(), v.trim()),
+                None => (pair, ""),
+            };
+            let lowered = raw_name.to_ascii_lowercase();
+            match lowered.as_str() {
+                "path" => {
+                    effective_path = raw_value.to_string();
+                    continue;
                 }
-                let mut parts = pair.splitn(2, '=');
-                let name = parts.next()?.trim().to_string();
-                let value = parts.next().unwrap_or("").trim().to_string();
-                if name.is_empty() {
-                    return None;
+                "domain" => {
+                    effective_domain = raw_value.trim_start_matches('.').to_string();
+                    continue;
                 }
-                Some(super::session::CdpCookie {
-                    name,
-                    value,
-                    domain: domain.to_string(),
-                    path: path.to_string(),
-                    expires: 0.0,
-                    http_only: false,
-                    secure: false,
-                    same_site: "Lax".to_string(),
-                    size: None,
-                })
-            })
-            .collect();
+                "expires" | "max-age" | "samesite" | "priority" | "partitioned" => continue,
+                "secure" | "httponly" => continue,
+                _ => {}
+            }
+            if raw_name.is_empty() {
+                continue;
+            }
+            cookies.push(super::session::CdpCookie {
+                name: raw_name.to_string(),
+                value: raw_value.to_string(),
+                domain: effective_domain.clone(),
+                path: effective_path.clone(),
+                expires: 0.0,
+                http_only: flag_http_only,
+                secure: flag_secure,
+                same_site: "Lax".to_string(),
+                size: None,
+            });
+        }
 
         if !cookies.is_empty() {
             super::session::set_cookies(&self.client, &self.session_id, &cookies).await?;
