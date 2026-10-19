@@ -502,7 +502,7 @@ fn unlowered_browser_methods_refuse_the_native_build() {
 fn main() {
     let browser = Browser.launch(true)
     let page = browser.new_page()
-    page.wait_for_function("1", 5000)
+    page.wait_for_selector("div.x", 5000)
     browser.close()
 }
 "#;
@@ -525,7 +525,7 @@ fn main() {
         "build failed for an unrelated reason:\n{build_err}"
     );
     assert!(
-        build_err.contains("wait_for_function"),
+        build_err.contains("wait_for_selector"),
         "the diagnostic does not name the method that has no lowering:\n{build_err}"
     );
 }
