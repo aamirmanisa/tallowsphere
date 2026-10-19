@@ -441,6 +441,69 @@ pub extern "C" fn tallow_page_throttle_network_preset(
     }
 }
 
+/// `Emulation.setEmulatedVisionDeficiency`. Empty means "none", matching the
+/// interpreter. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_emulate_vision(page: *mut c_void, deficiency: *mut c_char) -> i32 {
+    if page.is_null() {
+        set_last_error("emulate_vision: null page handle".to_string());
+        return -1;
+    }
+    let deficiency = if deficiency.is_null() {
+        String::new()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(deficiency) }
+            .to_string_lossy()
+            .to_string()
+    };
+    let page_ref = unsafe { &*(page as *const Page) };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.emulate_vision(&deficiency)) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_last_error(format!("emulate_vision: {e}"));
+            -1
+        }
+    }
+}
+
+/// `Emulation.setEmulatedMedia`. Empty strings take the same defaults the
+/// interpreter uses ("screen", "light", "no-preference"). Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_emulate_media(
+    page: *mut c_void,
+    media_type: *mut c_char,
+    color_scheme: *mut c_char,
+    reduced_motion: *mut c_char,
+) -> i32 {
+    if page.is_null() {
+        set_last_error("emulate_media: null page handle".to_string());
+        return -1;
+    }
+    let read = |p: *mut c_char| {
+        if p.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(p) }
+                .to_string_lossy()
+                .to_string()
+        }
+    };
+    let page_ref = unsafe { &*(page as *const Page) };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.emulate_media(
+        &read(media_type),
+        &read(color_scheme),
+        &read(reduced_motion),
+    )) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_last_error(format!("emulate_media: {e}"));
+            -1
+        }
+    }
+}
+
 /// Opt this page into console/error capture (`Runtime.enable`). Returns 0 on
 /// success. Idempotent per session.
 #[unsafe(no_mangle)]

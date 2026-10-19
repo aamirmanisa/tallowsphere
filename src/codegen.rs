@@ -1415,6 +1415,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_add_init_script(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_capture_console(ptr)\n");
         ir.push_str("declare i32 @tallow_page_throttle_cpu(ptr, double)\n");
+        ir.push_str("declare i32 @tallow_page_emulate_media(ptr, ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_emulate_vision(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_add_style_tag(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_throttle_network_preset(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
@@ -1880,6 +1882,43 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ContentFingerprint".to_string(),
+                }
+            });
+
+        // `MediaEmulation` — echoed back from the arguments, plus `applied`.
+        self.struct_layouts
+            .entry("MediaEmulation".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("media_type".to_string(), (0usize, LLType::I8Ptr));
+                field_map.insert("color_scheme".to_string(), (1usize, LLType::I8Ptr));
+                field_map.insert("reduced_motion".to_string(), (2usize, LLType::I8Ptr));
+                field_map.insert("applied".to_string(), (3usize, LLType::I1));
+                StructLayout {
+                    fields: vec![
+                        "media_type".to_string(),
+                        "color_scheme".to_string(),
+                        "reduced_motion".to_string(),
+                        "applied".to_string(),
+                    ],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MediaEmulation".to_string(),
+                }
+            });
+
+        // `VisionEmulation` — the deficiency that was applied, plus the flag.
+        self.struct_layouts
+            .entry("VisionEmulation".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("kind".to_string(), (0usize, LLType::I8Ptr));
+                field_map.insert("applied".to_string(), (1usize, LLType::I1));
+                StructLayout {
+                    fields: vec!["kind".to_string(), "applied".to_string()],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.VisionEmulation".to_string(),
                 }
             });
 
@@ -9308,6 +9347,51 @@ void tallow_async_runtime_shutdown(void) {
                     obj.reg
                 ));
                 Ok(LLValue::new(status, LLType::I32))
+            }
+            ("Page", "emulate_vision") => {
+                let value = self.emit_expr(&args[0].value)?;
+                let arg = self.coerce(&value, &LLType::I8Ptr)?;
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_emulate_vision(ptr {}, ptr {arg})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                Ok(self.build_result_struct("VisionEmulation", &[
+                    ("kind", arg.clone(), LLType::I8Ptr),
+                    ("applied", "1".to_string(), LLType::I1),
+                ], &ok)?)
+            }
+            ("Page", "emulate_media") => {
+                // Three optional arguments; the stdlib declares defaults, so a
+                // short call is legal and the missing ones become their
+                // defaults here rather than an empty string at CDP.
+                let defaults = ["screen", "light", "no-preference"];
+                let mut vals = Vec::new();
+                for (i, default) in defaults.iter().enumerate() {
+                    let value = match args.get(i) {
+                        Some(arg) => {
+                            let v = self.emit_expr(&arg.value)?;
+                            self.coerce(&v, &LLType::I8Ptr)?
+                        }
+                        None => self.intern_string(default),
+                    };
+                    vals.push(value);
+                }
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_emulate_media(ptr {}, ptr {}, ptr {}, ptr {})",
+                    obj.reg, vals[0], vals[1], vals[2]
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                Ok(self.build_result_struct("MediaEmulation", &[
+                    ("media_type", vals[0].clone(), LLType::I8Ptr),
+                    ("color_scheme", vals[1].clone(), LLType::I8Ptr),
+                    ("reduced_motion", vals[2].clone(), LLType::I8Ptr),
+                    ("applied", "1".to_string(), LLType::I1),
+                ], &ok)?)
             }
             ("Page", "throttle_network") => {
                 // Out-parameter, not a struct return: a 40-byte struct return
@@ -30243,6 +30327,29 @@ mod tests {
             ir.contains("call void @tallow_browser_close(ptr"),
             "should call tallow_browser_close"
         );
+    }
+
+    #[test]
+    fn codegen_lowers_emulation_methods() {
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let browser = Browser.launch(true)
+                let page = browser.new_page()
+                page.emulate_media("screen", "dark", "reduce")
+                page.emulate_vision("deuteranopia")
+                browser.close()
+            }
+        "#,
+        );
+        for needle in [
+            "call i32 @tallow_page_emulate_media",
+            "call i32 @tallow_page_emulate_vision",
+            "%struct.MediaEmulation = type",
+            "%struct.VisionEmulation = type",
+        ] {
+            assert!(ir.contains(needle), "missing `{needle}` in:\n{ir}");
+        }
     }
 
     #[test]
