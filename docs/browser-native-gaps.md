@@ -87,3 +87,14 @@ Measured against a plain loopback page: `resolved=true`, `final_status=200`,
 Still open: the native lowering, and `goto_antibot` (no implementation on either
 plane; the surface registry at src/stdlib/browser.rs:743 still reports
 `implemented_interp_routed`, which remains false).
+
+## Update 2026-10-19 — `resolve_antibot` lowered
+
+47 of 48 `Page` methods are now lowered natively and parity-proven.
+`resolve_antibot` joined them in `eb6144e` after the field-access defect was fixed
+(field reads on non-variable receivers, e.g. `rep.steps[k].engine`, previously fell
+through to a literal `0`). Both planes print identical output:
+`true / 200 / 1 / 5` and the five engine names.
+
+The only remaining method with no lowering on either plane is `goto_antibot`,
+registered as `declared_not_implemented`.
