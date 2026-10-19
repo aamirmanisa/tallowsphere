@@ -30,16 +30,24 @@ one layer up: prose asserting work that was never done.
 | `resolve_antibot` dispatch arm | `src/stdlib/browser.rs:562` | real, module shape `browser.resolve_antibot(page, url)` |
 | `dispatch_method(...)` entry point | `src/stdlib/browser.rs:644` | real |
 
-So `resolve_antibot` is one delegation away on the interpreter: an arm in
-`src/interp.rs` that calls
+`resolve_antibot` is reachable, but NOT by the delegation this doc first proposed.
+Two corrections, both measured after writing it:
 
-```rust
-crate::stdlib::browser::dispatch_method(&Value::Handle(handle.clone()), "resolve_antibot", args)
-```
+1. `dispatch_method` (src/stdlib/browser.rs:644) matches only
+   `Value::Struct { name, fields }` — surface-manifest field reads. It cannot
+   accept a page handle at all.
+2. The real entry point is `page_resolve_antibot(args)` via the module-level
+   `dispatch` arm at :562, which reads `args[0]` as
+   `Value::BrowserObject(bh)` with `bh.kind == "Page"` (`extract_page`, :876).
 
-with `args = [url]` or `[url, opts]` (the Rust side accepts the handle as
-`args[0]`, url as `args[1]`, opts as an optional map at `args[2]` — see
-`page_resolve_antibot`).
+So an interp arm would build `Value::BrowserObject(bh.clone())` plus url/opts and
+call that path. **Hazard:** `page_resolve_antibot` calls
+`crate::runtime::get_runtime()` and `rt.block_on(...)` internally; an interp arm
+runs inside the interpreter's own runtime drive, and a nested `block_on` on the
+same runtime panics. Any wiring must either extract the async part
+(`AntiBotOrchestrator::resolve`) and await it on the interpreter's existing drive,
+or run it on a separate thread with its own runtime — not call the stdlib helper
+from inside the arm.
 
 `goto_antibot` has **no** Rust implementation at all: the surface entry is the
 only place the name appears outside `stdlib/browser.tl`. The comment at
