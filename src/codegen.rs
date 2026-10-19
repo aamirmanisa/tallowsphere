@@ -1431,6 +1431,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_emulate_media(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_emulate_vision(ptr, ptr)\n");
         ir.push_str("declare void @tallow_print_optional(ptr)\n");
+        ir.push_str("declare i32 @tallow_page_wait_for_url(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare ptr @tallow_page_add_style_tag(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_throttle_network_preset(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
@@ -1933,6 +1934,34 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.VisionEmulation".to_string(),
+                }
+            });
+
+        // `WaitResult` — every field optional, so every slot is a pointer: null
+        // for absent, a box for present. Order matches stdlib/browser.tl.
+        self.struct_layouts
+            .entry("WaitResult".to_string())
+            .or_insert_with(|| {
+                let names = [
+                    "result",
+                    "matched",
+                    "received",
+                    "elapsed_ms",
+                    "waited_ms",
+                    "url",
+                    "method",
+                    "status",
+                    "event",
+                ];
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, LLType::Optional));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.WaitResult".to_string(),
                 }
             });
 
@@ -4636,6 +4665,25 @@ void tallow_async_runtime_shutdown(void) {
                 // 2. Fallback: try all struct layouts (for expressions like fn_call().field)
                 let obj = self.emit_expr(object)?;
                 if let ExprKind::Ident(var_name) = &object.kind {
+                    // This fallback guesses a struct type from the field name.
+                    // It is only defensible when exactly one known struct has
+                    // that field; otherwise the guess lands on the wrong layout
+                    // and loads an unrelated offset — a silent wrong value.
+                    let candidates: Vec<String> = self
+                        .struct_layouts
+                        .iter()
+                        .filter(|(_, l)| l.field_map.contains_key(field))
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    if candidates.len() > 1 {
+                        return Err(format!(
+                            "cannot resolve `{var_name}.{field}`: the field exists on {} known structs \
+                             ({}), so the struct type cannot be inferred; annotate the variable or \
+                             use a typed accessor",
+                            candidates.len(),
+                            candidates.join(", ")
+                        ));
+                    }
                     for (struct_name, layout) in &self.struct_layouts.clone() {
                         if let Some((idx, field_ty)) = layout.field_map.get(field).cloned() {
                             if let Some((alloca, LLType::I8Ptr)) =
@@ -9454,6 +9502,53 @@ void tallow_async_runtime_shutdown(void) {
                     ("latency_ms", latency.reg.clone(), LLType::I64),
                     ("download_kbps", down.reg.clone(), LLType::I64),
                     ("upload_kbps", up.reg.clone(), LLType::I64),
+                ], &ok)?)
+            }
+            ("Page", "wait_for_url") => {
+                let pattern = self.emit_expr(&args[0].value)?;
+                let pattern_c = self.coerce(&pattern, &LLType::I8Ptr)?;
+                let timeout = match args.get(1) {
+                    Some(arg) => {
+                        let v = self.emit_expr(&arg.value)?;
+                        self.coerce(&v, &LLType::I64)?
+                    }
+                    None => "30000".to_string(),
+                };
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = call ptr @malloc(i64 32)"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_wait_for_url(ptr {}, ptr {pattern_c}, i64 {timeout}, ptr {out})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                let found = self.fresh_reg();
+                self.emit_line(&format!("{found} = load i32, ptr {out}"));
+                let found_i1 = self.fresh_reg();
+                self.emit_line(&format!("{found_i1} = icmp ne i32 {found}, 0"));
+                let elapsed_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{elapsed_gep} = getelementptr inbounds i8, ptr {out}, i64 8"
+                ));
+                let elapsed = self.fresh_reg();
+                self.emit_line(&format!("{elapsed} = load i64, ptr {elapsed_gep}"));
+                let url_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{url_gep} = getelementptr inbounds i8, ptr {out}, i64 16"
+                ));
+                let url = self.fresh_reg();
+                self.emit_line(&format!("{url} = load ptr, ptr {url_gep}"));
+                Ok(self.build_result_struct("WaitResult", &[
+                    ("result", found_i1.clone(), LLType::I1),
+                    ("matched", found_i1.clone(), LLType::I1),
+                    ("received", "null".to_string(), LLType::Optional),
+                    ("elapsed_ms", elapsed.clone(), LLType::I64),
+                    ("waited_ms", timeout.clone(), LLType::I64),
+                    ("url", url.clone(), LLType::I8Ptr),
+                    ("method", "null".to_string(), LLType::Optional),
+                    ("status", "null".to_string(), LLType::Optional),
+                    ("event", "null".to_string(), LLType::Optional),
                 ], &ok)?)
             }
             ("Page", "capture_console") => {
@@ -19137,7 +19232,14 @@ void tallow_async_runtime_shutdown(void) {
             let Some((idx, field_ty)) = layout.field_map.get(*name).cloned() else {
                 return Err(format!("{layout_name} has no field `{name}`"));
             };
-            let stored = if value.starts_with('%') {
+            let stored = if matches!(field_ty, LLType::Optional) {
+                // An optional slot holds a pointer: null, or a box.
+                if value == "null" {
+                    "null".to_string()
+                } else {
+                    self.box_optional(&LLValue::new(value.clone(), ty.clone()))?
+                }
+            } else if value.starts_with('%') {
                 self.coerce(&LLValue::new(value.clone(), ty.clone()), &field_ty)?
             } else {
                 value.clone()
