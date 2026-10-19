@@ -78,3 +78,34 @@ Steps 1–3 each need a build (~5 min) plus a two-plane probe. Writing an interp
 that cannot be exercised in the same session would leave unverified code in a
 tree whose whole value is that its claims are measured — the exact opposite of
 what this session did everywhere else.
+
+## Measured divergence — why the native lowering was withdrawn
+
+A first native lowering (FFI returning a flat report struct whose `steps` slot is
+a native array of step pointers) was built and run, then reverted. Same build,
+same program, same loopback page:
+
+```
+interp: resolved=true  final_status=200  attempts=1  steps.len=5
+        egress / captcha.detect / warmup / escalation / classify
+native: resolved=true  final_status=200  attempts=1  steps.len=1
+        egress
+```
+
+The native report claims success while carrying one fifth of the reasoning. That
+is the dangerous shape: the summary fields agree, so a caller checking only
+`resolved` would never notice the missing steps. Shipping it would have converted
+a loud "no lowering" into a quiet wrong answer.
+
+Unresolved, and the next thing to measure: whether the FFI-side orchestrator
+produced one step, or whether the array never carried five. The runtime is the
+prime suspect — the interpreter arm drives `get_browser_runtime()`, the FFI used
+`get_runtime()`, and mixing them is the #105 reply-routing failure mode.
+
+### Testing lesson
+
+Every array parity probe so far has used an array of EXACTLY ONE element
+(one cookie, one console event, now one egress step). A length or slot-offset
+defect is invisible at N=1: `len` returning 1 and `len` returning the true count
+look identical. Multi-element fixtures are required before the array lowerings
+can be called proven.
