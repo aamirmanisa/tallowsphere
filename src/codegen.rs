@@ -4139,12 +4139,6 @@ void tallow_async_runtime_shutdown(void) {
                     val.ty.to_ir(),
                     val.reg
                 ));
-                if std::env::var("TALLOW_DEBUG_PAYLOAD").is_ok() {
-                    eprintln!(
-                        "[payload] let {name}: ty={:?} payload={:?}",
-                        val.ty, val.payload_struct
-                    );
-                }
                 if let Some(payload) = val.payload_struct.clone() {
                     // A `Result<T>` binding keeps T so `r.field` can unwrap.
                     // This is deliberately NOT `variable_struct_types`: that map
