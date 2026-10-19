@@ -72,3 +72,19 @@ re-guess, diff the IR.
 
 The unwrap branch is not in the tree; only the carrier (step 1) and the `let`
 recording (step 2) are, so nothing half-working ships.
+
+## IR evidence from the crashed build
+
+The failing build's IR survives at `/tmp/tallow_native_run_3568592.ll` (it was
+written before clang failed on the duplicate `exit` declaration). Two facts from it:
+
+- `%struct.WaitResult = type { ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }` — nine
+  pointer slots, as intended.
+- The construction block contains `getelementptr %struct.WaitResult, ptr null, i32 1`
+  — a GEP with a **null base**. So at least one slot is written through an address
+  computed from null rather than stored as `null`. That is why a later read produced
+  a small integer (0xa) where a box pointer belongs.
+
+Next: find the emitter that turns an absent optional into a GEP on the value instead
+of a plain `store ptr null` (look at how `build_result_struct` handles the fields
+passed as the literal `"null"`), and assert the IR has no `ptr null, i32` GEP.
