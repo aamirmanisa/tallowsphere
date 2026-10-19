@@ -64,6 +64,45 @@ fn run_native(dir: &PathBuf, tag: &str, source: &str) -> (bool, String, String) 
     )
 }
 
+fn run_interp(dir: &PathBuf, tag: &str, source: &str) -> (bool, String, String) {
+    let path = dir.join(format!("gapi-{tag}-{}.tl", std::process::id()));
+    std::fs::write(&path, source).expect("write program");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .arg("run")
+        .arg("--interpret")
+        .arg(&path)
+        .env("TALLOW_ALLOW_DIRECT", "1")
+        .output()
+        .expect("run tallow");
+    let _ = std::fs::remove_file(&path);
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+/// A method absent from BOTH planes must refuse on both. The native refusal is
+/// pinned above; the interpreter must not quietly accept what the native build
+/// rejects, or "unimplemented" would be true of only one engine.
+#[test]
+fn unlowered_page_methods_also_refuse_in_the_interpreter() {
+    let dir = std::env::temp_dir();
+    for (call, method) in GAPS {
+        let (ok, stdout, stderr) = run_interp(&dir, &method.replace('.', "-"), &program(call));
+        assert!(!ok, "{method} unexpectedly succeeded under --interpret:\n{stdout}\n{stderr}");
+        let combined = format!("{stdout}{stderr}");
+        assert!(
+            combined.contains(method.trim_start_matches("Page.")),
+            "interpreter refusal for {method} must name the method:\n{combined}"
+        );
+        assert!(
+            !stdout.contains("BODY-RAN"),
+            "{method} refused in the interpreter but the program body still ran:\n{stdout}"
+        );
+    }
+}
+
 #[test]
 fn unlowered_page_methods_refuse_by_name_and_never_fall_back() {
     let dir = std::env::temp_dir();

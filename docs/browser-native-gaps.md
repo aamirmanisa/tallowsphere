@@ -98,3 +98,24 @@ through to a literal `0`). Both planes print identical output:
 
 The only remaining method with no lowering on either plane is `goto_antibot`,
 registered as `declared_not_implemented`.
+
+## Decision (2026-10-19): `goto_antibot` stays declared, refuses on both planes
+
+Options were to implement the egress-map relaunch contract or delete the method.
+Decision: **keep it declared as a specification, and require it to fail loudly on
+both planes** — enforced by `tests/browser_unlowered_gaps.rs`.
+
+Reasoning:
+- Implementing it means relaunching the browser under a new egress: proxy selection
+  is process-level (`BrowserConfig.proxy`), so a *page* cannot change egress
+  mid-session. The honest home for that capability is `BrowserPool.create`, which
+  already takes an egress map and is registered as interp-routed.
+- Deleting it would remove a documented API that expresses real intent, and the
+  egress classification (`tier: tor|direct|datacenter|…`) is useful vocabulary even
+  while unimplemented.
+- Leaving it merely absent is the one unacceptable option: the registry would again
+  advertise a method with no behaviour.
+
+What the tests now pin: on `--require-native` the refusal names
+`Page.goto_antibot` and states that fallback is refused; under `--interpret` the
+error names the method too; and in neither case does the program body run.

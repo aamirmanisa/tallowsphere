@@ -14,10 +14,11 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       Done when: native and interp produce identical `resolved / final_status /
       attempts / steps[]` on the same page.
 
-- [ ] **`Page.goto_antibot`** — the only remaining Page method with no lowering on either plane; surface now says
-      `declared_not_implemented`. Decide: implement the egress-map relaunch
-      contract, or delete the declaration and the surface entry.
-      Done when: the method either works on both planes or does not exist.
+- [x] **`Page.goto_antibot`** — DECIDED: stays declared as a specification and must
+      refuse loudly on both planes, enforced by `tests/browser_unlowered_gaps.rs`
+      (native refusal names the method; interpreter refusal names it; body never runs).
+      Rationale: egress is process-level, so the capability belongs to
+      `BrowserPool.create`, not a page method.
 
 - [ ] **`opts` solver map** — accepted by `page_resolve_antibot` signature, not
       consumed by the interp arm or (future) native arm.
