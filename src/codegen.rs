@@ -1408,6 +1408,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_browser_new_page(ptr)\n");
         ir.push_str("declare ptr @tallow_page_frame_id(ptr)\n");
         ir.push_str("declare i32 @tallow_page_close(ptr)\n");
+        ir.push_str("declare ptr @tallow_page_add_script_tag(ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_page_add_init_script(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_title(ptr)\n");
         ir.push_str("declare ptr @tallow_page_url(ptr)\n");
@@ -1871,6 +1873,30 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ContentFingerprint".to_string(),
+                }
+            });
+
+        // `ScriptTag` — `Page.add_script_tag` / `add_init_script` return it by
+        // value in stdlib; the interpreter fills `tag_id` and `kind` and leaves
+        // the optional fields absent, which natively means null / false.
+        self.struct_layouts
+            .entry("ScriptTag".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("script_hash".to_string(), (0usize, LLType::I8Ptr));
+                field_map.insert("tag_id".to_string(), (1usize, LLType::I8Ptr));
+                field_map.insert("injected".to_string(), (2usize, LLType::I1));
+                field_map.insert("kind".to_string(), (3usize, LLType::I8Ptr));
+                StructLayout {
+                    fields: vec![
+                        "script_hash".to_string(),
+                        "tag_id".to_string(),
+                        "injected".to_string(),
+                        "kind".to_string(),
+                    ],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.ScriptTag".to_string(),
                 }
             });
 
@@ -9224,6 +9250,31 @@ void tallow_async_runtime_shutdown(void) {
                     obj.reg
                 ));
                 Ok(LLValue::new(status, LLType::I32))
+            }
+            ("Page", "add_script_tag") | ("Page", "add_init_script") => {
+                let is_init = method == "add_init_script";
+                let ffi = if is_init {
+                    "tallow_page_add_init_script"
+                } else {
+                    "tallow_page_add_script_tag"
+                };
+                let kind = if is_init { "init_script" } else { "script" };
+                let arg = self.emit_expr(&args[0].value)?;
+                let arg_c = self.coerce(&arg, &LLType::I8Ptr)?;
+                let tag = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{tag} = call ptr @{ffi}(ptr {}, ptr {arg_c})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp ne ptr {tag}, null"));
+                let kind_c = self.intern_string(kind);
+                Ok(self.build_result_struct("ScriptTag", &[
+                    ("script_hash", format!("null"), LLType::I8Ptr),
+                    ("tag_id", tag, LLType::I8Ptr),
+                    ("injected", "0".to_string(), LLType::I1),
+                    ("kind", kind_c, LLType::I8Ptr),
+                ], &ok)?)
             }
             ("Page", "content") => {
                 let reg = self.fresh_reg();
@@ -18703,6 +18754,76 @@ void tallow_async_runtime_shutdown(void) {
             }
         }
         "entry".to_string()
+    }
+
+    /// Allocate a stdlib struct, fill it, and wrap it as `Ok(value)` /
+    /// `Err(last_error)` in one tagged result. `ok` is the i1 register that
+    /// says which arm wins; the struct is allocated either way so the success
+    /// payload has a home. Shared by the browser methods that return a struct,
+    /// so field offsets and the result convention exist in one place.
+    fn build_result_struct(
+        &mut self,
+        layout_name: &str,
+        fields: &[(&str, String, LLType)],
+        ok: &str,
+    ) -> Result<LLValue, String> {
+        let layout = self
+            .struct_layouts
+            .get(layout_name)
+            .cloned()
+            .ok_or_else(|| format!("{layout_name} has no native layout"))?;
+        let struct_ty = layout.llvm_name.clone();
+        let size_ptr = self.fresh_reg();
+        self.emit_line(&format!("{size_ptr} = getelementptr {struct_ty}, ptr null, i32 1"));
+        let size_i64 = self.fresh_reg();
+        self.emit_line(&format!("{size_i64} = ptrtoint ptr {size_ptr} to i64"));
+        let object = self.fresh_reg();
+        self.emit_line(&format!("{object} = call ptr @malloc(i64 {size_i64})"));
+
+        for (name, value, ty) in fields {
+            let Some((idx, field_ty)) = layout.field_map.get(*name).cloned() else {
+                return Err(format!("{layout_name} has no field `{name}`"));
+            };
+            let stored = if value.starts_with('%') {
+                self.coerce(&LLValue::new(value.clone(), ty.clone()), &field_ty)?
+            } else {
+                value.clone()
+            };
+            let gep = self.fresh_reg();
+            self.emit_line(&format!(
+                "{gep} = getelementptr inbounds {struct_ty}, ptr {object}, i32 0, i32 {idx}"
+            ));
+            self.emit_line(&format!("store {} {stored}, ptr {gep}", field_ty.to_ir()));
+        }
+
+        let result_ptr = self.fresh_reg();
+        self.emit_line(&format!("{result_ptr} = call ptr @malloc(i64 24)"));
+        let tag_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{tag_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 0"
+        ));
+        let tag = self.fresh_reg();
+        self.emit_line(&format!("{tag} = select i1 {ok}, i64 0, i64 1"));
+        self.emit_line(&format!("store i64 {tag}, ptr {tag_gep}"));
+        let val_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{val_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 1"
+        ));
+        let obj_i = self.fresh_reg();
+        self.emit_line(&format!("{obj_i} = ptrtoint ptr {object} to i64"));
+        let err_ptr = self.fresh_reg();
+        self.emit_line(&format!("{err_ptr} = call ptr @tallow_last_error()"));
+        let err_i = self.fresh_reg();
+        self.emit_line(&format!("{err_i} = ptrtoint ptr {err_ptr} to i64"));
+        let payload = self.fresh_reg();
+        self.emit_line(&format!("{payload} = select i1 {ok}, i64 {obj_i}, i64 {err_i}"));
+        self.emit_line(&format!("store i64 {payload}, ptr {val_gep}"));
+        let vtype_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{vtype_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 2"
+        ));
+        self.emit_line(&format!("store i64 2, ptr {vtype_gep}"));
+        Ok(LLValue::new(result_ptr, LLType::ResultPtr))
     }
 
     fn intern_string(&mut self, s: &str) -> String {

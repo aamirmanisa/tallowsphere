@@ -80,8 +80,11 @@ and builds `NavigationResult { url, frame_id, status_code }` from the page
 afterwards, wrapped in `Result`. If the layout is absent the arm refuses rather
 than emitting a struct with unknown offsets.
 
-Lowered today: `goto`/`navigate`, `content`, `close` (plus `set_content` and
-`wait_for_timeout`, which predate this work).
+Lowered today: `goto`/`navigate`, `content`, `close`, `add_script_tag`,
+`add_init_script` (plus `set_content` and `wait_for_timeout`, which predate
+this work). Struct-returning methods are lowered with the struct: the backend
+allocates it, fills each declared field at its layout offset, and wraps it in
+the tagged result, so an Ok value can never carry a partially-built struct.
 
 Everything else in the browser API still refuses natively: `tallow build` fails
 with `no native lowering` naming the method, and `tallow run` states the

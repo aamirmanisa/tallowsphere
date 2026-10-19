@@ -369,6 +369,48 @@ pub extern "C" fn tallow_page_url(page: *mut c_void) -> *mut c_char {
     }
 }
 
+/// Inject a `<script>` (URL or inline source). Returns the tag id.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_add_script_tag(page: *mut c_void, source: *mut c_char) -> *mut c_char {
+    if page.is_null() || source.is_null() {
+        set_last_error("add_script_tag: null handle or argument".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let source = unsafe { std::ffi::CStr::from_ptr(source) }
+        .to_string_lossy()
+        .to_string();
+    let rt = get_runtime();
+    match rt.block_on(page_ref.add_script_tag(&source)) {
+        Ok(tag) => string_to_cstr(&tag),
+        Err(e) => {
+            set_last_error(format!("add_script_tag: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Register a script that runs before every document load. Returns its identifier.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_add_init_script(page: *mut c_void, script: *mut c_char) -> *mut c_char {
+    if page.is_null() || script.is_null() {
+        set_last_error("add_init_script: null handle or argument".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let script = unsafe { std::ffi::CStr::from_ptr(script) }
+        .to_string_lossy()
+        .to_string();
+    let rt = get_runtime();
+    match rt.block_on(page_ref.add_init_script(&script)) {
+        Ok(id) => string_to_cstr(&id),
+        Err(e) => {
+            set_last_error(format!("add_init_script: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Close this page's target. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_close(page: *mut c_void) -> i32 {
