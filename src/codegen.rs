@@ -1410,6 +1410,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_close(ptr)\n");
         ir.push_str("declare ptr @tallow_page_add_script_tag(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_add_init_script(ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_capture_console(ptr)\n");
+        ir.push_str("declare i32 @tallow_page_throttle_cpu(ptr, double)\n");
+        ir.push_str("declare ptr @tallow_page_add_style_tag(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_title(ptr)\n");
         ir.push_str("declare ptr @tallow_page_url(ptr)\n");
@@ -1873,6 +1876,35 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ContentFingerprint".to_string(),
+                }
+            });
+
+        // `StyleTag` and `CpuThrottle` — same reason as ScriptTag: declared in
+        // stdlib, returned by value, absent from a program that imports it.
+        self.struct_layouts
+            .entry("StyleTag".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("tag_id".to_string(), (0usize, LLType::I8Ptr));
+                field_map.insert("kind".to_string(), (1usize, LLType::I8Ptr));
+                StructLayout {
+                    fields: vec!["tag_id".to_string(), "kind".to_string()],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.StyleTag".to_string(),
+                }
+            });
+        self.struct_layouts
+            .entry("CpuThrottle".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("rate".to_string(), (0usize, LLType::F64));
+                field_map.insert("applied".to_string(), (1usize, LLType::I1));
+                StructLayout {
+                    fields: vec!["rate".to_string(), "applied".to_string()],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.CpuThrottle".to_string(),
                 }
             });
 
@@ -9250,6 +9282,47 @@ void tallow_async_runtime_shutdown(void) {
                     obj.reg
                 ));
                 Ok(LLValue::new(status, LLType::I32))
+            }
+            ("Page", "capture_console") => {
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_capture_console(ptr {})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                Ok(self.build_result_bool(&ok))
+            }
+            ("Page", "throttle_cpu") => {
+                let rate = self.emit_expr(&args[0].value)?;
+                let rate_f = self.coerce(&rate, &LLType::F64)?;
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_throttle_cpu(ptr {}, double {rate_f})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                Ok(self.build_result_struct("CpuThrottle", &[
+                    ("rate", rate_f, LLType::F64),
+                    ("applied", "1".to_string(), LLType::I1),
+                ], &ok)?)
+            }
+            ("Page", "add_style_tag") => {
+                let arg = self.emit_expr(&args[0].value)?;
+                let arg_c = self.coerce(&arg, &LLType::I8Ptr)?;
+                let tag = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{tag} = call ptr @tallow_page_add_style_tag(ptr {}, ptr {arg_c})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp ne ptr {tag}, null"));
+                let kind_c = self.intern_string("style");
+                Ok(self.build_result_struct("StyleTag", &[
+                    ("tag_id", tag, LLType::I8Ptr),
+                    ("kind", kind_c, LLType::I8Ptr),
+                ], &ok)?)
             }
             ("Page", "add_script_tag") | ("Page", "add_init_script") => {
                 let is_init = method == "add_init_script";
@@ -18761,6 +18834,37 @@ void tallow_async_runtime_shutdown(void) {
     /// says which arm wins; the struct is allocated either way so the success
     /// payload has a home. Shared by the browser methods that return a struct,
     /// so field offsets and the result convention exist in one place.
+    /// Wrap a boolean `Ok` / `Err(last_error)` from the i1 register that says
+    /// which arm wins. `Result<bool>` is vtype 0 (the integer/bool slot).
+    fn build_result_bool(&mut self, ok: &str) -> LLValue {
+        let result_ptr = self.fresh_reg();
+        self.emit_line(&format!("{result_ptr} = call ptr @malloc(i64 24)"));
+        let tag_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{tag_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 0"
+        ));
+        let tag = self.fresh_reg();
+        self.emit_line(&format!("{tag} = select i1 {ok}, i64 0, i64 1"));
+        self.emit_line(&format!("store i64 {tag}, ptr {tag_gep}"));
+        let val_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{val_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 1"
+        ));
+        let err_ptr = self.fresh_reg();
+        self.emit_line(&format!("{err_ptr} = call ptr @tallow_last_error()"));
+        let err_i = self.fresh_reg();
+        self.emit_line(&format!("{err_i} = ptrtoint ptr {err_ptr} to i64"));
+        let payload = self.fresh_reg();
+        self.emit_line(&format!("{payload} = select i1 {ok}, i64 1, i64 {err_i}"));
+        self.emit_line(&format!("store i64 {payload}, ptr {val_gep}"));
+        let vtype_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{vtype_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 2"
+        ));
+        self.emit_line(&format!("store i64 0, ptr {vtype_gep}"));
+        LLValue::new(result_ptr, LLType::ResultPtr)
+    }
+
     fn build_result_struct(
         &mut self,
         layout_name: &str,
@@ -30077,6 +30181,39 @@ mod tests {
             ir.contains("call void @tallow_browser_close(ptr"),
             "should call tallow_browser_close"
         );
+    }
+
+    #[test]
+    fn codegen_lowers_script_style_and_cpu_methods() {
+        // These three return stdlib structs or a bool; the arms must call their
+        // own FFI and fill the struct at its declared offsets, rather than
+        // matching a generic arm and producing a wrong value.
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let browser = Browser.launch(true)
+                let page = browser.new_page()
+                page.add_script_tag("window.x = 1")
+                page.add_init_script("window.y = 1")
+                page.add_style_tag("body { color: red }")
+                page.throttle_cpu(2.0)
+                page.capture_console()
+                browser.close()
+            }
+        "#,
+        );
+        for needle in [
+            "call ptr @tallow_page_add_script_tag",
+            "call ptr @tallow_page_add_init_script",
+            "call ptr @tallow_page_add_style_tag",
+            "call i32 @tallow_page_throttle_cpu",
+            "call i32 @tallow_page_capture_console",
+            "%struct.ScriptTag = type",
+            "%struct.StyleTag = type",
+            "%struct.CpuThrottle = type",
+        ] {
+            assert!(ir.contains(needle), "missing `{needle}` in:\n{ir}");
+        }
     }
 
     #[test]
