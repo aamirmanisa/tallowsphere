@@ -55,7 +55,7 @@ fn main() {{
     let browser = Browser.launch(true)
     let page = browser.new_page()
     page.goto("{url}")
-    let r = page.wait_for_response("slow.txt", 8000)
+    let r = page.wait_for_response("*slow.txt*", 8000)
     print(r.result)
     print(r.url)
     page.close()
@@ -65,14 +65,6 @@ fn main() {{
     )
 }
 
-// Known gap, measured: the native leg misses the event and prints false even
-// though the fetch is made while the wait is blocking. The likely cause is the
-// #105 class of bug — the CDP read loop is spawned on one runtime while the FFI
-// blocks on another, so replies never route. The interpreter leg cannot be
-// compared directly here (it needs `match`), so this stays ignored until the
-// runtime ownership is fixed; a green run of this test is the acceptance
-// criterion for that fix.
-#[ignore = "native wait_for_response misses events that arrive while it blocks (#120 follow-up)"]
 #[test]
 fn wait_for_response_sees_a_request_the_page_makes_after_load() {
     let port = serve();

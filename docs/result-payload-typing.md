@@ -107,3 +107,19 @@ The two bugs found on the way, both measured from the IR:
    WaitResult (offset 40 into 24 bytes) — fixed by a dedicated map;
 2. the unwrap branch had been inserted inside the `object_is_response` branch, so it
    only ever ran for `fetch()` results — moved to the top of the FieldAccess arm.
+
+## The network waits were never broken
+
+The `false` results from `wait_for_response` were my test's doing, not the engine's.
+`glob_match` requires the pattern to match the **whole** URL, so `"slow.txt"` never
+matched `http://127.0.0.1:18111/slow.txt`. With `"*slow.txt*"` both legs report:
+
+```
+true
+http://127.0.0.1:18111/slow.txt
+```
+
+`TALLOW_TRACE_EVENTS` (a temporary eprintln in the CDP read loop) showed
+`Network.responseReceived` arriving twice during the wait, which is what exposed the
+pattern as the cause. The instrumentation is removed; `tests/wait_net_parity.rs` is
+the standing proof and it passes.
