@@ -229,3 +229,29 @@ Next target: the emitter that handles `.len` when the receiver is a struct field
 rather than a bound variable — `infer_kind` on `rep.steps` decides between
 `emit_browser_method_call`'s typed arm and the generic slot-0 load, and one of them
 is not being taken.
+
+## Root cause — found in the generated IR
+
+Attempt 6 established the FFI returns five steps while the program prints 1. The
+generated IR (`TALLOW_KEEP_IR=1`) shows what `.len` actually compiled to:
+
+```llvm
+%115 = load ptr, ptr %114        ; steps array: [count=5][ptr,ptr,ptr,ptr,ptr]
+%116 = icmp eq ptr %115, null
+%117 = select i1 %116, ptr @.str.4, ptr %115
+%118 = call i64 @strlen(ptr %117)   ; <-- the array is treated as a STRING
+%119 = call i32 (i32, ...) @printf(ptr @.fmt.int, i64 %118)
+```
+
+`strlen` on the array reads bytes until a NUL: the count is stored little-endian
+as `05 00 00 …`, so `strlen` returns **1** — every run, deterministically. That is
+not a wrong count; it is a string length of a binary header.
+
+So `rep.steps.len` took the string-length path instead of the native-array slot-0
+load. The typed arm `("AntibotStepArray", "len")` never ran because `infer_kind`
+does not resolve a field of a `Result` payload to its declared element kind — the
+general defect, of which this method was only the first visible case.
+
+Fix target: make `infer_kind` (or the `.len` dispatch) consult
+`struct_layouts[*].field_kinds` for `FieldAccess` receivers, then take slot 0.
+Then re-apply the lowering; the `.ll` above is the regression fixture.
