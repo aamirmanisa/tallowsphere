@@ -1,0 +1,40 @@
+# Integration targets NOT run by CI, with the reason each one is absent.
+# Generated from a measured run on 2026-10-19 (cargo test --no-fail-fast, 39 targets).
+# Every entry is debt, not a policy: the goal is an empty file.
+
+browser_antibot_opts: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_antibot_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_array_len: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_callbacks_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_codegen_integration: UNCLASSIFIED - needs triage
+browser_ffi_error_visibility: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_flow_runtime_integration: UNCLASSIFIED - needs triage
+browser_landlock_smoke: UNCLASSIFIED - needs triage
+browser_native_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_page_events_shared: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_page_methods: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_unlowered_gaps: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+compiler_bench: specialized suite (bench/perf/fuzz), not per-commit
+crawler_browser_escalation: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+crawler_parity: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
+deals_integration: FAILING TODAY (6 failed on 2026-10-19) - tracked in docs/production-readiness.md
+egress_census: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+fuzz_safety: specialized suite (bench/perf/fuzz), not per-commit
+generated_tl_parity: FAILING TODAY (2 failed on 2026-10-19) - tracked in docs/production-readiness.md
+injection_redteam: UNCLASSIFIED - needs triage
+interp_codegen_parity: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
+juggler_smoke: UNCLASSIFIED - needs triage
+nav_direct: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+opsec_corpus_acceptance: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+optional_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+parity_runner: UNCLASSIFIED - needs triage
+perf_binary_startup: specialized suite (bench/perf/fuzz), not per-commit
+perf_install: specialized suite (bench/perf/fuzz), not per-commit
+pkg_archive: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
+pkg_cache: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
+request_plan_cli: FAILING TODAY (38 failed on 2026-10-19) - tracked in docs/production-readiness.md
+stdlib_math_env: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
+transfer_bwlimit: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
+transfer_transport: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+wait_net_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+wait_url_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
