@@ -4684,64 +4684,6 @@ void tallow_async_runtime_shutdown(void) {
                 let obj = self.emit_expr(object)?;
                 // 2. Fallback: try all struct layouts (for expressions like fn_call().field)
                 let obj = self.emit_expr(object)?;
-                // 1b. A Result<T> payload: unwrap behind a tag check. Both
-                // engines then refuse a failed call the same way instead of one
-                // printing Ok(...) and the other reading an unrelated offset
-                // (#120, docs/result-payload-typing.md).
-                if obj.ty == LLType::ResultPtr {
-                    let payload_struct = obj.payload_struct.clone().or_else(|| {
-                        match &object.kind {
-                            ExprKind::Ident(name) => self.variable_struct_types.get(name).cloned(),
-                            _ => None,
-                        }
-                    });
-                    let name = payload_struct.ok_or_else(|| {
-                        format!(
-                            "cannot read `.{field}` from a Result whose payload type is unknown; \
-                             bind it to a variable first"
-                        )
-                    })?;
-                    let layout = self
-                        .struct_layouts
-                        .get(&name)
-                        .cloned()
-                        .ok_or_else(|| format!("no layout for `{name}`, the Result payload struct"))?;
-                    let (idx, field_ty) = layout.field_map.get(field).cloned().ok_or_else(|| {
-                        format!("`{name}` has no field `{field}` (read from a Result payload)")
-                    })?;
-                    let err_l = self.fresh_label("L.result.err");
-                    let ok_l = self.fresh_label("L.result.ok");
-                    let tag_gep = self.fresh_reg();
-                    self.emit_line(&format!(
-                        "{tag_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 0",
-                        obj.reg
-                    ));
-                    let tag = self.fresh_reg();
-                    self.emit_line(&format!("{tag} = load i64, ptr {tag_gep}"));
-                    let is_err = self.fresh_reg();
-                    self.emit_line(&format!("{is_err} = icmp ne i64 {tag}, 0"));
-                    self.emit_line(&format!("br i1 {is_err}, label %{err_l}, label %{ok_l}"));
-                    self.emit_line(&format!("{err_l}:"));
-                    self.emit_line("call void @exit(i32 1)");
-                    self.emit_line("unreachable");
-                    self.emit_line(&format!("{ok_l}:"));
-                    let pay_gep = self.fresh_reg();
-                    self.emit_line(&format!(
-                        "{pay_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 1",
-                        obj.reg
-                    ));
-                    let pay = self.fresh_reg();
-                    self.emit_line(&format!("{pay} = load ptr, ptr {pay_gep}"));
-                    let fgep = self.fresh_reg();
-                    self.emit_line(&format!(
-                        "{fgep} = getelementptr inbounds {}, ptr {pay}, i32 0, i32 {idx}",
-                        layout.llvm_name
-                    ));
-                    let loaded = self.fresh_reg();
-                    self.emit_line(&format!("{loaded} = load {}, ptr {fgep}", field_ty.to_ir()));
-                    return Ok(LLValue::new(loaded, field_ty));
-                }
-
                 if let ExprKind::Ident(var_name) = &object.kind {
                     // This fallback guesses a struct type from the field name.
                     // It is only defensible when exactly one known struct has
