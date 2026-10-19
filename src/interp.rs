@@ -18256,7 +18256,7 @@ impl Interpreter {
                         let url = args.first().map(|v| v.as_string()).unwrap_or_default();
                         match rt.block_on(page.authenticated_get(&url)) {
                             Ok((status, body)) => Ok(Value::Ok(Box::new(Value::Struct {
-                                name: "AuthResponse".to_string(),
+                                name: "AuthenticatedResponse".to_string(),
                                 fields: vec![
                                     ("status".to_string(), Value::Int(status as i128)),
                                     ("body".to_string(), Value::String(body)),
@@ -18277,7 +18277,7 @@ impl Interpreter {
                         let body = args.get(2).map(|v| v.as_string()).unwrap_or_default();
                         match rt.block_on(page.authenticated_request(&url, &method, &body)) {
                             Ok((status, resp_body)) => Ok(Value::Ok(Box::new(Value::Struct {
-                                name: "AuthResponse".to_string(),
+                                name: "AuthenticatedResponse".to_string(),
                                 fields: vec![
                                     ("status".to_string(), Value::Int(status as i128)),
                                     ("body".to_string(), Value::String(resp_body)),
