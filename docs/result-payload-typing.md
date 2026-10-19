@@ -1,6 +1,8 @@
 # Typing `Result<T>` payloads (closes #120)
 
-Status: **steps 1–2 landed (payload carried on the value and through `let`);
+Status: **steps 1-3 landed and verified on a real page (2026-10-19); steps 4-5 remain.**
+
+Previous status: steps 1–2 landed (payload carried on the value and through `let`);
 step 3 attempted and reverted — measured crash, see below.** Blocks the four remaining `wait_*` arms and any
 native program that reads a field off a browser call's result.
 
@@ -89,3 +91,19 @@ Next: re-apply the unwrap branch and capture the IR **before** running it — us
 `tallow build <prog>` (which writes the `.ll` beside the output and does not delete
 it) instead of `tallow run`, then read the field offsets in that file. The previous
 attempt lost its IR, which is why this took two passes.
+
+## Step 3 verified
+
+`wait_native.tl` (goto → wait_for_url → print r.result, r.url) now builds and runs
+natively and prints:
+
+```
+true
+http://127.0.0.1:18101/
+```
+
+The two bugs found on the way, both measured from the IR:
+1. the payload name was stored in `variable_struct_types`, so the box was read as a
+   WaitResult (offset 40 into 24 bytes) — fixed by a dedicated map;
+2. the unwrap branch had been inserted inside the `object_is_response` branch, so it
+   only ever ran for `fetch()` results — moved to the top of the FieldAccess arm.
