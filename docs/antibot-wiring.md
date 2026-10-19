@@ -274,3 +274,22 @@ latent correctness fix with the IR and the 5-vs-1 run as evidence.
 
 Next: the index path needs the same kind awareness as `.len` (offset by the count
 prefix, then `inttoptr`), and only then can the lowering be re-applied.
+
+## After the `.len` fix — element access still returns 0
+
+With payload-array kinds recognised, `rep.steps.len` is 5 on both planes. Element
+access is not: `rep.steps[k].engine` printed `0` five times.
+
+Tried and measured: making the index path treat a declared struct element kind as
+pointer-backed (`struct_layouts.contains_key(array_elem_kind(...))`). No change —
+still `0` five times. So the index path is also not the whole story; the field
+read on the element (`engine`, an I8Ptr) is where the zero appears, and printing
+`0` rather than an empty string suggests the value is typed as an integer by the
+time it reaches `print`.
+
+Reverted. Only the `.len` fix is committed (3bffce3); the interpreter remains the
+only wired plane for `resolve_antibot`.
+
+Next probe: emit IR for `rep.steps[0].engine` alone and check the load chain — slot
+offset, `inttoptr`, then GEP into `%struct.AntibotResolveStep` field 0. The IR will
+name which of the three is missing, exactly as it did for `.len`.
