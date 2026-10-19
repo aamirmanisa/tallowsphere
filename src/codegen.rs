@@ -459,6 +459,10 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("Page", "drain_events") => Some("PageEventArray".to_string()),
         ("Page", "get_cookies") => Some("CookieArray".to_string()),
         ("Page", "resolve_antibot") => Some("AntibotResolveReport".to_string()),
+        // Struct-static constructors declared in stdlib/browser.tl. Without these
+        // the binding's type is unknown, and `c.strategy` is refused as ambiguous
+        // (the field exists on Crawler and PaginationInfo).
+        ("Crawler", "from_links") | ("Crawler", "from_sitemap") => Some("Crawler".to_string()),
         _ => None,
     }
 }
@@ -3847,6 +3851,18 @@ void tallow_async_runtime_shutdown(void) {
                 {
                     self.variable_struct_types
                         .insert(name.clone(), struct_name.clone());
+                }
+
+                // A call whose static result kind names a registered struct
+                // (`let c = Crawler.from_links(...)`) carries its type in the kind
+                // table, not in the expression shape. Outside the literal branch
+                // above, so it applies to every initializer.
+                if !self.variable_struct_types.contains_key(name) {
+                    if let Some(kind) = self.infer_kind(value) {
+                        if self.struct_layouts.contains_key(&kind) {
+                            self.variable_struct_types.insert(name.clone(), kind);
+                        }
+                    }
                 }
 
                 // Track the element struct of an array binding: `xs[0].field`
@@ -9037,6 +9053,8 @@ void tallow_async_runtime_shutdown(void) {
                     // Not a handle kind, so the dispatch site cannot mistake it
                     // for a method on a handle.
                     "http" => Some("http".to_string()),
+                    // Struct-static namespace (`Crawler.from_links(...)`).
+                    "Crawler" => Some("Crawler".to_string()),
                     _ => None,
                 }
             }

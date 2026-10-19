@@ -70,7 +70,11 @@ defect, not a policy:
 - [x] `transfer_bwlimit` — FIXED: the test used a stale room code
       (`123-alpha-beta-gamma`); this build accepts only the 8-symbol mint. Now
       `K7M2QPHD`; 2/2, in CI.
-- [ ] `crawler_parity`, `interp_codegen_parity` — 1 failed each.
+- [x] `crawler_parity` — FIXED: `let c = Crawler.from_links(...)` did not record the
+      struct type, so `c.strategy` was refused as ambiguous (the field exists on
+      Crawler and PaginationInfo). Added the result-kind mapping, the receiver
+      kind, and initializer-driven type tracking. 3/3, in CI.
+- [ ] `interp_codegen_parity` — 1 failed.
 
 ## P1 — honesty of the machine-readable surface
 
