@@ -155,7 +155,11 @@ fn test_math_nan() {
             print(x)
         }"#,
     );
-    assert_eq!(out, vec!["NaN"]);
+    // C `printf` semantics — the documented float→display contract of the native
+    // backend (`format_float_c` in src/interp.rs) — spell NaN as `nan`. Expecting
+    // `NaN` would have pinned the interpreter to a format the native plane does
+    // not produce.
+    assert_eq!(out, vec!["nan"]);
 }
 
 // ── Math backward compatibility ──────────────────────────────────────────────

@@ -143,7 +143,9 @@ fn bwlimit_paces_relay_send_within_band() {
 
     let port = free_tcp_port();
     let relay_addr = format!("127.0.0.1:{port}");
-    let code = "123-alpha-beta-gamma";
+    // The relay mints 8-symbol room codes; the old descriptive slug is rejected
+    // by every current build ("codes are 8 characters").
+    let code = "K7M2QPHD";
 
     let relay = spawn(&["relay", "--port", &port.to_string()]);
     assert!(

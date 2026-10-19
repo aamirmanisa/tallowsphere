@@ -32,8 +32,6 @@ parity_runner: UNCLASSIFIED - needs triage
 perf_binary_startup: specialized suite (bench/perf/fuzz), not per-commit
 perf_install: specialized suite (bench/perf/fuzz), not per-commit
 request_plan_cli: FAILING TODAY (38 failed on 2026-10-19) - tracked in docs/production-readiness.md
-stdlib_math_env: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
-transfer_bwlimit: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
 transfer_transport: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 wait_net_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 wait_url_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
