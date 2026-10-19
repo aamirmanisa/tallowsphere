@@ -158,6 +158,10 @@ pub struct Page {
     /// name up in: codegen hands over the address of a wrapper that rebuilds
     /// `PageEvent` and calls the user's function. See docs/browser-callback-abi.md.
     pub(crate) native_handlers: Arc<Mutex<Vec<(String, usize)>>>,
+    /// Native-plane JS bindings as `(js_name, function pointer)`. A binding's
+    /// name travels in the event payload, so the pump selects the handler per
+    /// event rather than per kind (see pump_bindings in the interpreter).
+    pub(crate) native_bindings: Arc<Mutex<Vec<(String, usize)>>>,
 }
 
 impl Page {
@@ -201,6 +205,7 @@ impl Page {
             handlers: Arc::new(Mutex::new(Vec::new())),
             bindings: Arc::new(Mutex::new(Vec::new())),
             native_handlers: Arc::new(Mutex::new(Vec::new())),
+            native_bindings: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -263,6 +268,39 @@ impl Page {
         if !guard.iter().any(|(k, h)| k == kind && *h == handler) {
             guard.push((kind.to_string(), handler));
         }
+    }
+
+    /// Register a compiled handler for a JS binding name. Idempotent per pair.
+    pub fn register_native_binding(&self, name: &str, handler: usize) {
+        let mut guard = match self.native_bindings.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !guard.iter().any(|(n, h)| n == name && *h == handler) {
+            guard.push((name.to_string(), handler));
+        }
+    }
+
+    /// Snapshot of the native bindings for the pump.
+    pub fn native_bindings(&self) -> Vec<(String, usize)> {
+        match self.native_bindings.lock() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Expose `name` to page JS via `Runtime.addBinding`. The interpreter does
+    /// this inline; the native plane needs it behind a method because the FFI
+    /// has no access to the session id.
+    pub async fn add_js_binding(&self, name: &str) -> Result<(), BrowserError> {
+        self.client
+            .send_command_with_session(
+                "Runtime.addBinding",
+                Some(serde_json::json!({ "name": name })),
+                &self.session_id,
+            )
+            .await
+            .map(|_| ())
     }
 
     /// Snapshot of the native handlers for the pump.
@@ -1914,6 +1952,7 @@ impl Page {
             handlers: Arc::new(Mutex::new(Vec::new())),
             bindings: Arc::new(Mutex::new(Vec::new())),
             native_handlers: Arc::new(Mutex::new(Vec::new())),
+            native_bindings: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -2902,6 +2941,7 @@ impl Page {
                             handlers: Arc::new(Mutex::new(Vec::new())),
             bindings: Arc::new(Mutex::new(Vec::new())),
             native_handlers: Arc::new(Mutex::new(Vec::new())),
+            native_bindings: Arc::new(Mutex::new(Vec::new())),
                         };
                         popup.start_event_pump().await;
                         return Ok(popup);
