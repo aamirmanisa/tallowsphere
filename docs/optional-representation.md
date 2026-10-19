@@ -60,6 +60,26 @@ Rules:
 5. `tests/browser_native_parity.rs` gains a `WaitResult` assertion: the same
    wait on both engines must report the same `result`, `url` and absent fields.
 
+## Sites to change (inventory, `src/codegen.rs`)
+
+Named so step 1 starts from facts rather than another search:
+
+| Site | Line | Today | Change |
+|---|---|---|---|
+| `Type::Optional(_)` mapping | 19137 | `LLType::I64` | `LLType::I8Ptr` |
+| `TypeExprKind::Optional(_)` mapping | 21847 | `LLType::I64` | `LLType::I8Ptr` |
+| `ExprKind::Nil` | 4382 | `i64 0` | null pointer in optional context, `i64 0` elsewhere |
+| `coerce` | 18238 | no `I64 ⇄ I8Ptr` path; must not box implicitly | explicit boxing helper, coerce stays reinterpretation-only |
+| `emit_print` | 10308 | dispatches on `LLType`; `I8Ptr` ⇒ `%s` | needs the optional's inner type, so print must consult the static type, not the LLType alone |
+| equality (`BinOp::Eq`/`Neq`) | 5551, 5619 | integer compare | pointer compare for nils, tag compare otherwise |
+| optional field store/load | — | none today (no native struct has an optional field) | box on store, tag on load |
+| function return coercion | return path | `i64` value | box for `T?` returns |
+
+Two facts worth carrying forward:
+
+- There is no `??`, no `Some(..)`, and no `Option` value in the interpreter — `Value` has only `Nil` and plain values. So "present" never needs a distinct runtime tag from the language's point of view; the box exists only so `false` and `nil` stop being the same number.
+- `print` is the hard part, not the storage: it dispatches on `LLType`, and an optional and a string are both `I8Ptr`. Either `print` learns the static type at its call site, or the box carries enough tag information to render itself. Step 1 must settle this before any browser arm uses the encoding, because `WaitResult` is normally printed or inspected field by field.
+
 ## Verification
 
 - `cargo test --lib` must stay at 0 failures; any test that pinned `i64`-shaped
