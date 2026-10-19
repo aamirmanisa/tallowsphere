@@ -502,7 +502,7 @@ fn unlowered_browser_methods_refuse_the_native_build() {
 fn main() {
     let browser = Browser.launch(true)
     let page = browser.new_page()
-    page.on_error("msg")
+    page.expose_binding("msg", "handler")
     browser.close()
 }
 "#;
@@ -525,7 +525,7 @@ fn main() {
         "build failed for an unrelated reason:\n{build_err}"
     );
     assert!(
-        build_err.contains("on_error"),
+        build_err.contains("expose_binding"),
         "the diagnostic does not name the method that has no lowering:\n{build_err}"
     );
 }
