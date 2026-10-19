@@ -20,10 +20,10 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       Rationale: egress is process-level, so the capability belongs to
       `BrowserPool.create`, not a page method.
 
-- [ ] **`opts` solver map** — accepted by `page_resolve_antibot` signature, not
-      consumed by the interp arm or (future) native arm.
-      Done when: `{solver_key, solver_service}` changes behaviour, or the
-      parameter is removed.
+- [x] **`opts` solver map** — DONE (9153cdd): consumed on the interpreter via the
+      stdlib path (`CaptchaSolverConfig`, service defaults to 2captcha); the native
+      plane refuses opts at build time instead of dropping them. Pinned by
+      `tests/browser_antibot_opts.rs`.
 
 - [ ] **Result-returning FFI failures must be observable.** A native `Err` exits
       before any `print` runs: two sessions were lost to a silent `exit 1`.
