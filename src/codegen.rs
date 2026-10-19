@@ -1272,6 +1272,8 @@ void tallow_async_runtime_shutdown(void) {
         // 1 string, 2 float, 3 bool). A null pointer means nil — the box exists
         // so `false` and `nil` stop being the same number.
         ir.push_str("%struct.Optional = type { i64, i64 }\n");
+        // Flat payload for tallow_page_authenticated_request (see the arm).
+        ir.push_str("%struct.AuthenticatedRaw = type { i64, ptr }\n");
         ir.push_str("%struct.TaggedValue = type { i64, i64 }\n");
         ir.push('\n');
 
@@ -1471,6 +1473,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_select(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_cookie_string(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_set_cookies_from_header(ptr, ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_authenticated_request(ptr, ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -1986,6 +1989,28 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.WaitResult".to_string(),
+                }
+            });
+
+        // `AuthenticatedResponse` — `{ status: Int, body: String }`, built from the
+        // flat out-parameter of tallow_page_authenticated_request. Registered by
+        // hand for the same reason as WaitResult: no native layout is collected
+        // for a struct that only appears as a Result payload.
+        self.struct_layouts
+            .entry("AuthenticatedResponse".to_string())
+            .or_insert_with(|| {
+                let names = ["status", "body"];
+                let kinds = [LLType::I64, LLType::I8Ptr];
+                let _ = &kinds;
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, kinds[i].clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.AuthenticatedResponse".to_string(),
                 }
             });
 
@@ -9690,6 +9715,74 @@ void tallow_async_runtime_shutdown(void) {
                     ("status", "null".to_string(), LLType::Optional),
                     ("event", "null".to_string(), LLType::Optional),
                 ], &ok)?)
+            }
+            // Out-parameter marshalling (#118 shape): the FFI fills a flat
+            // {status, body} struct, and the Result box is built from it so
+            // `r.status` / `r.body` resolve without guessing a layout (#120).
+            // Registers are allocated at the point of emission: this dialect
+            // numbers instructions in order, so reserving a name early and using
+            // it later makes clang reject the module.
+            ("Page", "authenticated_request") => {
+                let url = self.emit_expr(&args[0].value)?;
+                let url_c = self.coerce_to_string(&url)?;
+                let method_c = if let Some(m) = args.get(1) {
+                    let mv = self.emit_expr(&m.value)?;
+                    self.coerce_to_string(&mv)?
+                } else {
+                    self.intern_string("GET")
+                };
+                let body_c = if let Some(b) = args.get(2) {
+                    let bv = self.emit_expr(&b.value)?;
+                    self.coerce_to_string(&bv)?
+                } else {
+                    self.intern_string("")
+                };
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = alloca %struct.AuthenticatedRaw"));
+                let call_reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{call_reg} = call i32 @tallow_page_authenticated_request(ptr {}, ptr {url_c}, ptr {method_c}, ptr {body_c}, ptr {out})",
+                    obj.reg
+                ));
+                let status_ptr = self.fresh_reg();
+                self.emit_line(&format!("{status_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 0"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!("{status} = load i64, ptr {status_ptr}"));
+                let body_ptr = self.fresh_reg();
+                self.emit_line(&format!("{body_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 1"));
+                let body_reg = self.fresh_reg();
+                self.emit_line(&format!("{body_reg} = load ptr, ptr {body_ptr}"));
+                self.build_result_struct(
+                    "AuthenticatedResponse",
+                    &[("status", status, LLType::I64), ("body", body_reg, LLType::I8Ptr)],
+                    "true",
+                )
+            }
+            ("Page", "authenticated_get") => {
+                let url = self.emit_expr(&args[0].value)?;
+                let url_c = self.coerce_to_string(&url)?;
+                let method_c = self.intern_string("GET");
+                let body_c = self.intern_string("");
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = alloca %struct.AuthenticatedRaw"));
+                let call_reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{call_reg} = call i32 @tallow_page_authenticated_request(ptr {}, ptr {url_c}, ptr {method_c}, ptr {body_c}, ptr {out})",
+                    obj.reg
+                ));
+                let status_ptr = self.fresh_reg();
+                self.emit_line(&format!("{status_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 0"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!("{status} = load i64, ptr {status_ptr}"));
+                let body_ptr = self.fresh_reg();
+                self.emit_line(&format!("{body_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 1"));
+                let body_reg = self.fresh_reg();
+                self.emit_line(&format!("{body_reg} = load ptr, ptr {body_ptr}"));
+                self.build_result_struct(
+                    "AuthenticatedResponse",
+                    &[("status", status, LLType::I64), ("body", body_reg, LLType::I8Ptr)],
+                    "true",
+                )
             }
             // Declared Result<String>: wrap_ptr_in_result so Ok/Err matching works
             // natively instead of a bare ptr that matches neither arm.

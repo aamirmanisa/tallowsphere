@@ -2314,6 +2314,60 @@ pub extern "C" fn tallow_page_handle_cookie_consent(page: *mut c_void, strategy:
 ///
 /// Returns 1 if a banner was handled, 0 if none, -1 on error.
 #[unsafe(no_mangle)]
+/// Out-parameter payload for `authenticated_get` / `authenticated_request`.
+#[repr(C)]
+pub struct AuthenticatedRaw {
+    pub status: i64,
+    pub body: *mut c_char,
+}
+
+/// `Page.authenticated_request(url, method, body)`: HTTP with the browser's
+/// cookies attached, egressing through the same contract as the browser zone.
+/// The tuple returned by `Page::authenticated_request` is marshalled into a
+/// flat out-parameter so the native plane can build `AuthenticatedResponse`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_authenticated_request(
+    page: *mut c_void,
+    url: *const c_char,
+    method: *const c_char,
+    body: *const c_char,
+    out: *mut AuthenticatedRaw,
+) -> i32 {
+    if out.is_null() {
+        set_last_error("authenticated_request: null out parameter".to_string());
+        return -1;
+    }
+    let fail = |msg: String| {
+        set_last_error(msg);
+        unsafe {
+            (*out).status = 0;
+            (*out).body = std::ptr::null_mut();
+        }
+        -1
+    };
+    if page.is_null() {
+        return fail("authenticated_request: null page handle".to_string());
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let url_str = match unsafe { cstr_to_str(url) } {
+        Some(s) => s.to_string(),
+        None => return fail("authenticated_request: null or invalid url".to_string()),
+    };
+    let method_str = unsafe { cstr_to_str(method) }.unwrap_or("GET").to_string();
+    let body_str = unsafe { cstr_to_str(body) }.unwrap_or("").to_string();
+    let rt = get_runtime();
+    match rt.block_on(page_ref.authenticated_request(&url_str, &method_str, &body_str)) {
+        Ok((status, response_body)) => {
+            unsafe {
+                (*out).status = status as i64;
+                (*out).body = string_to_cstr(&response_body);
+            }
+            0
+        }
+        Err(e) => fail(format!("authenticated_request: {e}")),
+    }
+}
+
 /// `Page.cookie_string(url)`: the Cookie header for that URL. Returns a C string
 /// (caller must free) or null on error.
 #[unsafe(no_mangle)]
