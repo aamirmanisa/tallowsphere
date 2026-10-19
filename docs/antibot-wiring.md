@@ -255,3 +255,22 @@ general defect, of which this method was only the first visible case.
 Fix target: make `infer_kind` (or the `.len` dispatch) consult
 `struct_layouts[*].field_kinds` for `FieldAccess` receivers, then take slot 0.
 Then re-apply the lowering; the `.ll` above is the regression fixture.
+
+## The fix, and the limit of what it proves
+
+Two changes in `src/codegen.rs`, both general:
+
+1. `expr_is_native_array` now recognises `PageEventArray`, `CookieArray` and
+   `AntibotStepArray`. Their absence is what sent `rep.steps.len` to `strlen`.
+2. The typed `len` arm accepts those kinds as well.
+
+Measured with the lowering temporarily applied: `steps.len` went from **1** to
+**5**, matching the interpreter, on the same program and page.
+
+What it does NOT fix: `rep.steps[k].engine` printed `0` five times — element
+indexing through a payload-only array loads the wrong slot. That is a silent wrong
+value, so the lowering was reverted again and these two fixes stand alone, as a
+latent correctness fix with the IR and the 5-vs-1 run as evidence.
+
+Next: the index path needs the same kind awareness as `.len` (offset by the count
+prefix, then `inttoptr`), and only then can the lowering be re-applied.
