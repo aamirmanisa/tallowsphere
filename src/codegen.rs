@@ -504,6 +504,8 @@ pub struct CodeGen<'a> {
 
     // Variable → struct type name tracking (for instance method dispatch)
     variable_struct_types: HashMap<String, String>,
+    /// `Result<T>` bindings: variable → payload struct name (#120).
+    var_payload_struct: HashMap<String, String>,
     /// Element struct name for a variable bound to an array of structs, so
     /// `xs[0].field` can GEP into `%struct.Name` instead of returning 0.
     variable_array_elem_struct: HashMap<String, String>,
@@ -662,6 +664,7 @@ impl<'a> CodeGen<'a> {
             enum_variant_fields: HashMap::new(),
             enum_max_payload: HashMap::new(),
             variable_struct_types: HashMap::new(),
+            var_payload_struct: HashMap::new(),
             variable_array_elem_struct: HashMap::new(),
             variable_is_array: HashMap::new(),
             variable_array_elem_is_ptr: HashMap::new(),
@@ -1947,6 +1950,34 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.VisionEmulation".to_string(),
+                }
+            });
+
+        // `WaitResult` — every field optional, so every slot is a pointer: null
+        // for absent, a box for present. Order matches stdlib/browser.tl.
+        self.struct_layouts
+            .entry("WaitResult".to_string())
+            .or_insert_with(|| {
+                let names = [
+                    "result",
+                    "matched",
+                    "received",
+                    "elapsed_ms",
+                    "waited_ms",
+                    "url",
+                    "method",
+                    "status",
+                    "event",
+                ];
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, LLType::Optional));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.WaitResult".to_string(),
                 }
             });
 
@@ -4109,9 +4140,12 @@ void tallow_async_runtime_shutdown(void) {
                     val.reg
                 ));
                 if let Some(payload) = val.payload_struct.clone() {
-                    // A `Result<T>` binding keeps T, so `r.field` can unwrap
-                    // instead of guessing a layout (#120).
-                    self.variable_struct_types.insert(name.clone(), payload);
+                    // A `Result<T>` binding keeps T so `r.field` can unwrap.
+                    // This is deliberately NOT `variable_struct_types`: that map
+                    // says "this variable *is* that struct", and the field path
+                    // would then read the Result box as if it were the payload
+                    // (measured: `r.url` read offset 40 of a 24-byte box, #120).
+                    self.var_payload_struct.insert(name.clone(), payload);
                 }
                 self.variables.insert(name.clone(), (alloca, val.ty));
                 Ok(None)
@@ -4531,6 +4565,67 @@ void tallow_async_runtime_shutdown(void) {
                 };
                 if object_is_response {
                     let obj = self.emit_expr(object)?;
+                // 1b. A Result<T> payload: unwrap behind a tag check. Both
+                // engines then refuse a failed call the same way instead of one
+                // printing Ok(...) and the other reading an unrelated offset
+                // (#120, docs/result-payload-typing.md).
+                // The binding map is the authority: a `Result<T>` variable can
+                // reach here carrying `I8Ptr` (the type checker and the arm do
+                // not agree on the encoding), and reading it as a bare pointer
+                // is exactly the 0xa crash (#120). If a payload name is bound,
+                // unwrap regardless of the register type.
+                let payload_binding = obj.payload_struct.clone().or_else(|| match &object.kind {
+                    ExprKind::Ident(name) => self.var_payload_struct.get(name).cloned(),
+                    _ => None,
+                });
+                if obj.ty == LLType::ResultPtr || payload_binding.is_some() {
+                    let name = payload_binding.ok_or_else(|| {
+                        format!(
+                            "cannot read `.{field}` from a Result whose payload type is unknown; \
+                             bind it to a variable first"
+                        )
+                    })?;
+                    let layout = self
+                        .struct_layouts
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| format!("no layout for `{name}`, the Result payload struct"))?;
+                    let (idx, field_ty) = layout.field_map.get(field).cloned().ok_or_else(|| {
+                        format!("`{name}` has no field `{field}` (read from a Result payload)")
+                    })?;
+                    let err_l = self.fresh_label("L.result.err");
+                    let ok_l = self.fresh_label("L.result.ok");
+                    let tag_gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{tag_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 0",
+                        obj.reg
+                    ));
+                    let tag = self.fresh_reg();
+                    self.emit_line(&format!("{tag} = load i64, ptr {tag_gep}"));
+                    let is_err = self.fresh_reg();
+                    self.emit_line(&format!("{is_err} = icmp ne i64 {tag}, 0"));
+                    self.emit_line(&format!("br i1 {is_err}, label %{err_l}, label %{ok_l}"));
+                    self.emit_line(&format!("{err_l}:"));
+                    self.emit_line("call void @exit(i32 1)");
+                    self.emit_line("unreachable");
+                    self.emit_line(&format!("{ok_l}:"));
+                    let pay_gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{pay_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 1",
+                        obj.reg
+                    ));
+                    let pay = self.fresh_reg();
+                    self.emit_line(&format!("{pay} = load ptr, ptr {pay_gep}"));
+                    let fgep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{fgep} = getelementptr inbounds {}, ptr {pay}, i32 0, i32 {idx}",
+                        layout.llvm_name
+                    ));
+                    let loaded = self.fresh_reg();
+                    self.emit_line(&format!("{loaded} = load {}, ptr {fgep}", field_ty.to_ir()));
+                    return Ok(LLValue::new(loaded, field_ty));
+                }
+
                     match field.as_str() {
                         "status" => {
                             let s32 = self.fresh_reg();
