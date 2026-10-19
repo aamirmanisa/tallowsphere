@@ -45,6 +45,8 @@ fn main() {{
     let browser = Browser.launch(true)
     let page = browser.new_page()
     page.goto("{url}")
+    page.add_init_script("window.__tallowParityInit = 1")
+    page.add_script_tag("window.__tallowParityTag = 1")
     print("TITLE=" + page.title())
     print("URL=" + page.url())
     print(page.content())
