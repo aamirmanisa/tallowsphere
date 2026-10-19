@@ -3,6 +3,11 @@
 
 @legal(basis: .research, purpose: "scraping speed benchmark", retain_for: 1.days)
 @stealth(profile: .chrome_windows, evasions: .all)
+@cra_class(.default)
+@persona(id: "scrape-speed-test", cover_class: .researcher, compartment: "scrape-speed-test", fingerprint_seed: "scrape-speed-test-1020")
+@burn_plan(persona: "scrape-speed-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowDemo/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
 fn main() {
     print("=== TALLOW SCRAPING SPEED TEST ===")
     print("")

@@ -3,6 +3,11 @@
 
 @legal(basis: .research, purpose: "plugin demo", retain_for: 1.days)
 @stealth(profile: .chrome_windows, evasions: .all)
+@cra_class(.default)
+@persona(id: "browser-plugins-demo", cover_class: .researcher, compartment: "browser-plugins-demo", fingerprint_seed: "browser-plugins-demo-1020")
+@burn_plan(persona: "browser-plugins-demo", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowDemo/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
 fn main() {
     let browser = Browser.launch(false)
     let page = browser.new_page()

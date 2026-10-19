@@ -193,6 +193,7 @@ jobs:
           --test stdlib_math_env
           --test transfer_bwlimit
           --test crawler_parity
+          --test interp_codegen_parity
           --test artifact_sealing
           --test browser_contracts
           --test browser_dispatch_reachability

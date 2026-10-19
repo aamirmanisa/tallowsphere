@@ -74,7 +74,11 @@ defect, not a policy:
       struct type, so `c.strategy` was refused as ambiguous (the field exists on
       Crawler and PaginationInfo). Added the result-kind mapping, the receiver
       kind, and initializer-driven type tracking. 3/3, in CI.
-- [ ] `interp_codegen_parity` — 1 failed.
+- [x] `interp_codegen_parity` — FIXED: examples had drifted (stale room
+      codes, missing policy annotations, one script without `fn main`). All 21
+      failing examples were enumerated by running them, repaired where the fix was
+      in the source, and classified in `known_run_fail` where the dependency is a
+      live service. 2/2, in CI.
 
 ## P1 — honesty of the machine-readable surface
 

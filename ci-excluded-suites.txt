@@ -22,7 +22,6 @@ egress_census: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRE
 fuzz_safety: specialized suite (bench/perf/fuzz), not per-commit
 generated_tl_parity: FAILING TODAY (2 failed on 2026-10-19) - tracked in docs/production-readiness.md
 injection_redteam: UNCLASSIFIED - needs triage
-interp_codegen_parity: FAILING TODAY (1 failed on 2026-10-19) - tracked in docs/production-readiness.md
 juggler_smoke: UNCLASSIFIED - needs triage
 nav_direct: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 opsec_corpus_acceptance: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)

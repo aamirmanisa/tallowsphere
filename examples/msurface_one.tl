@@ -9,6 +9,11 @@
     personal_data: false,
     rate_limit: 2.per_second
 )
+@cra_class(.default)
+@persona(id: "msurface-one", cover_class: .researcher, compartment: "msurface", fingerprint_seed: "msurface-1020")
+@burn_plan(persona: "msurface-one", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowMSurface/1.0 (+https://tallow.invalid/bot)")
+@stealth(profile: .chrome_windows, evasions: .all)
 fn main() {
     let u = env.get("MSURL")
     print("URL " + u)
