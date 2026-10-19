@@ -83,9 +83,14 @@ Two facts worth carrying forward:
 **Resolved 2026-10-18:** add `LLType::Optional` rather than reusing `I8Ptr`.
 `I8Ptr` is already the string type, so an optional and a string would be
 indistinguishable at every dispatch site, `print` above all. A separate variant
-makes the distinction structural, and the compiler then enumerates the work:
-every `match` on `LLType` that is exhaustive will fail to compile until it names
-the new case, which is a to-do list that cannot go stale.
+makes the distinction structural.
+
+**Correction (measured):** the variant does *not* enumerate the work. Adding it
+produced zero compile errors, because every `match` on `LLType` in this file has
+a catch-all arm. The migration sites are silent, so step 1 closes the damage at
+the conversion boundary instead: `coerce` refuses any conversion to or from
+`LLType::Optional` with a message naming this document, which turns a wrong
+program into a failed build rather than a wrong binary.
 
 ## Verification
 

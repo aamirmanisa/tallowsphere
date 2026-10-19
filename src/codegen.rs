@@ -43,6 +43,11 @@ enum LLType {
     I8Ptr,     // ptr — strings and opaque pointers
     ResultPtr, // ptr to %struct.TallowResult — tagged union
     Tagged,    // ptr to {i64 tag; i64 payload} box — dynamically-typed value (Area 1)
+    /// `T?`: null pointer for nil, otherwise a `%struct.Optional` box. Distinct
+    /// from `I8Ptr` on purpose — a string and an optional are both pointers, and
+    /// dispatch on the type has to tell them apart (see
+    /// docs/optional-representation.md).
+    Optional,
     Void,
 }
 
@@ -57,6 +62,7 @@ impl LLType {
             LLType::I8Ptr => "ptr",
             LLType::ResultPtr => "ptr",
             LLType::Tagged => "ptr",
+            LLType::Optional => "ptr",
             LLType::Void => "void",
         }
     }
@@ -71,6 +77,7 @@ impl LLType {
             LLType::I8Ptr => "null",
             LLType::ResultPtr => "null",
             LLType::Tagged => "null",
+            LLType::Optional => "null",
             LLType::Void => "",
         }
     }
@@ -86,6 +93,8 @@ impl LLType {
             LLType::I8 | LLType::I32 => "0",
             LLType::ResultPtr => "5",
             LLType::Tagged => "0", // statically-typed path never sees a Tagged (runtime-dispatched)
+            // An optional is a pointer; a present value is never a bare tag here.
+            LLType::Optional => "2",
             LLType::Void => "4",
         }
     }
@@ -18240,6 +18249,16 @@ void tallow_async_runtime_shutdown(void) {
             return Ok(val.reg.clone());
         }
 
+        // Optionals are a distinct representation; nothing converts to or from
+        // them implicitly yet. Refusing here keeps a program from compiling
+        // into an integer reinterpreted as a pointer.
+        if matches!(val.ty, LLType::Optional) || matches!(target, LLType::Optional) {
+            return Err(
+                "optional values have no native lowering yet (see docs/optional-representation.md)"
+                    .to_string(),
+            );
+        }
+
         let reg = self.fresh_reg();
         match (&val.ty, target) {
             (LLType::I1, LLType::I64) => {
@@ -19134,7 +19153,7 @@ impl<'a> CodeGen<'a> {
             Type::Float(_) => LLType::F64,
             Type::String | Type::Bytes | Type::Char => LLType::I8Ptr,
             Type::Array(_) | Type::Map(_, _) | Type::Set(_) => LLType::I8Ptr,
-            Type::Optional(_) => LLType::I64,
+            Type::Optional(_) => LLType::Optional,
             Type::Result(_) => LLType::ResultPtr,
             Type::Function { .. } => LLType::I8Ptr,
             Type::Named(_) => LLType::I64,
@@ -21844,7 +21863,7 @@ fn type_expr_to_lltype(ty: &TypeExpr) -> LLType {
             "Self" => LLType::I8Ptr, // self param in impl methods — struct pointer
             _ => LLType::I64,        // default to i64 for unknown types
         },
-        TypeExprKind::Optional(_) => LLType::I64,
+        TypeExprKind::Optional(_) => LLType::Optional,
         TypeExprKind::Slice(_) => LLType::I8Ptr,
         TypeExprKind::Generic { name, .. } => {
             match name.as_str() {
