@@ -3296,6 +3296,23 @@ pub extern "C" fn tallow_page_wait_for_timeout(page: *mut c_void, ms: i64) -> i3
     0
 }
 
+/// `Page.wait_for_timeout(ms)`: sleep and report the elapsed milliseconds so the
+/// native plane can build `WaitResult` instead of returning a bare status. The
+/// interpreter reads `elapsed_ms` from the runtime, so the number must come from
+/// the same clock here.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_wait_for_timeout_ms(page: *mut c_void, ms: i64) -> i64 {
+    if page.is_null() {
+        set_last_error("wait_for_timeout: null page handle".to_string());
+        return -1;
+    }
+    let started = std::time::Instant::now();
+    if ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+    }
+    started.elapsed().as_millis() as i64
+}
+
 /// Block all non-essential resources (images, fonts, media, ads). Returns 0/-1.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_block_non_essential(page: *mut c_void) -> i32 {
