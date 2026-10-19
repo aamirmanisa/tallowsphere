@@ -314,3 +314,25 @@ Next probe (one run, IR): compile `rep.steps[0].engine` alone and read the chain
 slot load, `inttoptr`, GEP, field load. The absence of `inttoptr` will confirm the
 index is typed as an integer, which points at `array_expr_elem_is_ptr` /
 `variable_is_array` rather than at field access.
+
+## FIXED — native `resolve_antibot` reaches parity
+
+Root cause: `FieldAccess` had no branch for a receiver that is not a variable. The
+`rep.steps[k]` element is a pointer (`inttoptr` was emitted — visible in the IR at
+`scratch/wn/steps_engine.ll`), but `rep.steps[k].engine` fell through to the
+literal `0` because `infer_kind` could not type the payload array itself.
+
+Fix: resolve the struct for a field read on any `i8*` receiver — element kind
+first, then a unique-field scan across registered layouts, refusing when two
+layouts disagree.
+
+Measured, same program and page, both planes:
+
+```
+true / 200 / 1 / 5
+egress / captcha.detect / warmup / escalation / classify
+```
+
+Byte-identical. Registry updated to
+`implemented_interp_and_native_parity_tested`; the checker accepts it because arms
+now exist on both planes.
