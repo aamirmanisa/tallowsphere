@@ -18185,6 +18185,41 @@ impl Interpreter {
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }
                     }
+                    // `resolve_antibot(url [, opts])`: the orchestrator is real
+                    // (src/browser/antibot.rs), only the dispatch was missing.
+                    // Driven on the SAME runtime as every other Page call —
+                    // `page_resolve_antibot` in stdlib drives its own runtime,
+                    // and mixing runtimes is the #105 reply-routing bug.
+                    ("Page", "resolve_antibot") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let url = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        if url.is_empty() {
+                            return Err(RuntimeError::TypeError(
+                                "resolve_antibot(url): url must not be empty".to_string(),
+                            ));
+                        }
+                        let settings = crate::browser::AntiBotSettings {
+                            warmup_enabled: false,
+                            cookie_farm_enabled: false,
+                            // Resolve keeps the page's CURRENT egress; direct is
+                            // the explicit consent here (same as stdlib's arm).
+                            allow_direct_egress: true,
+                            ..Default::default()
+                        };
+                        let mut orchestrator =
+                            crate::browser::AntiBotOrchestrator::with_settings(settings);
+                        match rt.block_on(orchestrator.resolve(page, &url)) {
+                            Ok(report) => Ok(Value::Ok(Box::new(
+                                crate::stdlib::browser::resolve_report_to_value(&report),
+                            ))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
                     ("Page", "get_cookies") => {
                         let page = bh
                             .handle

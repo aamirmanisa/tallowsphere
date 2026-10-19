@@ -73,3 +73,17 @@ interpreter answers `unknown browser method`.
 The stdlib doc comments claimed an interpreter arm existed; they were wrong and
 are corrected. Wiring these means calling the existing Rust path from both
 planes — interpreter first (it is the reference), then codegen.
+
+### Update — resolve_antibot is now interpreter-routed
+
+`("Page", "resolve_antibot")` exists in src/interp.rs: it drives
+`AntiBotOrchestrator::resolve` on `get_browser_runtime()` — the SAME runtime as
+every other Page call, deliberately not `std::stdlib::browser`'s helper, which
+drives its own runtime (mixing them is the #105 reply-routing bug).
+
+Measured against a plain loopback page: `resolved=true`, `final_status=200`,
+`steps=5` — Ok path, no panic, no nested block_on.
+
+Still open: the native lowering, and `goto_antibot` (no implementation on either
+plane; the surface registry at src/stdlib/browser.rs:743 still reports
+`implemented_interp_routed`, which remains false).
