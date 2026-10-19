@@ -1430,6 +1430,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_throttle_cpu(ptr, double)\n");
         ir.push_str("declare i32 @tallow_page_emulate_media(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_emulate_vision(ptr, ptr)\n");
+        ir.push_str("declare void @tallow_print_optional(ptr)\n");
         ir.push_str("declare ptr @tallow_page_add_style_tag(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_throttle_network_preset(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
@@ -10393,6 +10394,22 @@ void tallow_async_runtime_shutdown(void) {
         }
 
         let val = self.emit_expr(&args[0].value)?;
+
+        // An optional prints as `nil` or as its payload rendered by the boxed
+        // kind; the runtime owns the dispatch so the value never reaches a
+        // format string as a bare integer.
+        if val.ty == LLType::Optional {
+            let printed = self.fresh_reg();
+            self.emit_line(&format!(
+                "{printed} = call i32 @tallow_print_optional(ptr {})",
+                val.reg
+            ));
+            let nl = self.fresh_reg();
+            self.emit_line(&format!(
+                "{nl} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
+            ));
+            return Ok(LLValue::new("0".into(), LLType::I64));
+        }
 
         match &val.ty {
             LLType::I64 => {

@@ -1,6 +1,6 @@
 # Optional representation in the native plane
 
-Status: **in progress — step 2 (boxing) partially landed.** Operator chose the boxed encoding
+Status: **in progress — returns and printing are boxed; fields, unboxing and equality remain.** Operator chose the boxed encoding
 (option 1 of three in register #119) on 2026-10-18.
 
 ## The defect it fixes
@@ -53,8 +53,10 @@ Rules:
    { i64 kind, i64 payload }`, `box_optional`, `return nil` ⇒ `ret ptr null`,
    `return x` ⇒ boxed. Verified: a `bool?` program builds and runs natively;
    `cargo test --lib` 9133 passed.
-2. Fix the fallout in field store/load (optional struct fields), function
-   returns and parameters, `match` on optional values, and printing.
+2. ~~Printing~~ **DONE** — `tallow_print_optional` reads the box's kind and
+   renders `true`/`false`/`%lld`/`%g`/`%s`, or `nil` for a null pointer.
+   `tests/optional_parity.rs` holds both engines to `true`/`false`/`nil`.
+   Remaining: field store/load, unboxing, and `== nil`.
 3. Convert the browser structs that carry optionals (`ScriptTag.script_hash`,
    `ScriptTag.injected`, `WaitResult.*`) to real optional fields — today they are
    filled with `null`/`false` placeholders.

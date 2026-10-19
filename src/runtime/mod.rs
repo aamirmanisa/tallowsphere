@@ -111,3 +111,52 @@ pub extern "C" fn tallow_free_string(ptr: *mut c_char) {
         }
     }
 }
+
+/// Print an optional box the way the interpreter renders an optional: `nil`
+/// when absent, otherwise the payload formatted by its boxed kind. Uses the
+/// same libc formats as the rest of `print`, so `%g`/`%lld` agree with the
+/// scalar paths byte for byte.
+#[repr(C)]
+pub struct OptionalBox {
+    pub kind: i64,
+    pub payload: i64,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_print_optional(boxed: *const OptionalBox) {
+    unsafe {
+        if boxed.is_null() {
+            libc::printf(b"nil\0".as_ptr() as *const libc::c_char);
+            return;
+        }
+        let b = &*boxed;
+        match b.kind {
+            // LLType::type_tag: 0 int, 1 string, 2 float, 3 bool
+            3 => {
+                let text: &[u8] = if b.payload != 0 {
+                    b"true\0"
+                } else {
+                    b"false\0"
+                };
+                libc::printf(text.as_ptr() as *const libc::c_char);
+            }
+            2 => {
+                let f = f64::from_bits(b.payload as u64);
+                libc::printf(b"%g\0".as_ptr() as *const libc::c_char, f);
+            }
+            1 => {
+                if b.payload == 0 {
+                    libc::printf(b"nil\0".as_ptr() as *const libc::c_char);
+                } else {
+                    libc::printf(
+                        b"%s\0".as_ptr() as *const libc::c_char,
+                        b.payload as *const libc::c_char,
+                    );
+                }
+            }
+            _ => {
+                libc::printf(b"%lld\0".as_ptr() as *const libc::c_char, b.payload);
+            }
+        }
+    }
+}
