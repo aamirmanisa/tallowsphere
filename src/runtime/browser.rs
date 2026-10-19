@@ -2314,6 +2314,74 @@ pub extern "C" fn tallow_page_handle_cookie_consent(page: *mut c_void, strategy:
 ///
 /// Returns 1 if a banner was handled, 0 if none, -1 on error.
 #[unsafe(no_mangle)]
+/// `Page.cookie_string(url)`: the Cookie header for that URL. Returns a C string
+/// (caller must free) or null on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_cookie_string(
+    page: *mut c_void,
+    url: *const c_char,
+) -> *mut c_char {
+    if page.is_null() {
+        set_last_error("cookie_string: null page handle".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let url_str = match unsafe { cstr_to_str(url) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("cookie_string: null or invalid url".to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.cookie_string(&url_str)) {
+        Ok(header) => string_to_cstr(&header),
+        Err(e) => {
+            set_last_error(format!("cookie_string: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// `Page.set_cookies_from_header(header, domain, path)`: parse a Set-Cookie style
+/// header and install each cookie for the domain.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_set_cookies_from_header(
+    page: *mut c_void,
+    header: *const c_char,
+    domain: *const c_char,
+    path: *const c_char,
+) -> i32 {
+    if page.is_null() {
+        set_last_error("set_cookies_from_header: null page handle".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let header_str = match unsafe { cstr_to_str(header) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("set_cookies_from_header: null or invalid header".to_string());
+            return -1;
+        }
+    };
+    let domain_str = match unsafe { cstr_to_str(domain) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("set_cookies_from_header: null or invalid domain".to_string());
+            return -1;
+        }
+    };
+    let path_str = unsafe { cstr_to_str(path) }.unwrap_or("/").to_string();
+    let rt = get_runtime();
+    match rt.block_on(page_ref.set_cookies_from_header(&header_str, &domain_str, &path_str)) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_last_error(format!("set_cookies_from_header: {e}"));
+            -1
+        }
+    }
+}
+
 /// `Page.select(selector, option, by)`: select an `<option>` by value, index or
 /// visible label. `by` is the same three-way name the stdlib signature exposes,
 /// resolved here so both planes agree on what an unknown name means (a loud
