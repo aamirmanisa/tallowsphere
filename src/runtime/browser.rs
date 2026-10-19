@@ -3038,6 +3038,42 @@ pub extern "C" fn tallow_page_register_handler(
     0
 }
 
+/// `page.expose_binding("name", "handler")` / `expose_function`: admit a JS
+/// binding and store the compiled wrapper. Unlike `on_*`, the name travels in
+/// the `Runtime.bindingCalled` payload, so the pump selects the handler per
+/// event.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_expose_binding(
+    page: *mut c_void,
+    name: *const c_char,
+    handler: *mut c_void,
+) -> i32 {
+    if page.is_null() || handler.is_null() {
+        set_last_error("expose_binding: null page or handler".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let name_str = match unsafe { cstr_to_str(name) } {
+        Some(s) => s.to_string(),
+        None => {
+            set_last_error("expose_binding: null or invalid binding name".to_string());
+            return -1;
+        }
+    };
+    let rt = get_runtime();
+    let _ = rt.block_on(page_ref.enable_runtime_events());
+    // A refused addBinding must not be swallowed: the handler would never fire.
+    match rt.block_on(page_ref.add_js_binding(&name_str)) {
+        Ok(()) => {}
+        Err(e) => {
+            set_last_error(format!("expose_binding: {e}"));
+            return -1;
+        }
+    }
+    page_ref.register_native_binding(&name_str, handler as usize);
+    0
+}
+
 thread_local! {
     /// Depth of nested pump runs. A handler that calls a Page method re-enters
     /// the pump; that is legitimate, but unbounded nesting is a stack overflow.
@@ -3056,7 +3092,8 @@ pub extern "C" fn tallow_page_pump(page: *mut c_void) -> i32 {
     }
     let page_ref = unsafe { &*(page as *const Page) };
     let handlers = page_ref.native_handlers();
-    if handlers.is_empty() {
+    let bindings = page_ref.native_bindings();
+    if handlers.is_empty() && bindings.is_empty() {
         return 0;
     }
     let depth = PUMP_DEPTH.with(|d| d.get());
@@ -3082,6 +3119,24 @@ pub extern "C" fn tallow_page_pump(page: *mut c_void) -> i32 {
             cb(kind_c, method_c, payload_c);
             delivered += 1;
         }
+    }
+    // Bindings last, and selected by the name inside the payload: one drain
+    // serves every binding, matching the interpreter's pump_bindings.
+    for ev in page_ref.drain_events("binding", 0) {
+        let name = serde_json::from_str::<serde_json::Value>(&ev.payload)
+            .ok()
+            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()));
+        let Some(name) = name else { continue };
+        let Some((_, fnptr)) = bindings.iter().find(|(n, _)| *n == name) else {
+            continue;
+        };
+        let kind_c = string_to_cstr(&ev.kind);
+        let method_c = string_to_cstr(&ev.method);
+        let payload_c = string_to_cstr(&ev.payload);
+        let cb: extern "C" fn(*const c_char, *const c_char, *const c_char) =
+            unsafe { std::mem::transmute(*fnptr) };
+        cb(kind_c, method_c, payload_c);
+        delivered += 1;
     }
     PUMP_DEPTH.with(|d| d.set(depth));
     delivered

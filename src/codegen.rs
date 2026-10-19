@@ -1489,7 +1489,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_wait_for_selector(ptr, ptr, i64)\n");
         ir.push_str("declare i64 @tallow_page_wait_for_timeout_ms(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_page_register_handler(ptr, ptr, ptr)\n");
-        ir.push_str("declare i32 @tallow_page_pump(ptr)\n");
+        ir.push_str("declare i32 @tallow_page_pump(ptr)\n");        ir.push_str("declare i32 @tallow_page_expose_binding(ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -2007,6 +2007,27 @@ void tallow_async_runtime_shutdown(void) {
                     llvm_name: "%struct.WaitResult".to_string(),
                 }
             });
+
+        // `ExposedBinding` / `ExposedFunction` — the receipts of expose_*:
+        // {name, handler, flag}. Same collection gap as EventListener.
+        for (struct_name, flag_field) in [("ExposedBinding", "bound"), ("ExposedFunction", "exposed")] {
+            self.struct_layouts
+                .entry(struct_name.to_string())
+                .or_insert_with(|| {
+                    let names = ["name", "handler", flag_field];
+                    let kinds = [LLType::I8Ptr, LLType::I8Ptr, LLType::I1];
+                    let mut field_map = HashMap::new();
+                    for (i, name) in names.iter().enumerate() {
+                        field_map.insert((*name).to_string(), (i, kinds[i].clone()));
+                    }
+                    StructLayout {
+                        fields: names.iter().map(|n| (*n).to_string()).collect(),
+                        field_map,
+                        field_kinds: HashMap::new(),
+                        llvm_name: format!("%struct.{struct_name}"),
+                    }
+                });
+        }
 
         // `EventListener` — the registration receipt (`kind`, `handler`, `active`).
         // Same collection gap as PageEvent: a program never names the type, but
@@ -10084,6 +10105,44 @@ void tallow_async_runtime_shutdown(void) {
             // in, so codegen emits a wrapper that rebuilds PageEvent and calls
             // the function directly (docs/browser-callback-abi.md). A non-literal
             // name is refused rather than silently registering nothing.
+            // JS bindings. Same wrapper machinery as on_*, but the runtime picks
+            // the handler by the binding name carried in the event payload.
+            ("Page", m @ ("expose_binding" | "expose_function")) => {
+                let (js_name, handler_name) = match (&args[0].value.kind, args.get(1).map(|a| &a.value.kind)) {
+                    (ExprKind::StringLit(n), Some(ExprKind::StringLit(h))) => (n.clone(), h.clone()),
+                    _ => {
+                        return Err(
+                            "expose_binding/expose_function require literal name and handler \
+                             arguments on the native plane: the compiled world cannot look a \
+                             function up by runtime string"
+                                .to_string(),
+                        )
+                    }
+                };
+                let symbol = format!("tallow_cb_{}", mangle_name(&handler_name));
+                if !self.callback_wrappers.iter().any(|(sym, _)| *sym == symbol) {
+                    self.callback_wrappers.push((symbol.clone(), handler_name.clone()));
+                }
+                let name_c = self.intern_string(&js_name);
+                let handler_c = self.intern_string(&handler_name);
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_expose_binding(ptr {}, ptr {name_c}, ptr @{symbol})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                let (struct_name, flag_name) = if m == "expose_binding" {
+                    ("ExposedBinding", "bound")
+                } else {
+                    ("ExposedFunction", "exposed")
+                };
+                Ok(self.build_result_struct(struct_name, &[
+                    ("name", name_c.clone(), LLType::I8Ptr),
+                    ("handler", handler_c, LLType::I8Ptr),
+                    (flag_name, "1".to_string(), LLType::I1),
+                ], &ok)?)
+            }
             ("Page", m @ ("on_console"
                     | "on_error"
                     | "on_request"

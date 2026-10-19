@@ -927,6 +927,7 @@ impl CdpClient {
             handlers: Arc::new(StdMutex::new(Vec::new())),
             bindings: Arc::new(StdMutex::new(Vec::new())),
             native_handlers: Arc::new(StdMutex::new(Vec::new())),
+            native_bindings: Arc::new(StdMutex::new(Vec::new())),
         };
         page.start_event_pump().await;
         Ok(page)
@@ -983,6 +984,7 @@ impl CdpClient {
             handlers: Arc::new(StdMutex::new(Vec::new())),
             bindings: Arc::new(StdMutex::new(Vec::new())),
             native_handlers: Arc::new(StdMutex::new(Vec::new())),
+            native_bindings: Arc::new(StdMutex::new(Vec::new())),
         };
         page.start_event_pump().await;
         Ok(page)

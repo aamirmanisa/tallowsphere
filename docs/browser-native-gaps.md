@@ -1,10 +1,10 @@
 # Browser native-plane gaps (Page)
 
-Measured at HEAD `c1c2990`+ by diffing `impl Page` in `stdlib/browser.tl` against the
+Measured at HEAD `d65e3ba`+ by diffing `impl Page` in `stdlib/browser.tl` against the
 `("Page", "<method>")` arms in `src/codegen.rs` — including the grouped form
 `("Page", m @ ("on_console" | ...))`, which a literal-only diff misses:
 
-**48 methods declared, 42 lowered, 6 without a native lowering.**
+**48 methods declared, 44 lowered, 4 without a native lowering.**
 
 The 12 are not one problem. They fall into three groups, and only the first group
 needs new machinery in the compiler.
@@ -29,26 +29,12 @@ What "array of struct" requires, concretely:
 4. One parity test per shape: field values printed from an indexed element must be
    byte-identical across engines.
 
-## Group 2 — JS bindings (2)
+## Group 2 — JS bindings — lowered
 
-`expose_binding`, `expose_function`.
-
-The six `on_*` handlers are lowered (see docs/browser-callback-abi.md) and share
-one registry, one pump and one wrapper emitter, so a new kind is a match arm and
-a parity probe. Bindings differ slightly: the binding NAME travels in the
-`Runtime.bindingCalled` payload, so one drain serves every binding and the handler
-must be selected per event rather than per kind.
-
-These take a Tallow function value and expect the runtime to call it later. The
-native plane has no callback plumbing: a compiled Tallow function is not a C
-function pointer the CDP pump can invoke, and the pump runs on the runtime thread
-while generated code is not re-entrant. These are **interpreter-only by design**;
-the correct native behaviour is the loud refusal that exists today, naming the
-method.
-
-Making them native would need a callback ABI (a trampoline that re-enters compiled
-code from the CDP loop) — a project, not a lowering. Do not start it without an
-explicit decision, because it changes the runtime's threading contract.
+`expose_binding` and `expose_function` went in with the callback work: same
+registry and pump, plus `Runtime.addBinding` and a lookup by the binding name in
+the event payload. Verified with a page calling both `note(...)` and
+`note2(...)`, byte-identical across engines.
 
 ## Group 3 — bot-defence orchestration (2)
 
