@@ -151,7 +151,10 @@ fn browser_process_rejects_pipe_before_spawning_chrome() {
         stealth: false,
         proxy: None,
         use_pipe: true,
-        backend: BrowserBackend::Chromium,
+        // Pipe transport IS implemented for Chromium (cdp.rs), so the
+        // fail-closed guard this test exercises now belongs to the backends
+        // that have no pipe: Firefox/Camoufox would need -juggler-pipe.
+        backend: BrowserBackend::Firefox,
         proxy_pac: None,
     };
 
@@ -160,7 +163,9 @@ fn browser_process_rejects_pipe_before_spawning_chrome() {
         Err(err) => err.to_string(),
     };
     assert!(
-        message.contains("remote-debugging-pipe") && message.contains("not supported"),
+        message.contains("remote-debugging-pipe")
+            && message.contains("only supported")
+            && message.contains("juggler-pipe"),
         "unexpected pipe rejection message: {message}"
     );
     assert!(

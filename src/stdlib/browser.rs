@@ -738,13 +738,27 @@ fn surface_manifest(args: Vec<Value>) -> StdlibResult {
                         "interp.rs BrowserPool.create accepts an OPTIONAL trailing map {proxy, tor, stealth, tier}; map wins over TALLOW_PROXY/TALLOW_TOR (env stays the fallback), tier:\"direct\" is an explicit direct choice (no env inheritance, no leak warning), stealth rides BrowserConfig.stealth; pool.rs resolve_proxy routes the URL into per-instance BrowserConfig.proxy -> Chrome --proxy-server (instance_launch_config). Non-live tested (browser::pool + interp egress tests).",
                     ),
                     surface_entry(
-                        "Page.goto_antibot (egress map)",
-                        "egress_control",
+                        "Page.resolve_antibot (opts map)",
+                        "antibot",
                         "implemented_interp_routed",
-                        "antibot_relaunch_proxy",
+                        "antibot_orchestrator_resolve",
                         false,
                         true,
-                        "interp.rs Page.goto_antibot accepts an OPTIONAL second map {proxy, tor, stealth, tier}; explicit proxy joins the orchestrator pool and wins in the relaunch BrowserConfig.proxy (--proxy-server), stealth toggles the relaunch config, tor:true enables Tor fallback + per-domain isolation, tier:\"direct\" disables Tor fallback. Absent map = historical behavior. Live relaunch remains human-gated.",
+                        "interp.rs Page.resolve_antibot drives AntiBotOrchestrator::resolve on get_browser_runtime() and returns Result<AntibotResolveReport> with per-engine {engine, available, ran, note} steps. Measured on a loopback page: resolved=true, final_status=200, steps=5. Native plane still refuses (no lowering). opts {solver_key, solver_service} accepted by the stdlib path but NOT yet consumed by this arm.",
+                    ),
+                    surface_entry(
+                        "Page.goto_antibot (egress map)",
+                        "antibot",
+                        // Measured, not assumed: grep -c "goto_antibot" over
+                        // src/interp.rs and src/codegen.rs is 0. This entry used
+                        // to claim implemented_interp_routed, which made the
+                        // machine-readable surface report a method that does not
+                        // exist on either plane.
+                        "declared_not_implemented",
+                        "none",
+                        false,
+                        true,
+                        "Declared in stdlib/browser.tl only. No interpreter arm and no native lowering (both greps return 0), so the interpreter answers 'unknown browser method' and --require-native refuses. The egress-map contract {proxy, tor, stealth, tier} with relaunch-on-proxy described here is a SPECIFICATION, not implemented behaviour. Implement or remove the declaration before claiming it.",
                     ),
                 ]),
             ),
