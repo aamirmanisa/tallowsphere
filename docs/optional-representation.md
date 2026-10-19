@@ -80,6 +80,13 @@ Two facts worth carrying forward:
 - There is no `??`, no `Some(..)`, and no `Option` value in the interpreter — `Value` has only `Nil` and plain values. So "present" never needs a distinct runtime tag from the language's point of view; the box exists only so `false` and `nil` stop being the same number.
 - `print` is the hard part, not the storage: it dispatches on `LLType`, and an optional and a string are both `I8Ptr`. Either `print` learns the static type at its call site, or the box carries enough tag information to render itself. Step 1 must settle this before any browser arm uses the encoding, because `WaitResult` is normally printed or inspected field by field.
 
+**Resolved 2026-10-18:** add `LLType::Optional` rather than reusing `I8Ptr`.
+`I8Ptr` is already the string type, so an optional and a string would be
+indistinguishable at every dispatch site, `print` above all. A separate variant
+makes the distinction structural, and the compiler then enumerates the work:
+every `match` on `LLType` that is exhaustive will fail to compile until it names
+the new case, which is a to-do list that cannot go stale.
+
 ## Verification
 
 - `cargo test --lib` must stay at 0 failures; any test that pinned `i64`-shaped
