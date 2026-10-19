@@ -369,6 +369,78 @@ pub extern "C" fn tallow_page_url(page: *mut c_void) -> *mut c_char {
     }
 }
 
+/// Out-parameter shape for `throttle_network`.
+///
+/// Written by the callee through a pointer rather than returned by value: a
+/// 40-byte struct return is lowered indirectly by the ABI, and the first
+/// attempt to consume it from generated LLVM segfaulted (measured, before any
+/// output of the calling program). Writing into caller memory removes the
+/// ABI question entirely. `ok == 0` means unknown preset or CDP failure.
+#[repr(C)]
+pub struct NetworkThrottleRaw {
+    pub preset: *mut c_char,
+    pub latency_ms: i64,
+    pub download_kbps: i64,
+    pub upload_kbps: i64,
+    pub ok: i64,
+}
+
+/// Apply a named network profile, writing the result into `out`. Returns 0 when
+/// a profile was applied, -1 otherwise (out then carries ok = 0). The preset
+/// table is `browser::network_preset`, shared with the interpreter.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_throttle_network_preset(
+    page: *mut c_void,
+    preset: *mut c_char,
+    out: *mut NetworkThrottleRaw,
+) -> i32 {
+    if out.is_null() {
+        set_last_error("throttle_network: null out parameter".to_string());
+        return -1;
+    }
+    let fail = |msg: String| {
+        set_last_error(msg);
+        unsafe {
+            *out = NetworkThrottleRaw {
+                preset: std::ptr::null_mut(),
+                latency_ms: 0,
+                download_kbps: 0,
+                upload_kbps: 0,
+                ok: 0,
+            }
+        };
+        -1
+    };
+    if page.is_null() || preset.is_null() {
+        return fail("throttle_network: null handle or preset".to_string());
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let preset_str = unsafe { std::ffi::CStr::from_ptr(preset) }
+        .to_string_lossy()
+        .to_string();
+    let Some((down, up, latency)) = crate::browser::network_preset(&preset_str) else {
+        return fail(format!(
+            "throttle_network: unknown preset '{preset_str}' (slow-3g, fast-3g, 4g, none)"
+        ));
+    };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.throttle_network(down, up, latency)) {
+        Ok(()) => {
+            unsafe {
+                *out = NetworkThrottleRaw {
+                    preset: string_to_cstr(&preset_str.trim().to_ascii_lowercase()),
+                    latency_ms: latency as i64,
+                    download_kbps: down as i64,
+                    upload_kbps: up as i64,
+                    ok: 1,
+                }
+            };
+            0
+        }
+        Err(e) => fail(format!("throttle_network: {e}")),
+    }
+}
+
 /// Opt this page into console/error capture (`Runtime.enable`). Returns 0 on
 /// success. Idempotent per session.
 #[unsafe(no_mangle)]

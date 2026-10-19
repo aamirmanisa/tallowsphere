@@ -1240,6 +1240,9 @@ void tallow_async_runtime_shutdown(void) {
         // Built-in type definitions
         ir.push_str("; Built-in types\n");
         ir.push_str("%struct.TallowResult = type { i64, i64, i64 }\n");
+        // Returned by value from tallow_page_throttle_network_preset; the
+        // backend extracts the fields rather than taking out-parameters.
+        ir.push_str("%struct.NetworkThrottleRaw = type { ptr, i64, i64, i64, i64 }\n");
         ir.push_str("%struct.TaggedValue = type { i64, i64 }\n");
         ir.push('\n');
 
@@ -1413,6 +1416,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_capture_console(ptr)\n");
         ir.push_str("declare i32 @tallow_page_throttle_cpu(ptr, double)\n");
         ir.push_str("declare ptr @tallow_page_add_style_tag(ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_throttle_network_preset(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_title(ptr)\n");
         ir.push_str("declare ptr @tallow_page_url(ptr)\n");
@@ -1876,6 +1880,28 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ContentFingerprint".to_string(),
+                }
+            });
+
+        // `NetworkThrottle` — four fields, all written by the preset FFI.
+        self.struct_layouts
+            .entry("NetworkThrottle".to_string())
+            .or_insert_with(|| {
+                let mut field_map = HashMap::new();
+                field_map.insert("preset".to_string(), (0usize, LLType::I8Ptr));
+                field_map.insert("latency_ms".to_string(), (1usize, LLType::I64));
+                field_map.insert("download_kbps".to_string(), (2usize, LLType::I64));
+                field_map.insert("upload_kbps".to_string(), (3usize, LLType::I64));
+                StructLayout {
+                    fields: vec![
+                        "preset".to_string(),
+                        "latency_ms".to_string(),
+                        "download_kbps".to_string(),
+                        "upload_kbps".to_string(),
+                    ],
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.NetworkThrottle".to_string(),
                 }
             });
 
@@ -9282,6 +9308,42 @@ void tallow_async_runtime_shutdown(void) {
                     obj.reg
                 ));
                 Ok(LLValue::new(status, LLType::I32))
+            }
+            ("Page", "throttle_network") => {
+                // Out-parameter, not a struct return: a 40-byte struct return
+                // segfaulted when consumed from generated LLVM (registered).
+                let preset = self.emit_expr(&args[0].value)?;
+                let preset_c = self.coerce(&preset, &LLType::I8Ptr)?;
+                let out = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{out} = call ptr @malloc(i64 40)"
+                ));
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_throttle_network_preset(ptr {}, ptr {preset_c}, ptr {out})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                let mut load = |cg: &mut Self, index: usize, ty: &LLType| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds %struct.NetworkThrottleRaw, ptr {out}, i32 0, i32 {index}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+                    LLValue::new(reg, ty.clone())
+                };
+                let preset_out = load(self, 0, &LLType::I8Ptr);
+                let latency = load(self, 1, &LLType::I64);
+                let down = load(self, 2, &LLType::I64);
+                let up = load(self, 3, &LLType::I64);
+                Ok(self.build_result_struct("NetworkThrottle", &[
+                    ("preset", preset_out.reg.clone(), LLType::I8Ptr),
+                    ("latency_ms", latency.reg.clone(), LLType::I64),
+                    ("download_kbps", down.reg.clone(), LLType::I64),
+                    ("upload_kbps", up.reg.clone(), LLType::I64),
+                ], &ok)?)
             }
             ("Page", "capture_console") => {
                 let status = self.fresh_reg();
@@ -30181,6 +30243,31 @@ mod tests {
             ir.contains("call void @tallow_browser_close(ptr"),
             "should call tallow_browser_close"
         );
+    }
+
+    #[test]
+    fn codegen_lowers_throttle_network_with_the_preset_ffi() {
+        // NetworkThrottle has four fields, so the FFI returns them by value in
+        // a raw struct and the backend extracts each one. The preset table
+        // itself lives in browser::network_preset, shared with the interpreter.
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let browser = Browser.launch(true)
+                let page = browser.new_page()
+                page.throttle_network("4g")
+                browser.close()
+            }
+        "#,
+        );
+        for needle in [
+            "declare i32 @tallow_page_throttle_network_preset(ptr, ptr, ptr)",
+            "call i32 @tallow_page_throttle_network_preset",
+            "getelementptr inbounds %struct.NetworkThrottleRaw",
+            "%struct.NetworkThrottle = type",
+        ] {
+            assert!(ir.contains(needle), "missing `{needle}` in:\n{ir}");
+        }
     }
 
     #[test]
