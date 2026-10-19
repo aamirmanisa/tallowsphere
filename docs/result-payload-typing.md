@@ -80,11 +80,12 @@ written before clang failed on the duplicate `exit` declaration). Two facts from
 
 - `%struct.WaitResult = type { ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }` — nine
   pointer slots, as intended.
-- The construction block contains `getelementptr %struct.WaitResult, ptr null, i32 1`
-  — a GEP with a **null base**. So at least one slot is written through an address
-  computed from null rather than stored as `null`. That is why a later read produced
-  a small integer (0xa) where a box pointer belongs.
+- **Correction:** the `getelementptr %struct.WaitResult, ptr null, i32 1` is the
+  malloc-size idiom (`src/codegen.rs:19245`), not a bad store. My first reading of it
+  as the cause was wrong. The 0xa read is still unexplained and the IR that produced
+  it no longer exists on disk.
 
-Next: find the emitter that turns an absent optional into a GEP on the value instead
-of a plain `store ptr null` (look at how `build_result_struct` handles the fields
-passed as the literal `"null"`), and assert the IR has no `ptr null, i32` GEP.
+Next: re-apply the unwrap branch and capture the IR **before** running it — use
+`tallow build <prog>` (which writes the `.ll` beside the output and does not delete
+it) instead of `tallow run`, then read the field offsets in that file. The previous
+attempt lost its IR, which is why this took two passes.
