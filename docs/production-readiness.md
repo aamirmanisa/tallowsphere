@@ -74,10 +74,10 @@ defect, not a policy:
 
 ## P1 — known open items carried from earlier sessions
 
-- [ ] **`http_result_model`** — 0/3 by decision: `http.batch` returns
-      `Response`/raw `Err`s while tests assert a typed `BatchResponse`/
-      `HttpError` model that exists in neither runtime nor `stdlib/http.tl`.
-      Done when: model authored, or assertions relaxed with a recorded rationale.
+- [x] **`http_result_model`** — DONE, and the entry was stale: measured
+      3 passed / 0 failed on 2026-10-19. The typed `BatchResponse` / `HttpError`
+      model it asserts exists in `stdlib/http.tl` and is produced by
+      `src/stdlib/http.rs::batch_item`.
 
 - [ ] **`request_plan_cli`** — parked: the verbs never existed on any ref.
       Done when: implemented or removed.
