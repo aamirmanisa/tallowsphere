@@ -163,3 +163,30 @@ FFI calls `get_browser_runtime().block_on(...)` from compiled code, while the
 interpreter and this test both drive navigation on a runtime they own. The
 failure is therefore a property of that block_on context, not of the navigation
 code it runs.
+
+## Attempt 4 — resolve is exonerated; the array length is not
+
+Re-applied on `get_runtime()` (the runtime every other native browser FFI uses,
+and the one that owns the CDP reader). Navigation no longer times out — attempt
+2's 30 s failure was `get_browser_runtime()`, a foreign runtime, i.e. register
+#105's exact shape: the command is written and the reader is never polled.
+
+With the FFI printing the report it actually returns:
+
+```
+[ffi] resolve_antibot ok: resolved=true status=200 attempts=1
+      steps=[("egress", false), ("captcha.detect", true), ("warmup", false),
+             ("escalation", false), ("classify", true)]
+```
+
+The orchestrator produced **five** steps natively — identical to the interpreter
+(egress, captcha.detect, warmup, escalation, classify). The compiled program then
+printed `rep.steps.len` = **1**.
+
+So the whole divergence is in the array crossing the FFI, not in `resolve`, not in
+settings, not in the runtime. `drain_events` traverses the same `native_array`
+helper at N=2 correctly, which is why the N=2 test passed and told us nothing
+about this case; the difference between the two is the element kind (a struct that
+appears only as a report payload) rather than a plain registered event struct.
+
+Lowering reverted again; the interpreter arm remains the only wired plane.
