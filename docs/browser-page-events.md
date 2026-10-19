@@ -81,7 +81,7 @@ afterwards, wrapped in `Result`. If the layout is absent the arm refuses rather
 than emitting a struct with unknown offsets.
 
 Lowered today: `goto`/`navigate`, `content`, `close`, `add_script_tag`,
-`add_init_script`, `add_style_tag`, `throttle_cpu`, `throttle_network`,
+`add_init_script`, `add_style_tag`, `throttle_cpu`, `throttle_network`, `emulate_media`, `emulate_vision`,
 `capture_console` (plus
 `set_content` and `wait_for_timeout`, which predate this work). Struct-returning methods are lowered with the struct: the backend
 allocates it, fills each declared field at its layout offset, and wraps it in

@@ -50,6 +50,8 @@ fn main() {{
     page.capture_console()
     page.throttle_cpu(1.0)
     page.throttle_network("4g")
+    page.emulate_media("screen", "dark", "no-preference")
+    page.emulate_vision("deuteranopia")
     print("TITLE=" + page.title())
     print("URL=" + page.url())
     print(page.content())
