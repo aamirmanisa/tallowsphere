@@ -293,3 +293,24 @@ only wired plane for `resolve_antibot`.
 Next probe: emit IR for `rep.steps[0].engine` alone and check the load chain — slot
 offset, `inttoptr`, then GEP into `%struct.AntibotResolveStep` field 0. The IR will
 name which of the three is missing, exactly as it did for `.len`.
+
+## Field read on an array element — attempt and result
+
+Read the emitter and found a real gap: `FieldAccess` resolves `var.field` by looking
+the variable up, then numeric `.0`, then `.len`, then falls through to the literal
+`0`. An indexed element (`rep.steps[k].engine`) has no variable, so it took the
+fallthrough — consistent with the observed `0` five times.
+
+Added the missing branch (resolve the declared element kind via `array_elem_kind`,
+GEP into `%struct.AntibotResolveStep`, load the field), plus marking struct-typed
+array elements as pointer-backed at the index site.
+
+Result: unchanged — still `0` five times. So the value never reaches that branch,
+which means the index is typed `i64` before the field read (the branch requires an
+`i8*` receiver), or `infer_kind` on the indexed expression is not what the emitter
+resolves. Reverted; only the `.len` fix remains committed.
+
+Next probe (one run, IR): compile `rep.steps[0].engine` alone and read the chain —
+slot load, `inttoptr`, GEP, field load. The absence of `inttoptr` will confirm the
+index is typed as an integer, which points at `array_expr_elem_is_ptr` /
+`variable_is_array` rather than at field access.
