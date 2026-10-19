@@ -47,6 +47,8 @@ fn main() {{
     page.goto("{url}")
     page.add_init_script("window.__tallowParityInit = 1")
     page.add_script_tag("window.__tallowParityTag = 1")
+    page.capture_console()
+    page.throttle_cpu(1.0)
     print("TITLE=" + page.title())
     print("URL=" + page.url())
     print(page.content())

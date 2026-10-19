@@ -369,6 +369,65 @@ pub extern "C" fn tallow_page_url(page: *mut c_void) -> *mut c_char {
     }
 }
 
+/// Opt this page into console/error capture (`Runtime.enable`). Returns 0 on
+/// success. Idempotent per session.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_capture_console(page: *mut c_void) -> i32 {
+    if page.is_null() {
+        set_last_error("capture_console: null page handle".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.enable_runtime_events()) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_last_error(format!("capture_console: {e}"));
+            -1
+        }
+    }
+}
+
+/// `Emulation.setCPUThrottlingRate`. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_throttle_cpu(page: *mut c_void, rate: f64) -> i32 {
+    if page.is_null() {
+        set_last_error("throttle_cpu: null page handle".to_string());
+        return -1;
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let rt = get_runtime();
+    match rt.block_on(page_ref.throttle_cpu(rate)) {
+        Ok(_applied) => 0,
+        Err(e) => {
+            set_last_error(format!("throttle_cpu: {e}"));
+            -1
+        }
+    }
+}
+
+/// Add a `<style>` (URL or inline CSS). Returns the tag id; the CSS itself is
+/// not part of `StyleTag`, which carries only id and kind.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_add_style_tag(page: *mut c_void, source: *mut c_char) -> *mut c_char {
+    if page.is_null() || source.is_null() {
+        set_last_error("add_style_tag: null handle or argument".to_string());
+        return std::ptr::null_mut();
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let source = unsafe { std::ffi::CStr::from_ptr(source) }
+        .to_string_lossy()
+        .to_string();
+    let rt = get_runtime();
+    match rt.block_on(page_ref.add_style_tag(&source)) {
+        Ok((tag, _css)) => string_to_cstr(&tag),
+        Err(e) => {
+            set_last_error(format!("add_style_tag: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Inject a `<script>` (URL or inline source). Returns the tag id.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_add_script_tag(page: *mut c_void, source: *mut c_char) -> *mut c_char {
