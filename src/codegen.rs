@@ -10084,7 +10084,12 @@ void tallow_async_runtime_shutdown(void) {
             // in, so codegen emits a wrapper that rebuilds PageEvent and calls
             // the function directly (docs/browser-callback-abi.md). A non-literal
             // name is refused rather than silently registering nothing.
-            ("Page", "on_console") => {
+            ("Page", m @ ("on_console"
+                    | "on_error"
+                    | "on_request"
+                    | "on_response"
+                    | "on_filechooser"
+                    | "on_download")) => {
                 let handler_name = match &args[0].value.kind {
                     ExprKind::StringLit(n) => n.clone(),
                     _ => {
@@ -10095,7 +10100,7 @@ void tallow_async_runtime_shutdown(void) {
                         )
                     }
                 };
-                let kind = "console";
+                let kind = m.trim_start_matches("on_");
                 let symbol = format!("tallow_cb_{}", mangle_name(&handler_name));
                 if !self.callback_wrappers.iter().any(|(sym, _)| *sym == symbol) {
                     self.callback_wrappers.push((symbol.clone(), handler_name.clone()));
