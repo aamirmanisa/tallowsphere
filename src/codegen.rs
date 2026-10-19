@@ -1450,6 +1450,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_wait_for_url(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_page_wait_for_function(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_page_wait_for_event(ptr, ptr, i64, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_wait_for_request(ptr, ptr, i64, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_wait_for_response(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare ptr @tallow_page_add_style_tag(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_throttle_network_preset(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_goto(ptr, ptr)\n");
@@ -9589,6 +9591,100 @@ void tallow_async_runtime_shutdown(void) {
                     ("latency_ms", latency.reg.clone(), LLType::I64),
                     ("download_kbps", down.reg.clone(), LLType::I64),
                     ("upload_kbps", up.reg.clone(), LLType::I64),
+                ], &ok)?)
+            }
+            ("Page", "wait_for_request") => {
+                let pattern = self.emit_expr(&args[0].value)?;
+                let pattern_c = self.coerce(&pattern, &LLType::I8Ptr)?;
+                let timeout = match args.get(1) {
+                    Some(arg) => {
+                        let v = self.emit_expr(&arg.value)?;
+                        self.coerce(&v, &LLType::I64)?
+                    }
+                    None => "30000".to_string(),
+                };
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = call ptr @malloc(i64 32)"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_wait_for_request(ptr {}, ptr {pattern_c}, i64 {timeout}, ptr {out})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                let found = self.fresh_reg();
+                self.emit_line(&format!("{found} = load i32, ptr {out}"));
+                let found_i1 = self.fresh_reg();
+                self.emit_line(&format!("{found_i1} = icmp ne i32 {found}, 0"));
+                let elapsed_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{elapsed_gep} = getelementptr inbounds i8, ptr {out}, i64 8"
+                ));
+                let elapsed = self.fresh_reg();
+                self.emit_line(&format!("{elapsed} = load i64, ptr {elapsed_gep}"));
+                let url_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{url_gep} = getelementptr inbounds i8, ptr {out}, i64 16"
+                ));
+                let url = self.fresh_reg();
+                self.emit_line(&format!("{url} = load ptr, ptr {url_gep}"));
+                Ok(self.build_result_struct("WaitResult", &[
+                    ("result", found_i1.clone(), LLType::I1),
+                    ("matched", found_i1.clone(), LLType::I1),
+                    ("received", url.clone(), LLType::I8Ptr),
+                    ("elapsed_ms", elapsed.clone(), LLType::I64),
+                    ("waited_ms", timeout.clone(), LLType::I64),
+                    ("url", url.clone(), LLType::I8Ptr),
+                    ("method", "null".to_string(), LLType::Optional),
+                    ("status", "null".to_string(), LLType::Optional),
+                    ("event", "null".to_string(), LLType::Optional),
+                ], &ok)?)
+            }
+            ("Page", "wait_for_response") => {
+                let pattern = self.emit_expr(&args[0].value)?;
+                let pattern_c = self.coerce(&pattern, &LLType::I8Ptr)?;
+                let timeout = match args.get(1) {
+                    Some(arg) => {
+                        let v = self.emit_expr(&arg.value)?;
+                        self.coerce(&v, &LLType::I64)?
+                    }
+                    None => "30000".to_string(),
+                };
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = call ptr @malloc(i64 32)"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_wait_for_response(ptr {}, ptr {pattern_c}, i64 {timeout}, ptr {out})",
+                    obj.reg
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                let found = self.fresh_reg();
+                self.emit_line(&format!("{found} = load i32, ptr {out}"));
+                let found_i1 = self.fresh_reg();
+                self.emit_line(&format!("{found_i1} = icmp ne i32 {found}, 0"));
+                let elapsed_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{elapsed_gep} = getelementptr inbounds i8, ptr {out}, i64 8"
+                ));
+                let elapsed = self.fresh_reg();
+                self.emit_line(&format!("{elapsed} = load i64, ptr {elapsed_gep}"));
+                let url_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{url_gep} = getelementptr inbounds i8, ptr {out}, i64 16"
+                ));
+                let url = self.fresh_reg();
+                self.emit_line(&format!("{url} = load ptr, ptr {url_gep}"));
+                Ok(self.build_result_struct("WaitResult", &[
+                    ("result", found_i1.clone(), LLType::I1),
+                    ("matched", found_i1.clone(), LLType::I1),
+                    ("received", url.clone(), LLType::I8Ptr),
+                    ("elapsed_ms", elapsed.clone(), LLType::I64),
+                    ("waited_ms", timeout.clone(), LLType::I64),
+                    ("url", url.clone(), LLType::I8Ptr),
+                    ("method", "null".to_string(), LLType::Optional),
+                    ("status", "null".to_string(), LLType::Optional),
+                    ("event", "null".to_string(), LLType::Optional),
                 ], &ok)?)
             }
             ("Page", "wait_for_event") => {

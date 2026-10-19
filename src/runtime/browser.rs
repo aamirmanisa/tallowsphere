@@ -686,6 +686,91 @@ pub extern "C" fn tallow_page_wait_for_event(
     }
 }
 
+/// Out-parameter shape for `wait_for_request` / `wait_for_response`.
+#[repr(C)]
+pub struct WaitNetRaw {
+    pub found: i32,
+    pub elapsed_ms: i64,
+    pub url: *mut c_char,
+    pub ok: i32,
+}
+
+fn wait_net(
+    page: *mut c_void,
+    pattern: *mut c_char,
+    timeout_ms: i64,
+    out: *mut WaitNetRaw,
+    which: u8,
+) -> i32 {
+    if out.is_null() {
+        set_last_error("wait_for_network: null out parameter".to_string());
+        return -1;
+    }
+    let fail = |msg: String| {
+        set_last_error(msg);
+        unsafe {
+            *out = WaitNetRaw {
+                found: 0,
+                elapsed_ms: 0,
+                url: std::ptr::null_mut(),
+                ok: 0,
+            }
+        };
+        -1
+    };
+    if page.is_null() || pattern.is_null() {
+        return fail("wait_for_network: null handle or pattern".to_string());
+    }
+    let page_ref = unsafe { &*(page as *const Page) };
+    let pat = unsafe { std::ffi::CStr::from_ptr(pattern) }
+        .to_string_lossy()
+        .to_string();
+    let timeout = if timeout_ms > 0 { timeout_ms as u64 } else { 30_000 };
+    let dur = std::time::Duration::from_millis(timeout);
+    let rt = get_runtime();
+    let awaited = if which == 0 {
+        rt.block_on(page_ref.wait_for_request(&pat, dur))
+    } else {
+        rt.block_on(page_ref.wait_for_response(&pat, dur))
+    };
+    match awaited {
+        Ok((found, elapsed, url)) => {
+            unsafe {
+                *out = WaitNetRaw {
+                    found: if found { 1 } else { 0 },
+                    elapsed_ms: elapsed as i64,
+                    url: string_to_cstr(&url),
+                    ok: 1,
+                }
+            };
+            0
+        }
+        Err(e) => fail(format!("wait_for_network: {e}")),
+    }
+}
+
+/// Wait for a request whose URL matches `pattern`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_wait_for_request(
+    page: *mut c_void,
+    pattern: *mut c_char,
+    timeout_ms: i64,
+    out: *mut WaitNetRaw,
+) -> i32 {
+    wait_net(page, pattern, timeout_ms, out, 0)
+}
+
+/// Wait for a response whose URL matches `pattern`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_wait_for_response(
+    page: *mut c_void,
+    pattern: *mut c_char,
+    timeout_ms: i64,
+    out: *mut WaitNetRaw,
+) -> i32 {
+    wait_net(page, pattern, timeout_ms, out, 1)
+}
+
 /// Opt this page into console/error capture (`Runtime.enable`). Returns 0 on
 /// success. Idempotent per session.
 #[unsafe(no_mangle)]
