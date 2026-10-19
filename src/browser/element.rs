@@ -554,8 +554,11 @@ impl ElementHandle {
         for ch in text.chars() {
             let key = ch.to_string();
 
-            // keyDown
-            self.dispatch_key_event("keyDown", &key, Some(&key), None, 0)
+            // keyDown must NOT carry `text`: CDP inserts the character when
+            // `text` is present, and the `char` event below inserts it again —
+            // measured as "hheelllloo" for the input "hello". The keydown
+            // listener still sees the key; insertion belongs to `char` alone.
+            self.dispatch_key_event("keyDown", &key, None, None, 0)
                 .await?;
             // char
             self.dispatch_key_event("char", &key, Some(&key), None, 0)
