@@ -110,3 +110,19 @@ invisible. Measured afterwards with two console events:
 plumbing is correct at N>1, and the one-step report above is the FFI-side
 orchestrator's own output, not a truncated array. The runtime hypothesis stands:
 `get_runtime()` vs `get_browser_runtime()`.
+
+## Attempt 2 — browser runtime, and a new failure
+
+Retried the lowering driving `get_browser_runtime()` (the interpreter arm's
+runtime) instead of `get_runtime()`, with the FFI always returning a report and
+marking failure in an `error` field — the first attempt's null-on-error returned
+null and every field load dereferenced it (SIGSEGV, "native run crashed").
+
+Result: `[ffi] resolve_antibot error: action failed: resolve: navigation timed
+out for http://127.0.0.1:18118/`. So the earlier one-step report and this timeout
+are the same fault seen twice: navigation inside the FFI's `block_on` does not
+complete, while `page.goto` immediately before it does.
+
+Diagnostic note worth keeping: without the `eprintln!` the whole failure looked
+like a silent `exit 1`, because the Result-tag guard exits on Err before any
+`print` runs. A failing FFI in this position reports nothing unless it prints.
