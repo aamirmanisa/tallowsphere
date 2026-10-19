@@ -205,3 +205,27 @@ Conclusion: `.len` on this expression is emitted somewhere other than the typed
 array-method arm — the struct-field access path is the remaining candidate — so the
 hypothesis was wrong and the arm alone is not the fix. Reverted; recorded so the
 next attempt does not start by adding that arm again.
+
+## Attempt 6 — three runs, one answer, still wrong
+
+Re-applied attempt 5 (with the `AntibotStepArray` len arm) and printed the FFI's
+own view beside the program's, three consecutive runs:
+
+```
+[ffi] report: steps=5 engines=["egress","captcha.detect","warmup","escalation","classify"]
+true / 200 / 1 / 1        <- resolved, status, attempts, steps.len
+```
+
+Identical three times. So the report is deterministic, the array really does hold
+five pointers, and the compiled program still reads 1.
+
+That rules out nondeterminism in the orchestrator and locates the defect precisely:
+`rep.steps.len` is a `.len` on a field of a `Result` payload, and that emission does
+not read slot 0 of the native array. It is neither the array construction
+(`native_array` pushes the count first) nor the FFI (measured five) nor the
+orchestrator (five engines named above).
+
+Next target: the emitter that handles `.len` when the receiver is a struct field
+rather than a bound variable — `infer_kind` on `rep.steps` decides between
+`emit_browser_method_call`'s typed arm and the generic slot-0 load, and one of them
+is not being taken.
