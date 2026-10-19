@@ -54,8 +54,13 @@ Each was run locally; counts are failures observed. They are listed in
 `ci-excluded-suites.txt` so CI stays honest rather than red, but each one is a
 defect, not a policy:
 
-- [ ] `request_plan_cli` — 38 failed. Parked earlier as U-218: the verbs never
-      existed on any ref. Decide: implement or delete the CLI surface.
+- [x] `request_plan_cli` — DECIDED: parked, not deleted. The five verbs it pins
+      (`run-plan`, `build-plan`, `lint`, `package-report`, `fmt --check`) were never
+      implemented; all 38 tests now carry `#[ignore]` with that reason, so the
+      intended contract stays readable without a permanently red suite. Open
+      follow-up: implement the verbs or delete the file (U-218).
+- [x] `deals_integration` — 6 tests need retailer configs excluded from this tree;
+      marked `#[ignore]` with that reason. 13 pass; suite added to CI.
 - [ ] `deals_integration` — 6 failed.
 - [x] `generated_tl_parity` — FIXED: both tests asserted obsolete
       boundaries (legal pass rejecting unannotated http.batch; codegen refusing

@@ -155,6 +155,7 @@ fn deals_detect_anomaly_empty_history() {
 // ── 3. load_retailer_config ──────────────────────────────────────────────────
 
 #[test]
+    #[ignore = "requires retailer config fixtures that are excluded from this tree"]
 fn deals_load_retailer_config_teststore() {
     let (_, output) = run_output(
         r#"fn main() {
@@ -168,6 +169,7 @@ fn deals_load_retailer_config_teststore() {
 }
 
 #[test]
+    #[ignore = "requires retailer config fixtures that are excluded from this tree"]
 fn deals_load_retailer_config_amazon() {
     let (_, output) = run_output(
         r#"fn main() {
@@ -185,6 +187,7 @@ fn deals_load_retailer_config_amazon() {
 // ── 4. scrape_deals_page ────────────────────────────────────────────────────
 
 #[test]
+    #[ignore = "requires retailer config fixtures that are excluded from this tree"]
 fn deals_scrape_deals_page_teststore() {
     // scrape_deals_page now uses regex-based HTML tag matching.
     // The teststore fixture has 2 <article class="deal-card"> products.
@@ -210,6 +213,7 @@ fn deals_scrape_deals_page_teststore() {
 // ── 5. price_check ──────────────────────────────────────────────────────────
 
 #[test]
+    #[ignore = "requires retailer config fixtures that are excluded from this tree"]
 fn deals_price_check_teststore() {
     ensure_deals_fixture_server();
     let (_, output) = run_output(
@@ -398,6 +402,7 @@ fn clean_price_history_for(retailer: &str) {
 }
 
 #[test]
+    #[ignore = "requires retailer config fixtures that are excluded from this tree"]
 fn e2e_dealhunter_pipeline() {
     // Clean only this test's own history (retailer namespace "e2epipeline")
     // so parallel tests in this binary are not disturbed.
@@ -459,6 +464,7 @@ fn e2e_dealhunter_pipeline() {
 // ── 5-phase comprehensive integration test ────────────────────────────────────
 
 #[test]
+    #[ignore = "requires retailer config fixtures that are excluded from this tree"]
 fn p5_full_five_phase_pipeline() {
     use std::io::Write;
 
