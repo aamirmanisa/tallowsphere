@@ -123,11 +123,24 @@ struct FnSig {
 struct LLValue {
     reg: String, // e.g. "%3" or "42" (literal)
     ty: LLType,
+    /// For a `Result<T>` value: the struct name of `T`, so field access can
+    /// unwrap the payload instead of guessing a layout by field name (#120,
+    /// docs/result-payload-typing.md).
+    payload_struct: Option<String>,
 }
 
 impl LLValue {
     fn new(reg: String, ty: LLType) -> Self {
-        Self { reg, ty }
+        Self {
+            reg,
+            ty,
+            payload_struct: None,
+        }
+    }
+
+    fn with_payload_struct(mut self, name: impl Into<String>) -> Self {
+        self.payload_struct = Some(name.into());
+        self
     }
 }
 
@@ -1312,7 +1325,6 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @memmove(ptr, ptr, i64)\n");
         ir.push_str("declare ptr @memset(ptr, i32, i64)\n");
         ir.push_str("declare ptr @realloc(ptr, i64)\n");
-        ir.push_str("declare void @exit(i32)\n");
         ir.push_str("declare i64 @strtol(ptr, ptr, i32)\n");
         ir.push_str("declare double @strtod(ptr, ptr)\n");
         ir.push_str("declare ptr @strchr(ptr, i32)\n");
@@ -1431,6 +1443,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_emulate_media(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_emulate_vision(ptr, ptr)\n");
         ir.push_str("declare void @tallow_print_optional(ptr)\n");
+        ir.push_str("declare void @exit(i32)\n");
         ir.push_str("declare i32 @tallow_page_wait_for_url(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare ptr @tallow_page_add_style_tag(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_throttle_network_preset(ptr, ptr, ptr)\n");
@@ -4123,6 +4136,11 @@ void tallow_async_runtime_shutdown(void) {
                     val.ty.to_ir(),
                     val.reg
                 ));
+                if let Some(payload) = val.payload_struct.clone() {
+                    // A `Result<T>` binding keeps T, so `r.field` can unwrap
+                    // instead of guessing a layout (#120).
+                    self.variable_struct_types.insert(name.clone(), payload);
+                }
                 self.variables.insert(name.clone(), (alloca, val.ty));
                 Ok(None)
             }
@@ -4664,6 +4682,66 @@ void tallow_async_runtime_shutdown(void) {
 
                 // 2. Fallback: try all struct layouts (for expressions like fn_call().field)
                 let obj = self.emit_expr(object)?;
+                // 2. Fallback: try all struct layouts (for expressions like fn_call().field)
+                let obj = self.emit_expr(object)?;
+                // 1b. A Result<T> payload: unwrap behind a tag check. Both
+                // engines then refuse a failed call the same way instead of one
+                // printing Ok(...) and the other reading an unrelated offset
+                // (#120, docs/result-payload-typing.md).
+                if obj.ty == LLType::ResultPtr {
+                    let payload_struct = obj.payload_struct.clone().or_else(|| {
+                        match &object.kind {
+                            ExprKind::Ident(name) => self.variable_struct_types.get(name).cloned(),
+                            _ => None,
+                        }
+                    });
+                    let name = payload_struct.ok_or_else(|| {
+                        format!(
+                            "cannot read `.{field}` from a Result whose payload type is unknown; \
+                             bind it to a variable first"
+                        )
+                    })?;
+                    let layout = self
+                        .struct_layouts
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| format!("no layout for `{name}`, the Result payload struct"))?;
+                    let (idx, field_ty) = layout.field_map.get(field).cloned().ok_or_else(|| {
+                        format!("`{name}` has no field `{field}` (read from a Result payload)")
+                    })?;
+                    let err_l = self.fresh_label("L.result.err");
+                    let ok_l = self.fresh_label("L.result.ok");
+                    let tag_gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{tag_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 0",
+                        obj.reg
+                    ));
+                    let tag = self.fresh_reg();
+                    self.emit_line(&format!("{tag} = load i64, ptr {tag_gep}"));
+                    let is_err = self.fresh_reg();
+                    self.emit_line(&format!("{is_err} = icmp ne i64 {tag}, 0"));
+                    self.emit_line(&format!("br i1 {is_err}, label %{err_l}, label %{ok_l}"));
+                    self.emit_line(&format!("{err_l}:"));
+                    self.emit_line("call void @exit(i32 1)");
+                    self.emit_line("unreachable");
+                    self.emit_line(&format!("{ok_l}:"));
+                    let pay_gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{pay_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 1",
+                        obj.reg
+                    ));
+                    let pay = self.fresh_reg();
+                    self.emit_line(&format!("{pay} = load ptr, ptr {pay_gep}"));
+                    let fgep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{fgep} = getelementptr inbounds {}, ptr {pay}, i32 0, i32 {idx}",
+                        layout.llvm_name
+                    ));
+                    let loaded = self.fresh_reg();
+                    self.emit_line(&format!("{loaded} = load {}, ptr {fgep}", field_ty.to_ir()));
+                    return Ok(LLValue::new(loaded, field_ty));
+                }
+
                 if let ExprKind::Ident(var_name) = &object.kind {
                     // This fallback guesses a struct type from the field name.
                     // It is only defensible when exactly one known struct has
@@ -19278,7 +19356,7 @@ void tallow_async_runtime_shutdown(void) {
             "{vtype_gep} = getelementptr %struct.TallowResult, ptr {result_ptr}, i64 0, i32 2"
         ));
         self.emit_line(&format!("store i64 2, ptr {vtype_gep}"));
-        Ok(LLValue::new(result_ptr, LLType::ResultPtr))
+        Ok(LLValue::new(result_ptr, LLType::ResultPtr).with_payload_struct(layout_name))
     }
 
     fn intern_string(&mut self, s: &str) -> String {
