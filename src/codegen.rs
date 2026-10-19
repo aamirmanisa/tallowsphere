@@ -1476,6 +1476,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_set_cookies_from_header(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_authenticated_request(ptr, ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_wait_for_selector(ptr, ptr, i64)\n");
+        ir.push_str("declare i64 @tallow_page_wait_for_timeout_ms(ptr, i64)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -10326,21 +10327,35 @@ void tallow_async_runtime_shutdown(void) {
             ("Page", "wait_for_timeout") => {
                 let ms = if let Some(arg) = args.first() {
                     let v = self.emit_expr(&arg.value)?;
-                    v.reg
+                    self.coerce(&v, &LLType::I64)?
                 } else {
                     "0".to_string()
                 };
-                let status = self.fresh_reg();
+                let elapsed = self.fresh_reg();
                 self.emit_line(&format!(
-                    "{status} = call i32 @tallow_page_wait_for_timeout(ptr {}, i64 {ms})",
+                    "{elapsed} = call i64 @tallow_page_wait_for_timeout_ms(ptr {}, i64 {ms})",
                     obj.reg
                 ));
-                // KNOWN GAP: the interpreter returns `Ok(WaitResult { waited_ms })`,
-                // a struct with no native layout, so this arm returns the raw status.
-                // Registering WaitResult is the fix, not another wrapper.
-                let result = self.fresh_reg();
-                self.emit_line(&format!("{result} = sext i32 {status} to i64"));
-                Ok(LLValue::new(result, LLType::I64))
+                // Declared Result<WaitResult>. This arm used to return the raw
+                // status because WaitResult had no native layout; it has one now,
+                // and the interpreter returns Ok(WaitResult{...}), so returning an
+                // integer here was a silent divergence between the planes.
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp sge i64 {elapsed}, 0"));
+                // `result`/`matched` stay nil: a plain sleep matched nothing, and
+                // the interpreter's wait_result_fields(None, ..) sets both to nil.
+                // Returning `true` here was a divergence the parity probe caught.
+                Ok(self.build_result_struct("WaitResult", &[
+                    ("result", "null".to_string(), LLType::Optional),
+                    ("matched", "null".to_string(), LLType::Optional),
+                    ("received", "null".to_string(), LLType::Optional),
+                    ("elapsed_ms", elapsed.clone(), LLType::I64),
+                    ("waited_ms", ms.clone(), LLType::I64),
+                    ("url", "null".to_string(), LLType::Optional),
+                    ("method", "null".to_string(), LLType::Optional),
+                    ("status", "null".to_string(), LLType::Optional),
+                    ("event", "null".to_string(), LLType::Optional),
+                ], &ok)?)
             }
             ("Page", "scroll_to_bottom") => {
                 let status = self.fresh_reg();
