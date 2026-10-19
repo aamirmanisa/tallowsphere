@@ -17807,7 +17807,7 @@ impl Interpreter {
                                 RuntimeError::TypeError("invalid page handle".to_string())
                             })?;
                         let preset = args.first().map(|v| v.as_string()).unwrap_or_default();
-                        let Some((down, up, latency)) = network_preset(&preset) else {
+                        let Some((down, up, latency)) = crate::browser::network_preset(&preset) else {
                             return Err(RuntimeError::Error(format!(
                                 "throttle_network: unknown preset '{preset}' (slow-3g, fast-3g, 4g, none)"
                             )));
@@ -31834,15 +31834,6 @@ fn value_to_json(val: &Value) -> String {
 /// Kept in the dispatch layer rather than `page.rs` because the `Page` method
 /// takes raw numbers; a preset name is a scripting convenience, and an unknown
 /// name must fail loudly instead of throttling nothing.
-fn network_preset(preset: &str) -> Option<(f64, f64, f64)> {
-    match preset.trim().to_ascii_lowercase().as_str() {
-        "slow-3g" | "slow3g" => Some((400.0, 400.0, 500.0)),
-        "fast-3g" | "fast3g" => Some((1_600.0, 750.0, 150.0)),
-        "4g" => Some((9_000.0, 3_000.0, 50.0)),
-        "none" | "off" | "reset" => Some((0.0, 0.0, 0.0)),
-        _ => None,
-    }
-}
 
 /// Build the `WaitResult` field vector shared by the Page wait methods.
 ///

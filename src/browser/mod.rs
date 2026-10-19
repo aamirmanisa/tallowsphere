@@ -4,6 +4,20 @@
 //! page navigation with lifecycle events, element querying with auto-waiting,
 //! robots.txt compliance, rate limiting, retry logic, and typed error handling.
 
+/// Named network profiles, as (download_kbps, upload_kbps, latency_ms).
+///
+/// Shared by the interpreter arm and the native FFI: a preset table in two
+/// places is a divergence waiting to happen.
+pub fn network_preset(preset: &str) -> Option<(f64, f64, f64)> {
+    match preset.trim().to_ascii_lowercase().as_str() {
+        "slow-3g" | "slow3g" => Some((400.0, 400.0, 500.0)),
+        "fast-3g" | "fast3g" => Some((1_600.0, 750.0, 150.0)),
+        "4g" => Some((9_000.0, 3_000.0, 50.0)),
+        "none" | "off" | "reset" => Some((0.0, 0.0, 0.0)),
+        _ => None,
+    }
+}
+
 pub mod ab_detector;
 pub mod accessibility;
 pub mod adaptive_crawler;

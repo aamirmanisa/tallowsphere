@@ -49,6 +49,7 @@ fn main() {{
     page.add_script_tag("window.__tallowParityTag = 1")
     page.capture_console()
     page.throttle_cpu(1.0)
+    page.throttle_network("4g")
     print("TITLE=" + page.title())
     print("URL=" + page.url())
     print(page.content())
