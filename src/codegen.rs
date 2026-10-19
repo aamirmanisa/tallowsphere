@@ -384,6 +384,7 @@ fn array_elem_kind(array_kind: Option<&str>) -> Option<String> {
     match array_kind? {
         "HtmlElementArray" => Some("HtmlElement".to_string()),
         "ElementArray" => Some("Element".to_string()),
+        "PageEventArray" => Some("PageEvent".to_string()),
         _ => None,
     }
 }
@@ -453,6 +454,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // emits the wrong KIND still passes `--require-native` — it just produces
         // nonsense, so this registration is part of the lowering, not an extra.
         ("Page", "extract_all_text") => Some("StringArray".to_string()),
+        ("Page", "drain_events") => Some("PageEventArray".to_string()),
         _ => None,
     }
 }
@@ -1487,6 +1489,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_page_set_cookies_from_header(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_authenticated_request(ptr, ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_wait_for_selector(ptr, ptr, i64)\n");
+        ir.push_str("declare ptr @tallow_page_drain_events_array(ptr, ptr, i64)\n");
         ir.push_str("declare i64 @tallow_page_wait_for_timeout_ms(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_page_register_handler(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_pump(ptr)\n");        ir.push_str("declare i32 @tallow_page_expose_binding(ptr, ptr, ptr)\n");
@@ -3933,6 +3936,20 @@ void tallow_async_runtime_shutdown(void) {
                                     | ("Element", "outer_html") | ("Element", "computed_style") => {
                                         self.variable_result_payload_kind
                                             .insert(name.clone(), 2);
+                                    }
+                                    // `page.drain_events(...)` — native array of
+                                    // PageEvent struct POINTERS. The element
+                                    // struct is recorded so `evs[0].kind` GEPs
+                                    // into the struct instead of printing 0.
+                                    ("Page", "drain_events") => {
+                                        self.browser_variables.insert(
+                                            name.clone(),
+                                            "PageEventArray".to_string(),
+                                        );
+                                        self.variable_array_elem_is_ptr.insert(name.clone(), true);
+                                        self.variable_is_array.insert(name.clone(), true);
+                                        self.variable_array_elem_struct
+                                            .insert(name.clone(), "PageEvent".to_string());
                                     }
                                     ("Page", "query_selector_all") => {
                                         self.browser_variables
@@ -10105,6 +10122,26 @@ void tallow_async_runtime_shutdown(void) {
             // in, so codegen emits a wrapper that rebuilds PageEvent and calls
             // the function directly (docs/browser-callback-abi.md). A non-literal
             // name is refused rather than silently registering nothing.
+            ("Page", "drain_events") => {
+                let kind_c = if let Some(arg) = args.first() {
+                    let v = self.emit_expr(&arg.value)?;
+                    self.coerce_to_string(&v)?
+                } else {
+                    self.intern_string("")
+                };
+                let limit = if let Some(arg) = args.get(1) {
+                    let v = self.emit_expr(&arg.value)?;
+                    self.coerce(&v, &LLType::I64)?
+                } else {
+                    "0".to_string()
+                };
+                let arr = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{arr} = call ptr @tallow_page_drain_events_array(ptr {}, ptr {kind_c}, i64 {limit})",
+                    obj.reg
+                ));
+                Ok(LLValue::new(arr, LLType::I8Ptr))
+            }
             // JS bindings. Same wrapper machinery as on_*, but the runtime picks
             // the handler by the binding name carried in the event payload.
             ("Page", m @ ("expose_binding" | "expose_function")) => {
