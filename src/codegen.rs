@@ -1468,6 +1468,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_structured_data(ptr)\n");
         ir.push_str("declare i32 @tallow_page_reload(ptr)\n");
         ir.push_str("declare i32 @tallow_page_fill(ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_select(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -9687,6 +9688,28 @@ void tallow_async_runtime_shutdown(void) {
                     ("status", "null".to_string(), LLType::Optional),
                     ("event", "null".to_string(), LLType::Optional),
                 ], &ok)?)
+            }
+            // `Page.select(sel, option, by)` — the `by` name is resolved in the
+            // FFI, so an unknown name fails loudly instead of guessing.
+            ("Page", "select") => {
+                let sel = self.emit_expr(&args[0].value)?;
+                let sel_c = self.coerce_to_string(&sel)?;
+                let opt = self.emit_expr(&args[1].value)?;
+                let opt_c = self.coerce_to_string(&opt)?;
+                let by_c = if let Some(by_arg) = args.get(2) {
+                    let by_val = self.emit_expr(&by_arg.value)?;
+                    self.coerce_to_string(&by_val)?
+                } else {
+                    self.intern_string("value")
+                };
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_select(ptr {}, ptr {sel_c}, ptr {opt_c}, ptr {by_c})",
+                    obj.reg
+                ));
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = sext i32 {status} to i64"));
+                Ok(LLValue::new(result, LLType::I64))
             }
             // `Page.fill(sel, value)` — query, clear, type. The composition lives
             // in the FFI so both planes share one definition.

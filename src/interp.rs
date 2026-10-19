@@ -17468,6 +17468,47 @@ impl Interpreter {
                         }
                     }
 
+                    ("Page", "select") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let sel = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        let option = args.get(1).map(|v| v.as_string()).unwrap_or_default();
+                        let by = args
+                            .get(2)
+                            .map(|v| v.as_string())
+                            .unwrap_or_else(|| "value".to_string());
+                        let select_by = match by.to_ascii_lowercase().as_str() {
+                            "value" => crate::browser::interaction::SelectBy::Value(option.clone()),
+                            "label" => crate::browser::interaction::SelectBy::Label(option.clone()),
+                            "index" => match option.trim().parse::<usize>() {
+                                Ok(n) => crate::browser::interaction::SelectBy::Index(n),
+                                Err(_) => {
+                                    return Ok(Value::Err(Box::new(Value::String(format!(
+                                        "Page.select: index `{option}` is not a number"
+                                    )))));
+                                }
+                            },
+                            other => {
+                                return Ok(Value::Err(Box::new(Value::String(format!(
+                                    "Page.select: unknown `by` value `{other}` (expected value, label or index)"
+                                )))));
+                            }
+                        };
+                        match rt.block_on(page.query_selector(&sel)) {
+                            Ok(Some(el)) => match rt.block_on(el.select_option(select_by)) {
+                                Ok(()) => Ok(Value::Ok(Box::new(Value::Nil))),
+                                Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                            },
+                            Ok(None) => Ok(Value::Err(Box::new(Value::String(format!(
+                                "Page.select: no element matches `{sel}`"
+                            ))))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
                     ("Page", "fill") => {
                         let page = bh
                             .handle
