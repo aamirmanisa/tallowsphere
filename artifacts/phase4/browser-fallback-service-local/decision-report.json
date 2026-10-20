@@ -1,0 +1,189 @@
+{
+  "schema_version": "tallow.browser_fallback_decision_report.v1",
+  "phase": "phase4-browser-fallback-service",
+  "run_id": "phase4-browser-fallback-service-local-proof",
+  "decisions": [
+    {
+      "target_id": "js-product",
+      "url": "https://shop.example/products/1",
+      "status": "planned_fail_closed",
+      "status_code": "planned_fail_closed",
+      "browser_required": true,
+      "route": {
+        "depth": "D5",
+        "transport": "T4",
+        "reason": "preferred_transport_browser",
+        "fallback_chain": [
+          "T4"
+        ],
+        "budget_class": "expensive",
+        "estimated_cost_microusd": 256000,
+        "budget_cap_microusd": 400000,
+        "budget_within_cap": true,
+        "budget_guardrail": "within_budget_cap",
+        "observability_tags": {
+          "route_domain": "shop.example",
+          "route_depth": "D5",
+          "route_transport": "T4",
+          "route_transport_name": "browser",
+          "route_budget": "expensive",
+          "route_estimated_cost_microusd": 256000,
+          "route_budget_cap_microusd": 400000,
+          "route_budget_guardrail": "within_budget_cap",
+          "route_budget_within_cap": true,
+          "route_reason": "preferred_transport_browser",
+          "route_fallback_chain": [
+            "T4"
+          ],
+          "route_fallback_chain_names": [
+            "browser"
+          ],
+          "route_ladder": "T4",
+          "route_signature": "D5-T4-expensive"
+        }
+      },
+      "reason_codes": [
+        "route_preferred_transport_browser",
+        "browser_fallback_reason_requires_javascript",
+        "browser_fallback_reason_dom_state",
+        "browser_launch_blocked_by_local_non_live_policy"
+      ],
+      "cdp_transport_policy": "websocket_only",
+      "pipe_status": "unsupported_fail_closed",
+      "artifact_hooks": [
+        {
+          "artifact": "response_body",
+          "requested": true,
+          "status": "redacted_snippet_planned_not_captured",
+          "reason": "Phase 4 planner records a policy hook only; snippet_bytes=256; no response body was fetched or persisted"
+        },
+        {
+          "artifact": "screenshot",
+          "requested": true,
+          "status": "refused_live_capture",
+          "reason": "live browser artifact capture is human-gated and not executed by the Phase 4 planner"
+        },
+        {
+          "artifact": "har",
+          "requested": true,
+          "status": "refused_live_capture",
+          "reason": "live browser artifact capture is human-gated and not executed by the Phase 4 planner"
+        },
+        {
+          "artifact": "dom_snapshot",
+          "requested": true,
+          "status": "refused_live_capture",
+          "reason": "live browser artifact capture is human-gated and not executed by the Phase 4 planner"
+        }
+      ],
+      "budget_within_cap": true,
+      "would_launch_browser": false,
+      "performed_network_io": false,
+      "captured_artifacts": false,
+      "claims_live_browser_ready": false,
+      "claims_production_fallback_ready": false
+    },
+    {
+      "target_id": "cheap-full-capture",
+      "url": "https://shop.example/products/1",
+      "status": "blocked_by_budget",
+      "status_code": "blocked_by_budget",
+      "browser_required": true,
+      "route": {
+        "depth": "D5",
+        "transport": "T4",
+        "reason": "preferred_transport_browser+budget_guardrail_depth_floor_exceeds_budget_cap",
+        "fallback_chain": [
+          "T4"
+        ],
+        "budget_class": "cheap",
+        "estimated_cost_microusd": 256000,
+        "budget_cap_microusd": 60000,
+        "budget_within_cap": false,
+        "budget_guardrail": "budget_guardrail_depth_floor_exceeds_budget_cap",
+        "observability_tags": {
+          "route_domain": "shop.example",
+          "route_depth": "D5",
+          "route_transport": "T4",
+          "route_transport_name": "browser",
+          "route_budget": "cheap",
+          "route_estimated_cost_microusd": 256000,
+          "route_budget_cap_microusd": 60000,
+          "route_budget_guardrail": "budget_guardrail_depth_floor_exceeds_budget_cap",
+          "route_budget_within_cap": false,
+          "route_reason": "preferred_transport_browser+budget_guardrail_depth_floor_exceeds_budget_cap",
+          "route_fallback_chain": [
+            "T4"
+          ],
+          "route_fallback_chain_names": [
+            "browser"
+          ],
+          "route_ladder": "T4",
+          "route_signature": "D5-T4-cheap"
+        }
+      },
+      "reason_codes": [
+        "route_preferred_transport_browser_budget_guardrail_depth_floor_exceeds_budget_cap",
+        "browser_fallback_reason_requires_javascript",
+        "browser_fallback_reason_dom_state",
+        "budget_guardrail_depth_floor_exceeds_budget_cap",
+        "browser_launch_blocked_by_local_non_live_policy"
+      ],
+      "cdp_transport_policy": "websocket_only",
+      "pipe_status": "unsupported_fail_closed",
+      "artifact_hooks": [
+        {
+          "artifact": "response_body",
+          "requested": true,
+          "status": "redacted_snippet_planned_not_captured",
+          "reason": "Phase 4 planner records a policy hook only; snippet_bytes=256; no response body was fetched or persisted"
+        },
+        {
+          "artifact": "screenshot",
+          "requested": true,
+          "status": "refused_live_capture",
+          "reason": "live browser artifact capture is human-gated and not executed by the Phase 4 planner"
+        },
+        {
+          "artifact": "har",
+          "requested": true,
+          "status": "refused_live_capture",
+          "reason": "live browser artifact capture is human-gated and not executed by the Phase 4 planner"
+        },
+        {
+          "artifact": "dom_snapshot",
+          "requested": true,
+          "status": "refused_live_capture",
+          "reason": "live browser artifact capture is human-gated and not executed by the Phase 4 planner"
+        }
+      ],
+      "budget_within_cap": false,
+      "would_launch_browser": false,
+      "performed_network_io": false,
+      "captured_artifacts": false,
+      "claims_live_browser_ready": false,
+      "claims_production_fallback_ready": false
+    }
+  ],
+  "metrics": {
+    "total_decisions": 2,
+    "planned_fail_closed": 1,
+    "blocked_by_policy": 0,
+    "blocked_by_budget": 1,
+    "http_only": 0,
+    "live_launch_refusals": 2,
+    "budget_refusals": 1,
+    "pipe_refusals": 0,
+    "artifact_capture_refusals": 6,
+    "performed_network_io": 0,
+    "captured_artifacts": 0
+  },
+  "non_claims": {
+    "live_browser_ready": false,
+    "production_fallback_ready": false,
+    "live_scraping": false,
+    "screenshots_har_dom_capture": false,
+    "credentialed_sessions": false,
+    "windows_support": false
+  }
+}

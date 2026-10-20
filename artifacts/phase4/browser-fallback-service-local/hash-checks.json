@@ -1,0 +1,34 @@
+[
+  {
+    "path": "artifacts/phase4/browser-fallback-service-local/decision-report.json",
+    "artifact_class": "fallback_decision_report",
+    "exists": true,
+    "size_bytes": 6775,
+    "sha256": "5a06bf6a1501e28c6ac01207353661df550a2ab46a860ce64b21a1f1812f0534",
+    "redaction_status": "not_required"
+  },
+  {
+    "path": "artifacts/phase4/browser-fallback-service-local/metrics.json",
+    "artifact_class": "metrics",
+    "exists": true,
+    "size_bytes": 289,
+    "sha256": "8d5aaef90b1682de7258bf30ed5760e09e62a88b62f82ed70b97ca45692a3cd8",
+    "redaction_status": "not_required"
+  },
+  {
+    "path": "artifacts/phase4/browser-fallback-service-local/command-log.txt",
+    "artifact_class": "command_log",
+    "exists": true,
+    "size_bytes": 58,
+    "sha256": "dc7d8e0f171090262b391953c76d9a5c95c6ba7d67156b9d263404fb2048caef",
+    "redaction_status": "not_required"
+  },
+  {
+    "path": "artifacts/phase4/browser-fallback-service-local/README.txt",
+    "artifact_class": "readme",
+    "exists": true,
+    "size_bytes": 164,
+    "sha256": "3ba2bbd6e22b2f67fd8cd6256a800c5c4ec17fdfb815e5d3b6a213b06e26cb75",
+    "redaction_status": "not_required"
+  }
+]

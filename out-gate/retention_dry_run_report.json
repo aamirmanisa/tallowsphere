@@ -1,0 +1,12 @@
+{
+  "destructive_action_performed": false,
+  "dry_run": true,
+  "generated_at_utc": "2026-10-20T02:37:55Z",
+  "non_claims": {
+    "no_files_deleted": true,
+    "no_remote_retention_policy_modified": true
+  },
+  "plans": [],
+  "requested_action": "dry-run",
+  "schema_version": "tallow.retention_dry_run_report.v1"
+}

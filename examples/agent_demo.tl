@@ -27,6 +27,7 @@ fn analyze_market(sector: String) -> String {
 // An orchestrator that can spawn sub-agents
 @agent_task(
     id:           task_id,
+    level:        .L4,
     timeout:      2.minutes,
     max_requests: 200,
     can_spawn:    true,

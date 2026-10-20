@@ -6,6 +6,7 @@
 
 // ── 1. Market Data: Fetch quotes for Magnificent 7 ──
 
+fn main() {
 let tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"];
 
 let quotes = tickers.map(|t| {
@@ -120,18 +121,19 @@ print("  Trades: ${bt_result.trades}");
 
 // ── 9. Export everything ──
 
-export {
-    quotes: quotes |> CSV.write("output/quotes.csv"),
-    weights: weights |> JSON.write("output/weights.json"),
-    sentiment: sentiment |> JSON.write("output/sentiment.json"),
-    backtest: bt_result.equity_curve |> CSV.write("output/equity_curve.csv"),
-    summary: {
-        ticker_count: tickers.len(),
-        portfolio_sharpe: Portfolios.sharpe(asset_returns[0], 0.05),
-        nvda_rsi: rsi,
-        market_sentiment: sentiment.sentiment,
-        forward_rate: fwd_1y_5y,
-    } |> JSON.write("output/summary.json"),
-};
+// `export { .. }` is not Tallow syntax; write each artifact explicitly.
+quotes |> CSV.write("output/quotes.csv")
+weights |> JSON.write("output/weights.json")
+sentiment |> JSON.write("output/sentiment.json")
+bt_result.equity_curve |> CSV.write("output/equity_curve.csv")
+let summary = {
+    ticker_count: tickers.len(),
+    portfolio_sharpe: Portfolios.sharpe(asset_returns[0], 0.05),
+    nvda_rsi: rsi,
+    market_sentiment: sentiment.sentiment,
+    forward_rate: fwd_1y_5y,
+}
+summary |> JSON.write("output/summary.json")
 
 print("✅ End-to-end test complete. Output in output/");
+}

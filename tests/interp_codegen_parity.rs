@@ -11,11 +11,8 @@ const EXAMPLES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
 
 fn known_check_fail(name: &str) -> Option<&str> {
     match name {
-        "agent_demo.tl" => Some("can_spawn exceeds L3"),
-        "agent_memory_demo.tl" => Some("undefined variable brain"),
         "channels_demo.tl" => Some("undefined variable Chan"),
         "sqlite_demo.tl" => Some("db import missing"),
-        "financial_e2e_test.tl" => Some("top-level let — invalid Tallow (items only); needs fn main() rewrite"),
         _ => None,
     }
 }
@@ -38,9 +35,6 @@ fn known_run_fail(name: &str) -> Option<&str> {
         "agent_valid.tl" | "self_host.tl" | "stdlib_codegen_test.tl" | "public_source_get_batch.tl"
         | "sitescan_demo.tl" => Some("long-running or live-network example (timed out at 20 s)"),
         "msurface_one.tl" => Some("needs MSURL in the environment"),
-        "financial_e2e_test.tl" => {
-            Some("top-level script without fn main — predates the entrypoint rule")
-        }
         "dealhunter.tl" | "dealhunter_pipeline.tl" => Some("live HTTP fetch — network required"),
         "live_tor_test.tl" => Some("live Tor daemons — network required; handler returns Struct not Ok/Err"),
         "browser_demo.tl" | "browser_full_demo.tl" | "browser_plugins_demo.tl"

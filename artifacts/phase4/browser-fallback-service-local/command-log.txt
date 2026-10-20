@@ -1,0 +1,1 @@
+cargo test --test browser_fallback_service -- --nocapture

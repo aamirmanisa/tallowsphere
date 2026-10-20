@@ -1,0 +1,14 @@
+{
+  "findings": [],
+  "findings_total": 0,
+  "generated_at_utc": "2026-10-20T02:37:55Z",
+  "non_claims": {
+    "no_secret_files_read_by_default": true,
+    "not_a_full_dlp_system": true
+  },
+  "paths_scanned": [],
+  "paths_skipped": [],
+  "raw_values_emitted": false,
+  "scanner": "phase9_local_pattern_scanner_no_raw_values",
+  "schema_version": "tallow.redaction_scan_report.v1"
+}

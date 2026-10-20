@@ -1,0 +1,14 @@
+{
+  "generated_at_utc": "2026-10-20T02:37:55Z",
+  "no_secret_material_resolved": true,
+  "non_claims": {
+    "no_real_secret_material": true,
+    "no_real_vault_configuration": true
+  },
+  "real_vault_contacted": false,
+  "references": [],
+  "references_total": 0,
+  "resolver": "fake_local_reference_only",
+  "schema_version": "tallow.vault_resolution_report.v1",
+  "secret_material_serialized": false
+}

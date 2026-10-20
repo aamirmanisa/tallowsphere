@@ -1,0 +1,13 @@
+{
+  "total_decisions": 2,
+  "planned_fail_closed": 1,
+  "blocked_by_policy": 0,
+  "blocked_by_budget": 1,
+  "http_only": 0,
+  "live_launch_refusals": 2,
+  "budget_refusals": 1,
+  "pipe_refusals": 0,
+  "artifact_capture_refusals": 6,
+  "performed_network_io": 0,
+  "captured_artifacts": 0
+}

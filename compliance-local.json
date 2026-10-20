@@ -1,0 +1,152 @@
+{
+  "gates": [
+    {
+      "detail": "target-manifest.v2.json",
+      "name": "target_manifest_loaded",
+      "passed": false
+    },
+    {
+      "name": "policy_metadata_present",
+      "passed": false
+    },
+    {
+      "detail": "no real vault contacted and no secret material resolved",
+      "name": "fake_local_vault_only",
+      "passed": true
+    },
+    {
+      "detail": "findings=0",
+      "name": "redaction_scan",
+      "passed": true
+    },
+    {
+      "detail": "no destructive retention action performed",
+      "name": "retention_dry_run",
+      "passed": true
+    },
+    {
+      "detail": "tool performs no network requests",
+      "name": "no_live_network_io",
+      "passed": true
+    }
+  ],
+  "generated_at_utc": "2026-10-20T02:37:55Z",
+  "legal": {
+    "targets": []
+  },
+  "mode": "local_no_secret_proof",
+  "network_scope": "local",
+  "non_claims": {
+    "no_destructive_retention_purge": true,
+    "no_live_external_scraping": true,
+    "no_production_compliance_readiness": true,
+    "no_real_secret_material": true,
+    "no_real_vault_configuration": true
+  },
+  "passed": false,
+  "production_gate": {
+    "accepted_for_live_execution": false,
+    "accepted_for_live_preflight": false,
+    "approval_id": "",
+    "destructive_retention_performed": false,
+    "legal_metadata_status": "incomplete",
+    "network_io_performed": false,
+    "redaction_status": "passed",
+    "retention_status": "dry_run_only"
+  },
+  "redaction": {
+    "findings": [],
+    "findings_total": 0,
+    "paths_scanned": [],
+    "raw_values_emitted": false,
+    "scanner": "phase9_local_pattern_scanner_no_raw_values"
+  },
+  "retention": {
+    "destructive_action_performed": false,
+    "dry_run": true,
+    "plans": [],
+    "requested_action": "dry-run"
+  },
+  "schema_version": "tallow.compliance_gate_report.v1",
+  "summary": {
+    "redaction_findings_total": 0,
+    "retention_plans_total": 0,
+    "targets_total": 0,
+    "targets_with_auth_ref": 0,
+    "violations_count": 4,
+    "warnings_count": 0
+  },
+  "target_manifest": {
+    "manifest_id": "",
+    "path": "target-manifest.v2.json",
+    "schema_version": "",
+    "sha256": ""
+  },
+  "vault": {
+    "no_secret_material_resolved": true,
+    "real_vault_contacted": false,
+    "references": [],
+    "references_total": 0,
+    "resolver": "fake_local_reference_only",
+    "secret_material_serialized": false
+  },
+  "violations": [
+    {
+      "code": "target_manifest.load_failed",
+      "error": {
+        "kind": "validation",
+        "message": "[Errno 2] No such file or directory: '/home/aamir/tallowsphere/target-manifest.v2.json'",
+        "phase": "compliance_gate",
+        "policy_blocked": false,
+        "retryable": false,
+        "source_target_id": null,
+        "url": null
+      },
+      "message": "[Errno 2] No such file or directory: '/home/aamir/tallowsphere/target-manifest.v2.json'",
+      "path": "target-manifest.v2.json"
+    },
+    {
+      "code": "target_manifest.schema_version",
+      "error": {
+        "kind": "validation",
+        "message": "schema_version must be tallow.target_manifest.v2",
+        "phase": "compliance_gate",
+        "policy_blocked": false,
+        "retryable": false,
+        "source_target_id": null,
+        "url": null
+      },
+      "message": "schema_version must be tallow.target_manifest.v2",
+      "path": "manifest.schema_version"
+    },
+    {
+      "code": "policy.missing",
+      "error": {
+        "kind": "robots_policy",
+        "message": "Policy object is required",
+        "phase": "compliance_gate",
+        "policy_blocked": true,
+        "retryable": false,
+        "source_target_id": null,
+        "url": null
+      },
+      "message": "Policy object is required",
+      "path": "manifest.policy"
+    },
+    {
+      "code": "manifest.targets_missing",
+      "error": {
+        "kind": "validation",
+        "message": "targets must be a non-empty array",
+        "phase": "compliance_gate",
+        "policy_blocked": false,
+        "retryable": false,
+        "source_target_id": null,
+        "url": null
+      },
+      "message": "targets must be a non-empty array",
+      "path": "manifest.targets"
+    }
+  ],
+  "warnings": []
+}

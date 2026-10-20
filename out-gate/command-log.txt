@@ -1,0 +1,8 @@
+Phase 9 local/no-secret compliance gate
+generated_at_utc=2026-10-20T02:37:55Z
+argv=['/home/aamir/tallowsphere/scripts/compliance_gate.py', '--target-manifest', 'target-manifest.v2.json', '--output-dir', 'out-gate', '--report-path', 'compliance-local.json', '--network-scope', 'local']
+secret_like_env_present=False
+secret_like_env_values_logged=false
+network_io_performed=false
+real_vault_contacted=false
+destructive_retention_action_performed=false

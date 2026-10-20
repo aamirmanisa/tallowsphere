@@ -1,0 +1,71 @@
+{
+  "artifact_id": "phase9-local-no-secret-compliance-proof",
+  "files": [
+    {
+      "artifact_class": "manifest",
+      "exists": true,
+      "path": "compliance-local.json",
+      "redaction_status": "redacted",
+      "sha256": "adb5d1fe9f1c9d3d524ecb4191047ce5f6a44b004a6e7e875ff221c6a461b7b4",
+      "size_bytes": 4167
+    },
+    {
+      "artifact_class": "manifest",
+      "exists": true,
+      "path": "out-gate/vault_resolution_report.json",
+      "redaction_status": "redacted",
+      "sha256": "4a59f2cd458b2de501232465702c8e1acbf94ec73240ba96ef03ea7c5031326a",
+      "size_bytes": 405
+    },
+    {
+      "artifact_class": "metrics",
+      "exists": true,
+      "path": "out-gate/redaction_scan_report.json",
+      "redaction_status": "redacted",
+      "sha256": "33c7095a34a56c19c06e4bd1d2683616fbe165eb6f6acf5f577bb92bde885c85",
+      "size_bytes": 383
+    },
+    {
+      "artifact_class": "manifest",
+      "exists": true,
+      "path": "out-gate/retention_dry_run_report.json",
+      "redaction_status": "redacted",
+      "sha256": "45c1de4b1fcda4cf7e57f75e9c805c84abb34bcfb587ac256a9c91fb58ae4e2b",
+      "size_bytes": 316
+    },
+    {
+      "artifact_class": "logs",
+      "exists": true,
+      "path": "out-gate/command-log.txt",
+      "redaction_status": "redacted",
+      "sha256": "3bdb13fbe761fddb874fc8d96b543d568269d3ccdc9098f11ea7a3c7f72df089",
+      "size_bytes": 450
+    },
+    {
+      "artifact_class": "metrics",
+      "exists": true,
+      "path": "out-gate/manifest_hash_verification.json",
+      "redaction_status": "redacted",
+      "sha256": "7fcd34a1bceb49ad019f05a5f8a7f3572e68c6b73802c400ad38ff212fed5ab8",
+      "size_bytes": 1477
+    }
+  ],
+  "generated_at_utc": "2026-10-20T02:37:55Z",
+  "launch_id": "phase9-local-no-secret-compliance-proof",
+  "redaction": {
+    "notes": "Phase 9 proof reports do not emit raw secret/PII values.",
+    "pii_policy": "redact",
+    "status": "passed"
+  },
+  "replay": {
+    "replay_reason": "Compliance/vault/retention proof artifacts are audit evidence, not replay input.",
+    "requires_approval": true,
+    "safe_to_replay": false
+  },
+  "retention": {
+    "delete_after_utc": "2026-10-21T02:37:55Z",
+    "retention_days": 1
+  },
+  "run_id": "phase9-local-no-secret-compliance-proof",
+  "schema_version": "tallow.artifact_manifest.v1"
+}
