@@ -121,23 +121,27 @@ defect, not a policy:
       handshake and `wire/capabilities.rs`. Port UP into Tallowsphere first,
       verify room-id conformance, then sync. Never sync downward first.
 
-- [ ] **`scripts/sync-canonical-crates.sh` must stay non-destructive** — no
+- [x] **`scripts/sync-canonical-crates.sh` must stay non-destructive** — no  
+      VERIFIED: no rm/--delete/git push in the script; the only mentions are comments explaining their absence.
       `rsync --delete`; product-only files would be deleted.
 
 ## P1 — release hygiene
 
 - [ ] **Author identity on the published root commit** is a dead domain
       (`f6185df`). Re-author before any public release.
-- [ ] **Nothing pushed** — no GitHub push is authorized for any Tallow artifact;
+- [x] **Nothing pushed** — no GitHub push is authorized for any Tallow artifact;  
+      HELD: no push performed in any session; publication remains an operator decision.
       publication decision is the operator's, explicitly.
-- [ ] **Two sendtallow files under a standing no-touch directive** — do not
+- [x] **Two sendtallow files under a standing no-touch directive** — do not  
+      RESPECTED: neither file touched.
       modify without a new instruction.
 
 ## P2 — quality
 
 - [x] **`cargo fmt` hangs** — MEASURED and worked around. `cargo fmt -p tallow -- --check` exceeds 400 s at ~1 s of CPU (blocked, not working); the same check via `rustfmt` directly over every tracked file takes 58-65 s. Root cause sits in cargo-fmt's single rustfmt invocation, not in rustfmt. `scripts/fmt-check.sh` provides the working check (`--write` to apply). Separately: the tree currently carries 13,132 rustfmt diff blocks, so a wholesale format is its own reviewed change, not a side effect of this item.
       or fix the hang (unverified cause).
-- [ ] The gold linker is deprecated with known warnings — decide or document.
+- [x] The gold linker is deprecated with known warnings — decide or document.  
+      DECIDED: not used. .cargo/config.toml lines 55-59 record the measurement — it links, but cargo warns the linker is deprecated with known Rust bugs; lld is the real fix and is a package change.
 - [x] Remaining browser methods declared in `stdlib/browser.tl` but with no lowering are now ENUMERATED and pinned as loud refusals: `Page.goto_antibot`, `Page.links`, `Element.classes`. Each names itself on both planes in `tests/browser_unlowered_gaps.rs`; `docs/browser-native-gaps.md` records what closing each would take.
       native arm: the four became three, then two (`goto_antibot`,
       `resolve_antibot`); re-run the census before claiming zero.
