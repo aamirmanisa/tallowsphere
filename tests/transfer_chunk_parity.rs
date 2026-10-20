@@ -79,15 +79,22 @@ fn write_payload(path: &Path) {
     std::fs::write(path, data).expect("write payload");
 }
 
-fn work_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tallow_chunk_parity_{}", std::process::id()));
+/// Per-test work directory. Keying only on the process id let two tests in this
+/// binary share one directory and delete each other's payload, which surfaced only
+/// when the suite ran with --test-threads=2.
+fn work_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "tallow_chunk_parity_{}_{}",
+        std::process::id(),
+        tag
+    ));
     std::fs::create_dir_all(&dir).expect("create work dir");
     dir
 }
 
 #[test]
 fn transfer_chunk_and_tree_hash_agree_across_engines() {
-    let dir = work_dir();
+    let dir = work_dir("chunk");
     let payload = dir.join("payload.bin");
     write_payload(&payload);
     let prog = dir.join("chunk.tl");
@@ -142,7 +149,7 @@ fn transfer_chunk_and_tree_hash_agree_across_engines() {
 
 #[test]
 fn transfer_manifest_matches_except_timestamp() {
-    let dir = work_dir();
+    let dir = work_dir("tree");
     let payload = dir.join("payload2.bin");
     write_payload(&payload);
     let prog = dir.join("manifest.tl");
