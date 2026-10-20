@@ -102,16 +102,16 @@ fn goto_loads_the_same_page_in_both_engines() {
         "native leg fell back to the interpreter:\n{native_err}"
     );
 
-    // Both legs must have navigated and read the same document. The printed
-    // wrapper differs (`Ok("…")` natively — register #116), so the assertion is
-    // on the content both engines agree about.
+    // Both legs must have navigated and read the same document. `+` renders a
+    // Result by its inner value on both planes (`print` keeps the wrapper), so
+    // the concatenated line is exact — register #116's convention.
     for (leg, out) in [("interpreter", &interp_out), ("native", &native_out)] {
         assert!(
-            out.contains("native-parity-page"),
-            "{leg} did not read the title:\n{out}"
+            out.contains("TITLE=native-parity-page\n"),
+            "{leg} rendered the title wrapper differently (register #116):\n{out}"
         );
         assert!(
-            out.contains(&url),
+            out.contains(&format!("URL={url}")),
             "{leg} reported the wrong URL (expected {url}):\n{out}"
         );
         // `content()` is a second lowered method: both planes must read the
@@ -119,6 +119,10 @@ fn goto_loads_the_same_page_in_both_engines() {
         assert!(
             out.contains("hello</p>"),
             "{leg} did not read the body through content():\n{out}"
+        );
+        assert!(
+            !out.contains("TITLE=Ok("),
+            "{leg} still prints the Ok(..) wrapper in a concatenation:\n{out}"
         );
     }
 }
