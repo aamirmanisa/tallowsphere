@@ -210,6 +210,7 @@ jobs:
           --test fuzz_safety
           --test enum_semantics_parity
           --test match_exhaustiveness_parity
+          --test truthiness_parity
           --test deals_integration
           --test artifact_sealing
           --test browser_contracts
