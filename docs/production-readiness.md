@@ -1,4 +1,4 @@
-# Production-readiness checklist — Tallow (state: 2026-10-20, HEAD 1805278)
+# Production-readiness checklist — Tallow (state: 2026-10-20, HEAD f036b73)
 
 Every item below is either verified against this tree or explicitly marked
 UNVERIFIED. No item may be checked without a command whose output proves it.
@@ -13,9 +13,12 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
   `benchmarks/baseline/v1.1-baseline-aarch64.json` (57 files, median 12.343 ms,
   p95 14.963 ms, 80.6 files/s, RSS 22.8 MB) and the gate PASSes against a repeat run.
   The v1 baseline is retired as unreproducible; see `docs/benchmarks/baseline-v1.1-2026-10-20.md`.
-- Closed since the previous header: #122 truthiness, #123 non-exhaustive match, #125
-  printing a payload enum, #126 calling a function value, #83 the sketch example.
-- Open: #124 indirect calls / closures across a call boundary (feature, refuses loudly).
+- Closed since the previous header: #122 truthiness, #123 non-exhaustive match, #124
+  function values (callable through the closure ABI, thunks for named functions),
+  #125 printing a payload enum, #126 the wrong-value indirect call, #83 the sketch example.
+- Open: #127 a *capturing* closure across a call boundary — a value carries no
+  environment, so it refuses loudly and the interpreter runs it. An ABI change
+  (`{fn, env}` plus a heap env), not a patch.
 - Not pushed: the local-only directive stands.
 
 ## P0 — correctness gaps that produce wrong answers
