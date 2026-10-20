@@ -49,6 +49,10 @@ fn printing_a_payload_variant_renders_it_or_refuses_loudly() {
         stderr.contains("cannot print a data-carrying enum natively"),
         "expected the refusal message, got: {stderr}"
     );
+    assert!(
+        stderr.contains("struct, not a string"),
+        "the refusal message carries continuation padding: {stderr}"
+    );
     let native_stdout = String::from_utf8_lossy(&native.stdout).to_string();
     assert!(
         !native_stdout.chars().any(|c| c.is_control()),

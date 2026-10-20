@@ -7072,7 +7072,7 @@ void tallow_async_runtime_shutdown(void) {
             // wrong value (`apply(add, 2, 40)` printed 2 — register #126).
             if self.variable_is_fn.get(name).copied().unwrap_or(false) {
                 return Err(format!(
-                    "cannot call a function value natively: `{name}` is a fn(..) binding and                      the backend does not lower indirect calls yet; call the function by name,                      or run without --require-native (the interpreter handles it)"
+                    "cannot call a function value natively: `{name}` is a fn(..) binding and the backend does not lower indirect calls yet; call the function by name, or run without --require-native (the interpreter handles it)"
                 ));
             }
             // ── Fail-loud: capture-through-call ──────────────────────────────
