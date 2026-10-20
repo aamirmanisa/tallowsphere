@@ -483,6 +483,25 @@ impl SupplyChainReport {
 ///    (`SCI-PIN-MISMATCH` errors, `SCI-PIN-UNVERIFIED` warnings)
 /// 5. Signing infrastructure availability
 /// 6. SLSA provenance level
+/// Does the signing path actually round-trip? Generates an ephemeral key, signs a
+/// fixed payload and verifies it — the same calls `tallow package sign/verify` make.
+fn signing_roundtrip_works() -> bool {
+    let key = ed25519_dalek::SigningKey::generate(&mut rand_core_06::OsRng);
+    let probe = b"tallow-supply-chain-self-test";
+    let sig = match std::panic::catch_unwind(|| {
+        crate::signing::sign_package(probe, "probe", "0.0.0", &key)
+    }) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    matches!(
+        std::panic::catch_unwind(|| {
+            crate::signing::verify_package(probe, &sig, &key.verifying_key())
+        }),
+        Ok(Ok(true))
+    )
+}
+
 pub fn run_supply_chain_audit(
     project_dir: &std::path::Path,
     pin_store: &KeyPinStore,
@@ -652,13 +671,26 @@ pub fn run_supply_chain_audit(
     }
 
     // ── 5. Signing infrastructure ───────────────────────────────────────
-    // Signing is always available since we have the signing module
-    let signing_available = true;
+    // Evidence, not a constant: sign a probe and verify it. The previous code
+    // asserted `true` and reported "Ed25519 + Sigstore simulation", claiming a
+    // capability nothing had exercised and naming one that does not exist.
+    let signing_available = signing_roundtrip_works();
     findings.push(SupplyChainFinding {
-        code: "SCI-SIGN-OK".to_string(),
-        severity: FindingSeverity::Info,
-        message: "Package signing infrastructure available (Ed25519 + Sigstore simulation)."
-            .to_string(),
+        code: if signing_available { "SCI-SIGN-OK" } else { "SCI-SIGN-MISSING" }.to_string(),
+        severity: if signing_available {
+            FindingSeverity::Info
+        } else {
+            FindingSeverity::Error
+        },
+        message: if signing_available {
+            "Ed25519 package signing verified by self-test; Sigstore is not implemented \
+             (signatures are local)."
+                .to_string()
+        } else {
+            "Ed25519 package signing self-test failed: sign_package/verify_package did \
+             not round-trip."
+                .to_string()
+        },
         package: None,
     });
 
