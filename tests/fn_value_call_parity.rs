@@ -49,6 +49,11 @@ fn calling_a_function_value_natively_refuses_instead_of_returning_a_wrong_number
         stderr.contains("cannot call a function value natively"),
         "expected the refusal message, got: {stderr}"
     );
+    // A `\`-continued literal leaves its source indentation inside the sentence.
+    assert!(
+        stderr.contains("binding and the backend"),
+        "the refusal message carries continuation padding: {stderr}"
+    );
     assert!(
         !native_stdout.trim().eq("2"),
         "the old silent wrong answer is back: {native_stdout:?}"
