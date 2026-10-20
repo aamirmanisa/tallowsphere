@@ -523,6 +523,10 @@ pub struct CodeGen<'a> {
 
     // Variable → true if this variable holds an array (not a string), for .len disambiguation
     variable_is_array: HashMap<String, bool>,
+    /// Bindings whose static type is `String`. Truthiness needs this: an empty
+    /// string is falsy (spec §4.2), but `LLType::I8Ptr` cannot tell a string from
+    /// a native array or an opaque handle (register #122).
+    variable_is_string: HashMap<String, bool>,
 
     // Variable → true if this array's elements are POINTER-BACKED (strings or
     // opaque handles) rather than plain numbers. Native arrays store every
@@ -681,6 +685,7 @@ impl<'a> CodeGen<'a> {
             var_payload_struct: HashMap::new(),
             variable_array_elem_struct: HashMap::new(),
             variable_is_array: HashMap::new(),
+            variable_is_string: HashMap::new(),
             variable_array_elem_is_ptr: HashMap::new(),
             callback_wrappers: Vec::new(),
             variable_result_payload_kind: HashMap::new(),
@@ -3203,6 +3208,7 @@ void tallow_async_runtime_shutdown(void) {
         self.variable_struct_types.clear();
         self.variable_array_elem_struct.clear();
         self.variable_is_array.clear();
+        self.variable_is_string.clear();
         self.variable_array_element_type.clear();
         self.variable_privacy.clear();
         self.variable_is_tuple.clear();
@@ -3876,6 +3882,21 @@ void tallow_async_runtime_shutdown(void) {
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<Option<LLValue>, String> {
         match &stmt.kind {
             StmtKind::Let { name, value, ty } | StmtKind::Var { name, value, ty } => {
+                // Track "this binding is a String": `if s` must test emptiness,
+                // not pointer non-null (register #122).
+                let is_string = match ty {
+                    Some(t) => matches!(&t.kind, TypeExprKind::Named(n) if n == "String"),
+                    None => matches!(
+                        &value.kind,
+                        ExprKind::StringLit(_) | ExprKind::Interpolation { .. }
+                    ),
+                };
+                if is_string {
+                    self.variable_is_string.insert(name.clone(), true);
+                } else {
+                    self.variable_is_string.remove(name);
+                }
+
                 // Track struct type for instance method dispatch
                 if let ExprKind::StructLit {
                     name: struct_name, ..
@@ -9455,6 +9476,48 @@ void tallow_async_runtime_shutdown(void) {
     /// read that misses this falls through to `strlen` on the buffer, which reads
     /// the count slot's first bytes — right for 0 and 1 elements, silently wrong
     /// from 2 up.
+    /// True when the expression is statically a `String` (literal, interpolation,
+    /// or a binding recorded as one at its `let`).
+    fn expr_is_string(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::StringLit(_) | ExprKind::Interpolation { .. } => true,
+            ExprKind::Ident(name) => self.variable_is_string.get(name).copied().unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// Truthiness with the expression in hand, so a pointer can be tested for what
+    /// it is: arrays by their count slot, strings by their first byte, everything
+    /// else (opaque handles) by non-nullness. `emit_truthy_i1` sees only the type.
+    fn truthy_of(&mut self, expr: &Expr, val: &LLValue) -> Result<String, String> {
+        if val.ty == LLType::I8Ptr {
+            if self.expr_is_native_array(expr) {
+                let count = self.fresh_reg();
+                self.emit_line(&format!("{count} = load i64, ptr {}", val.reg));
+                let nonzero = self.fresh_reg();
+                self.emit_line(&format!("{nonzero} = icmp ne i64 {count}, 0"));
+                return Ok(nonzero);
+            }
+            if self.expr_is_string(expr) {
+                // Guard the load: a nil string reads as the empty interned string.
+                let empty = self.intern_string("");
+                let is_null = self.fresh_reg();
+                self.emit_line(&format!("{is_null} = icmp eq ptr {}, null", val.reg));
+                let safe = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{safe} = select i1 {is_null}, ptr {empty}, ptr {}",
+                    val.reg
+                ));
+                let first = self.fresh_reg();
+                self.emit_line(&format!("{first} = load i8, ptr {safe}"));
+                let nonzero = self.fresh_reg();
+                self.emit_line(&format!("{nonzero} = icmp ne i8 {first}, 0"));
+                return Ok(nonzero);
+            }
+        }
+        self.emit_truthy_i1(val)
+    }
+
     fn expr_is_native_array(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Ident(name) => {
@@ -12347,7 +12410,7 @@ void tallow_async_runtime_shutdown(void) {
         }
 
         let cond = self.emit_expr(condition)?;
-        let cond_i1 = self.emit_truthy_i1(&cond)?;
+        let cond_i1 = self.truthy_of(condition, &cond)?;
 
         let then_label = self.fresh_label("if.then");
         let else_label = self.fresh_label("if.else");
@@ -13585,7 +13648,7 @@ void tallow_async_runtime_shutdown(void) {
         // Condition
         self.body.push_str(&format!("{cond_label}:\n"));
         let cond = self.emit_expr(condition)?;
-        let cond_i1 = self.emit_truthy_i1(&cond)?;
+        let cond_i1 = self.truthy_of(condition, &cond)?;
         self.emit_line(&format!(
             "br i1 {cond_i1}, label %{body_label}, label %{end_label}"
         ));
