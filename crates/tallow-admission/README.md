@@ -92,9 +92,26 @@ with no accounting. Both are now bounded in `src/io.rs`:
 unit-testable without sleeping. Pre-fix behaviour is kept as an executable
 proof (`proof_drip_survives_the_total_budget_on_the_unfixed_arithmetic`).
 
-## TODO (remaining v1 hardening — tracked for the deployed gate)
+## v1 hardening status
 
-- Keepalive / idle policy inside authenticated sessions.
-- Rate limiting per source (door-level, behind Caddy).
+Landed:
+
+- **Keepalive / idle policy inside authenticated sessions.** `SESSION_IDLE_TIMEOUT`
+  (30 s) closes a silent session; a client that needs to hold one open sends
+  `{"act":"ping"}` inside that window. Any authenticated frame refreshes the
+  deadline, and `ping` is allowed for both roles because it touches no state and
+  returns no data — no second wire format, no new frame type.
+- **Rate limiting per source.** `ratelimit::SourceLimiter` is a token bucket per
+  TCP peer (burst 20, refill 10/s) checked *before* a pre-auth slot is claimed,
+  so connect/close churn is refused without occupying the concurrency budget.
+  Refusal is the same cover-bytes-then-close shape as the over-cap path. The map
+  is bounded at 4,096 sources and prunes only buckets that have refilled to full.
+  Tunable with `TALLOW_ADMISSION_RATE_BURST` and `TALLOW_ADMISSION_RATE_REFILL`.
+  **Deployment note:** behind a terminating proxy every peer is the proxy, so the
+  bucket becomes a global rate — set the budget accordingly or terminate
+  admission at the edge.
+
+Still open (needs the deployed gate, not this crate):
+
 - Registry integration: back `DeviceRegistry` with the console device store
   (mint/revoke); production server keys from protected key files.

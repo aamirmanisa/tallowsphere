@@ -18,8 +18,10 @@ use crate::server::{Action, ServerCore, ServerSession};
 
 /// Pre-auth phase read timeout (the linger deadline).
 pub const PRE_AUTH_TIMEOUT: Duration = Duration::from_millis(2_000);
-/// Authenticated-session idle timeout (v0: close on idle; keepalive is a
-/// documented v1 item).
+/// Authenticated-session idle timeout: a silent admitted session is closed after
+/// this long. Keepalive is application-level — any authenticated frame refreshes
+/// the deadline, and `{"act":"ping"}` exists so a client can hold a session open
+/// without carrying a payload (see `crate::policy`).
 pub const SESSION_IDLE_TIMEOUT: Duration = Duration::from_millis(30_000);
 /// Client-side admission/request deadline.
 pub const CLIENT_DEADLINE: Duration = Duration::from_millis(15_000);
@@ -106,6 +108,18 @@ pub fn serve(listener: TcpListener, core: Arc<ServerCore>) -> JoinHandle<()> {
             match stream {
                 Ok(stream) => {
                     let core = Arc::clone(&core);
+                    // Rate limit per source before touching the concurrency
+                    // budget: a peer that reconnects in a loop must be refused
+                    // without ever holding a pre-auth slot. Same refusal shape
+                    // as the over-cap path (cover bytes, then close).
+                    if let Ok(peer) = stream.peer_addr() {
+                        if !core.allow_source(peer.ip(), Instant::now()) {
+                            let mut s = stream;
+                            let _ = s.write_all(cover());
+                            let _ = s.flush();
+                            continue;
+                        }
+                    }
                     // Cap concurrent PRE-AUTH connections before spawning a
                     // thread. Over the cap: answer with cover and close, so a
                     // refusal is indistinguishable from ordinary traffic.

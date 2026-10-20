@@ -52,6 +52,7 @@ pub mod framing;
 pub mod handshake;
 pub mod io;
 pub mod policy;
+pub mod ratelimit;
 pub mod server;
 
 pub use aead::AeadChan;
