@@ -531,11 +531,12 @@ pub struct CodeGen<'a> {
     /// would treat the tagged struct as a C string (register #125), so `print`
     /// refuses instead of emitting bytes.
     variable_data_enum: HashMap<String, bool>,
-    /// Bindings whose type is `fn(..) -> ..`. A call through one is an indirect
-    /// call, which the native backend does not lower: it emitted a call to the
-    /// binding's name, which does not exist, and the result was a silent wrong
-    /// value (`apply(add, 2, 40)` printed 2 instead of 42 — register #126).
-    variable_is_fn: HashMap<String, bool>,
+    /// Bindings whose type is `fn(..) -> ..`, with the declared parameter and
+    /// return types. A call through one is an indirect call: load the function
+    /// pointer the binding holds and call it with the closure ABI (env first).
+    variable_is_fn: HashMap<String, (Vec<LLType>, LLType)>,
+    /// Thunks generated for named functions used as values (register #124).
+    emitted_fn_thunks: std::collections::HashSet<String>,
 
     // Variable → true if this array's elements are POINTER-BACKED (strings or
     // opaque handles) rather than plain numbers. Native arrays store every
@@ -697,6 +698,7 @@ impl<'a> CodeGen<'a> {
             variable_is_string: HashMap::new(),
             variable_data_enum: HashMap::new(),
             variable_is_fn: HashMap::new(),
+            emitted_fn_thunks: std::collections::HashSet::new(),
             variable_array_elem_is_ptr: HashMap::new(),
             callback_wrappers: Vec::new(),
             variable_result_payload_kind: HashMap::new(),
@@ -3278,11 +3280,10 @@ void tallow_async_runtime_shutdown(void) {
         // here covers exactly one record per async call.
         self.emit_legal_audit_entry(func);
 
-        // Track function-typed params: calling through them is unsupported natively
-        // and must refuse rather than call a non-existent symbol (register #126).
+        // Track function-typed params with their declared signature (register #124).
         for param in &func.params {
-            if matches!(&param.ty.kind, TypeExprKind::Function { .. }) {
-                self.variable_is_fn.insert(param.name.clone(), true);
+            if let Some(sig) = self.fn_type_sig(&param.ty) {
+                self.variable_is_fn.insert(param.name.clone(), sig);
             }
         }
 
@@ -3825,11 +3826,10 @@ void tallow_async_runtime_shutdown(void) {
         // so the record exists even if the function later fails mid-network.
         self.emit_legal_audit_entry(func);
 
-        // Track function-typed params (register #126): a call through one is an
-        // indirect call the backend cannot lower, so it must refuse.
+        // Track function-typed params with their declared signature (register #124).
         for param in &func.params {
-            if matches!(&param.ty.kind, TypeExprKind::Function { .. }) {
-                self.variable_is_fn.insert(param.name.clone(), true);
+            if let Some(sig) = self.fn_type_sig(&param.ty) {
+                self.variable_is_fn.insert(param.name.clone(), sig);
             }
         }
 
@@ -3925,8 +3925,22 @@ void tallow_async_runtime_shutdown(void) {
                 } else {
                     self.variable_is_string.remove(name);
                 }
-                if matches!(ty, Some(t) if matches!(&t.kind, TypeExprKind::Function { .. })) {
-                    self.variable_is_fn.insert(name.clone(), true);
+                // A binding holds a function value when its annotation says so, or
+                // when it is initialised from a function by name (register #124).
+                let fn_sig = match ty {
+                    Some(t) => self.fn_type_sig(t),
+                    None => match &value.kind {
+                        ExprKind::Ident(f) => self.functions.get(f).cloned().map(|sig| {
+                            (
+                                sig.params.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
+                                sig.ret.clone(),
+                            )
+                        }),
+                        _ => None,
+                    },
+                };
+                if let Some(sig) = fn_sig {
+                    self.variable_is_fn.insert(name.clone(), sig);
                 } else {
                     self.variable_is_fn.remove(name);
                 }
@@ -4795,6 +4809,11 @@ void tallow_async_runtime_shutdown(void) {
                     // `@tallow.None` → clang "use of undefined value". Mirror
                     // the `ExprKind::Nil` literal arm exactly (I64 0).
                     Ok(LLValue::new("0".to_string(), LLType::I64))
+                } else if let Some(sig) = self.functions.get(name).cloned() {
+                    // A function used as a value: hand out its thunk, which has the
+                    // closure ABI every function value is called through (#124).
+                    let thunk = self.fn_value_thunk(name, &sig)?;
+                    Ok(LLValue::new(format!("@{thunk}"), LLType::I8Ptr))
                 } else {
                     // Might be a function reference — treat as unresolved for now
                     Ok(LLValue::new(format!("@tallow.{name}"), LLType::I8Ptr))
@@ -7070,10 +7089,30 @@ void tallow_async_runtime_shutdown(void) {
             // backend has no function-value representation, so this used to emit
             // `call @<binding-name>` for a symbol that does not exist and produce a
             // wrong value (`apply(add, 2, 40)` printed 2 — register #126).
-            if self.variable_is_fn.get(name).copied().unwrap_or(false) {
-                return Err(format!(
-                    "cannot call a function value natively: `{name}` is a fn(..) binding and the backend does not lower indirect calls yet; call the function by name, or run without --require-native (the interpreter handles it)"
+            if let Some((param_tys, ret_ty)) = self.variable_is_fn.get(name).cloned() {
+                // Indirect call through the binding: it holds the function pointer,
+                // and every function value has the closure ABI `i64 (ptr env, …)`.
+                if ret_ty != LLType::I64 {
+                    return Err(format!(
+                        "`{name}` is a fn(..) -> `{}` binding; a function value is called through                          the closure ABI, which is i64-only — call it by name, or run without                          --require-native (the interpreter handles it)",
+                        ret_ty.to_ir()
+                    ));
+                }
+                let fn_ptr = self.emit_expr(callee)?;
+                let mut call_args: Vec<String> = vec!["ptr null".to_string()];
+                for (i, arg) in args.iter().enumerate() {
+                    let val = self.emit_expr(&arg.value)?;
+                    let param_ty = param_tys.get(i).cloned().unwrap_or_else(|| val.ty.clone());
+                    let coerced = self.coerce(&val, &param_ty)?;
+                    call_args.push(format!("{} {coerced}", param_ty.to_ir()));
+                }
+                let result = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{result} = call i64 {}({})",
+                    fn_ptr.reg,
+                    call_args.join(", ")
                 ));
+                return Ok(LLValue::new(result, LLType::I64));
             }
             // ── Fail-loud: capture-through-call ──────────────────────────────
             // A capturing closure passed as a call argument needs its env
@@ -9524,6 +9563,50 @@ void tallow_async_runtime_shutdown(void) {
     /// read that misses this falls through to `strlen` on the buffer, which reads
     /// the count slot's first bytes — right for 0 and 1 elements, silently wrong
     /// from 2 up.
+    /// Declared `fn(..) -> ..` signature of a type annotation, if it has one.
+    fn fn_type_sig(&self, ty: &TypeExpr) -> Option<(Vec<LLType>, LLType)> {
+        if let TypeExprKind::Function {
+            params,
+            return_type,
+        } = &ty.kind
+        {
+            Some((
+                params.iter().map(|p| self.resolve_type(p)).collect(),
+                self.resolve_type(return_type),
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// A named function used as a value needs the closure ABI: every function
+    /// value is called as `i64 (ptr env, args…)` and `env` is null for a
+    /// non-capturing value. Emit one thunk per function, on demand.
+    fn fn_value_thunk(&mut self, name: &str, sig: &FnSig) -> Result<String, String> {
+        if sig.ret != LLType::I64 {
+            return Err(format!(
+                "function `{name}` returns `{}`; a function value is called through the closure                  ABI, which is i64-only, so it cannot be used as a value yet — call it by name,                  or run without --require-native (the interpreter handles it)",
+                sig.ret.to_ir()
+            ));
+        }
+        let thunk = format!("tallow.__fnval_{}", mangle_name(name));
+        if self.emitted_fn_thunks.insert(thunk.clone()) {
+            let mut params = vec!["ptr %env".to_string()];
+            let mut call_args = Vec::new();
+            for (i, (_, ty)) in sig.params.iter().enumerate() {
+                params.push(format!("{} %a{i}", ty.to_ir()));
+                call_args.push(format!("{} %a{i}", ty.to_ir()));
+            }
+            self.lifted_closures.push_str(&format!(
+                "define i64 @\"{thunk}\"({}) #0 {{\nentry:\n  %r = call i64 @{}({})\n  ret i64 %r\n}}\n\n",
+                params.join(", "),
+                mangle_name(name),
+                call_args.join(", ")
+            ));
+        }
+        Ok(thunk)
+    }
+
     /// True when the expression is statically a `String` (literal, interpolation,
     /// or a binding recorded as one at its `let`).
     fn expr_is_string(&self, expr: &Expr) -> bool {
