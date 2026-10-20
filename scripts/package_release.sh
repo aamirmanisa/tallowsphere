@@ -28,11 +28,24 @@ case "$TARGET" in
     *-windows-*) BIN="$BIN_DIR/tallow.exe"; LABEL="windows-$(echo "$TARGET" | cut -d- -f1)"; EXT="zip" ;;
     *-apple-darwin) BIN="$BIN_DIR/tallow"; LABEL="macos-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
     *-linux-musl) BIN="$BIN_DIR/tallow"; LABEL="linux-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
+    *-linux-gnu) BIN="$BIN_DIR/tallow"; LABEL="linux-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
     *) echo "unsupported target: $TARGET" >&2; exit 2 ;;
 esac
 
 if [ ! -f "$BIN" ]; then
     echo "missing $BIN — build it first: cargo build --profile release --locked --target $TARGET --bin tallow" >&2
+    exit 1
+fi
+
+# The compiler links compiled programs against this archive (src/codegen.rs,
+# find_runtime_lib_for_target: "same directory as the tallow binary" is the
+# first search step). Without it beside the binary, any program that calls a
+# runtime symbol fails to link on a machine that has no build tree — measured
+# 2026-10-20: the installed binary could not run `print(find(true))` because
+# tallow_print_optional was unresolved.
+RUNTIME_A="$BIN_DIR/libtallow.a"
+if [ ! -f "$RUNTIME_A" ]; then
+    echo "missing $RUNTIME_A — build it too: cargo build --profile release --locked --target $TARGET --lib" >&2
     exit 1
 fi
 
@@ -45,10 +58,12 @@ rm -f "$ARCHIVE" "$ARCHIVE.sha256"
 
 if [ "$EXT" = "zip" ]; then
     cp "$BIN" "$STAGE/tallow.exe"
-    (cd "$STAGE" && zip -q -9 "$ARCHIVE" tallow.exe) || { echo "zip failed (install zip or pass a linux target)" >&2; exit 1; }
+    cp "$RUNTIME_A" "$STAGE/tallow.lib"
+    (cd "$STAGE" && zip -q -9 "$ARCHIVE" tallow.exe tallow.lib) || { echo "zip failed (install zip or pass a linux target)" >&2; exit 1; }
 else
     cp "$BIN" "$STAGE/tallow"
-    tar czf "$ARCHIVE" -C "$STAGE" tallow
+    cp "$RUNTIME_A" "$STAGE/libtallow.a"
+    tar czf "$ARCHIVE" -C "$STAGE" tallow libtallow.a
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then

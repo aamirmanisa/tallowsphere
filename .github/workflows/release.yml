@@ -74,11 +74,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # GNU, not musl: the C++ dependency stack (btls-sys) is compiled with the
+          # host C++ compiler, which produces glibc-only fortified symbols
+          # (__snprintf_chk, __memcpy_chk, __isoc23_strtoul). A musl link therefore
+          # fails unless a musl C++ cross toolchain is present, and Ubuntu ships
+          # musl-gcc without musl-g++. Measured 2026-10-20; see register row #130.
           - os: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             label: linux-x86_64
           - os: ubuntu-24.04
-            target: aarch64-unknown-linux-musl
+            target: aarch64-unknown-linux-gnu
             label: linux-aarch64
           - os: macos-15
             target: x86_64-apple-darwin
@@ -102,13 +107,15 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Install musl toolchain
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - name: Build
+      - name: Build (binary + runtime archive)
         shell: bash
-        run: cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow
+        run: |
+          cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow
+          # libtallow.a is the archive the compiler links compiled programs
+          # against; it must be shipped beside the binary (see
+          # scripts/package_release.sh) or every program that calls a runtime
+          # symbol fails to link on a machine without a build tree.
+          cargo build --profile release --locked --target ${{ matrix.target }} --lib
 
       - name: Package archive
         shell: bash
@@ -117,13 +124,35 @@ jobs:
           ver="$(grep -m1 '^version' Cargo.toml | sed -E 's/^version *= *"([^"]+)".*/\1/')"
           bash scripts/package_release.sh "${{ matrix.target }}" "$ver" --out dist
 
-      - name: Smoke — the packaged binary runs
+      - name: Smoke — the packaged binary compiles and runs a program
         shell: bash
         run: |
           set -euo pipefail
+          # The version string alone proves nothing about linkage: this program
+          # calls a runtime symbol (tallow_print_optional), which is exactly what
+          # a missing libtallow.a breaks.
+          cat > smoke.tl <<'TL'
+          fn find(hit: bool) -> i64? {
+              if hit { return 7 }
+              return nil
+          }
+          fn main() {
+              print(find(true))
+              print(find(false))
+          }
+          TL
           case "${{ matrix.target }}" in
-            *-windows-*) exe=dist/*.zip; mkdir -p unpack && (cd unpack && unzip -q ../$exe) && ./unpack/tallow.exe --version ;;
-            *) a=$(ls dist/*.tar.gz); mkdir -p unpack && tar xzf "$a" -C unpack && ./unpack/tallow --version ;;
+            *-windows-*)
+              exe=$(ls dist/*.zip); mkdir -p unpack && (cd unpack && unzip -q "../$exe")
+              ./unpack/tallow.exe --version
+              ./unpack/tallow.exe run --require-native smoke.tl | grep -qx 7 ;;
+            *)
+              a=$(ls dist/*.tar.gz); mkdir -p unpack && tar xzf "$a" -C unpack
+              ./unpack/tallow --version
+              out=$(cd unpack && ./tallow run --require-native ../smoke.tl)
+              echo "$out"
+              echo "$out" | head -1 | grep -qx 7
+              ;;
           esac
 
       - name: Install cosign
