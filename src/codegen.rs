@@ -31870,9 +31870,12 @@ mod tests {
             }
         "#,
         );
+        // The lowering moved to the millisecond variant when WaitResult gained a
+        // native layout: the sleep reports its own elapsed time, and the arm now
+        // returns a struct rather than a bare status.
         assert!(
-            ir.contains("call i32 @tallow_page_wait_for_timeout(ptr"),
-            "wait_for_timeout must lower to the sleep FFI"
+            ir.contains("call i64 @tallow_page_wait_for_timeout_ms(ptr"),
+            "wait_for_timeout must lower to the millisecond sleep FFI"
         );
         assert!(
             ir.contains("call i32 @tallow_page_scroll_to_bottom(ptr"),
@@ -34948,16 +34951,27 @@ fn main() {
     }
 
     #[test]
-    fn codegen_stdlib_process_run() {
-        let ir = compile_to_ir(
+    fn codegen_stdlib_process_run_refuses_instead_of_faking_output() {
+        // This arm used to emit `system()` and hand back the exit code while the
+        // language declares `Output`. Every field read then turned into 0, so the
+        // test asserting `@system` was pinning the fake. It must refuse by name.
+        let (tokens, errors) = lexer::tokenize(
             r#"
             fn main() {
-                let code = process.run("echo hello")
-                print(code)
+                let out = process.exec("echo hello")
+                print(out.stdout)
             }
         "#,
         );
-        assert!(ir.contains("@system"), "should call system()");
+        assert!(errors.is_empty(), "lex errors: {errors:?}");
+        let program = parser::Parser::parse(tokens).expect("parse error");
+        let (env, _) = TypeChecker::new(&program).check();
+        let mut cg = CodeGen::new(&program, &env);
+        let err = cg.emit_module().expect_err("native exec must refuse");
+        assert!(
+            err.contains("process.exec/run") && err.contains("cannot capture output"),
+            "refusal must name the limitation, got: {err}"
+        );
     }
 
     #[test]
