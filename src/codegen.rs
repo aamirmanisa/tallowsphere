@@ -10047,9 +10047,18 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(self.wrap_ptr_in_result(&reg))
             }
             ("Page", "set_cookies_from_header") => {
+                // `domain` is required by the stdlib signature. Indexing args[1]
+                // unguarded turned a caller mistake into an ICE ("index out of
+                // bounds: the len is 1 but the index is 1") — report it instead.
+                let Some(domain_arg) = args.get(1) else {
+                    return Err(
+                        "Page.set_cookies_from_header: domain is required (header, domain, path?)"
+                            .to_string(),
+                    );
+                };
                 let header = self.emit_expr(&args[0].value)?;
                 let header_c = self.coerce_to_string(&header)?;
-                let domain = self.emit_expr(&args[1].value)?;
+                let domain = self.emit_expr(&domain_arg.value)?;
                 let domain_c = self.coerce_to_string(&domain)?;
                 let path_c = if let Some(path_arg) = args.get(2) {
                     let path_val = self.emit_expr(&path_arg.value)?;
