@@ -34,7 +34,7 @@ The runtime value is `interp::Value` (`src/interp.rs:153`), a tagged union. Prin
 | `Consent` | `{ consent_id, inner }` | GDPR consent chain |
 | `Erasable` | `{ erasure_id, inner }` | right-to-erasure tracking |
 | `Function` | `{ name, params, body, captures }` | first-class; captures are a creation-time snapshot held in a shared cell |
-| `Enum` | `{ enum_name, variant, fields }` | |
+| `Enum` | `{ enum_name, variant, discriminant, fields }` | `discriminant` is the variant's position in its declaration: enums are integer-backed, so `==`/`!=` against an integer and integer literal `match` arms compare it, and display prints it. A synthetic `Some(x)` has no declaration and carries `-1`, which keeps its constructor display. See register #122/#123 for the remaining plane divergences. |
 | `Struct` | `{ name, fields }` | `name` drives `impl` dispatch |
 | `Range` | `{ start, end, step }` | end-exclusive |
 | `DbConnection`, `KeyPair` | opaque handles | |
