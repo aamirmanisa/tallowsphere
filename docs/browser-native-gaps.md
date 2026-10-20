@@ -129,3 +129,17 @@ error, not a missing lowering, and a refusal test built on it passed for the wro
 reason. The entries were removed from `tests/browser_unlowered_gaps.rs`.
 
 The only genuinely declared-but-unimplemented Page method remains `goto_antibot`.
+
+## Fixed: three FFIs were unmangled (`fill`, `select`, cookie consent)
+
+`tallow_page_fill`, `tallow_page_select` and `tallow_page_handle_cookie_consent_str`
+were declared `pub extern "C"` without `#[unsafe(no_mangle)]`. Every other FFI in the
+file has it, so these three exported mangled Rust symbols instead of C names: the
+codegen arm existed, `cargo check` passed, and only a real link (`--require-native`)
+failed with `undefined reference to tallow_page_fill`.
+
+That is the worst shape a defect can take here — a lowering that compiles and cannot
+link — so it is now checked mechanically: `scripts/check_ffi_symbols.py` fails when a
+runtime `tallow_*` FFI lacks the attribute or when codegen emits a symbol nothing
+defines (LLVM IR and the embedded C async shim count as definitions). Negative
+control: removing the attribute from `fill` in a copy exits 1.
