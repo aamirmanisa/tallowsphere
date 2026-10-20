@@ -6155,7 +6155,8 @@ fn probe_fido2_authenticator() -> bool {
                 size: 0,
                 value: [0u8; 4096],
             };
-            let rc = unsafe { libc::ioctl(f.as_raw_fd(), HIDIOCGRDESC, &mut desc) };
+            // `ioctl`'s request argument is c_ulong on glibc and c_int on musl.
+            let rc = unsafe { libc::ioctl(f.as_raw_fd(), HIDIOCGRDESC as _, &mut desc) };
             if rc == 0 {
                 // FIDO usage page 0xF1D0 appears as bytes D0 F1 (little-endian
                 // usage page field) somewhere in the report descriptor.

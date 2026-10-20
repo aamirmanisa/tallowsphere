@@ -4,8 +4,8 @@
 //! to the binding's name, which is not a symbol, and `apply(add, 2, 40)` returned 2 with
 //! exit 0. Function values now carry the closure ABI — a pointer called as
 //! `i64 (ptr env, args…)` — with a thunk generated per named function and a null env for
-//! non-capturing values. A *capturing* closure still cannot cross a call boundary,
-//! because its environment lives in the caller's frame; that case must refuse loudly.
+//! non-capturing values. A capturing closure crosses a boundary as the same pair,
+//! with a heap-allocated environment, and still renders identically on both planes.
 
 const NAMED: &str = r#"
 fn add(a: i64, b: i64) -> i64 { a + b }
@@ -77,17 +77,19 @@ fn a_non_capturing_closure_is_callable_through_a_parameter() {
 }
 
 #[test]
-fn a_capturing_closure_across_a_call_still_refuses_loudly() {
-    let native = run(CAPTURING_ACROSS, &["--require-native"], "capturing");
-    let stderr = String::from_utf8_lossy(&native.stderr).to_string();
-    assert_eq!(native.status.code(), Some(1), "expected refusal: {stderr}");
-    assert!(
-        stderr.contains("capturing closure"),
-        "expected the capture-boundary refusal, got: {stderr}"
-    );
-    // The default path stays correct by falling back to the interpreter.
-    let default = run(CAPTURING_ACROSS, &[], "capturing-default");
-    let stdout = String::from_utf8_lossy(&default.stdout).to_string();
-    assert!(default.status.success(), "default run failed: {stdout}");
-    assert_eq!(stdout.trim(), "42");
+fn a_capturing_closure_crosses_a_call_boundary() {
+    // #127: the value is a {code, env} pair and the environment is heap-allocated,
+    // so a capturing closure stays callable after the defining frame is gone.
+    assert_renders(CAPTURING_ACROSS, "42\n", "capturing");
+
+    let stored = r#"
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
+fn main() {
+    let multiplier = 3
+    let triple = { y -> y * multiplier }
+    print(apply(triple, 14))
+}
+"#;
+    assert_renders(stored, "42\n", "capturing-stored");
 }

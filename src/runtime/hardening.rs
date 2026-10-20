@@ -68,9 +68,18 @@ fn ensure_nofile_floor(floor: libc::rlim_t) -> io::Result<()> {
     set_rlimit(libc::RLIMIT_NOFILE, target, lim.rlim_max)
 }
 
+/// The resource argument type differs by libc: glibc names it
+/// `__rlimit_resource_t`, musl (and the BSDs) take a plain `c_int`. Naming the
+/// alias here is what lets one source tree build for both (musl target found
+/// this: `__rlimit_resource_t` does not exist there).
+#[cfg(all(unix, not(target_env = "musl")))]
+pub type RlimitResource = libc::__rlimit_resource_t;
+#[cfg(all(unix, target_env = "musl"))]
+pub type RlimitResource = libc::c_int;
+
 /// Read a resource limit via `getrlimit(2)`.
 #[cfg(unix)]
-pub fn get_rlimit(resource: libc::__rlimit_resource_t) -> io::Result<libc::rlimit> {
+pub fn get_rlimit(resource: RlimitResource) -> io::Result<libc::rlimit> {
     let mut lim = libc::rlimit {
         rlim_cur: 0,
         rlim_max: 0,
@@ -85,7 +94,7 @@ pub fn get_rlimit(resource: libc::__rlimit_resource_t) -> io::Result<libc::rlimi
 
 /// Set both limits of `resource` via `setrlimit(2)`.
 #[cfg(unix)]
-pub fn set_rlimit(resource: libc::__rlimit_resource_t, soft: libc::rlim_t, hard: libc::rlim_t) -> io::Result<()> {
+pub fn set_rlimit(resource: RlimitResource, soft: libc::rlim_t, hard: libc::rlim_t) -> io::Result<()> {
     let lim = libc::rlimit {
         rlim_cur: soft,
         rlim_max: hard,

@@ -535,6 +535,10 @@ pub struct CodeGen<'a> {
     /// return types. A call through one is an indirect call: load the function
     /// pointer the binding holds and call it with the closure ABI (env first).
     variable_is_fn: HashMap<String, (Vec<LLType>, LLType)>,
+    /// Per user function, per parameter: the `fn(..)` signature when that
+    /// parameter takes a function value. Call sites box the argument into a
+    /// `{code, env}` pair so a capturing closure can cross the boundary (#127).
+    fn_param_shapes: HashMap<String, Vec<Option<(Vec<LLType>, LLType)>>>,
     /// Thunks generated for named functions used as values (register #124).
     emitted_fn_thunks: std::collections::HashSet<String>,
 
@@ -698,6 +702,7 @@ impl<'a> CodeGen<'a> {
             variable_is_string: HashMap::new(),
             variable_data_enum: HashMap::new(),
             variable_is_fn: HashMap::new(),
+            fn_param_shapes: HashMap::new(),
             emitted_fn_thunks: std::collections::HashSet::new(),
             variable_array_elem_is_ptr: HashMap::new(),
             callback_wrappers: Vec::new(),
@@ -2864,6 +2869,9 @@ void tallow_async_runtime_shutdown(void) {
         params: &[Param],
         return_type: &Option<TypeExpr>,
     ) {
+        let shapes: Vec<Option<(Vec<LLType>, LLType)>> =
+            params.iter().map(|p| self.fn_type_sig(&p.ty)).collect();
+        self.fn_param_shapes.insert(name.to_string(), shapes);
         let params: Vec<(String, LLType)> = params
             .iter()
             .map(|p| (p.name.clone(), self.resolve_type(&p.ty)))
@@ -4462,6 +4470,25 @@ void tallow_async_runtime_shutdown(void) {
                     }
                 }
 
+                // A function value stored in a variable carries the {code, env}
+                // pair, never a bare code pointer: a capturing closure must stay
+                // callable after the defining frame is gone (#127).
+                let rhs_is_closure = matches!(&value.kind, ExprKind::Closure { .. });
+                let rhs_is_fn_ident = matches!(&value.kind, ExprKind::Ident(n) if self.functions.contains_key(n.as_str()));
+                let annotated_fn = matches!(ty, Some(t) if matches!(&t.kind, TypeExprKind::Function { .. }));
+                let val = if val.reg.starts_with('@') && (rhs_is_closure || rhs_is_fn_ident || annotated_fn) {
+                    let key = val.reg.trim_start_matches('@').trim_matches('"').to_string();
+                    let env = self
+                        .variable_closure_env
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_else(|| "null".to_string());
+                    let pair = self.box_fn_value(&val.reg, &env);
+                    LLValue::new(pair, LLType::I8Ptr)
+                } else {
+                    val
+                };
+
                 let alloca = self.fresh_reg();
                 self.emit_line(&format!("{alloca} = alloca {}", val.ty.to_ir()));
                 self.emit_line(&format!(
@@ -4813,7 +4840,8 @@ void tallow_async_runtime_shutdown(void) {
                     // A function used as a value: hand out its thunk, which has the
                     // closure ABI every function value is called through (#124).
                     let thunk = self.fn_value_thunk(name, &sig)?;
-                    Ok(LLValue::new(format!("@{thunk}"), LLType::I8Ptr))
+                    let pair = self.box_fn_value(&format!("@\"{thunk}\""), "null");
+                    Ok(LLValue::new(pair, LLType::I8Ptr))
                 } else {
                     // Might be a function reference — treat as unresolved for now
                     Ok(LLValue::new(format!("@tallow.{name}"), LLType::I8Ptr))
@@ -5798,8 +5826,13 @@ void tallow_async_runtime_shutdown(void) {
                 if has_captures {
                     // Allocate environment struct on the stack and pack captured values
                     let env_type = format!("%closure_env_{closure_id}");
+                    // Heap, not stack: the environment must outlive this frame once
+                    // the closure is boxed into a {code, env} pair and passed across
+                    // a call boundary (#127). GEPs still index by the named struct
+                    // type; the allocation is rounded up so that is safe.
                     let env_ptr = self.fresh_reg();
-                    self.emit_line(&format!("{env_ptr} = alloca {env_type}"));
+                    let env_bytes = 8 * (capture_types.len() as i64 + 1);
+                    self.emit_line(&format!("{env_ptr} = call ptr @malloc(i64 {env_bytes})"));
                     for (i, (cap_name, cap_ty)) in capture_types.iter().enumerate() {
                         if let Some((alloca, _)) = self.variables.get(cap_name).cloned() {
                             let val = self.fresh_reg();
@@ -7098,8 +7131,19 @@ void tallow_async_runtime_shutdown(void) {
                         ret_ty.to_ir()
                     ));
                 }
-                let fn_ptr = self.emit_expr(callee)?;
-                let mut call_args: Vec<String> = vec!["ptr null".to_string()];
+                let pair = self.emit_expr(callee)?;
+                let code_i = self.fresh_reg();
+                self.emit_line(&format!("{code_i} = load i64, ptr {}", pair.reg));
+                let code = self.fresh_reg();
+                self.emit_line(&format!("{code} = inttoptr i64 {code_i} to ptr"));
+                let env_p = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{env_p} = getelementptr i8, ptr {}, i64 8",
+                    pair.reg
+                ));
+                let env_v = self.fresh_reg();
+                self.emit_line(&format!("{env_v} = load ptr, ptr {env_p}"));
+                let mut call_args: Vec<String> = vec![format!("ptr {env_v}")];
                 for (i, arg) in args.iter().enumerate() {
                     let val = self.emit_expr(&arg.value)?;
                     let param_ty = param_tys.get(i).cloned().unwrap_or_else(|| val.ty.clone());
@@ -7108,40 +7152,10 @@ void tallow_async_runtime_shutdown(void) {
                 }
                 let result = self.fresh_reg();
                 self.emit_line(&format!(
-                    "{result} = call i64 {}({})",
-                    fn_ptr.reg,
+                    "{result} = call i64 {code}({})",
                     call_args.join(", ")
                 ));
                 return Ok(LLValue::new(result, LLType::I64));
-            }
-            // ── Fail-loud: capture-through-call ──────────────────────────────
-            // A capturing closure passed as a call argument needs its env
-            // side-table threaded across the ABI into the callee; the native
-            // backend does not thread it yet, so the callee indirect-calls the
-            // closure without its environment — the produced binary then exits
-            // 1 silently or spins forever (examples/closure_capture.tl,
-            // examples/closure_advanced.tl). Reject loudly so `tallow run`
-            // build-fails and falls back to the (correct) interpreter — same
-            // partial-backend fail-loud rule as the closure-return guard.
-            if self.functions.contains_key(name.as_str()) {
-                for arg in args {
-                    let capture = match &arg.value.kind {
-                        ExprKind::Ident(var_name) => self
-                            .variable_closure_env
-                            .contains_key(var_name.as_str())
-                            .then_some(var_name.clone()),
-                        ExprKind::Closure { params, body } => find_free_vars(params, body)
-                            .into_iter()
-                            .find(|c| self.variables.contains_key(c.as_str())),
-                        _ => None,
-                    };
-                    if let Some(cap) = capture {
-                        return Err(format!(
-                            "call to '{}' passes a capturing closure (captures '{}') across a function boundary; native backend cannot thread a closure environment through a call yet (interpreter handles it) — build failing loudly so the interpreter runs it",
-                            name, cap
-                        ));
-                    }
-                }
             }
             // Built-in functions
             match name.as_str() {
@@ -7642,10 +7656,37 @@ void tallow_async_runtime_shutdown(void) {
                 }
                 let mut arg_regs: Vec<String> = Vec::new();
 
+                let wants_pair: Vec<bool> = self
+                    .fn_param_shapes
+                    .get(&resolved_name)
+                    .map(|shapes| shapes.iter().map(|s| s.is_some()).collect())
+                    .unwrap_or_default();
+
                 for (i, arg) in args.iter().enumerate() {
                     let val = self.emit_expr(&arg.value)?;
-                    let param_ty = sig.params.get(i).map(|(_, t)| t).unwrap_or(&val.ty);
-                    let coerced = self.coerce(&val, param_ty)?;
+                    let param_ty = sig
+                        .params
+                        .get(i)
+                        .map(|(_, t)| t.clone())
+                        .unwrap_or_else(|| val.ty.clone());
+                    // A fn-typed parameter carries the {code, env} pair. A raw
+                    // symbol (`@"closure"`, a thunk) is boxed here, with the
+                    // environment the closure registered when it captured.
+                    let val = if wants_pair.get(i).copied().unwrap_or(false)
+                        && val.reg.starts_with('@')
+                    {
+                        let key = val.reg.trim_start_matches('@').trim_matches('"').to_string();
+                        let env = self
+                            .variable_closure_env
+                            .get(&key)
+                            .cloned()
+                            .unwrap_or_else(|| "null".to_string());
+                        let pair = self.box_fn_value(&val.reg, &env);
+                        LLValue::new(pair, LLType::I8Ptr)
+                    } else {
+                        val
+                    };
+                    let coerced = self.coerce(&val, &param_ty)?;
                     arg_regs.push(format!("{} {coerced}", param_ty.to_ir()));
                 }
 
@@ -7666,21 +7707,26 @@ void tallow_async_runtime_shutdown(void) {
                 // Variable holding a function pointer — indirect call
                 let loaded = self.fresh_reg();
                 self.emit_line(&format!("{loaded} = load {}, ptr {alloca}", ty.to_ir()));
-                let fn_ptr = if ty == LLType::I8Ptr {
-                    loaded.clone()
+                let (fn_ptr, env_loaded) = if ty == LLType::I8Ptr {
+                    // `loaded` is the {code, env} pair.
+                    let ci = self.fresh_reg();
+                    self.emit_line(&format!("{ci} = load i64, ptr {loaded}"));
+                    let code = self.fresh_reg();
+                    self.emit_line(&format!("{code} = inttoptr i64 {ci} to ptr"));
+                    let ep = self.fresh_reg();
+                    self.emit_line(&format!("{ep} = getelementptr i8, ptr {loaded}, i64 8"));
+                    let ev = self.fresh_reg();
+                    self.emit_line(&format!("{ev} = load ptr, ptr {ep}"));
+                    (code, ev)
                 } else {
                     let cast = self.fresh_reg();
                     self.emit_line(&format!("{cast} = inttoptr i64 {loaded} to ptr"));
-                    cast
+                    (cast, "null".to_string())
                 };
                 // Use tracked function signature for correct calling convention
                 let known_sig = self.variable_fn_sig.get(name).cloned();
                 // Prepend env pointer: use tracked env if available, else null
-                let env_arg = self
-                    .variable_closure_env
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(|| "null".to_string());
+                let env_arg = env_loaded;
                 let mut arg_regs: Vec<String> = vec![format!("ptr {env_arg}")];
                 if let Some(ref sig) = known_sig {
                     // Same fail-loud rule as the direct-call branch: a shorter
@@ -9605,6 +9651,24 @@ void tallow_async_runtime_shutdown(void) {
             ));
         }
         Ok(thunk)
+    }
+
+    /// Box a function value into the 16-byte `{ code, env }` pair every fn-typed
+    /// slot carries: code at +0, environment pointer at +8 (null when nothing is
+    /// captured). Returning the pair, not the code pointer, is what lets a
+    /// capturing closure cross a call boundary (#127).
+    fn box_fn_value(&mut self, code: &str, env: &str) -> String {
+        let mem = self.fresh_reg();
+        self.emit_line(&format!("{mem} = call ptr @malloc(i64 16)"));
+        let ci = self.fresh_reg();
+        self.emit_line(&format!("{ci} = ptrtoint ptr {code} to i64"));
+        let p0 = self.fresh_reg();
+        self.emit_line(&format!("{p0} = getelementptr i8, ptr {mem}, i64 0"));
+        self.emit_line(&format!("store i64 {ci}, ptr {p0}"));
+        let p1 = self.fresh_reg();
+        self.emit_line(&format!("{p1} = getelementptr i8, ptr {mem}, i64 8"));
+        self.emit_line(&format!("store ptr {env}, ptr {p1}"));
+        mem
     }
 
     /// True when the expression is statically a `String` (literal, interpolation,
