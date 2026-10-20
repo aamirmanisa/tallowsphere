@@ -7689,7 +7689,7 @@ void tallow_async_runtime_shutdown(void) {
                         let suffix_str = self.coerce_to_string(&suffix)?;
                         return self.emit_string_ends_with(&obj, &suffix_str);
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    return Err("ends_with requires one argument".to_string());
                 }
                 "repeat" => {
                     if let Some(arg) = args.first() {
@@ -7830,7 +7830,15 @@ void tallow_async_runtime_shutdown(void) {
                         let needle_str = self.coerce_to_string(&needle)?;
                         return self.emit_string_count(&obj, &needle_str);
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    // `count()` with no argument is the length, as in the interpreter.
+                    let empty = self.intern_string("");
+                    let is_null = self.fresh_reg();
+                    self.emit_line(&format!("{is_null} = icmp eq ptr {}, null", obj.reg));
+                    let safe = self.fresh_reg();
+                    self.emit_line(&format!("{safe} = select i1 {is_null}, ptr {empty}, ptr {}", obj.reg));
+                    let reg = self.fresh_reg();
+                    self.emit_line(&format!("{reg} = call i64 @strlen(ptr {safe})"));
+                    return Ok(LLValue::new(reg, LLType::I64));
                 }
                 "is_numeric" => {
                     return self.emit_string_is_numeric(&obj);
@@ -8053,7 +8061,8 @@ void tallow_async_runtime_shutdown(void) {
                             return self.emit_result_unwrap_or_else(&obj, param_name, body);
                         }
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    // Not given a closure, the interpreter returns the value unchanged.
+                    return Ok(obj);
                 }
                 _ => {}
             }
@@ -8116,7 +8125,7 @@ void tallow_async_runtime_shutdown(void) {
                         let key_i64 = self.coerce_to_i64(&key_val)?;
                         return self.emit_map_get(&obj, &key_i64, string_keys);
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    return Err("map get requires a key argument".to_string());
                 }
                 "set" | "insert" => {
                     if args.len() >= 2 {
@@ -8132,7 +8141,7 @@ void tallow_async_runtime_shutdown(void) {
                             var_name_opt.as_deref(),
                         );
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    return Err("set requires a key and a value".to_string());
                 }
                 "has_key" | "contains_key" => {
                     if let Some(arg) = args.first() {
@@ -8148,7 +8157,7 @@ void tallow_async_runtime_shutdown(void) {
                         let key_i64 = self.coerce_to_i64(&key_val)?;
                         return self.emit_map_remove(&obj, &key_i64, string_keys);
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    return Err("remove requires a key argument".to_string());
                 }
                 "entries" => {
                     return self.emit_map_entries(&obj);
@@ -8425,6 +8434,7 @@ void tallow_async_runtime_shutdown(void) {
                             return self.emit_array_find_inline(&obj, param_name, body);
                         }
                     }
+                    // Not given a closure, the interpreter answers nil.
                     return Ok(LLValue::new("0".into(), LLType::I64));
                 }
                 "any" => {
@@ -8460,7 +8470,7 @@ void tallow_async_runtime_shutdown(void) {
                             );
                         }
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    return Err("reduce requires an initial value and a closure".to_string());
                 }
                 "count" => {
                     // Array.count with closure — count matching elements
@@ -8570,7 +8580,7 @@ void tallow_async_runtime_shutdown(void) {
                             return self.emit_array_min_by_inline(&obj, param_name, body);
                         }
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    return Err("min_by requires a closure argument".to_string());
                 }
                 "max_by" => {
                     if let Some(arg) = args.first() {
@@ -8580,7 +8590,7 @@ void tallow_async_runtime_shutdown(void) {
                             return self.emit_array_max_by_inline(&obj, param_name, body);
                         }
                     }
-                    return Ok(LLValue::new("0".into(), LLType::I64));
+                    return Err("max_by requires a closure argument".to_string());
                 }
                 "each_ok" => {
                     if let Some(arg) = args.first() {
