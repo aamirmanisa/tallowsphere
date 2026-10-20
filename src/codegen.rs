@@ -11859,9 +11859,12 @@ void tallow_async_runtime_shutdown(void) {
         // one emitted a raw byte of the discriminant (register #125); refuse so the
         // interpreter prints `Variant(payload)` instead of garbage.
         if self.expr_is_data_enum(&args[0].value) {
-            return Err(
-                "cannot print a data-carrying enum natively: it is a tagged struct,                  not a string; read its fields instead, or run without --require-native                  (the interpreter prints `Variant(payload)`)"
-                    .into(),
+            return Err(concat!(
+                "cannot print a data-carrying enum natively: it is a tagged struct, ",
+                "not a string; read its fields instead, or run without --require-native ",
+                "(the interpreter prints `Variant(payload)`)"
+            )
+            .into(),
             );
         }
 
