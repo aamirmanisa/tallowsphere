@@ -31,7 +31,7 @@
   claim: single-request HTTP fetch ~50µs
   sources:
   - docs/tallow-complete-reference.html:274-278
-  - CLAUDE.md:116
+  - docs/mega/claims-provenance-gaps.md:12
   bucket: D
   label: target-only
   owner: runtime
@@ -43,7 +43,7 @@
   claim: 100K concurrent reqs — io_uring + userspace TCP ✅
   sources:
   - docs/tallow-complete-reference.html:293-296
-  - CLAUDE.md:119
+  - docs/mega/claims-provenance-gaps.md:13
   bucket: D
   label: target-only
   owner: concurrency
@@ -58,7 +58,7 @@
   - docs/tallow-complete-reference.html:329
   - docs/browser-specs.md:1485
   - docs/browser-specs.md:1524
-  - CLAUDE.md:106
+  - docs/mega/claims-provenance-gaps.md:14
   bucket: D
   label: target-only
   owner: concurrency
@@ -84,7 +84,7 @@
   sources:
   - docs/TALLOW-CAPABILITIES.md:845
   - docs/tallow-complete-reference.html:268-272
-  - CLAUDE.md:115
+  - docs/mega/claims-provenance-gaps.md:15
   bucket: A
   label: partial
   owner: runtime
@@ -96,7 +96,7 @@
   claim: Parse 10K HTML pages ~40ms (SIMD tokenizer)
   sources:
   - docs/tallow-complete-reference.html:281-284
-  - CLAUDE.md:117
+  - docs/mega/claims-provenance-gaps.md:16
   bucket: B
   label: partial
   owner: runtime
@@ -108,7 +108,7 @@
   claim: Encrypt 1GB ~200ms (AES-NI)
   sources:
   - docs/tallow-complete-reference.html:286-290
-  - CLAUDE.md:118
+  - docs/mega/claims-provenance-gaps.md:17
   bucket: A
   label: partial
   owner: runtime
@@ -131,7 +131,7 @@
   claim: io_uring backend (Linux 5.1+) for async I/O
   sources:
   - docs/tallow-complete-reference.html:255
-  - CLAUDE.md:105
+  - docs/mega/claims-provenance-gaps.md:18
   bucket: A
   label: partial
   owner: runtime
@@ -143,7 +143,7 @@
   claim: SIMD string processing (32 bytes at once)
   sources:
   - docs/tallow-complete-reference.html:257
-  - CLAUDE.md:107
+  - docs/mega/claims-provenance-gaps.md:19
   bucket: B
   label: target-only
   owner: runtime
@@ -155,7 +155,7 @@
   claim: Arena allocators, zero GC
   sources:
   - docs/tallow-complete-reference.html:257
-  - CLAUDE.md:108
+  - docs/mega/claims-provenance-gaps.md:20
   bucket: A
   label: partial
   owner: runtime
@@ -214,9 +214,9 @@
   claim: Scales from 10K (epoll) → 1M (io_uring) → 10M+ (DPDK)
   sources:
   - docs/tallow-complete-reference.html:329
-  - CLAUDE.md:105
-  - CLAUDE.md:150
-  - CLAUDE.md:762-763
+  - docs/mega/claims-provenance-gaps.md:18
+  - docs/mega/claims-provenance-gaps.md:22
+  - docs/mega/claims-provenance-gaps.md:23
   bucket: D
   label: target-only
   owner: concurrency
@@ -473,7 +473,7 @@
 - id: R-B9
   claim: HtmlParser ~100x faster (no browser)
   sources:
-  - tallow_1000x_upgrade_prompt.md:23
+  - docs/mega/claims-provenance-gaps.md:24
   bucket: B
   label: partial
   owner: browser
@@ -681,7 +681,7 @@
 - id: R-M3
   claim: Same perf table duplicated in agent-facing root file
   sources:
-  - CLAUDE.md:103-119
+  - docs/mega/claims-provenance-gaps.md:25
   bucket: D
   label: target-only
   owner: docs
@@ -703,15 +703,15 @@
 - id: R-M5
   claim: '''Tallow 2.0 — 1000x Language Specification'' + provenance'
   sources:
-  - docs/mega/tallow-2.0-spec.md:1-8
-  - docs/mega/tallow-2.0-spec.md:147
-  - docs/mega/tallow-2.0-spec.md:160
-  - docs/mega/tallow-2.0-spec.md:212
-  - docs/mega/tallow-2.0-spec.md:216
-  - docs/mega/tallow-2.0-spec.md:251
-  - docs/mega/tallow-2.0-spec.md:252
-  - docs/mega/tallow-2.0-spec.md:379
-  - docs/mega/tallow-2.0-spec.md:421
+  - docs/mega/claims-provenance-gaps.md:26
+  - docs/mega/claims-provenance-gaps.md:27
+  - docs/mega/claims-provenance-gaps.md:28
+  - docs/mega/claims-provenance-gaps.md:29
+  - docs/mega/claims-provenance-gaps.md:30
+  - docs/mega/claims-provenance-gaps.md:31
+  - docs/mega/claims-provenance-gaps.md:32
+  - docs/mega/claims-provenance-gaps.md:33
+  - docs/mega/claims-provenance-gaps.md:34
   bucket: D
   label: target-only
   owner: docs
@@ -722,7 +722,7 @@
 - id: R-M6
   claim: '''Stdlib: 100 modules'' + ''full PQC suite … HSM PKCS#11, sigstore'''
   sources:
-  - docs/mega/tallow-1000x-adversary-upgrade-plan.md:57-58
+  - docs/mega/claims-provenance-gaps.md:40
   bucket: S
   label: partial
   owner: docs
@@ -848,15 +848,15 @@
 - id: R-M12
   claim: ".planning phase-completion bookkeeping: DONE-stub 'all tests passing' assertions + stale ROADMAP/REQUIREMENTS/STATE vs phases 47–49"
   sources:
-  - .planning/phases/36-supply-chain-integrity/36-01-DONE.md:6
-  - .planning/phases/47-codegen-parity/47-01-DONE.md:6
-  - .planning/phases/48a-browser-automation-upgrade-OLD/48-01-DONE.md:6
-  - .planning/ROADMAP.md:594
-  - .planning/ROADMAP.md:631
-  - .planning/ROADMAP.md:650
-  - .planning/ROADMAP.md:662
-  - .planning/STATE.md:29
-  - .planning/REQUIREMENTS.md:554
+  - docs/mega/claims-provenance-gaps.md:41
+  - docs/mega/claims-provenance-gaps.md:42
+  - docs/mega/claims-provenance-gaps.md:43
+  - docs/mega/claims-provenance-gaps.md:44
+  - docs/mega/claims-provenance-gaps.md:45
+  - docs/mega/claims-provenance-gaps.md:46
+  - docs/mega/claims-provenance-gaps.md:47
+  - docs/mega/claims-provenance-gaps.md:48
+  - docs/mega/claims-provenance-gaps.md:49
   bucket: S
   label: partial
   owner: planning

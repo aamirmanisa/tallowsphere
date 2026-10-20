@@ -2,7 +2,7 @@ name: CI
 
 # Carried from the development tree, scoped to what this repository can actually run.
 #
-# The development tree's ci.yml has 15 jobs. Twelve are carried, and three are not — each for a reason
+# The development tree's ci.yml has 15 jobs. Thirteen are carried, and two are not — each for a reason
 # that was MEASURED here rather than assumed, because a gate that cannot pass is worse than a gate
 # left behind (a permanently red check gets ignored). Their inputs are carried anyway, so adopting
 # any of them later is a one-line change:
@@ -10,10 +10,12 @@ name: CI
 #   vet            inputs carried (`supply-chain/{config,audits.toml,imports.lock}`) but the ledger
 #                  is empty — `audits.toml` is 35 bytes — so `cargo vet --locked` has nothing to
 #                  certify against. Unproven here; not wired.
-#   claims-ledger  inputs carried, and it RUNS: rc=1 with **23 hard findings** across 65 entries
-#                  (1 shipped, 43 partial, 21 target-only) plus 48 warnings. It is red upstream too
-#                  — the job accepts rc 0|2 and fails on rc=1 — so wiring it would import a failing
-#                  check. Worth fixing where the claims live, not by weakening the gate here.
+#   claims-ledger  **carried as of 2026-10-20.** It was rc=1 with 23 hard findings, every one a
+#                  "missing source file" anchor to a document never committed here (CLAUDE.md,
+#                  tallow_1000x_upgrade_prompt.md, docs/mega/tallow-2.0-spec.md, .planning/*).
+#                  The anchors now resolve to docs/mega/claims-provenance-gaps.md, which records
+#                  each original anchor verbatim and is explicitly not a claim that the original
+#                  text still exists. The gate is rc=2 (warnings only) — the job accepts 0|2.
 #   fmt            the tree is not cargo-fmt clean: `cargo fmt --all -- --check` reports 7,902
 #                  files and 121,519 diff lines (import-ordering style — `use std::sync::{Arc, mpsc}`
 #                  against `{mpsc, Arc}`), i.e. rustfmt has never been run across this workspace.
@@ -353,6 +355,22 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Regenerate CBOM seed and fail on drift
         run: python3 scripts/crypto-inventory.py --check scripts/crypto-inventory.json
+
+  claims-ledger:
+    name: Claims-ledger gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install the ledger's one dependency
+        run: python3 -m pip install --quiet pyyaml
+      - name: Check the claims ledger
+        # rc 0 = clean, 2 = warnings only (the adopted baseline), 1 = hard findings.
+        run: |
+          set +e
+          python3 scripts/claims_ledger_check.py --format text
+          rc=$?
+          echo "claims-ledger rc=$rc"
+          if [ "$rc" -eq 1 ]; then exit 1; fi
 
   # ── Canonical-pin gate (blocking) ──────────────────────────────────────────
   # tallow-crypto, tallow-net, tallow-protocol and tallow-svid are canonical in THIS repository and
