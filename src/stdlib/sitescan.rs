@@ -1352,6 +1352,7 @@ fn value_to_json(v: &Value) -> J {
             enum_name,
             variant,
             fields,
+            ..
         } => {
             let mut obj = JMap::new();
             obj.insert("_enum".to_string(), J::String(enum_name.clone()));

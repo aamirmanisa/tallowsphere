@@ -208,6 +208,7 @@ jobs:
           --test process_exec_parity
           --test result_truthiness_parity
           --test fuzz_safety
+          --test enum_semantics_parity
           --test deals_integration
           --test artifact_sealing
           --test browser_contracts
