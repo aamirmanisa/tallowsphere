@@ -12022,19 +12022,25 @@ impl Interpreter {
                     .first()
                     .map(|v| v.as_string())
                     .unwrap_or_default();
-                let args_list: Vec<String> =
-                    positional.iter().skip(1).map(|v| v.as_string()).collect();
+                let args_list: Vec<String> = positional
+                    .iter()
+                    .skip(1)
+                    .flat_map(|v| match v {
+                        Value::Array(items) => items.iter().map(|x| x.as_string()).collect::<Vec<_>>(),
+                        _ => vec![v.as_string()],
+                    })
+                    .collect();
                 return match std::process::Command::new(&cmd).args(&args_list).output() {
                     Ok(output) => {
                         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                         let status_code = output.status.code().unwrap_or(-1);
                         Ok(Value::Struct {
-                            name: "ProcessResult".to_string(),
+                            name: "Output".to_string(),
                             fields: vec![
                                 ("stdout".to_string(), Value::String(stdout)),
                                 ("stderr".to_string(), Value::String(stderr)),
-                                ("status".to_string(), Value::Int(status_code as i128)),
+                                ("exit_code".to_string(), Value::Int(status_code as i128)),
                                 ("success".to_string(), Value::Bool(output.status.success())),
                             ],
                         })

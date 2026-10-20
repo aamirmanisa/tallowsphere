@@ -35,6 +35,7 @@ optional_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DI
 parity_runner: UNCLASSIFIED - needs triage
 perf_binary_startup: specialized suite (bench/perf/fuzz), not per-commit
 perf_install: specialized suite (bench/perf/fuzz), not per-commit
+process_contract: runs tallow against the host process table (local only, not in CI image)
 request_plan_cli: PARKED — verbs (run-plan/build-plan/lint/package-report, fmt --check) are not implemented; tests ignored with that reason (U-218)
 transfer_transport: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 wait_net_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
