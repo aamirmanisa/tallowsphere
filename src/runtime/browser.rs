@@ -3235,6 +3235,11 @@ pub extern "C" fn tallow_page_register_handler(
     // once is harmless for the kinds that would arrive anyway.
     let rt = get_runtime();
     let _ = rt.block_on(page_ref.enable_runtime_events());
+    // A handler that can never fire is a silent no-op; arm the domain first.
+    if let Err(e) = rt.block_on(page_ref.arm_event_kind(&kind_str)) {
+        set_last_error(format!("register_handler: cannot arm {kind_str}: {e}"));
+        return -1;
+    }
     page_ref.register_native_handler(&kind_str, handler as usize);
     0
 }

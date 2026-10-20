@@ -21530,6 +21530,13 @@ impl Interpreter {
                         let rt = get_browser_runtime();
                         let _ = rt.block_on(page.enable_runtime_events());
                         let kind = m.trim_start_matches("on_").to_string();
+                        // A registered handler that can never fire is a silent lie:
+                        // arm the CDP domain that produces this event kind.
+                        if let Err(e) = rt.block_on(page.arm_event_kind(&kind)) {
+                            return Err(RuntimeError::Error(format!(
+                                "{m}: cannot arm event delivery: {e}"
+                            )));
+                        }
                         page.register_handler(&kind, &handler);
                         Ok(Value::Ok(Box::new(Value::Struct {
                             name: "EventListener".to_string(),

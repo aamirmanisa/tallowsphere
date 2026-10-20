@@ -2846,6 +2846,34 @@ impl Page {
         Ok(())
     }
 
+    /// Arm the CDP domain that makes `kind` able to fire at all.
+    ///
+    /// Two handlers were previously registered and then never delivered:
+    /// `Page.downloadWillBegin` only arrives once a download behavior is set, and
+    /// `Page.fileChooserOpened` only arrives with file-chooser interception on.
+    /// Registering the handler is exactly the moment both are wanted, so they are
+    /// armed here instead of leaving the caller to discover a silent no-op.
+    pub async fn arm_event_kind(&self, kind: &str) -> Result<(), BrowserError> {
+        match kind {
+            "download" => {
+                let dir = std::env::temp_dir().join("tallow-downloads");
+                let dir = dir.to_string_lossy().to_string();
+                self.set_download_path(&dir).await
+            }
+            "filechooser" => {
+                self.client
+                    .send_command_with_session(
+                        "Page.setInterceptFileChooserDialog",
+                        Some(json!({ "enabled": true })),
+                        &self.session_id,
+                    )
+                    .await
+                    .map(|_| ())
+            }
+            _ => Ok(()),
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Popup / new-tab detection (Playwright-parity)
     // -----------------------------------------------------------------------

@@ -21,6 +21,7 @@ browser_network_callbacks_parity: requires Chromium + loopback (runs locally wit
 browser_page_events_shared: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_page_methods: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_result_field_refusal: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_ui_events_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_unlowered_gaps: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 compiler_bench: specialized suite (bench/perf/fuzz), not per-commit
 crawler_browser_escalation: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
