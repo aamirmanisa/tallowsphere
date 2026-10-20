@@ -189,7 +189,7 @@ defect, not a policy:
       `tallow_process_execv`; literal arrays keep the no-allocation blob path. `tests/process_exec_parity.rs` 1/1: stdout,
       stderr, exit code and `success` identical on both planes.
 
-## Gate sweep — 2026-10-20 (measured on HEAD 916ddfd)
+## Gate sweep — 2026-10-20 (measured on HEAD 0bf3ef4 (last code change; later commits are docs/register))
 
 | gate | command | result |
 |---|---|---|
