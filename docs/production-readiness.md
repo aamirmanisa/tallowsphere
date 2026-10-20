@@ -149,6 +149,11 @@ defect, not a policy:
 
 - [x] The gold linker is deprecated with known warnings — decide or document.  
       DECIDED: not used. .cargo/config.toml lines 55-59 record the measurement — it links, but cargo warns the linker is deprecated with known Rust bugs; lld is the real fix and is a package change.
+- [x] **Three page FFIs were exported with mangled names** — `Page.fill`,
+      `Page.select` and cookie consent compiled and could not link ("undefined
+      reference to tallow_page_fill"). Fixed; `scripts/check_ffi_symbols.py` gates
+      the class in CI, with a negative control that exits 1.
+
 - [x] Browser methods declared but unlowered are ENUMERATED: exactly one, `Page.goto_antibot`, pinned as a loud refusal on both planes in `tests/browser_unlowered_gaps.rs`. `scripts/census_page_methods.py` re-derives
       the 48/47 count from `impl Page` on every CI run (negative control: emptying its
       allowlist exits 1), so a drifted claim fails instead of surviving. Earlier entries for `Page.links` and `Element.classes` were wrong (both are `Html`/`Element` methods in stdlib/html.tl) and were removed — a refusal that passes for the wrong reason pins nothing. `resolve_antibot` is now implemented with parity.
