@@ -1,4 +1,4 @@
-# Production-readiness checklist — Tallow (state: 2026-10-20, HEAD bbc898d, tag v1.1.1)
+# Production-readiness checklist — Tallow (state: 2026-10-20, HEAD 0304255, tag v1.1.1)
 
 Every item below is either verified against this tree or explicitly marked
 UNVERIFIED. No item may be checked without a command whose output proves it.
