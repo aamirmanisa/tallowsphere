@@ -21,9 +21,11 @@ const GAPS: &[(&str, &str)] = &[
         "Page.goto_antibot",
     ),
     // No lowering AND no FFI: `tallow_page_links` does not exist.
-    (r#"let v = page.links()"#, "Page.links"),
-    // Element methods: the registry knows HtmlElement.classes, not this one.
-    (r#"let v = page.query_selector("body").classes()"#, "Element.classes"),
+    // NOTE: `page.links()` and `page.query_selector(..).classes()` were listed
+    // here by mistake. Neither is a Page method — `links` lives on `Html` and
+    // `classes` on `Element` in stdlib/html.tl — so those programs failed as type
+    // errors, not as unimplemented lowerings. A refusal test that passes for the
+    // wrong reason pins nothing, so they were removed.
 ];
 
 fn program(call: &str) -> String {

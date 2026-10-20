@@ -42,10 +42,10 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
 
 - [x] **Array parity at N=0/1/3** — DONE for the four lowerings that exist:
       `query_selector_all`, `drain_events`, `extract_all_text`, `get_cookies`
-      (`browser_array_parity_n.rs`, `_links.rs`, `_cookies.rs`). `Page.links` and
-      `Element.classes` have no lowering and no FFI, so they cannot be covered by a
-      parity test; both are pinned as loud refusals in
-      `tests/browser_unlowered_gaps.rs` and recorded in `docs/browser-native-gaps.md`.
+      (`browser_array_parity_n.rs`, `_links.rs`, `_cookies.rs`). `Page.links` and `Element.classes` are NOT
+typecorrectly Page methods (they live on `Html`/`Element` in `stdlib/html.tl`), so
+      calls like `page.links()` are type errors — that was measured and the bogus
+      refusal entries were removed rather than kept as false gaps.
 - [x] **Parity tests must assert non-trivial values.** N=1 probes hid every  
       DONE — query_selector_all, drain_events, extract_all_text and get_cookies now assert lengths and contents at N=0/1/3 on both planes.
       length bug; single-element fixtures hid ordering. Enforce a minimum of two
@@ -149,9 +149,9 @@ defect, not a policy:
 
 - [x] The gold linker is deprecated with known warnings — decide or document.  
       DECIDED: not used. .cargo/config.toml lines 55-59 record the measurement — it links, but cargo warns the linker is deprecated with known Rust bugs; lld is the real fix and is a package change.
-- [x] Remaining browser methods declared in `stdlib/browser.tl` but with no lowering are now ENUMERATED and pinned as loud refusals: `Page.goto_antibot`, `Page.links`, `Element.classes`. Each names itself on both planes in `tests/browser_unlowered_gaps.rs`; `docs/browser-native-gaps.md` records what closing each would take.
-      native arm: the four became three, then two (`goto_antibot`,
-      `resolve_antibot`); re-run the census before claiming zero.
+- [x] Browser methods declared but unlowered are ENUMERATED: exactly one, `Page.goto_antibot`, pinned as a loud refusal on both planes in `tests/browser_unlowered_gaps.rs`. `scripts/census_page_methods.py` re-derives
+      the 48/47 count from `impl Page` on every CI run (negative control: emptying its
+      allowlist exits 1), so a drifted claim fails instead of surviving. Earlier entries for `Page.links` and `Element.classes` were wrong (both are `Html`/`Element` methods in stdlib/html.tl) and were removed — a refusal that passes for the wrong reason pins nothing. `resolve_antibot` is now implemented with parity.
 
 ## Definition of 100%
 
