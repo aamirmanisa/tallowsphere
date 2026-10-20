@@ -495,6 +495,11 @@ pub struct CodeGen<'a> {
     // Function signatures
     functions: HashMap<String, FnSig>,
 
+    /// Names declared `native fn` (register #129). Their calls bind to a symbol
+    /// of exactly that name — no `tallow.` mangling — because the provider is an
+    /// external object, not a function this module emits.
+    native_fns: std::collections::HashSet<String>,
+
     // Loop context stack: (continue_label, break_label)
     loop_stack: Vec<(String, String)>,
 
@@ -689,6 +694,14 @@ impl<'a> CodeGen<'a> {
             next_label: 0,
             variables: HashMap::new(),
             functions: HashMap::new(),
+            native_fns: program
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Fn(f) if f.is_native => Some(f.name.clone()),
+                    _ => None,
+                })
+                .collect(),
             loop_stack: Vec::new(),
             struct_layouts: BTreeMap::new(),
             constants: HashMap::new(),
@@ -1263,8 +1276,10 @@ void tallow_async_runtime_shutdown(void) {
         for item in &self.merged_items {
             match item {
                 Item::Fn(func) => {
-                    // Skip generic functions — emit specializations instead
-                    if func.type_params.is_empty() {
+                    // Skip generic functions — emit specializations instead.
+                    // A `native fn` has no body by definition: its symbol is
+                    // declared above and supplied at link time.
+                    if func.type_params.is_empty() && !func.is_native {
                         fns_to_emit.push(func.clone());
                     }
                 }
@@ -1352,6 +1367,33 @@ void tallow_async_runtime_shutdown(void) {
         }
         if !self.strings.is_empty() {
             ir.push('\n');
+        }
+
+        // `native fn` declarations (register #129): no body is emitted, only a
+        // symbol declaration, so the call resolves at link time against whatever
+        // provides that symbol. A missing provider is an undefined reference that
+        // names the function — a loud failure, never a silent no-op.
+        for item in &self.merged_items {
+            if let Item::Fn(f) = item {
+                if f.is_native {
+                    let args: Vec<&str> = f
+                        .params
+                        .iter()
+                        .map(|p| self.resolve_type(&p.ty).to_ir())
+                        .collect();
+                    let ret = f
+                        .return_type
+                        .as_ref()
+                        .map(|t| self.resolve_type(t))
+                        .unwrap_or(LLType::Void);
+                    ir.push_str(&format!(
+                        "declare {} @{}({})\n",
+                        ret.to_ir(),
+                        f.name,
+                        args.join(", ")
+                    ));
+                }
+            }
         }
 
         // External declarations
@@ -3197,6 +3239,7 @@ void tallow_async_runtime_shutdown(void) {
         FnDecl {
             annotations: generic_fn.annotations.clone(),
             is_async: generic_fn.is_async,
+            is_native: generic_fn.is_native,
             name: mangled,
             type_params: vec![], // specialized — no longer generic
             params: specialized_params,
@@ -7634,7 +7677,13 @@ void tallow_async_runtime_shutdown(void) {
                 }
             };
             if let Some(sig) = sig_opt {
-                let mangled = mangle_name(&resolved_name);
+                // A native fn is an external symbol: call it by name, not by the
+                // `tallow.` mangled name this module gives its own functions.
+                let mangled = if self.native_fns.contains(&resolved_name) {
+                    resolved_name.clone()
+                } else {
+                    mangle_name(&resolved_name)
+                };
                 // Omitted trailing arguments: the interpreter binds the declared
                 // defaults, the native backend has no default metadata at call
                 // sites. Emitting the call with fewer operands than the

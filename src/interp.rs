@@ -830,6 +830,8 @@ pub enum RuntimeError {
     UndefinedVar(String),
     #[error("undefined function: {0}")]
     UndefinedFn(String),
+    #[error("native function `{0}` has no interpreter implementation — it is bound at link time; run without --interpret")]
+    NativeFnInInterpreter(String),
 }
 
 // ── Environment (Scoped Variables) ───────────────────────────────────────────
@@ -1591,6 +1593,7 @@ impl Interpreter {
                                         let default_fn = FnDecl {
                                             annotations: Vec::new(),
                                             is_async: false,
+                                            is_native: false,
                                             name: tm.name.clone(),
                                             type_params: Vec::new(),
                                             params: tm.params.clone(),
@@ -12363,6 +12366,12 @@ impl Interpreter {
 
         // User-defined functions
         if let Some(func) = self.functions.get(name).cloned() {
+            // `native fn` (register #129) is a link-time binding: the interpreter
+            // has nothing to execute, and must say so instead of running an
+            // empty body and returning a made-up value.
+            if func.is_native {
+                return Err(RuntimeError::NativeFnInInterpreter(name.to_string()));
+            }
             // Guard against unbounded recursion
             if self.call_depth >= Self::MAX_CALL_DEPTH {
                 return Err(RuntimeError::Error(format!(
@@ -21712,6 +21721,7 @@ impl Interpreter {
                             return Some(Arc::new(FnDecl {
                                 annotations: Vec::new(),
                                 is_async: false,
+                                is_native: false,
                                 name: method_name.to_string(),
                                 type_params: Vec::new(),
                                 params: tm.params.clone(),

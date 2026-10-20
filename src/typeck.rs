@@ -896,6 +896,11 @@ impl<'a> TypeChecker<'a> {
 
     /// Check that all code paths return a value when the function has a non-void return type.
     fn check_return_coverage(&mut self, f: &FnDecl, _declared_return: &Type) {
+        // A `native fn` has no body by definition: its implementation is a
+        // symbol supplied at link time (register #129).
+        if f.is_native {
+            return;
+        }
         if f.body.stmts.is_empty() {
             // E2500 (not E0100): E0100 is reserved by legal_pass for the
             // network-touching-fn-without-@legal error. This is a distinct

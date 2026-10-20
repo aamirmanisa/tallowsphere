@@ -43,6 +43,9 @@ impl Item {
 pub struct FnDecl {
     pub annotations: Vec<Annotation>,
     pub is_async: bool,
+    /// `native fn name(...) -> T` — a declaration with no body, implemented by a
+    /// symbol of the same name at link time (register #129).
+    pub is_native: bool,
     pub name: String,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
