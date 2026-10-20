@@ -485,6 +485,11 @@ impl SupplyChainReport {
 /// 6. SLSA provenance level
 /// Does the signing path actually round-trip? Generates an ephemeral key, signs a
 /// fixed payload and verifies it — the same calls `tallow package sign/verify` make.
+///
+/// NOTE (docs/PANIC-POLICY.md): both `catch_unwind` calls below are inert in every
+/// shipped profile (`panic = "abort"`); they contain panics only under `cargo test`
+/// and dev builds. They stay because a malformed key/payload in a self-test should
+/// report "signing unavailable" rather than take the audit down in the test profile.
 fn signing_roundtrip_works() -> bool {
     let key = ed25519_dalek::SigningKey::generate(&mut rand_core_06::OsRng);
     let probe = b"tallow-supply-chain-self-test";
