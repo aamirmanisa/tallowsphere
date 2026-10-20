@@ -1,0 +1,204 @@
+name: Release
+
+# The engine repo's own release pipeline.
+#
+# Why this file exists: until now the only release workflow lived in the `~/Nixe`
+# workspace and built from a filtered copy of this tree, so a tag here could not
+# produce an artifact and nothing in this repository proved that the five shipped
+# targets compile. A tag now builds, checksums, signs and drafts a release from
+# this tree — nothing is published automatically.
+#
+# LOCALITY: actions are pinned to full commit SHAs (resolved with `git ls-remote`).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Upload artifacts and draft a release (leave off to build only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Gate: nothing is built before the tree proves itself ───────────────
+  gate:
+    name: Release gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+
+      - name: Assert tag ↔ Cargo.toml version consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "not a tag run (ref type: ${GITHUB_REF_TYPE}) — version check skipped"
+            exit 0
+          fi
+          ver="$(grep -m1 '^version' Cargo.toml | sed -E 's/^version *= *"([^"]+)".*/\1/')"
+          tag="${GITHUB_REF_NAME#v}"
+          [ -n "$ver" ] || { echo "could not read version from Cargo.toml"; exit 1; }
+          if [ "$ver" != "$tag" ] && [ "$ver" != "$tag.0" ]; then
+            echo "Cargo.toml version '$ver' does not match tag '$GITHUB_REF_NAME' — refusing to build a mislabeled release"
+            exit 1
+          fi
+          echo "version '$ver' consistent with tag '$GITHUB_REF_NAME'"
+
+      - name: Static gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/panic_policy_check.py
+          python3 scripts/claims_ledger_check.py
+          python3 scripts/check_capability_registry.py
+          python3 scripts/check_ffi_symbols.py
+          python3 scripts/check_test_coverage.py
+
+      - name: Full lib suite
+        shell: bash
+        run: cargo test --lib --locked -- --test-threads=2
+
+  # ── Build one archive per shipped target ───────────────────────────────
+  build:
+    name: build ${{ matrix.label }}
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            label: linux-x86_64
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-musl
+            label: linux-aarch64
+          - os: macos-15
+            target: x86_64-apple-darwin
+            label: macos-x86_64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            label: macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write        # keyless Sigstore signing
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        shell: bash
+        run: cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(grep -m1 '^version' Cargo.toml | sed -E 's/^version *= *"([^"]+)".*/\1/')"
+          bash scripts/package_release.sh "${{ matrix.target }}" "$ver" --out dist
+
+      - name: Smoke — the packaged binary runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            *-windows-*) exe=dist/*.zip; mkdir -p unpack && (cd unpack && unzip -q ../$exe) && ./unpack/tallow.exe --version ;;
+            *) a=$(ls dist/*.tar.gz); mkdir -p unpack && tar xzf "$a" -C unpack && ./unpack/tallow --version ;;
+          esac
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.2.4'
+
+      - name: Sign archive (Sigstore keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for a in dist/*.tar.gz dist/*.zip; do
+            [ -e "$a" ] || continue
+            cosign sign-blob --yes --tlog-upload=true "$a" --output-signature "$a.sig"
+          done
+
+      - name: Attest build provenance (SLSA L2)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'dist/*.tar.gz'
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tallow-${{ matrix.label }}
+          path: dist/*
+          retention-days: 30
+
+  # ── Draft release (manual dispatch with publish=true, or a v* tag) ─────
+  publish:
+    name: draft release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: tallow-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify every archive has a checksum and a signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          n=0
+          for a in *.tar.gz *.zip; do
+            [ -e "$a" ] || continue
+            [ -f "$a.sha256" ] || { echo "MISSING $a.sha256 — refusing to publish"; exit 1; }
+            [ -f "$a.sig" ]    || { echo "MISSING $a.sig — refusing to publish"; exit 1; }
+            sha256sum -c "$a.sha256"
+            n=$((n+1))
+          done
+          echo "verified $n archive(s)"
+          [ "$n" -eq 5 ] || { echo "expected 5 archives, found $n"; exit 1; }
+
+      - name: Draft release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: release-assets/*
+          tag_name: ${{ github.ref_name }}
+          name: "Tallow ${{ github.ref_name }}"
+          draft: true
+          prerelease: false
+          body: |
+            ## Tallow ${{ github.ref_name }}
+
+            Five targets, each with a `.sha256` sidecar and a Sigstore keyless signature:
+
+            ```
+            cosign verify-blob --signature <archive>.sig <archive>
+            sha256sum -c <archive>.sha256
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
