@@ -21,8 +21,8 @@ An A/B against v1 is therefore unmeasurable, not merely inconvenient. Any claim 
 
 | field | value |
 |---|---|
-| engine tree | `1d3b7aa` (code at `03a3932` + the message-join commit) |
-| binary | `target/release/tallow`, sha256 `c53b1869a527ffe5…` |
+| engine tree | `3e876b3` (includes #124 function values) |
+| binary | `target/release/tallow`, sha256 `946b25231c9ee5cf…` |
 | corpus | `examples/*.tl`, 57 files, sha256 `dc45d5af0884961b…` |
 | host | aarch64, 8 cpus, kernel 6.8.0-146, loadavg 1.71 at capture |
 | params | iters 7, warmup 2, parser mode `recover` |
@@ -30,11 +30,15 @@ An A/B against v1 is therefore unmeasurable, not merely inconvenient. Any claim 
 | metric | value |
 |---|---|
 | files ok / total | **57 / 57** (success 1.0, 0 unresolved) |
-| median check | 12.343 ms |
-| p95 check | 14.963 ms |
-| max check | 24.671 ms |
-| throughput | 80.627 files/s |
-| peak RSS | 22.8 MB |
+| median check | 12.488 ms |
+| p95 check | 16.359 ms |
+| max check | 21.852 ms |
+| throughput | 79.456 files/s |
+| peak RSS | 21.2 MB |
+
+A first capture of the same corpus on the pre-#124 binary (`c53b1869…`) read 12.343 ms
+median / 14.963 ms p95 / 80.627 files/s / 22.8 MB. The delta is noise on this host, and
+it is recorded rather than smoothed: one run cannot resolve a 1 % median shift.
 
 The v1 file recorded 51/58 ok (0.8793) — three of those seven misses were genuinely
 broken examples, fixed in this change:
