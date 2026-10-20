@@ -87,7 +87,7 @@ pub extern "C" fn tallow_process_exec(
 /// hands it here. The blob entry point above stays for literal arrays, which
 /// need no loop.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tallow_process_execv(
+pub extern "C" fn tallow_process_execv(
     cmd: *const c_char,
     argv: *const *const c_char,
     argc: i64,

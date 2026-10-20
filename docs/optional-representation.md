@@ -1,9 +1,11 @@
 # Optional representation in the native plane
 
-Status: **steps 1–4 done; field-level WaitResult parity (step 5) is the open
-item.** Returns, printing, field store/load, truthiness, unboxing and `== nil`
-all work; arithmetic on an optional still refuses by name. Operator chose the
-boxed encoding (option 1 of three in register #119) on 2026-10-18.
+Status: **complete — steps 1–5 done, no open items.** Returns, printing, field
+store/load, truthiness, `== nil` and field-level WaitResult parity all work.
+Arithmetic on an optional is not a gap: the type checker rejects it on both
+planes with `E0110 left operand of + must be numeric, got i64?`, so there is no
+divergence to fix. Operator chose the boxed encoding (option 1 of three in
+register #119) on 2026-10-18.
 
 ## The defect it fixes
 
@@ -64,8 +66,8 @@ Rules:
    catch-all that read "non-null pointer ⇒ true"), and `== nil` / `!= nil` /
    value equality (`emit_optional_eq`). The same test file's
    `optional_truthiness_and_nil_equality_agree` asserts all of it on both planes.
-   Remaining: arithmetic on an optional (`r.elapsed_ms + 1`) refuses with the
-   named coerce error rather than unboxing.
+   Arithmetic on an optional is rejected by the type checker (E0110) before
+   either engine runs — same error on both, so nothing is left open here.
 3. **DONE** — the browser structs carry real optional fields, and the five wait
    arms fill only what the interpreter fills: `wait_for_event` writes `event`
    (not `received`/`method`), `wait_for_request` leaves `received` nil, and
