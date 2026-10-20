@@ -211,6 +211,7 @@ jobs:
           --test enum_semantics_parity
           --test match_exhaustiveness_parity
           --test truthiness_parity
+          --test data_enum_print_parity
           --test deals_integration
           --test artifact_sealing
           --test browser_contracts
