@@ -5136,7 +5136,13 @@ void tallow_async_runtime_shutdown(void) {
                     }
                 }
 
-                Ok(LLValue::new("0".into(), LLType::I64))
+                // No layout, no payload, no constant matched. Returning a literal 0
+                // here made every untyped field read silently wrong on this plane
+                // (`process.exec(..).stdout` printed 0 while the interpreter printed
+                // the real stdout). A field that cannot be located is a refusal.
+                return Err(format!(
+                    "field access `.{field}`: the receiver has no known struct layout with that field on the native plane; bind the value and use a declared struct field, or run with --interpret"
+                ));
             }
 
             // ── If/Else ─────────────────────────────────────────────────
@@ -20544,20 +20550,14 @@ impl<'a> CodeGen<'a> {
                 self.emit_line("unreachable");
                 Ok(Some(LLValue::new("0".into(), LLType::I64)))
             }
-            "run" | "exec" => {
-                // process.run("command") -> system("command"), returns exit code
-                if let Some(arg) = args.first() {
-                    let cmd = self.emit_expr(&arg.value)?;
-                    let cmd_str = self.coerce_to_string(&cmd)?;
-                    let result = self.fresh_reg();
-                    self.emit_line(&format!("{result} = call i32 @system(ptr {cmd_str})"));
-                    let result_i64 = self.fresh_reg();
-                    self.emit_line(&format!("{result_i64} = sext i32 {result} to i64"));
-                    Ok(Some(LLValue::new(result_i64, LLType::I64)))
-                } else {
-                    Ok(Some(LLValue::new("0".into(), LLType::I64)))
-                }
-            }
+            "run" | "exec" => Err(
+                "process.exec/run: the language declares `Output` (stdout, stderr, \
+                 exit_code, success), but the native lowering can only run a shell and \
+                 read its exit status — it cannot capture output, so it used to return a \
+                 bare number that every field read turned into 0. Use --interpret, or \
+                 redirect the child's output yourself"
+                    .to_string(),
+            ),
             "pid" => {
                 let reg = self.fresh_reg();
                 self.emit_line(&format!("{reg} = call i32 @getpid()"));

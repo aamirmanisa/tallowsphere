@@ -3,12 +3,12 @@
 // Shell execution requires can_execute in agent context.
 
 /// Execute a shell command
-fn exec(cmd: String) -> Result<Output> {
+fn exec(cmd: String) -> Output {
     // native: runs command in default shell
 }
 
 /// Execute with arguments
-fn exec(cmd: String, args: []String) -> Result<Output> {
+fn exec(cmd: String, args: []String) -> Output {
     // native: runs command with arguments
 }
 
@@ -17,6 +17,7 @@ struct Output {
     stdout:    String,
     stderr:    String,
     exit_code: i32,
+    success:   bool,
 }
 
 impl Output {
@@ -26,23 +27,24 @@ impl Output {
 }
 
 /// Spawn a background process
-fn spawn(cmd: String, args: []String) -> Result<Process> {
+fn spawn(cmd: String, args: []String) -> Process {
     // native: starts process without waiting
 }
 
 /// Process handle
 struct Process {
-    pid: u32,
+    pid:     u32,
+    running: bool,
 }
 
 impl Process {
     /// Wait for process to finish
-    fn wait(self) -> Result<Output> {
+    fn wait(self) -> Output {
         // native: blocks until process exits
     }
 
     /// Kill the process
-    fn kill(self) -> Result<()> {
+    fn kill(self) {
         // native: sends SIGKILL
     }
 

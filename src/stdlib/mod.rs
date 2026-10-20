@@ -396,13 +396,18 @@ pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option
                 filter::dispatch_method(object, method, args)
             }
             "FsWatcher" => fs::dispatch_method(object, method, args),
+            // `stdlib/db.tl` declares `Connection`; forensics only ever *produces*
+            // structs under that name for packet records and implements no methods
+            // for them, so routing it there turned every db connection call into
+            // "unknown method". db answers with an honest explanation instead.
+            "Connection" => db::dispatch_method(object, method, args),
             "HtmlDocument" => html::dispatch_method(object, method, args),
             "HtmlElement" => html::dispatch_method(object, method, args),
             // json and url types are handled inline in interp.rs. `time` is NOT one of them any
             // more: its Int-backed receivers are routed above (see the note there).
             "Regex" => regex::dispatch_method(object, method, args),
             "HttpListener" | "Response" => http::dispatch_method(object, method, args),
-            "ChildProcess" => process::dispatch_method(object, method, args),
+            "ChildProcess" | "Process" => process::dispatch_method(object, method, args),
             "IntelGraph" | "IntelEntity" | "IntelEdge" | "IntelReport" | "Finding" | "Target"
             | "SubdomainResult" | "TechStack" | "Technology" | "Provenance" | "DomainIntel"
             | "ASNIntel" | "EmailIntel" | "DocumentMeta" | "SpfResult" | "DmarcResult"
@@ -413,7 +418,7 @@ pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option
             // Phase 38: Digital Forensics struct types
             "EvidenceChain" | "EvidenceEntry" | "MemoryDump" | "DiskImage" | "CarvedFile"
             | "NetworkCapture" | "VolatileData" | "StixBundle" | "StixObject"
-            | "AttackTechnique" | "Connection" | "ProcessInfo" => {
+            | "AttackTechnique" | "ProcessInfo" => {
                 forensics::dispatch_method(object, method, args)
             }
             // Phase 02: Copy + Verification engine struct types

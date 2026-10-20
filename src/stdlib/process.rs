@@ -1,7 +1,9 @@
 //! Standard library: `tallow.process` -- Process management.
 //!
 //! Provides process.exec/run (synchronous), process.spawn (async with handle),
-//! process.exit, process.pid. ChildProcess struct supports .wait() and .kill().
+//! process.exit, process.pid. The handle struct is `Process` (the name
+//! `stdlib/process.tl` declares) and supports .wait(), .kill() and .is_running().
+//! `ChildProcess` is still accepted from older values.
 
 use super::StdlibResult;
 use crate::interp::Value;
@@ -32,7 +34,10 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
 /// Dispatch a method call on a ChildProcess struct.
 pub fn dispatch_method(object: &Value, method: &str, _args: Vec<Value>) -> Option<StdlibResult> {
     if let Value::Struct { name, fields } = object {
-        if name != "ChildProcess" {
+        // `stdlib/process.tl` declares the handle as `Process`; the router used to
+        // dispatch only `ChildProcess`, so every declared method was unreachable.
+        // Accept both names rather than renaming either side.
+        if name != "ChildProcess" && name != "Process" {
             return None;
         }
         let pid = fields
@@ -47,6 +52,7 @@ pub fn dispatch_method(object: &Value, method: &str, _args: Vec<Value>) -> Optio
         match method {
             "wait" => Some(child_wait(pid)),
             "kill" => Some(child_kill(pid)),
+            "is_running" => Some(child_is_running(pid)),
             _ => None,
         }
     } else {
@@ -54,23 +60,69 @@ pub fn dispatch_method(object: &Value, method: &str, _args: Vec<Value>) -> Optio
     }
 }
 
+/// `Process.is_running()` — reap-aware liveness.
+///
+/// `kill(pid, 0)` alone reports a zombie as alive: the child has exited but the
+/// kernel keeps the pid until someone waits. `try_wait` answers the real question
+/// and reaps the entry when the process is gone.
+fn child_is_running(pid: u32) -> StdlibResult {
+    let mut map = CHILD_PROCESSES.lock().unwrap();
+    if let Some(child) = map.get_mut(&pid) {
+        return match child.try_wait() {
+            Ok(None) => Ok(Value::Bool(true)),
+            Ok(Some(_)) => {
+                map.remove(&pid);
+                Ok(Value::Bool(false))
+            }
+            Err(e) => Err(format!("is_running: {e}")),
+        };
+    }
+    // Not one of ours: fall back to the signal-0 probe.
+    #[cfg(unix)]
+    {
+        Ok(Value::Bool(unsafe { libc::kill(pid as i32, 0) } == 0))
+    }
+    #[cfg(not(unix))]
+    {
+        Err("Process.is_running: handle is not tracked and this platform has no probe".into())
+    }
+}
+
+
+/// Flatten `args: []String` call arguments.
+///
+/// The declared surface takes an array, but the positionals arrive as one
+/// `Value::Array`; mapping `as_string` over them stringified the whole array and
+/// handed the child a single argument that looked like `["hello"]`. Expand arrays
+/// one level instead, which is what the signature promises.
+fn flatten_args(args: &[Value]) -> Vec<String> {
+    let mut out = Vec::new();
+    for a in args {
+        match a {
+            Value::Array(items) => out.extend(items.iter().map(|v| v.as_string())),
+            _ => out.push(a.as_string()),
+        }
+    }
+    out
+}
+
 fn process_exec(args: Vec<Value>) -> StdlibResult {
     let cmd = args.first().map(|v| v.as_string()).unwrap_or_default();
     if cmd.is_empty() {
         return Err("process.exec requires a command string".into());
     }
-    let args_list: Vec<String> = args.iter().skip(1).map(|v| v.as_string()).collect();
+    let args_list = flatten_args(&args[1..]);
     match Command::new(&cmd).args(&args_list).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let status_code = output.status.code().unwrap_or(-1);
             Ok(Value::Struct {
-                name: "ProcessResult".to_string(),
+                name: "Output".to_string(),
                 fields: vec![
                     ("stdout".to_string(), Value::String(stdout)),
                     ("stderr".to_string(), Value::String(stderr)),
-                    ("status".to_string(), Value::Int(status_code as i128)),
+                    ("exit_code".to_string(), Value::Int(status_code as i128)),
                     ("success".to_string(), Value::Bool(output.status.success())),
                 ],
             })
@@ -84,7 +136,7 @@ fn process_spawn(args: Vec<Value>) -> StdlibResult {
     if cmd.is_empty() {
         return Err("process.spawn requires a command string".into());
     }
-    let args_list: Vec<String> = args.iter().skip(1).map(|v| v.as_string()).collect();
+    let args_list = flatten_args(&args[1..]);
     match Command::new(&cmd)
         .args(&args_list)
         .stdin(Stdio::null())
@@ -96,7 +148,10 @@ fn process_spawn(args: Vec<Value>) -> StdlibResult {
             let pid = child.id();
             CHILD_PROCESSES.lock().unwrap().insert(pid, child);
             Ok(Value::Struct {
-                name: "ChildProcess".to_string(),
+                // The language declares `Process`; producing `ChildProcess` made the
+                // declared type unnameable and hid every method behind a name the
+                // router had to be taught separately.
+                name: "Process".to_string(),
                 fields: vec![
                     ("pid".to_string(), Value::Int(pid as i128)),
                     ("running".to_string(), Value::Bool(true)),
@@ -116,11 +171,11 @@ fn child_wait(pid: u32) -> StdlibResult {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                 let status_code = output.status.code().unwrap_or(-1);
                 Ok(Value::Struct {
-                    name: "ProcessResult".to_string(),
+                    name: "Output".to_string(),
                     fields: vec![
                         ("stdout".to_string(), Value::String(stdout)),
                         ("stderr".to_string(), Value::String(stderr)),
-                        ("status".to_string(), Value::Int(status_code as i128)),
+                        ("exit_code".to_string(), Value::Int(status_code as i128)),
                         ("success".to_string(), Value::Bool(output.status.success())),
                     ],
                 })
@@ -136,9 +191,10 @@ fn child_kill(pid: u32) -> StdlibResult {
     match map.get_mut(&pid) {
         Some(child) => match child.kill() {
             Ok(()) => {
-                // Remove after kill
-                drop(map);
-                let mut map = CHILD_PROCESSES.lock().unwrap();
+                // Reap before dropping the handle. A killed-but-unreaped child stays
+                // a zombie, and the signal-0 probe reports zombies as alive, so
+                // is_running() used to stay true after a successful kill.
+                let _ = child.wait();
                 map.remove(&pid);
                 Ok(Value::Nil)
             }
