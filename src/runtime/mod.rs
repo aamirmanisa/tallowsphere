@@ -34,6 +34,7 @@ pub mod io_uring_runtime;
 pub mod ippool_ffi;
 pub mod kernel_tune;
 pub mod net_ffi;
+pub mod diag_ffi;
 pub mod process_ffi;
 pub mod regex_ffi;
 pub mod sync_ffi;

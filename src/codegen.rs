@@ -1403,6 +1403,7 @@ void tallow_async_runtime_shutdown(void) {
         // process.exec / process.run: argv crosses as a NUL-separated blob with
         // an explicit count; the out-parameter carries stdout, stderr, status.
         ir.push_str("declare i32 @tallow_process_exec(ptr, ptr, i64, ptr)\n");
+        ir.push_str("declare void @tallow_no_match(i32, i32)\n");
         ir.push_str("declare i32 @tallow_process_execv(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_append_file(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_remove_dir_all(ptr)\n");
@@ -13223,8 +13224,14 @@ void tallow_async_runtime_shutdown(void) {
         // Emit default fallthrough block (only if no wildcard arm provided the default)
         let has_default_arm = default_label.is_some();
         if !has_default_arm {
+            // No arm matched. The interpreter raises a runtime error here; falling
+            // through to the result type's default value produced a silent `(null)`
+            // and exit 0 (register #123). Fail the same way the interpreter does:
+            // the helper is `noreturn`, so this block never reaches the merge and
+            // contributes no PHI entry.
             self.body.push_str(&format!("{default_fallthrough}:\n"));
-            self.emit_line(&format!("br label %{merge_label}"));
+            self.emit_line("call void @tallow_no_match(i32 0, i32 0)");
+            self.emit_line("unreachable");
         }
 
         // Emit each arm body
@@ -13255,13 +13262,8 @@ void tallow_async_runtime_shutdown(void) {
             let phi = self.fresh_reg();
             let ty = &first.0.ty;
             let mut phi_args: Vec<String> = Vec::new();
-            // Add entry for the default fallthrough block (if no wildcard arm)
-            if !has_default_arm {
-                phi_args.push(format!(
-                    "[ {}, %{default_fallthrough} ]",
-                    ty.default_value()
-                ));
-            }
+            // No PHI entry for the no-match path: it calls a `noreturn` helper and
+            // never reaches this merge block.
             for (val, label) in &results {
                 let coerced = if val.ty != *ty {
                     self.coerce(val, ty)?
@@ -13295,6 +13297,12 @@ void tallow_async_runtime_shutdown(void) {
         // Track (value, exit_label) for PHI node
         let mut results: Vec<(LLValue, String)> = Vec::new();
         let mut had_default = false;
+        // Where a failed comparison goes when no default arm exists. Branching to
+        // `merge_label` here was the bug: with a single arm the failing edge reached
+        // the merge block while the PHI only listed the body block, and LLVM folded
+        // the guard away — `"x" match { "a" -> "A" }` printed "A" (register #123).
+        let nomatch_label = self.fresh_label("match.nomatch");
+        let mut nomatch_used = false;
 
         for (i, arm) in arms.iter().enumerate() {
             self.body.push_str(&format!("{next_label}:\n"));
@@ -13315,7 +13323,8 @@ void tallow_async_runtime_shutdown(void) {
                     next_label = if i + 1 < arms.len() {
                         self.fresh_label(&format!("match.check.{}", i + 1))
                     } else {
-                        merge_label.clone()
+                        nomatch_used = true;
+                        nomatch_label.clone()
                     };
 
                     self.emit_line(&format!(
@@ -13334,7 +13343,8 @@ void tallow_async_runtime_shutdown(void) {
                 next_label = if i + 1 < arms.len() {
                     self.fresh_label(&format!("match.check.{}", i + 1))
                 } else {
-                    merge_label.clone()
+                    nomatch_used = true;
+                    nomatch_label.clone()
                 };
                 self.emit_line(&format!("br label %{next_label}"));
                 continue;
@@ -13347,14 +13357,13 @@ void tallow_async_runtime_shutdown(void) {
             results.push((val, exit_label));
         }
 
-        // If we ended without matching all arms, add a fallback branch
-        if next_label != merge_label {
-            self.body.push_str(&format!("{next_label}:\n"));
-            self.emit_line(&format!("br label %{merge_label}"));
-            // Add default fallback value for PHI
-            if !had_default {
-                results.push((LLValue::new("0".into(), LLType::I64), next_label.clone()));
-            }
+        // A comparison with no arm left to try and no default arm is a
+        // non-exhaustive match: fail the way the interpreter does instead of
+        // inventing a value.
+        if nomatch_used && !had_default {
+            self.body.push_str(&format!("{nomatch_label}:\n"));
+            self.emit_line("call void @tallow_no_match(i32 0, i32 0)");
+            self.emit_line("unreachable");
         }
 
         self.body.push_str(&format!("{merge_label}:\n"));
