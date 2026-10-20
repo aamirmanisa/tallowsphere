@@ -161,10 +161,19 @@ impl Parser {
         // Collect annotations
         let annotations = self.parse_annotations()?;
         let is_async = self.eat(TokenKind::Async);
+        // `native fn name(...) -> T` declares a function implemented by a symbol
+        // of the same name at link time (register #129). `native` is not a
+        // keyword: it is only a modifier when the next token is `fn`, so an
+        // identifier named `native` elsewhere keeps working.
+        let is_native = matches!(self.peek_kind(), TokenKind::Ident(n) if n == "native")
+            && matches!(self.peek_kind_ahead(1), Some(TokenKind::Fn));
+        if is_native {
+            self.advance();
+        }
 
         match self.peek_kind() {
             TokenKind::Fn => {
-                let f = self.parse_fn_decl(annotations, is_async)?;
+                let f = self.parse_fn_decl(annotations, is_async, is_native)?;
                 Ok(Item::Fn(f))
             }
             TokenKind::Struct => {
@@ -466,6 +475,7 @@ impl Parser {
         &mut self,
         annotations: Vec<Annotation>,
         is_async: bool,
+        is_native: bool,
     ) -> Result<FnDecl, ParseError> {
         let start = if let Some(a) = annotations.first() {
             a.span
@@ -501,11 +511,19 @@ impl Parser {
             None
         };
 
-        let body = self.parse_block()?;
+        let body = if is_native {
+            Block {
+                stmts: Vec::new(),
+                span: Span::new(start.start, self.prev_span().end),
+            }
+        } else {
+            self.parse_block()?
+        };
 
         Ok(FnDecl {
             annotations,
             is_async,
+            is_native,
             name,
             type_params,
             params,
@@ -717,7 +735,14 @@ impl Parser {
         while !self.check(TokenKind::RBrace) && !self.at_eof() {
             let annotations = self.parse_annotations()?;
             let is_async = self.eat(TokenKind::Async);
-            methods.push(self.parse_fn_decl(annotations, is_async)?);
+            // `native fn` is allowed on impl methods too: a struct or trait impl
+            // may declare a method whose body is a link-time symbol.
+            let is_native = matches!(self.peek_kind(), TokenKind::Ident(n) if n == "native")
+                && matches!(self.peek_kind_ahead(1), Some(TokenKind::Fn));
+            if is_native {
+                self.advance();
+            }
+            methods.push(self.parse_fn_decl(annotations, is_async, is_native)?);
         }
         self.expect(TokenKind::RBrace)?;
 
@@ -5586,6 +5611,32 @@ mod tests {
             panic!()
         };
         assert_eq!(c.name, "VERSION");
+    }
+
+    #[test]
+    fn parse_native_fn_declaration() {
+        // register #129: a body-less declaration is accepted; the body is empty
+        // and the flag says the implementation is a link-time symbol.
+        let program = parse("native fn hash(data: String) -> i64");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!("expected a function item")
+        };
+        assert!(f.is_native);
+        assert!(f.body.stmts.is_empty());
+        assert_eq!(f.name, "hash");
+        assert_eq!(f.params.len(), 1);
+        assert!(f.return_type.is_some());
+    }
+
+    #[test]
+    fn parse_fn_named_native_still_parses() {
+        // `native` is only a modifier when followed by `fn`.
+        let program = parse("fn native() { }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!("expected a function item")
+        };
+        assert!(!f.is_native);
+        assert_eq!(f.name, "native");
     }
 
     #[test]

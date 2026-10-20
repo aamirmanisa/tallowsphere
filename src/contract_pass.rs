@@ -514,6 +514,7 @@ mod tests {
         FnDecl {
             annotations,
             is_async: false,
+            is_native: false,
             name: name.to_string(),
             type_params: vec![],
             params,
