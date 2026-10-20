@@ -2638,6 +2638,7 @@ pub extern "C" fn tallow_page_set_cookies_from_header(
 /// visible label. `by` is the same three-way name the stdlib signature exposes,
 /// resolved here so both planes agree on what an unknown name means (a loud
 /// error, not a silent default).
+#[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_select(
     page: *mut c_void,
     selector: *const c_char,
@@ -2706,6 +2707,7 @@ pub extern "C" fn tallow_page_select(
 /// `Page.fill(selector, value)`: query the element, clear it, then type the
 /// value. Composition of existing ElementHandle operations — no new CDP code —
 /// so the interpreted and native planes cannot diverge on what "fill" means.
+#[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_fill(
     page: *mut c_void,
     selector: *const c_char,
@@ -2751,6 +2753,7 @@ pub extern "C" fn tallow_page_fill(
     }
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn tallow_page_handle_cookie_consent_str(
     page: *mut c_void,
     strategy: *const c_char,
