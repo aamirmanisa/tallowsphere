@@ -1163,13 +1163,30 @@ fn plan_dir(
                     });
                 }
                 LinkPolicy::Preserve => {
+                    // Re-creating a link that already points at the same target is
+                    // pure churn: same inode, same bytes, same result. Plan a Skip
+                    // so a repeated copy does not rewrite every symlink. A link
+                    // that exists but points elsewhere is still a Copy (it must be
+                    // replaced), and a missing destination is a Copy.
+                    let source_target = fs::read_link(&source_path).ok();
+                    let already_correct = source_target.as_ref().is_some_and(|want| {
+                        fs::read_link(&destination_path).is_ok_and(|have| &have == want)
+                    });
+                    let (kind, reason) = if already_correct {
+                        (
+                            CopyActionKind::Skip,
+                            "symlink already points at the same target",
+                        )
+                    } else {
+                        (CopyActionKind::Copy, "symlink preserved as symlink")
+                    };
                     actions.push(CopyAction {
-                        kind: CopyActionKind::Copy,
+                        kind,
                         source: Some(source_path.clone()),
                         destination: destination_path,
                         relative_path,
                         bytes: link_bytes,
-                        reason: "symlink preserved as symlink".to_string(),
+                        reason: reason.to_string(),
                     });
                 }
                 LinkPolicy::Follow => {
@@ -2314,6 +2331,49 @@ mod tests {
             deleted,
             vec![destination.join("stale.link")],
             "the stale symlink must be deleted by the plan"
+        );
+    }
+
+    #[test]
+    fn preserve_link_is_skipped_when_it_already_matches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("src");
+        let destination = tmp.path().join("dst");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("kept.txt"), b"hi").unwrap();
+        std::os::unix::fs::symlink("kept.txt", source.join("alias.link")).unwrap();
+        std::os::unix::fs::symlink("kept.txt", destination.join("alias.link")).unwrap();
+
+        let mut job = CopyJob::copy(&source, &destination);
+        job.link_policy = LinkPolicy::Preserve;
+        let first = plan(job).unwrap();
+        let link_action = first
+            .actions
+            .iter()
+            .find(|a| a.destination.ends_with("alias.link"))
+            .expect("the link must appear in the plan");
+        assert_eq!(
+            link_action.kind,
+            CopyActionKind::Skip,
+            "an identical link must not be re-created"
+        );
+
+        // A link pointing somewhere else is still a copy.
+        fs::remove_file(destination.join("alias.link")).unwrap();
+        std::os::unix::fs::symlink("elsewhere.txt", destination.join("alias.link")).unwrap();
+        let mut job = CopyJob::copy(&source, &destination);
+        job.link_policy = LinkPolicy::Preserve;
+        let replan = plan(job).unwrap();
+        let link_action = replan
+            .actions
+            .iter()
+            .find(|a| a.destination.ends_with("alias.link"))
+            .unwrap();
+        assert_eq!(
+            link_action.kind,
+            CopyActionKind::Copy,
+            "a link to a different target must be replaced"
         );
     }
 
