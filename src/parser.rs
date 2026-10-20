@@ -83,6 +83,25 @@ impl Parser {
         let mut items = Vec::new();
 
         while !self.at_eof() {
+            // `module tallow.csv` — stdlib sources name the module they implement.
+            // The engine keys modules by path (`src/stdlib/mod.rs`), so the header
+            // carries no information the compiler needs; accept and skip it so the
+            // .tl corpus parses (register #128).
+            if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "module") {
+                self.advance();
+                if matches!(self.peek_kind(), TokenKind::Ident(_)) {
+                    self.advance();
+                    while self.check(TokenKind::Dot) {
+                        self.advance();
+                        if matches!(self.peek_kind(), TokenKind::Ident(_)) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
             if self.recover_mode {
                 match self.parse_item() {
                     Ok(item) => items.push(item),
