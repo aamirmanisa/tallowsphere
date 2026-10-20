@@ -1403,6 +1403,7 @@ void tallow_async_runtime_shutdown(void) {
         // process.exec / process.run: argv crosses as a NUL-separated blob with
         // an explicit count; the out-parameter carries stdout, stderr, status.
         ir.push_str("declare i32 @tallow_process_exec(ptr, ptr, i64, ptr)\n");
+        ir.push_str("declare i32 @tallow_process_execv(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_append_file(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_remove_dir_all(ptr)\n");
         ir.push_str("declare ptr @tallow_fs_read_lines(ptr)\n");
@@ -20947,49 +20948,126 @@ impl<'a> CodeGen<'a> {
                 // refused precisely because it could only read a status code.
                 let cmd = self.emit_expr(&args[0].value)?;
                 let cmd_c = self.coerce_to_string(&cmd)?;
-                let (argv_c, argc) = match args.get(1) {
-                    None => (self.intern_string(""), 0i64),
-                    Some(arg) => match &arg.value.kind {
-                        ExprKind::Array(items) => {
-                            let mut blob = String::new();
-                            for item in items {
-                                match &item.kind {
-                                    ExprKind::StringLit(s) => {
-                                        blob.push_str(s);
-                                        blob.push('\0');
-                                    }
-                                    _ => {
-                                        return Err(
-                                            "process.exec: native argv must be an array of \
-                                             string literals (the runtime receives one \
-                                             NUL-separated blob); build the strings into \
-                                             literals or run --interpret"
-                                                .to_string(),
-                                        )
-                                    }
-                                }
-                            }
-                            (self.intern_string(&blob), items.len() as i64)
-                        }
-                        _ => {
-                            return Err(
-                                "process.exec: the native lowering needs the arguments as an \
-                                 array literal of strings, not a dynamic value; run --interpret"
-                                    .to_string(),
-                            )
-                        }
-                    },
-                };
-                // 32 bytes: stdout ptr (0), stderr ptr (8), exit_code i64 (16),
-                // success i32 (24), ok i32 (28). Byte offsets rather than a named
-                // LLVM struct: the runtime's type is not part of the module's type
-                // table, and `alloca %struct.X` needs a declared sized type.
+                // 32 bytes for the out-parameter: stdout ptr (0), stderr ptr (8),
+                // exit_code i64 (16), success i32 (24), ok i32 (28). Byte offsets
+                // rather than a named LLVM struct: the runtime's type is not in
+                // the module's type table, and `alloca %struct.X` needs a sized type.
                 let out = self.fresh_reg();
                 self.emit_line(&format!("{out} = call ptr @malloc(i64 32)"));
-                let status = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{status} = call i32 @tallow_process_exec(ptr {cmd_c}, ptr {argv_c}, i64 {argc}, ptr {out})"
-                ));
+                match args.get(1) {
+                    None => {
+                        let blob = self.intern_string("");
+                        let status = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{status} = call i32 @tallow_process_exec(ptr {cmd_c}, ptr {blob}, i64 0, ptr {out})"
+                        ));
+                    }
+                    Some(arg) => match &arg.value.kind {
+                        // All-literal argv keeps the blob path: one interned
+                        // constant, no allocation, no loop.
+                        ExprKind::Array(items)
+                            if items
+                                .iter()
+                                .all(|i| matches!(&i.kind, ExprKind::StringLit(_))) =>
+                        {
+                            let mut blob = String::new();
+                            for item in items {
+                                if let ExprKind::StringLit(s) = &item.kind {
+                                    blob.push_str(s);
+                                    blob.push('\0');
+                                }
+                            }
+                            let blob = self.intern_string(&blob);
+                            let n = items.len() as i64;
+                            let status = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{status} = call i32 @tallow_process_exec(ptr {cmd_c}, ptr {blob}, i64 {n}, ptr {out})"
+                            ));
+                        }
+                        // Mixed literals and expressions: build the pointer
+                        // array directly, one store per element.
+                        ExprKind::Array(items) => {
+                            let n = items.len();
+                            let buf = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{buf} = call ptr @malloc(i64 {})",
+                                (n as i64) * 8
+                            ));
+                            for (i, item) in items.iter().enumerate() {
+                                let v = self.emit_expr(item)?;
+                                let sptr = self.coerce_to_string(&v)?;
+                                let slot = self.fresh_reg();
+                                self.emit_line(&format!(
+                                    "{slot} = getelementptr ptr, ptr {buf}, i64 {i}"
+                                ));
+                                self.emit_line(&format!("store ptr {sptr}, ptr {slot}"));
+                            }
+                            let status = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{status} = call i32 @tallow_process_execv(ptr {cmd_c}, ptr {buf}, i64 {n}, ptr {out})"
+                            ));
+                        }
+                        // A runtime `[]String`: walk it with the runtime's own
+                        // accessors, so the pointer array matches the ABI.
+                        _ => {
+                            let arr = self.emit_expr(&arg.value)?;
+                            let arr_c = self.coerce(&arr, &LLType::I8Ptr)?;
+                            // Native array layout: `[count: i64][slot0: i64]…`
+                            // (the same shape `.len` reads). `tallow_array_len`
+                            // is the LEGACY handle width and must not be used
+                            // here — it dereferences the array as a Vec header.
+                            let n64 = self.fresh_reg();
+                            self.emit_line(&format!("{n64} = load i64, ptr {arr_c}"));
+                            let sz = self.fresh_reg();
+                            self.emit_line(&format!("{sz} = mul i64 {n64}, 8"));
+                            let buf = self.fresh_reg();
+                            self.emit_line(&format!("{buf} = call ptr @malloc(i64 {sz})"));
+                            let idx = self.fresh_reg();
+                            self.emit_line(&format!("{idx} = alloca i64"));
+                            self.emit_line(&format!("store i64 0, ptr {idx}"));
+                            let cond = self.fresh_label("argv.cond");
+                            let body = self.fresh_label("argv.body");
+                            let done = self.fresh_label("argv.done");
+                            self.emit_line(&format!("br label %{cond}"));
+                            self.body.push_str(&format!("{cond}:\n"));
+                            let i = self.fresh_reg();
+                            self.emit_line(&format!("{i} = load i64, ptr {idx}"));
+                            let cmp = self.fresh_reg();
+                            self.emit_line(&format!("{cmp} = icmp ult i64 {i}, {n64}"));
+                            self.emit_line(&format!(
+                                "br i1 {cmp}, label %{body}, label %{done}"
+                            ));
+                            self.body.push_str(&format!("{body}:\n"));
+                            // slot address = arr + 8 + i*8
+                            let off = self.fresh_reg();
+                            self.emit_line(&format!("{off} = mul i64 {i}, 8"));
+                            let off2 = self.fresh_reg();
+                            self.emit_line(&format!("{off2} = add i64 {off}, 8"));
+                            let slotp = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{slotp} = getelementptr inbounds i8, ptr {arr_c}, i64 {off2}"
+                            ));
+                            let raw = self.fresh_reg();
+                            self.emit_line(&format!("{raw} = load i64, ptr {slotp}"));
+                            let el = self.fresh_reg();
+                            self.emit_line(&format!("{el} = inttoptr i64 {raw} to ptr"));
+                            let slot = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{slot} = getelementptr ptr, ptr {buf}, i64 {i}"
+                            ));
+                            self.emit_line(&format!("store ptr {el}, ptr {slot}"));
+                            let next = self.fresh_reg();
+                            self.emit_line(&format!("{next} = add i64 {i}, 1"));
+                            self.emit_line(&format!("store i64 {next}, ptr {idx}"));
+                            self.emit_line(&format!("br label %{cond}"));
+                            self.body.push_str(&format!("{done}:\n"));
+                            let status = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{status} = call i32 @tallow_process_execv(ptr {cmd_c}, ptr {buf}, i64 {n64}, ptr {out})"
+                            ));
+                        }
+                    },
+                }
                 let mut load = |cg: &mut Self, offset: usize, ty: &LLType| {
                     let gep = cg.fresh_reg();
                     cg.emit_line(&format!(
@@ -35427,10 +35505,9 @@ fn main() {
     }
 
     #[test]
-    fn codegen_stdlib_process_exec_refuses_a_dynamic_argv() {
-        // The runtime takes one NUL-separated blob, so the arguments have to be
-        // known at build time. A dynamic array must refuse by name rather than
-        // silently run the command with no arguments.
+    fn codegen_stdlib_process_exec_lowers_a_dynamic_argv_through_the_array_abi() {
+        // A runtime `[]String` cannot be a compile-time blob, so the arm builds a
+        // pointer array with the runtime's own accessors and calls execv.
         let (tokens, errors) = lexer::tokenize(
             r#"
             fn main() {
@@ -35444,10 +35521,18 @@ fn main() {
         let program = parser::Parser::parse(tokens).expect("parse error");
         let (env, _) = TypeChecker::new(&program).check();
         let mut cg = CodeGen::new(&program, &env);
-        let err = cg.emit_module().expect_err("dynamic argv must refuse");
+        let ir = cg.emit_module().expect("dynamic argv must lower");
         assert!(
-            err.contains("process.exec") && err.contains("array literal"),
-            "refusal must name the shape, got: {err}"
+            ir.contains("call i32 @tallow_process_execv"),
+            "the dynamic form must call the pointer-array entry point"
+        );
+        assert!(
+            ir.contains("getelementptr inbounds i8, ptr") && ir.contains("inttoptr i64"),
+            "the loop must read the native [count][slot] layout directly"
+        );
+        assert!(
+            ir.contains("argv.cond") && ir.contains("argv.body"),
+            "a loop is required to copy the slots"
         );
     }
 
