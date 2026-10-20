@@ -135,7 +135,7 @@ defect, not a policy:
 
 ## P2 — quality
 
-- [ ] `cargo fmt` over the workspace hangs on this box; format touched files only,
+- [x] **`cargo fmt` hangs** — MEASURED and worked around. `cargo fmt -p tallow -- --check` exceeds 400 s at ~1 s of CPU (blocked, not working); the same check via `rustfmt` directly over every tracked file takes 58-65 s. Root cause sits in cargo-fmt's single rustfmt invocation, not in rustfmt. `scripts/fmt-check.sh` provides the working check (`--write` to apply). Separately: the tree currently carries 13,132 rustfmt diff blocks, so a wholesale format is its own reviewed change, not a side effect of this item.
       or fix the hang (unverified cause).
 - [ ] The gold linker is deprecated with known warnings — decide or document.
 - [x] Remaining browser methods declared in `stdlib/browser.tl` but with no lowering are now ENUMERATED and pinned as loud refusals: `Page.goto_antibot`, `Page.links`, `Element.classes`. Each names itself on both planes in `tests/browser_unlowered_gaps.rs`; `docs/browser-native-gaps.md` records what closing each would take.
