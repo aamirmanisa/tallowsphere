@@ -107,6 +107,24 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
+      - name: Cross toolchain (aarch64 Linux)
+        # This runner is x86_64. Building aarch64 here needs a C and C++ cross
+        # compiler: btls-sys compiles C++ (cbs.cc) and cc-rs otherwise invokes the
+        # host gcc, whose glibc headers emit __snprintf_chk / __memcpy_chk and
+        # fail the aarch64 link exactly as they failed on the build box.
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          {
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++"
+            echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
+          } >> "$GITHUB_ENV"
+
       - name: Build (binary + runtime archive)
         shell: bash
         run: |
@@ -154,6 +172,14 @@ jobs:
               echo "$out" | head -1 | grep -qx 7
               ;;
           esac
+
+      - name: Conformance — both planes against the packaged binary
+        # Runs only where the archive's architecture matches the runner: an
+        # aarch64 binary cannot execute here. This is the check that caught the
+        # archive shipping without libtallow.a.
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: python3 conformance/run.py --tallow "$PWD/unpack/tallow"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3

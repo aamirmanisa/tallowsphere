@@ -1,0 +1,4 @@
+{
+  "kind": "accept",
+  "stdout": "Ok(6)\nErr(\"negative\")\n42\n"
+}

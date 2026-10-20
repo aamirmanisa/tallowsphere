@@ -1,0 +1,4 @@
+{
+  "kind": "accept",
+  "stdout": "hello, world (3)\ntab\there\nquote: \"ok\"\n"
+}

@@ -24,6 +24,10 @@ No LLM, no API key, no engine, no egress.
 > **If you are an AI agent**, read [`AGENTS.md`](AGENTS.md) first — it is written for you and carries
 > this quickstart with exit codes, the full CLI surface, and the honest limits of the tree.
 
+Prebuilt binaries (Linux x86_64/aarch64, macOS, Windows) install with
+`curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/install.sh | sh`;
+see [`docs/INSTALL.md`](docs/INSTALL.md). The build-from-source path follows.
+
 ```bash
 cargo build --bin tallow
 
