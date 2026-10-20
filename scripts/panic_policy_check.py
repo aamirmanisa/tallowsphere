@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 # Declared by docs/PANIC-POLICY.md.
 EXPECT_PROFILE_PANIC = {"release": "abort"}   # [profile.max] must inherit release, not restate
-DECLARED_SITES = {"src/main.rs": 2, "src/interp.rs": 5}
+DECLARED_SITES = {"src/main.rs": 2, "src/interp.rs": 5, "src/supply_chain.rs": 2}
 # Files that mention catch_unwind but are not shipped code.
 EXCLUDED = {"tests/fuzz_safety.rs"}
 

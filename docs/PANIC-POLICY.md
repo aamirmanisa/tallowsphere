@@ -42,14 +42,15 @@ panic=unwind  ->  RESULT CAUGHT -- in-process isolation works
                   exit 0
 ```
 
-The tree contains **7 `catch_unwind` call sites in `src/`** whose surrounding comments promise containment.
-**6 are on shipped code paths; 1 is inside a unit test** — a split I had wrong when this document was first
+The tree contains **9 `catch_unwind` call sites in `src/`** whose surrounding comments promise containment.
+**8 are on shipped code paths; 1 is inside a unit test** — a split I had wrong when this document was first
 written (it said 7 shipped), corrected while annotating them:
 
 | file | sites | lines |
 |---|---|---|
 | `src/main.rs` | 2 | 16892, 16912 — probe/report runs described as "thread + catch_unwind + hard timeout". Both shipped. |
 | `src/interp.rs` | 5 | 3616, 4645, 4796, 32312 shipped — "prevent panic propagation", "Execute child in catch_unwind for crash isolation". **42810 is inside the unit test `secret_type_cannot_be_printed`.** |
+| `src/supply_chain.rs` | 2 | `signing_roundtrip_works` — the supply-chain self-test. Both shipped, annotated in place 2026-10-20. |
 
 **They do nothing in release.** They work in dev and in `cargo test`, because both use `unwind` — which is
 exactly why two in-tree tests pass while the guarantee they describe is absent from everything that ships:
@@ -57,7 +58,7 @@ exactly why two in-tree tests pass while the guarantee they describe is absent f
 (`src/main.rs`, which asserts `run_guarded_probe(|| panic!("boom")) == Panicked`). A test that runs under a
 profile the artifact is not built with does not test the artifact.
 
-**Annotated in place — decision taken 2026-10-16: keep `abort`, correct the comments.** All 7 sites and both
+**Annotated in place — decision taken 2026-10-16: keep `abort`, correct the comments.** All 9 sites and both
 tests now carry a short note stating the dev/test-only scope and pointing here, so the next reader cannot take
 them for a release guarantee. The change is **comment-only** and was verified as such: every added line in the
 diff is a comment, and the gate's call-site counts are unchanged.
