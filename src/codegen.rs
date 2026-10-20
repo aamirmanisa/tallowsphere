@@ -527,6 +527,10 @@ pub struct CodeGen<'a> {
     /// string is falsy (spec §4.2), but `LLType::I8Ptr` cannot tell a string from
     /// a native array or an opaque handle (register #122).
     variable_is_string: HashMap<String, bool>,
+    /// Bindings that hold a payload-carrying enum variant. Printing one natively
+    /// would treat the tagged struct as a C string (register #125), so `print`
+    /// refuses instead of emitting bytes.
+    variable_data_enum: HashMap<String, bool>,
 
     // Variable → true if this array's elements are POINTER-BACKED (strings or
     // opaque handles) rather than plain numbers. Native arrays store every
@@ -686,6 +690,7 @@ impl<'a> CodeGen<'a> {
             variable_array_elem_struct: HashMap::new(),
             variable_is_array: HashMap::new(),
             variable_is_string: HashMap::new(),
+            variable_data_enum: HashMap::new(),
             variable_array_elem_is_ptr: HashMap::new(),
             callback_wrappers: Vec::new(),
             variable_result_payload_kind: HashMap::new(),
@@ -3209,6 +3214,7 @@ void tallow_async_runtime_shutdown(void) {
         self.variable_array_elem_struct.clear();
         self.variable_is_array.clear();
         self.variable_is_string.clear();
+        self.variable_data_enum.clear();
         self.variable_array_element_type.clear();
         self.variable_privacy.clear();
         self.variable_is_tuple.clear();
@@ -3895,6 +3901,11 @@ void tallow_async_runtime_shutdown(void) {
                     self.variable_is_string.insert(name.clone(), true);
                 } else {
                     self.variable_is_string.remove(name);
+                }
+                if self.expr_is_data_enum(value) {
+                    self.variable_data_enum.insert(name.clone(), true);
+                } else {
+                    self.variable_data_enum.remove(name);
                 }
 
                 // Track struct type for instance method dispatch
@@ -9486,6 +9497,28 @@ void tallow_async_runtime_shutdown(void) {
         }
     }
 
+    /// True when the expression constructs (or holds) an enum variant that carries
+    /// fields: `Status.Pending(reason: "..")`.
+    fn expr_is_data_enum(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::MethodCall {
+                object, method, ..
+            } => matches!(
+                &object.kind,
+                ExprKind::Ident(enum_name)
+                    if self.enum_variant_fields.get(enum_name).is_some_and(|variants| {
+                        variants
+                            .iter()
+                            .any(|(v, fields)| v == method && !fields.is_empty())
+                    })
+            ),
+            ExprKind::Ident(name) => {
+                self.variable_data_enum.get(name).copied().unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
     /// Truthiness with the expression in hand, so a pointer can be tested for what
     /// it is: arrays by their count slot, strings by their first byte, everything
     /// else (opaque handles) by non-nullness. `emit_truthy_i1` sees only the type.
@@ -11783,6 +11816,16 @@ void tallow_async_runtime_shutdown(void) {
                 "{reg} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
             ));
             return Ok(LLValue::new("0".into(), LLType::I64));
+        }
+
+        // A payload-carrying enum is a tagged struct, not a string. Printing it as
+        // one emitted a raw byte of the discriminant (register #125); refuse so the
+        // interpreter prints `Variant(payload)` instead of garbage.
+        if self.expr_is_data_enum(&args[0].value) {
+            return Err(
+                "cannot print a data-carrying enum natively: it is a tagged struct,                  not a string; read its fields instead, or run without --require-native                  (the interpreter prints `Variant(payload)`)"
+                    .into(),
+            );
         }
 
         // ── Privacy enforcement: intercept print of private/secret values ──
