@@ -1,0 +1,4 @@
+{
+  "kind": "accept",
+  "stdout": "body\nsecond-defer\nfirst-defer\n"
+}
