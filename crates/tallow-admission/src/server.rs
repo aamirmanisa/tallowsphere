@@ -168,6 +168,10 @@ pub struct ServerCore {
     /// `MAX_PRE_AUTH_CONNECTIONS`; a connection released from this count once
     /// its session authenticates (see `try_enter_pre_auth`).
     pre_auth: AtomicUsize,
+    /// Per-source connection rate (v1 hardening, 2026-10-20). Checked BEFORE a
+    /// pre-auth slot is claimed, so connection churn is refused without ever
+    /// occupying the concurrency budget.
+    sources: Mutex<crate::ratelimit::SourceLimiter>,
 }
 
 /// RAII slot in the pre-auth connection accounting. Dropping it (on ANY exit
@@ -199,6 +203,17 @@ impl ServerCore {
         }
     }
 
+    /// Charge one connection to `ip` at `now`; `false` means rate-limited.
+    ///
+    /// A poisoned lock fails closed (refuse), not open: the limiter is the only
+    /// thing between a flood and the accept loop.
+    pub fn allow_source(&self, ip: std::net::IpAddr, now: std::time::Instant) -> bool {
+        match self.sources.lock() {
+            Ok(mut l) => l.allow(ip, now),
+            Err(_) => false,
+        }
+    }
+
     /// Current pre-auth occupancy (for metrics/tests).
     pub fn pre_auth_count(&self) -> usize {
         self.pre_auth.load(Ordering::SeqCst)
@@ -216,6 +231,7 @@ impl ServerCore {
             audit,
             replay: Mutex::new(ReplaySet::default()),
             pre_auth: AtomicUsize::new(0),
+            sources: Mutex::new(crate::ratelimit::SourceLimiter::from_env()),
         })
     }
 
