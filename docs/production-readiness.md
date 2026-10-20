@@ -39,13 +39,12 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       exits 1). The 9 red suites are real defects, tracked below, not excluded
       policy.
 
-- [ ] **Array parity at N=0/1/3 for every array lowering.** DONE for
-      `query_selector_all` (`tests/browser_array_parity_n.rs`: 0/1/3 lengths correct,
-      elements correct on both planes) and `drain_events` (N=2, `browser_array_len`).
-      `extract_all_text` now covered too (0/1/3). Still owed: `classes`,
-      `get_cookies`. `Page.links` turned out to have no lowering AND no FFI — pinned
-      as a refusal instead, and recorded in docs/browser-native-gaps.md.
-
+- [x] **Array parity at N=0/1/3** — DONE for the four lowerings that exist:
+      `query_selector_all`, `drain_events`, `extract_all_text`, `get_cookies`
+      (`browser_array_parity_n.rs`, `_links.rs`, `_cookies.rs`). `Page.links` and
+      `Element.classes` have no lowering and no FFI, so they cannot be covered by a
+      parity test; both are pinned as loud refusals in
+      `tests/browser_unlowered_gaps.rs` and recorded in `docs/browser-native-gaps.md`.
 - [ ] **Parity tests must assert non-trivial values.** N=1 probes hid every
       length bug; single-element fixtures hid ordering. Enforce a minimum of two
       elements wherever a collection is asserted.

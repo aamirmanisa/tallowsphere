@@ -22,6 +22,8 @@ const GAPS: &[(&str, &str)] = &[
     ),
     // No lowering AND no FFI: `tallow_page_links` does not exist.
     (r#"let v = page.links()"#, "Page.links"),
+    // Element methods: the registry knows HtmlElement.classes, not this one.
+    (r#"let v = page.query_selector("body").classes()"#, "Element.classes"),
 ];
 
 fn program(call: &str) -> String {
