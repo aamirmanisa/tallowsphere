@@ -198,15 +198,18 @@ defect, not a policy:
 | panic policy | `scripts/panic_policy_check.py` | **PASS** — 9 sites (main 2, interp 5, supply_chain 2), abort in `release`/`max` |
 | claims ledger | `scripts/claims_ledger_check.py` | **PASS (rc=0)** — 72 entries, 0 hard, 0 warnings |
 | capability registry | `scripts/check_capability_registry.py` | 3 Page entries, **0 mismatches** |
-| FFI symbols | `scripts/check_ffi_symbols.py` | 269 runtime fns, 231 emitted, **0 problems** |
+| FFI symbols | `scripts/check_ffi_symbols.py` | 270 runtime fns, 232 emitted, **0 problems** |
+| fuzz safety | `cargo test --test fuzz_safety` | 25/25 |
+| perf gate | `scripts/no_regression_gate.py --self-test` | **PASS** |
+| compliance gate | `scripts/compliance_gate.py --target-manifest examples/request_plan_get_only/target-manifest.v2.json` | **PASS (rc=0)** |
 | optional parity | `cargo test --test optional_parity` | 2/2 |
 | WaitResult parity | `cargo test --test wait_url_parity` / `wait_net_parity` | 1/1 · 3/3 (live Chrome) |
 | process.exec parity | `cargo test --test process_exec_parity` | 1/1 |
 | Result truthiness | `cargo test --test result_truthiness_parity` | 1/1 |
 
-Not exercised here: `compliance_gate.py` (needs `--target-manifest`) and
-`no_regression_gate.py --current` (needs a fresh measurement run; CI runs its
-`--self-test`). Neither is a failure — both reject a bare invocation.
+`no_regression_gate.py --current` still needs a fresh measurement run (the CI job
+runs its `--self-test`); the gate itself rejects a bare invocation, which is argv
+validation, not a verdict.
 
 ## Definition of 100%
 

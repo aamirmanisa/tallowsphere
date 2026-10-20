@@ -6,8 +6,9 @@
 > `ci-full.yml` — are not in this tree, and their absence is measured rather than assumed:
 > `never_check.sh` names 19 paths this tree does not carry (`apps/tallow-copy/…`, `apps/tallowsync/…`,
 > `artifacts/…`), `kev_gate.sh` needs `scripts/kev/kev.snapshot.json`, and `ci-full.yml` runs the
-> workspace's full matrix, including the three gates this repository omits (`fmt`, `vet`,
-> `claims-ledger`). What this repository carries and verifies is `.github/workflows/ci.yml` (12 jobs) and
+> workspace's full matrix, including the two gates this repository still omits (`fmt`, `vet`).
+> `claims-ledger` was the third and is now carried (2026-10-20: 72 entries, 0 findings, rc=0).
+> What this repository carries and verifies is `.github/workflows/ci.yml` (17 jobs) and
 > `.github/workflows/tallow-production-ci-gates.yml`; see `MANIFEST.md` § "CI carried, and what was left
 > behind".
 

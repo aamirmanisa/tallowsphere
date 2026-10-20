@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Tokens a source may hold: the largest burst accepted before refill matters.
 pub const SOURCE_BURST: f64 = 20.0;
@@ -138,6 +138,7 @@ impl SourceLimiter {
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
+    use std::time::Duration;
 
     fn ip(last: u8) -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(10, 0, 0, last))
