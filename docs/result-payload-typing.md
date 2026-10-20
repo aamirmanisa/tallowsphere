@@ -123,3 +123,27 @@ http://127.0.0.1:18111/slow.txt
 `Network.responseReceived` arriving twice during the wait, which is what exposed the
 pattern as the cause. The instrumentation is removed; `tests/wait_net_parity.rs` is
 the standing proof and it passes.
+
+## Field access needs a binding, not a call receiver
+
+`page.authenticated_get(url).status` reads **0** on the native plane while the
+interpreter returns the real status. Measured 2026-10-20: native `["0","0"]` vs
+interpreter `["201","201"]` against a loopback server.
+
+Cause: the unwrap path is limited to `ExprKind::Ident` receivers on purpose —
+unwrapping a call receiver would have to emit the call a second time (the IR shows
+the `tallow_page_authenticated_request` call duplicated at lines 434 and 458 of the
+generated module). A call receiver therefore reaches the generic field path, and the
+field is not in the `%struct.TallowResult` wrapper, so the read falls through to a
+literal 0.
+
+Correct shape, and what `tests/browser_authenticated_parity.rs` pins:
+
+```tl
+let first = page.authenticated_get(url)
+print(first.status)      // real status on both planes
+```
+
+This is a third state the Definition of 100% forbids ("works identically ... or fails
+loudly by name"), so it stays an open item: either refuse that expression shape at
+compile time or support it without double emission.

@@ -8,6 +8,7 @@ browser_array_len: requires Chromium + loopback (runs locally with TALLOW_ALLOW_
 browser_array_parity_cookies: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_array_parity_links: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_array_parity_n: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_authenticated_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_callbacks_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_codegen_integration: UNCLASSIFIED - needs triage
 browser_ffi_error_visibility: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
@@ -16,6 +17,7 @@ browser_form_parity: requires Chromium + loopback (runs locally with TALLOW_ALLO
 browser_landlock_smoke: UNCLASSIFIED - needs triage
 browser_native_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_navigation_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_network_callbacks_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_page_events_shared: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_page_methods: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_unlowered_gaps: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
