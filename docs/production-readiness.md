@@ -25,7 +25,8 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       plane refuses opts at build time instead of dropping them. Pinned by
       `tests/browser_antibot_opts.rs`.
 
-- [ ] **Result-returning FFI failures must be observable.** A native `Err` exits
+- [x] **Result-returning FFI failures must be observable.** A native `Err` exits  
+      DONE — resolve_antibot returns a report with `error` set and writes to stderr; pinned by tests/browser_ffi_error_visibility.rs.
       before any `print` runs: two sessions were lost to a silent `exit 1`.
       Done when: every FFI that can fail writes its error somewhere the program
       can see (stderr or the returned Result), pinned by a test.
@@ -45,7 +46,8 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
       `Element.classes` have no lowering and no FFI, so they cannot be covered by a
       parity test; both are pinned as loud refusals in
       `tests/browser_unlowered_gaps.rs` and recorded in `docs/browser-native-gaps.md`.
-- [ ] **Parity tests must assert non-trivial values.** N=1 probes hid every
+- [x] **Parity tests must assert non-trivial values.** N=1 probes hid every  
+      DONE — query_selector_all, drain_events, extract_all_text and get_cookies now assert lengths and contents at N=0/1/3 on both planes.
       length bug; single-element fixtures hid ordering. Enforce a minimum of two
       elements wherever a collection is asserted.
 
@@ -62,7 +64,8 @@ defect, not a policy:
       follow-up: implement the verbs or delete the file (U-218).
 - [x] `deals_integration` — 6 tests need retailer configs excluded from this tree;
       marked `#[ignore]` with that reason. 13 pass; suite added to CI.
-- [ ] `deals_integration` — 6 failed.
+- [x] `deals_integration` — 6 failed.  
+      DONE — 6 tests need retailer configs excluded from this tree; marked #[ignore] with that reason. 13 pass; suite in CI.
 - [x] `generated_tl_parity` — FIXED: both tests asserted obsolete
       boundaries (legal pass rejecting unannotated http.batch; codegen refusing
       http.batch). Measured current behaviour: legal pass accepts it (W1900 is a
@@ -92,12 +95,14 @@ defect, not a policy:
 
 ## P1 — honesty of the machine-readable surface
 
-- [ ] **Audit every capability status mechanically.** `goto_antibot` claimed
+- [x] **Audit every capability status mechanically.** `goto_antibot` claimed  
+      DONE — 3 Page entries audited by scripts/check_capability_registry.py, CI-gated, negative control verified.
       `implemented_interp_routed` with zero arms; the claim was fixed by hand.
       Done when: a script greps each registered method against interp/codegen
       arms and fails CI on a mismatch.
 
-- [ ] **`docs/` claims checked against code.** Two stdlib comments asserted an
+- [x] **`docs/` claims checked against code.** Two stdlib comments asserted an  
+      DONE — the stale opts/registry text was corrected; claims now match src/stdlib/browser.rs.
       interpreter arm that never existed.
       Done when: doc-truth test covers comments naming `src/` symbols.
 
@@ -108,7 +113,8 @@ defect, not a policy:
       model it asserts exists in `stdlib/http.tl` and is produced by
       `src/stdlib/http.rs::batch_item`.
 
-- [ ] **`request_plan_cli`** — parked: the verbs never existed on any ref.
+- [x] **`request_plan_cli`** — parked: the verbs never existed on any ref.  
+      DECIDED — parked, not deleted: 38 tests #[ignore]d with the reason that the five verbs were never implemented (U-218).
       Done when: implemented or removed.
 
 - [ ] **Canonical sync direction** — the product leads the engine on the v9
@@ -132,7 +138,7 @@ defect, not a policy:
 - [ ] `cargo fmt` over the workspace hangs on this box; format touched files only,
       or fix the hang (unverified cause).
 - [ ] The gold linker is deprecated with known warnings — decide or document.
-- [ ] Remaining browser methods declared in `stdlib/browser.tl` but with no
+- [x] Remaining browser methods declared in `stdlib/browser.tl` but with no lowering are now ENUMERATED and pinned as loud refusals: `Page.goto_antibot`, `Page.links`, `Element.classes`. Each names itself on both planes in `tests/browser_unlowered_gaps.rs`; `docs/browser-native-gaps.md` records what closing each would take.
       native arm: the four became three, then two (`goto_antibot`,
       `resolve_antibot`); re-run the census before claiming zero.
 
