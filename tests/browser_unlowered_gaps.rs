@@ -20,6 +20,8 @@ const GAPS: &[(&str, &str)] = &[
         r#"let v = page.goto_antibot("http://127.0.0.1:9/")"#,
         "Page.goto_antibot",
     ),
+    // No lowering AND no FFI: `tallow_page_links` does not exist.
+    (r#"let v = page.links()"#, "Page.links"),
 ];
 
 fn program(call: &str) -> String {

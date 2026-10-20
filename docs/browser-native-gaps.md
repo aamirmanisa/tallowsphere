@@ -119,3 +119,13 @@ Reasoning:
 What the tests now pin: on `--require-native` the refusal names
 `Page.goto_antibot` and states that fallback is refused; under `--interpret` the
 error names the method too; and in neither case does the program body run.
+
+## `Page.links` — declared, no lowering and no FFI
+
+`page.links() -> []String` exists in `stdlib/browser.tl` and runs in the interpreter,
+but there is no codegen arm and no `tallow_page_links` symbol to call. Unlike
+`goto_antibot` (blocked by process-level egress), this one is a straightforward gap:
+an FFI returning a string array plus a `StringArray` kind mapping would close it.
+
+Pinned as a loud refusal on both planes by `tests/browser_unlowered_gaps.rs`, so the
+limitation cannot drift into a silent fallback.

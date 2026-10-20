@@ -5,6 +5,7 @@
 browser_antibot_opts: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_antibot_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_array_len: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+browser_array_parity_links: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_array_parity_n: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_callbacks_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 browser_codegen_integration: UNCLASSIFIED - needs triage

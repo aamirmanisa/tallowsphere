@@ -42,7 +42,9 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
 - [ ] **Array parity at N=0/1/3 for every array lowering.** DONE for
       `query_selector_all` (`tests/browser_array_parity_n.rs`: 0/1/3 lengths correct,
       elements correct on both planes) and `drain_events` (N=2, `browser_array_len`).
-      Still owed: `extract_all_text`, `links`, `classes`, `get_cookies`.
+      `extract_all_text` now covered too (0/1/3). Still owed: `classes`,
+      `get_cookies`. `Page.links` turned out to have no lowering AND no FFI — pinned
+      as a refusal instead, and recorded in docs/browser-native-gaps.md.
 
 - [ ] **Parity tests must assert non-trivial values.** N=1 probes hid every
       length bug; single-element fixtures hid ordering. Enforce a minimum of two
