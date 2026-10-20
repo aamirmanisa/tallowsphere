@@ -267,6 +267,8 @@ mod tests {
             Value::Enum {
                 enum_name: "Algorithm".into(),
                 variant: "zstd".into(),
+                // Synthetic value with no enum declaration behind it.
+                discriminant: -1,
                 fields: vec![],
             },
         ]);
