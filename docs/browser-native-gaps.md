@@ -143,3 +143,21 @@ link — so it is now checked mechanically: `scripts/check_ffi_symbols.py` fails
 runtime `tallow_*` FFI lacks the attribute or when codegen emits a symbol nothing
 defines (LLVM IR and the embedded C async shim count as definitions). Negative
 control: removing the attribute from `fill` in a copy exits 1.
+
+## Fixed: two handlers that could never fire
+
+`on_download` and `on_filechooser` registered cleanly and delivered nothing, because
+the CDP domain that produces each event was never armed:
+
+- `Page.downloadWillBegin` only arrives once a download behavior is set
+  (`Browser.setDownloadBehavior`).
+- `Page.fileChooserOpened` only arrives with file-chooser interception on
+  (`Page.setInterceptFileChooserDialog`).
+
+`Page.arm_event_kind(kind)` now runs at registration on both planes and arms exactly
+the domain that kind needs; the interpreter surfaces a failure to arm as a runtime
+error instead of a silent dead handler. Verified by
+`tests/browser_ui_events_parity.rs`, which clicks a real download link and a real file
+input and requires both markers on both planes.
+
+Downloads land in `<temp>/tallow-downloads` when a download handler is registered.
