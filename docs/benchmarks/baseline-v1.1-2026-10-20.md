@@ -22,7 +22,7 @@ An A/B against v1 is therefore unmeasurable, not merely inconvenient. Any claim 
 | field | value |
 |---|---|
 | engine tree | `3e876b3` (includes #124 function values) |
-| binary | `target/release/tallow`, sha256 `946b25231c9ee5cf…` |
+| binary | `target/release/tallow`, sha256 `946b25231c9ee5cf…` (built at `3e876b3`; it predates the `module`-header parser change `ce2004a`, so rebuild before packaging) |
 | corpus | `examples/*.tl`, 57 files, sha256 `dc45d5af0884961b…` |
 | host | aarch64, 8 cpus, kernel 6.8.0-146, loadavg 1.71 at capture |
 | params | iters 7, warmup 2, parser mode `recover` |
