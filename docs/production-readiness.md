@@ -164,6 +164,30 @@ defect, not a policy:
       the 48/47 count from `impl Page` on every CI run (negative control: emptying its
       allowlist exits 1), so a drifted claim fails instead of surviving. Earlier entries for `Page.links` and `Element.classes` were wrong (both are `Html`/`Element` methods in stdlib/html.tl) and were removed — a refusal that passes for the wrong reason pins nothing. `resolve_antibot` is now implemented with parity.
 
+## Closed 2026-10-20 — native-plane parity (measured)
+
+- [x] **Optional presence is the payload's, not the pointer's.** `if x` reached a
+      catch-all that read "non-null pointer ⇒ true", so a present `false`, `0` or
+      `""` was truthy. All eleven condition sites now use `emit_truthy_i1`; an
+      optional reads its box's kind tag. `== nil`, `!= nil` and value equality were
+      added on top of the same encoding. `tests/optional_parity.rs` 2/2, both
+      planes byte-identical.
+- [x] **`WaitResult` fields are the interpreter's fields.** `wait_for_event` wrote
+      the event name into `received`, `method` *and* `event`; `wait_for_request`
+      wrote the URL into `received`; `wait_for_response` boxed the URL into a
+      `bool?` slot. Each arm now matches `interp::wait_result_fields`. Field-level
+      parity is not yet asserted by a test (only `result`/`url` are) — recorded in
+      `docs/optional-representation.md` step 5.
+- [x] **`+` on a `Result` renders the inner value (#116).** The interpreter's two
+      `String + non-String` arms unwrap `Ok`/`Err`; `print` keeps the wrapper. Native
+      rendered the wrapper in every position. Split into `emit_result_parts` with
+      two consumers; `tests/browser_native_parity.rs` now fails on `TITLE=Ok(`.
+- [x] **`process.exec` captures output natively.** `src/runtime/process_ffi.rs`
+      (`tallow_process_exec`, 32-byte out-parameter) plus `build_plain_struct`.
+      A dynamic `argv` refuses by name (register #121) rather than running the
+      command with no arguments. `tests/process_exec_parity.rs` 1/1: stdout,
+      stderr, exit code and `success` identical on both planes.
+
 ## Definition of 100%
 
 1. Every `Page` method either works identically on both planes (proven by a test

@@ -199,6 +199,9 @@ jobs:
           --test crawler_parity
           --test interp_codegen_parity
           --test generated_tl_parity
+          --test optional_parity
+          --test process_exec_parity
+          --test result_truthiness_parity
           --test deals_integration
           --test artifact_sealing
           --test browser_contracts

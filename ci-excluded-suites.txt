@@ -31,7 +31,6 @@ injection_redteam: UNCLASSIFIED - needs triage
 juggler_smoke: UNCLASSIFIED - needs triage
 nav_direct: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 opsec_corpus_acceptance: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-optional_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 parity_runner: UNCLASSIFIED - needs triage
 perf_binary_startup: specialized suite (bench/perf/fuzz), not per-commit
 perf_install: specialized suite (bench/perf/fuzz), not per-commit
