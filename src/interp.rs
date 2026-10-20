@@ -183,6 +183,11 @@ pub enum Value {
     Enum {
         enum_name: String,
         variant: String,
+        /// Position of `variant` in the enum's declaration. This is the value the
+        /// native plane stores and compares: enums are integer-backed, so the
+        /// interpreter must agree with it on `==`, on literal match arms, and on
+        /// display, or the same program prints different answers per plane.
+        discriminant: i128,
         fields: Vec<(String, Value)>,
     },
 
@@ -600,10 +605,15 @@ impl Value {
                     .collect();
                 format!("{{{}}}", inner.join(", "))
             }
-            Value::Enum {
-                variant, fields, ..
-            } => {
-                if fields.is_empty() {
+            // A declared enum prints its discriminant, which is what the native
+            // plane stores. A synthetic value with no declaration behind it
+            // (`Some(x)` from the Option convention) keeps its constructor form.
+            Value::Enum { variant, fields, discriminant, .. } => {
+                if *discriminant >= 0 && fields.is_empty() {
+                    discriminant.to_string()
+                } else if *discriminant >= 0 {
+                    discriminant.to_string()
+                } else if fields.is_empty() {
                     variant.clone()
                 } else {
                     let inner: Vec<String> = fields.iter().map(|(_, v)| v.display()).collect();
@@ -2939,9 +2949,11 @@ impl Interpreter {
                                 .collect()
                         };
 
+                        let discriminant = self.variant_discriminant(name, method);
                         return Ok(Value::Enum {
                             enum_name: name.clone(),
                             variant: method.clone(),
+                            discriminant,
                             fields,
                         });
                     }
@@ -2984,9 +2996,11 @@ impl Interpreter {
                 if let ExprKind::Ident(name) = &object.kind {
                     if self.enums.contains_key(name.as_str()) {
                         // Construct a unit enum variant
+                        let discriminant = self.variant_discriminant(name, field);
                         return Ok(Value::Enum {
                             enum_name: name.clone(),
                             variant: field.clone(),
+                            discriminant,
                             fields: vec![],
                         });
                     }
@@ -4014,6 +4028,14 @@ impl Interpreter {
             | (BinOp::Eq, Value::Err(_), Value::Err(_)) => {
                 Ok(Value::Bool(Self::values_deep_eq(left_unwrapped, right_unwrapped)))
             }
+            (BinOp::Eq, Value::Enum { discriminant, .. }, Value::Int(v))
+            | (BinOp::Eq, Value::Int(v), Value::Enum { discriminant, .. }) => {
+                Ok(Value::Bool(discriminant == v))
+            }
+            (BinOp::Neq, Value::Enum { discriminant, .. }, Value::Int(v))
+            | (BinOp::Neq, Value::Int(v), Value::Enum { discriminant, .. }) => {
+                Ok(Value::Bool(discriminant != v))
+            }
             (BinOp::Neq, Value::Array(_), Value::Array(_))
             | (BinOp::Neq, Value::Map(_), Value::Map(_))
             | (BinOp::Neq, Value::Struct { .. }, Value::Struct { .. })
@@ -4089,8 +4111,8 @@ impl Interpreter {
                     })
             }
             (
-                Value::Enum { enum_name: e1, variant: v1, fields: f1 },
-                Value::Enum { enum_name: e2, variant: v2, fields: f2 },
+                Value::Enum { enum_name: e1, variant: v1, fields: f1, .. },
+                Value::Enum { enum_name: e2, variant: v2, fields: f2, .. },
             ) => {
                 e1 == e2
                     && v1 == v2
@@ -4276,6 +4298,9 @@ impl Interpreter {
                 return Ok(Value::Enum {
                     enum_name: "Option".to_string(),
                     variant: "Some".to_string(),
+                    // -1: no declaration behind it, so it keeps its constructor
+                    // display instead of printing a discriminant.
+                    discriminant: -1,
                     fields: vec![("0".to_string(), inner)],
                 });
             }
@@ -22473,6 +22498,16 @@ impl Interpreter {
         }
     }
 
+    /// Position of `variant` in `enum_name`'s declaration; -1 when the variant is
+    /// unknown (a synthetic value such as `Some`).
+    fn variant_discriminant(&self, enum_name: &str, variant: &str) -> i128 {
+        self.enums
+            .get(enum_name)
+            .and_then(|vs| vs.iter().position(|v| v.name == variant))
+            .map(|i| i as i128)
+            .unwrap_or(-1)
+    }
+
     fn pattern_matches(&self, pattern: &Pattern, value: &Value, env: &mut Env) -> bool {
         // Auto-unbox Value::Boxed — pattern matching sees through Box transparently
         if let Value::Boxed(inner) = value {
@@ -22509,7 +22544,12 @@ impl Interpreter {
             Pattern::Literal(expr) => {
                 // Compare the pattern literal to the value
                 match &expr.kind {
-                    ExprKind::IntLit(n) => matches!(value, Value::Int(v) if v == n),
+                    ExprKind::IntLit(n) => match value {
+                        Value::Int(v) => v == n,
+                        // Enums are integer-backed: `Color.Red match { 0 -> … }`.
+                        Value::Enum { discriminant, .. } => discriminant == n,
+                        _ => false,
+                    },
                     ExprKind::FloatLit(n) => matches!(value, Value::Float(v) if v == n),
                     ExprKind::StringLit(s) => {
                         matches!(value, Value::String(v) if v == s)
@@ -31946,17 +31986,23 @@ fn value_to_json(val: &Value) -> String {
         }
         Value::Ok(v) => format!("{{\"Ok\":{}}}", value_to_json(v)),
         Value::Err(v) => format!("{{\"Err\":{}}}", value_to_json(v)),
-        Value::Enum {
-            variant, fields, ..
-        } => {
-            if fields.is_empty() {
+        Value::Enum { variant, discriminant, fields, .. } => {
+            if *discriminant < 0 && fields.is_empty() {
                 format!("\"{}\"", variant)
-            } else {
+            } else if *discriminant < 0 {
                 let f: Vec<String> = fields
                     .iter()
                     .map(|(k, v)| format!("\"{}\":{}", k, value_to_json(v)))
                     .collect();
                 format!("{{\"{}\":{{{}}}}}", variant, f.join(","))
+            } else if fields.is_empty() {
+                format!("{discriminant}")
+            } else {
+                let f: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("\"{}\":{}", k, value_to_json(v)))
+                    .collect();
+                format!("{{\"{}\":{{{}}}}}", discriminant, f.join(","))
             }
         }
         Value::Private(inner) => value_to_json(inner),
