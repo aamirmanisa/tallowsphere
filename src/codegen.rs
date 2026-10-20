@@ -1400,6 +1400,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i64 @tallow_time_parse_iso(ptr)\n");
         // `tallow.env` / `tallow.fs` runtime helpers (src/runtime/{env,fs}_ffi.rs).
         ir.push_str("declare ptr @tallow_env_exe_path()\n");
+        // process.exec / process.run: argv crosses as a NUL-separated blob with
+        // an explicit count; the out-parameter carries stdout, stderr, status.
+        ir.push_str("declare i32 @tallow_process_exec(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_append_file(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_remove_dir_all(ptr)\n");
         ir.push_str("declare ptr @tallow_fs_read_lines(ptr)\n");
@@ -2019,6 +2022,33 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.WaitResult".to_string(),
+                }
+            });
+
+        // `Output` — the return of `process.exec/run`. Declared in
+        // stdlib/process.tl, but `process.exec` is reachable without an explicit
+        // import (module builtins resolve by name), so the layout must exist
+        // before the generic struct scan runs. Field order matches the .tl
+        // declaration and `ProcessOutputRaw` in src/runtime/process_ffi.rs.
+        self.struct_layouts
+            .entry("Output".to_string())
+            .or_insert_with(|| {
+                let names = ["stdout", "stderr", "exit_code", "success"];
+                let types = [
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I32,
+                    LLType::I1,
+                ];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.Output".to_string(),
                 }
             });
 
@@ -6361,6 +6391,21 @@ void tallow_async_runtime_shutdown(void) {
             // holding `false`, `0` or "" is present and falsy. The box's kind tag
             // selects the payload rule, matching interp.rs::Value::is_truthy.
             LLType::Optional => self.emit_optional_truthy_i1(val),
+            // A `Result` is truthy iff it is `Ok` — the interpreter maps
+            // `Value::Ok(_) => true, Value::Err(_) => false`. The catch-all
+            // below would read the box pointer, which is non-null for both.
+            LLType::ResultPtr => {
+                let tag_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{tag_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 0",
+                    val.reg
+                ));
+                let tag = self.fresh_reg();
+                self.emit_line(&format!("{tag} = load i64, ptr {tag_gep}"));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i64 {tag}, 0"));
+                Ok(ok)
+            }
             LLType::I1 | LLType::I64 | LLType::F64 | LLType::I8Ptr | LLType::Tagged => {
                 self.coerce_to_i1(val)
             }
@@ -20465,6 +20510,53 @@ void tallow_async_runtime_shutdown(void) {
         LLValue::new(result_ptr, LLType::ResultPtr)
     }
 
+    /// Build a plain (non-`Result`) instance of a declared struct: allocate the
+    /// layout, store each field, return the pointer. `build_result_struct` wraps
+    /// the same allocation in a `%struct.TallowResult`; `process.exec` declares
+    /// `Output`, not `Result<Output>`, so it needs the unwrapped form.
+    fn build_plain_struct(
+        &mut self,
+        layout_name: &str,
+        fields: &[(&str, String, LLType)],
+    ) -> Result<LLValue, String> {
+        let layout = self
+            .struct_layouts
+            .get(layout_name)
+            .cloned()
+            .ok_or_else(|| format!("{layout_name} has no native layout"))?;
+        let struct_ty = layout.llvm_name.clone();
+        let size_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{size_ptr} = getelementptr {struct_ty}, ptr null, i32 1"
+        ));
+        let size_i64 = self.fresh_reg();
+        self.emit_line(&format!("{size_i64} = ptrtoint ptr {size_ptr} to i64"));
+        let object = self.fresh_reg();
+        self.emit_line(&format!("{object} = call ptr @malloc(i64 {size_i64})"));
+        for (name, value, ty) in fields {
+            let Some((idx, field_ty)) = layout.field_map.get(*name).cloned() else {
+                return Err(format!("{layout_name} has no field `{name}`"));
+            };
+            let stored = if matches!(field_ty, LLType::Optional) {
+                if value == "null" {
+                    "null".to_string()
+                } else {
+                    self.box_optional(&LLValue::new(value.clone(), ty.clone()))?
+                }
+            } else if value.starts_with('%') {
+                self.coerce(&LLValue::new(value.clone(), ty.clone()), &field_ty)?
+            } else {
+                value.clone()
+            };
+            let gep = self.fresh_reg();
+            self.emit_line(&format!(
+                "{gep} = getelementptr inbounds {struct_ty}, ptr {object}, i32 0, i32 {idx}"
+            ));
+            self.emit_line(&format!("store {} {stored}, ptr {gep}", field_ty.to_ir()));
+        }
+        Ok(LLValue::new(object, LLType::I8Ptr))
+    }
+
     fn build_result_struct(
         &mut self,
         layout_name: &str,
@@ -20848,14 +20940,83 @@ impl<'a> CodeGen<'a> {
                 self.emit_line("unreachable");
                 Ok(Some(LLValue::new("0".into(), LLType::I64)))
             }
-            "run" | "exec" => Err(
-                "process.exec/run: the language declares `Output` (stdout, stderr, \
-                 exit_code, success), but the native lowering can only run a shell and \
-                 read its exit status — it cannot capture output, so it used to return a \
-                 bare number that every field read turned into 0. Use --interpret, or \
-                 redirect the child's output yourself"
-                    .to_string(),
-            ),
+            "run" | "exec" => {
+                // Native popen (src/runtime/process_ffi.rs). `Output` is what the
+                // language declares, so this must return a real struct carrying
+                // the child's captured stdout/stderr/status — the previous arm
+                // refused precisely because it could only read a status code.
+                let cmd = self.emit_expr(&args[0].value)?;
+                let cmd_c = self.coerce_to_string(&cmd)?;
+                let (argv_c, argc) = match args.get(1) {
+                    None => (self.intern_string(""), 0i64),
+                    Some(arg) => match &arg.value.kind {
+                        ExprKind::Array(items) => {
+                            let mut blob = String::new();
+                            for item in items {
+                                match &item.kind {
+                                    ExprKind::StringLit(s) => {
+                                        blob.push_str(s);
+                                        blob.push('\0');
+                                    }
+                                    _ => {
+                                        return Err(
+                                            "process.exec: native argv must be an array of \
+                                             string literals (the runtime receives one \
+                                             NUL-separated blob); build the strings into \
+                                             literals or run --interpret"
+                                                .to_string(),
+                                        )
+                                    }
+                                }
+                            }
+                            (self.intern_string(&blob), items.len() as i64)
+                        }
+                        _ => {
+                            return Err(
+                                "process.exec: the native lowering needs the arguments as an \
+                                 array literal of strings, not a dynamic value; run --interpret"
+                                    .to_string(),
+                            )
+                        }
+                    },
+                };
+                // 32 bytes: stdout ptr (0), stderr ptr (8), exit_code i64 (16),
+                // success i32 (24), ok i32 (28). Byte offsets rather than a named
+                // LLVM struct: the runtime's type is not part of the module's type
+                // table, and `alloca %struct.X` needs a declared sized type.
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = call ptr @malloc(i64 32)"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_process_exec(ptr {cmd_c}, ptr {argv_c}, i64 {argc}, ptr {out})"
+                ));
+                let mut load = |cg: &mut Self, offset: usize, ty: &LLType| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {out}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+                    LLValue::new(reg, ty.clone())
+                };
+                let stdout = load(self, 0, &LLType::I8Ptr);
+                let stderr = load(self, 8, &LLType::I8Ptr);
+                let exit64 = load(self, 16, &LLType::I64);
+                let success32 = load(self, 24, &LLType::I32);
+                let exit32 = self.fresh_reg();
+                self.emit_line(&format!("{exit32} = trunc i64 {} to i32", exit64.reg));
+                let success = self.fresh_reg();
+                self.emit_line(&format!("{success} = icmp ne i32 {}, 0", success32.reg));
+                Ok(Some(self.build_plain_struct(
+                    "Output",
+                    &[
+                        ("stdout", stdout.reg, LLType::I8Ptr),
+                        ("stderr", stderr.reg, LLType::I8Ptr),
+                        ("exit_code", exit32, LLType::I32),
+                        ("success", success, LLType::I1),
+                    ],
+                )?))
+            }
             "pid" => {
                 let reg = self.fresh_reg();
                 self.emit_line(&format!("{reg} = call i32 @getpid()"));
@@ -35239,14 +35400,42 @@ fn main() {
     }
 
     #[test]
-    fn codegen_stdlib_process_run_refuses_instead_of_faking_output() {
+    fn codegen_stdlib_process_exec_lowers_to_the_capture_ffi() {
         // This arm used to emit `system()` and hand back the exit code while the
-        // language declares `Output`. Every field read then turned into 0, so the
-        // test asserting `@system` was pinning the fake. It must refuse by name.
+        // language declares `Output`; every field read then turned into 0. It now
+        // calls the runtime popen FFI, which fills stdout/stderr/status.
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let out = process.exec("/bin/echo", ["hello"])
+                print(out.stdout)
+            }
+        "#,
+        );
+        assert!(
+            ir.contains("@tallow_process_exec"),
+            "process.exec must lower to the capture FFI"
+        );
+        assert!(
+            ir.contains("call i32 @tallow_process_exec"),
+            "the arm must call the capture FFI with the out-parameter"
+        );
+        assert!(
+            !ir.contains("call i32 @system("),
+            "the status-only shell call is the fake this replaced"
+        );
+    }
+
+    #[test]
+    fn codegen_stdlib_process_exec_refuses_a_dynamic_argv() {
+        // The runtime takes one NUL-separated blob, so the arguments have to be
+        // known at build time. A dynamic array must refuse by name rather than
+        // silently run the command with no arguments.
         let (tokens, errors) = lexer::tokenize(
             r#"
             fn main() {
-                let out = process.exec("echo hello")
+                let argv = ["hello"]
+                let out = process.exec("/bin/echo", argv)
                 print(out.stdout)
             }
         "#,
@@ -35255,10 +35444,10 @@ fn main() {
         let program = parser::Parser::parse(tokens).expect("parse error");
         let (env, _) = TypeChecker::new(&program).check();
         let mut cg = CodeGen::new(&program, &env);
-        let err = cg.emit_module().expect_err("native exec must refuse");
+        let err = cg.emit_module().expect_err("dynamic argv must refuse");
         assert!(
-            err.contains("process.exec/run") && err.contains("cannot capture output"),
-            "refusal must name the limitation, got: {err}"
+            err.contains("process.exec") && err.contains("array literal"),
+            "refusal must name the shape, got: {err}"
         );
     }
 

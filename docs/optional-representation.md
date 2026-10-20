@@ -1,7 +1,9 @@
 # Optional representation in the native plane
 
-Status: **in progress — returns and printing are boxed; fields, unboxing and equality remain.** Operator chose the boxed encoding
-(option 1 of three in register #119) on 2026-10-18.
+Status: **steps 1–4 done; field-level WaitResult parity (step 5) is the open
+item.** Returns, printing, field store/load, truthiness, unboxing and `== nil`
+all work; arithmetic on an optional still refuses by name. Operator chose the
+boxed encoding (option 1 of three in register #119) on 2026-10-18.
 
 ## The defect it fixes
 
@@ -56,17 +58,30 @@ Rules:
 2. ~~Printing~~ **DONE** — `tallow_print_optional` reads the box's kind and
    renders `true`/`false`/`%lld`/`%g`/`%s`, or `nil` for a null pointer.
    `tests/optional_parity.rs` holds both engines to `true`/`false`/`nil`.
-   Remaining: field store/load, unboxing, and `== nil`.
-3. Convert the browser structs that carry optionals (`ScriptTag.script_hash`,
-   `ScriptTag.injected`, `WaitResult.*`) to real optional fields — today they are
-   filled with `null`/`false` placeholders.
-4. Lower the five `wait_*` methods, which become possible only at step 3.
-5. `tests/browser_native_parity.rs` gains a `WaitResult` assertion: the same
-   wait on both engines must report the same `result`, `url` and absent fields.
+   **Also done:** field store/load (both struct builders box an optional slot and
+   load the pointer back), truthiness (`emit_optional_truthy_i1` reads the kind
+   tag, so a present `false`/`0`/`""` is falsy *and* not absent — this replaced a
+   catch-all that read "non-null pointer ⇒ true"), and `== nil` / `!= nil` /
+   value equality (`emit_optional_eq`). The same test file's
+   `optional_truthiness_and_nil_equality_agree` asserts all of it on both planes.
+   Remaining: arithmetic on an optional (`r.elapsed_ms + 1`) refuses with the
+   named coerce error rather than unboxing.
+3. **DONE** — the browser structs carry real optional fields, and the five wait
+   arms fill only what the interpreter fills: `wait_for_event` writes `event`
+   (not `received`/`method`), `wait_for_request` leaves `received` nil, and
+   `wait_for_response` writes `received` as the observed bool. Before this they
+   wrote the URL string into `received`, which is declared `bool?`.
+4. **DONE** — all six `wait_*` arms (timeout, function, url, event, request,
+   response) are lowered; `wait_url_parity` / `wait_net_parity` gate the value.
+5. **OPEN** — those two tests read `result` and `url` only. A field-by-field
+   `WaitResult` comparison against the interpreter (`received`, `method`,
+   `event`, `elapsed_ms`) still needs a browser-driven test; the code now fills
+   the same fields, but only the source-level comparison proves it.
 
 ## Sites to change (inventory, `src/codegen.rs`)
 
-Named so step 1 starts from facts rather than another search:
+Named so step 1 starts from facts rather than another search. This is the
+original inventory; the migration order above records what has since landed.
 
 | Site | Line | Today | Change |
 |---|---|---|---|
