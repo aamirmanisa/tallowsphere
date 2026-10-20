@@ -149,14 +149,12 @@ defect, not a policy:
 
 - [x] The gold linker is deprecated with known warnings — decide or document.  
       DECIDED: not used. .cargo/config.toml lines 55-59 record the measurement — it links, but cargo warns the linker is deprecated with known Rust bugs; lld is the real fix and is a package change.
-- [ ] **Field access on an unbound Result call reads 0 natively.** 
-      `page.authenticated_get(url).status` returns 0 on the native plane and the real
-      status in the interpreter. The unwrap path is deliberately limited to a bound
-      variable (a call receiver would emit the call twice), so the expression reaches
-      the generic path and falls through to a literal 0. Fix: refuse that shape at
-      compile time or support it without double emission. Binding first (`let r =
-      …; r.status`) works on both planes and is what the parity test pins. Recorded in
-      docs/result-payload-typing.md.
+- [x] **Field access on an unbound Result call** — no longer silent. Native codegen
+      refuses the shape with "bind the result first"; the interpreter rejects it as a
+      type error. Neither returns 0. Pinned by
+      `tests/browser_result_field_refusal.rs`; the bound form (`let r = …; r.status`)
+      is parity-proven in `tests/browser_authenticated_parity.rs`.
+
 - [x] **Three page FFIs were exported with mangled names** — `Page.fill`,
       `Page.select` and cookie consent compiled and could not link ("undefined
       reference to tallow_page_fill"). Fixed; `scripts/check_ffi_symbols.py` gates

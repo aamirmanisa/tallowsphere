@@ -126,9 +126,10 @@ the standing proof and it passes.
 
 ## Field access needs a binding, not a call receiver
 
-`page.authenticated_get(url).status` reads **0** on the native plane while the
-interpreter returns the real status. Measured 2026-10-20: native `["0","0"]` vs
-interpreter `["201","201"]` against a loopback server.
+`page.authenticated_get(url).status` used to read **0** on the native plane
+(measured 2026-10-20: native `["0","0"]` vs interpreter `["201","201"]`). Codegen now
+refuses the shape by name — "bind the result first" — and the interpreter rejects it
+as a type error, so neither plane returns a silent zero.
 
 Cause: the unwrap path is limited to `ExprKind::Ident` receivers on purpose —
 unwrapping a call receiver would have to emit the call a second time (the IR shows
@@ -144,6 +145,7 @@ let first = page.authenticated_get(url)
 print(first.status)      // real status on both planes
 ```
 
-This is a third state the Definition of 100% forbids ("works identically ... or fails
-loudly by name"), so it stays an open item: either refuse that expression shape at
-compile time or support it without double emission.
+Pinned by `tests/browser_result_field_refusal.rs`: native fails with the fix in the
+message, the interpreter fails with a generic type error naming `.status`. Supporting
+the shorthand outright would need the call emitted once and unwrapped — the shape the
+bound-variable path already implements.
