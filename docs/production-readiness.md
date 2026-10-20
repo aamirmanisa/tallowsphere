@@ -172,12 +172,13 @@ defect, not a policy:
       optional reads its box's kind tag. `== nil`, `!= nil` and value equality were
       added on top of the same encoding. `tests/optional_parity.rs` 2/2, both
       planes byte-identical.
-- [x] **`WaitResult` fields are the interpreter's fields.** `wait_for_event` wrote
+- [x] **`WaitResult` fields are the interpreter's fields, and tested.** `wait_for_event` wrote
       the event name into `received`, `method` *and* `event`; `wait_for_request`
       wrote the URL into `received`; `wait_for_response` boxed the URL into a
       `bool?` slot. Each arm now matches `interp::wait_result_fields`. Field-level
-      parity is not yet asserted by a test (only `result`/`url` are) — recorded in
-      `docs/optional-representation.md` step 5.
+      `tests/wait_url_parity.rs` compares all seven deterministic fields on both
+      engines; `tests/wait_net_parity.rs` asserts the per-wait shape (response sets
+      `received`, request/event leave it absent, event name lands in `event`).
 - [x] **`+` on a `Result` renders the inner value (#116).** The interpreter's two
       `String + non-String` arms unwrap `Ok`/`Err`; `print` keeps the wrapper. Native
       rendered the wrapper in every position. Split into `emit_result_parts` with

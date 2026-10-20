@@ -61,7 +61,11 @@ fn main() {{
     page.goto("{url}")
     let r = {wait_call}
     print(r.result)
+    print(r.received)
     print(r.url)
+    print(r.method)
+    print(r.status)
+    print(r.event)
     page.close()
     browser.close()
 }}
@@ -69,7 +73,7 @@ fn main() {{
     )
 }
 
-fn run_against_delayed_fetch(wait_call: &str) -> String {
+fn run_against_delayed_fetch(wait_call: &str) -> Vec<String> {
     let port = serve();
     let url = format!("http://127.0.0.1:{port}/");
     let dir = std::env::temp_dir();
@@ -96,32 +100,58 @@ fn run_against_delayed_fetch(wait_call: &str) -> String {
         !stderr.contains("native build unavailable"),
         "native leg fell back to the interpreter:\n{stderr}"
     );
-    assert!(
-        stdout.starts_with("true\n"),
+    let lines: Vec<String> = stdout.lines().map(|l| l.trim().to_string()).collect();
+    assert_eq!(
+        lines.len(),
+        6,
+        "expected result/received/url/method/status/event, got:\n{stdout}"
+    );
+    assert_eq!(
+        lines[0], "true",
         "the wait missed an event that arrived while it was blocking:\n{stdout}"
     );
-    stdout
+    lines
 }
 
 #[test]
 fn wait_for_response_sees_a_request_the_page_makes_after_load() {
-    let stdout = run_against_delayed_fetch(WAIT_RESPONSE);
+    // The interpreter's `wait_result_fields` for a response wait sets both
+    // `url` and `received` (the observed bool) and leaves the rest nil.
+    let lines = run_against_delayed_fetch(WAIT_RESPONSE);
     assert!(
-        stdout.contains("slow.txt"),
-        "the matched URL was not reported:\n{stdout}"
+        lines[2].contains("slow.txt"),
+        "the matched URL was not reported: {lines:?}"
     );
+    assert_eq!(lines[1], "true", "wait_for_response must set received");
+    assert_eq!(lines[3], "nil", "method is not part of a response wait");
+    assert_eq!(lines[4], "nil", "status is not part of a response wait");
+    assert_eq!(lines[5], "nil", "event is not part of a response wait");
 }
 
 #[test]
 fn wait_for_request_sees_a_request_the_page_makes_after_load() {
-    let stdout = run_against_delayed_fetch(WAIT_REQUEST);
+    // A request wait reports `url` and leaves `received` absent — it used to
+    // write the URL into that `bool?` slot.
+    let lines = run_against_delayed_fetch(WAIT_REQUEST);
     assert!(
-        stdout.contains("slow.txt"),
-        "the matched URL was not reported:\n{stdout}"
+        lines[2].contains("slow.txt"),
+        "the matched URL was not reported: {lines:?}"
     );
+    assert_eq!(lines[1], "nil", "received must stay absent on a request wait");
+    assert_eq!(lines[3], "nil", "method is not part of a request wait");
+    assert_eq!(lines[5], "nil", "event is not part of a request wait");
 }
 
 #[test]
 fn wait_for_event_sees_an_event_the_page_causes_after_load() {
-    run_against_delayed_fetch(WAIT_EVENT);
+    // `event` carries the event's *name*; it used to be filled into `received`
+    // and `method` as well.
+    let lines = run_against_delayed_fetch(WAIT_EVENT);
+    assert_eq!(
+        lines[5], "Network.requestWillBeSent",
+        "the event name must land in `event`: {lines:?}"
+    );
+    assert_eq!(lines[1], "nil", "received must stay absent on an event wait");
+    assert_eq!(lines[2], "nil", "url must stay absent on an event wait");
+    assert_eq!(lines[3], "nil", "method must stay absent on an event wait");
 }
