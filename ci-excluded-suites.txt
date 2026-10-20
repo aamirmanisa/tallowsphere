@@ -26,7 +26,6 @@ browser_unlowered_gaps: requires Chromium + loopback (runs locally with TALLOW_A
 compiler_bench: specialized suite (bench/perf/fuzz), not per-commit
 crawler_browser_escalation: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 egress_census: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-fuzz_safety: specialized suite (bench/perf/fuzz), not per-commit
 injection_redteam: UNCLASSIFIED - needs triage
 juggler_smoke: UNCLASSIFIED - needs triage
 nav_direct: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
