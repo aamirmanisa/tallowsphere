@@ -887,3 +887,107 @@
   reason: "C8 (audit 2026-09-15): code-verified — src/vault/db.rs:16 (v2 hybrid written when pqc_enabled==true; default for new vaults, A6.1.3), :27-29 (v3 XChaCha20-Poly1305 written when pqc_enabled==false and cipher=xchacha20-poly1305), :264 (pqc_enabled: true in Default). README Security posture now states the precedence (R2, 2026-09-16); CAPS:330 still lacks it (CAPS-owned file). Re-verify on any container-format change."
   action: edit
   last_verified: '2026-09-16'
+
+- id: R-M15
+  claim: "`[profile.max]` ships smaller binaries: 36.6 vs 46.0 MB (-20.4% size), peak RSS 20.7 vs 22.6 MB, at ~+11% build wall — no runtime win claimed"
+  sources:
+  - README.md:190-196
+  label: shipped
+  bucket: S
+  owner: tooling
+  method: docs/benchmarks/profile-ab-2026-10-16.md
+  reason: "Measured 2026-10-16 on this box under CARGO_BUILD_JOBS=2 in a MemoryMax=8G scope; 58 examples/*.tl files, 51 type-check clean under both binaries. Size and RSS reproduce; the 12.84 vs 12.81 ms median is inside noise and is recorded as not-a-claim."
+  action: keep
+  last_verified: "2026-10-20"
+
+- id: R-M16
+  claim: "Formatting the whole workspace is a scale problem, not a hang: `cargo fmt --all --check` is 10.3 s on a clean tree, >5 min here (2,827 diff blocks across 874 tracked .rs files), 30-65 s for src/interp.rs alone"
+  sources:
+  - README.md:180-186
+  label: partial
+  bucket: S
+  owner: tooling
+  method: null
+  reason: "One-off measurement 2026-10-16, recorded in prose only; no harness reproduces the timing. The diff-block and file counts are recomputable by running the check, and the instruction (format only touched files, scripts/fmt-touched.sh) does not depend on the exact seconds."
+  action: keep
+  last_verified: "2026-10-20"
+
+- id: R-M17
+  claim: "`src/browser/traffic_morph.rs` timing parameters (500 ms burst window, 3-30 s reading pauses, 50-500 ms rapid click, 30 ms and 10 ms floors, Weibull 1952 ms, 36 s sample)"
+  sources:
+  - src/browser/traffic_morph.rs:250
+  - src/browser/traffic_morph.rs:356-357
+  - src/browser/traffic_morph.rs:428
+  - src/browser/traffic_morph.rs:447
+  - src/browser/traffic_morph.rs:783
+  - src/browser/traffic_morph.rs:982-989
+  - src/browser/traffic_morph.rs:1005-1012
+  - src/browser/traffic_morph.rs:1193
+  label: partial
+  bucket: S
+  owner: browser
+  method: null
+  reason: "Implementation parameters of the behavioural timing model, documented inline. Registered for R4 attribution only — these are not product claims and no user-facing number depends on them."
+  action: keep
+  last_verified: "2026-10-20"
+
+- id: R-M18
+  claim: "Transfer reference throughput table (disk write 2.8 GB/s, peak-speed row incl. 4.2 GB/s AES-256)"
+  sources:
+  - docs/transfer-reference.html:98
+  - docs/transfer-reference.html:469
+  - docs/transfer-reference.html:801
+  - docs/transfer-reference.html:827-843
+  - docs/transfer-reference.html:861
+  label: partial
+  bucket: S
+  owner: transfer
+  method: null
+  reason: "Illustrative reference table. The 4.2 GB/s cell is labelled 'target - unmeasured' in the row itself; nothing in this table was measured on this box, and the engine doc must not be read as a benchmark result."
+  action: keep
+  last_verified: "2026-10-20"
+
+- id: R-M19
+  claim: "CDP transport latency (~2 ms WebSocket, ~1.3 ms pipe) and browser-spec timeout defaults (2 ms-600 s)"
+  sources:
+  - docs/browser-specs.md:111
+  - docs/browser-specs.md:130-131
+  - docs/browser-specs.md:249
+  - docs/browser-specs.md:494
+  - docs/browser-specs.md:503
+  - docs/browser-specs.md:809
+  - docs/browser-specs.md:1045
+  - docs/browser-specs.md:1368
+  label: partial
+  bucket: S
+  owner: browser
+  method: null
+  reason: "Transport comparison and protocol timeout defaults in the browser spec. Documentation values, not measurements run here; the timeout numbers are the API's defaults, not performance claims."
+  action: keep
+  last_verified: "2026-10-20"
+
+- id: R-M20
+  claim: "Copy tool can be '1000x faster' than robocopy/FastCopy"
+  sources:
+  - docs/plans/2026-05-12-tallow-ultrafast-copy-tool.md:29
+  - docs/plans/2026-05-12-tallow-ultrafast-copy-tool.md:585
+  label: target-only
+  bucket: C
+  owner: copy-engine
+  method: null
+  reason: "The plan states the opposite of a promise: 'no software can be 1000x faster than well-tuned robocopy/FastCopy on the same hardware' and names the bandwidth bound. Registered so the phrase is attributable to that bound, not to a shipped claim."
+  action: rewrite
+  last_verified: "2026-10-20"
+
+- id: R-M21
+  claim: "Reference examples use `delay: 100.ms` / `delay: 500.ms` call shapes"
+  sources:
+  - docs/tallow-complete-reference.html:1103
+  - docs/tallow-complete-reference.html:1852
+  label: partial
+  bucket: S
+  owner: docs
+  method: null
+  reason: "API examples showing literal call syntax. The durations are syntax samples, not latency or performance claims."
+  action: keep
+  last_verified: "2026-10-20"
