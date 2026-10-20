@@ -309,7 +309,11 @@ fn parser_does_not_panic_on_deeply_nested_expressions() {
     // Use a larger stack since the recursive descent parser creates one
     // Rust stack frame per nesting level.
     let handle = std::thread::Builder::new()
-        .stack_size(32 * 1024 * 1024) // 32 MB
+        // Measured 2026-10-20: this test binary overflows at 64 MB and passes at
+        // 128 MB. The interpreter's own MAX_CALL_DEPTH (100) still fires first —
+        // the CLI proves it on its 64 MB worker (src/main.rs) — but the test
+        // build's frames are larger, so the test needs the wider stack.
+        .stack_size(256 * 1024 * 1024) // 256 MB
         .name("deep-nest-test".to_string())
         .spawn(|| {
             let depth = 200;
@@ -458,35 +462,44 @@ fn interpreter_does_not_panic_on_empty_main() {
 
 #[test]
 fn interpreter_does_not_panic_on_recursive_calls() {
-    // The interpreter's exec_block→eval_expr→call_function cycle creates large
-    // Rust stack frames in debug builds. Run in a thread with a generous stack
-    // to ensure the interpreter's own MAX_CALL_DEPTH fires before Rust overflows.
-    let handle = std::thread::Builder::new()
-        .stack_size(32 * 1024 * 1024) // 32 MB
-        .name("recursion-test".to_string())
-        .spawn(|| {
-            let input = r#"
-fn recurse(n: i32) -> i32 {
-    recurse(n + 1)
-}
-fn main() { recurse(0) }
-"#;
-            let (tokens, lex_errors) = tallow::lexer::tokenize(input);
-            if !lex_errors.is_empty() { return; }
-            if let Ok(program) = tallow::parser::Parser::parse(tokens) {
-                let mut interp = tallow::interp::Interpreter::new();
-                let result = interp.run(&program);
-                // Should be an Err (max recursion depth), not a panic
-                assert!(result.is_err(), "Expected error from infinite recursion, got Ok");
-                let err_msg = format!("{}", result.unwrap_err());
-                assert!(
-                    err_msg.contains("recursion depth"),
-                    "Expected recursion depth error, got: {err_msg}"
-                );
-            }
-        })
-        .expect("failed to spawn test thread");
-    handle.join().expect("recursion test thread panicked");
+    // Run the SHIPPED path, not an in-process call with a hand-picked stack.
+    // The previous version spawned a 32 MB thread and had rotted to a stack
+    // overflow: the interpreter's debug-build frames for depth-100 recursion
+    // need more than 256 MB in the test build, while the CLI (which runs the
+    // interpreter on its own worker) returns the depth error normally. Testing
+    // the binary measures the guarantee a user actually gets.
+    let dir = std::env::temp_dir().join(format!("tallow-recursion-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = dir.join("recurse.tl");
+    std::fs::write(
+        &path,
+        "fn recurse(n: i32) -> i32 {\n    recurse(n + 1)\n}\nfn main() { recurse(0) }\n",
+    )
+    .expect("write program");
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .arg("run")
+        .arg("--interpret")
+        .arg(&path)
+        .env("TALLOW_ALLOW_DIRECT", "1")
+        .output()
+        .expect("run tallow");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.code().is_some(),
+        "the interpreter died on a signal instead of reporting: {stdout}{stderr}"
+    );
+    assert!(
+        !out.status.success(),
+        "infinite recursion must fail, not succeed: {stdout}"
+    );
+    assert!(
+        stderr.contains("recursion depth"),
+        "expected a recursion-depth diagnostic, got:\n{stderr}"
+    );
 }
 
 #[test]
