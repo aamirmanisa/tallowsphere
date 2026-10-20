@@ -531,6 +531,11 @@ pub struct CodeGen<'a> {
     /// would treat the tagged struct as a C string (register #125), so `print`
     /// refuses instead of emitting bytes.
     variable_data_enum: HashMap<String, bool>,
+    /// Bindings whose type is `fn(..) -> ..`. A call through one is an indirect
+    /// call, which the native backend does not lower: it emitted a call to the
+    /// binding's name, which does not exist, and the result was a silent wrong
+    /// value (`apply(add, 2, 40)` printed 2 instead of 42 — register #126).
+    variable_is_fn: HashMap<String, bool>,
 
     // Variable → true if this array's elements are POINTER-BACKED (strings or
     // opaque handles) rather than plain numbers. Native arrays store every
@@ -691,6 +696,7 @@ impl<'a> CodeGen<'a> {
             variable_is_array: HashMap::new(),
             variable_is_string: HashMap::new(),
             variable_data_enum: HashMap::new(),
+            variable_is_fn: HashMap::new(),
             variable_array_elem_is_ptr: HashMap::new(),
             callback_wrappers: Vec::new(),
             variable_result_payload_kind: HashMap::new(),
@@ -3215,6 +3221,7 @@ void tallow_async_runtime_shutdown(void) {
         self.variable_is_array.clear();
         self.variable_is_string.clear();
         self.variable_data_enum.clear();
+        self.variable_is_fn.clear();
         self.variable_array_element_type.clear();
         self.variable_privacy.clear();
         self.variable_is_tuple.clear();
@@ -3270,6 +3277,14 @@ void tallow_async_runtime_shutdown(void) {
         // Mirrors the sync path; the async wrapper spawns this body, so emitting
         // here covers exactly one record per async call.
         self.emit_legal_audit_entry(func);
+
+        // Track function-typed params: calling through them is unsupported natively
+        // and must refuse rather than call a non-existent symbol (register #126).
+        for param in &func.params {
+            if matches!(&param.ty.kind, TypeExprKind::Function { .. }) {
+                self.variable_is_fn.insert(param.name.clone(), true);
+            }
+        }
 
         // Track array/struct types from params
         for param in &func.params {
@@ -3810,6 +3825,14 @@ void tallow_async_runtime_shutdown(void) {
         // so the record exists even if the function later fails mid-network.
         self.emit_legal_audit_entry(func);
 
+        // Track function-typed params (register #126): a call through one is an
+        // indirect call the backend cannot lower, so it must refuse.
+        for param in &func.params {
+            if matches!(&param.ty.kind, TypeExprKind::Function { .. }) {
+                self.variable_is_fn.insert(param.name.clone(), true);
+            }
+        }
+
         // Track array and struct type info from function parameter type annotations
         for param in &func.params {
             if let TypeExprKind::Slice(inner) = &param.ty.kind {
@@ -3901,6 +3924,11 @@ void tallow_async_runtime_shutdown(void) {
                     self.variable_is_string.insert(name.clone(), true);
                 } else {
                     self.variable_is_string.remove(name);
+                }
+                if matches!(ty, Some(t) if matches!(&t.kind, TypeExprKind::Function { .. })) {
+                    self.variable_is_fn.insert(name.clone(), true);
+                } else {
+                    self.variable_is_fn.remove(name);
                 }
                 if self.expr_is_data_enum(value) {
                     self.variable_data_enum.insert(name.clone(), true);
@@ -7038,6 +7066,15 @@ void tallow_async_runtime_shutdown(void) {
 
     fn emit_call(&mut self, callee: &Expr, args: &[CallArg]) -> Result<LLValue, String> {
         if let ExprKind::Ident(name) = &callee.kind {
+            // A call through a function-typed binding is an indirect call. The
+            // backend has no function-value representation, so this used to emit
+            // `call @<binding-name>` for a symbol that does not exist and produce a
+            // wrong value (`apply(add, 2, 40)` printed 2 — register #126).
+            if self.variable_is_fn.get(name).copied().unwrap_or(false) {
+                return Err(format!(
+                    "cannot call a function value natively: `{name}` is a fn(..) binding and                      the backend does not lower indirect calls yet; call the function by name,                      or run without --require-native (the interpreter handles it)"
+                ));
+            }
             // ── Fail-loud: capture-through-call ──────────────────────────────
             // A capturing closure passed as a call argument needs its env
             // side-table threaded across the ABI into the callee; the native
