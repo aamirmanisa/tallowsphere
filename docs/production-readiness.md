@@ -1,4 +1,4 @@
-# Production-readiness checklist — Tallow (state: 2026-10-20, HEAD f036b73)
+# Production-readiness checklist — Tallow (state: 2026-10-20, HEAD ce2004a)
 
 Every item below is either verified against this tree or explicitly marked
 UNVERIFIED. No item may be checked without a command whose output proves it.
@@ -19,6 +19,11 @@ UNVERIFIED. No item may be checked without a command whose output proves it.
 - Open: #127 a *capturing* closure across a call boundary — a value carries no
   environment, so it refuses loudly and the interpreter runs it. An ABI change
   (`{fn, env}` plus a heap env), not a patch.
+- Open: #128 the `stdlib/*.tl` corpus is written in a dialect the parser does not
+  implement — 11 of 85 files check clean; the rest need `native fn` without a body,
+  nested slices `[[T]]`, and `Int`/`Float`. `module` headers are now accepted, which
+  removes 26 first-errors but fixes no file end to end. Programs are unaffected
+  (stdlib is Rust); recommendation is to generate these stubs from the registry.
 - Not pushed: the local-only directive stands.
 
 ## P0 — correctness gaps that produce wrong answers
