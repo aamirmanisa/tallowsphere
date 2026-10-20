@@ -185,8 +185,8 @@ defect, not a policy:
       two consumers; `tests/browser_native_parity.rs` now fails on `TITLE=Ok(`.
 - [x] **`process.exec` captures output natively.** `src/runtime/process_ffi.rs`
       (`tallow_process_exec`, 32-byte out-parameter) plus `build_plain_struct`.
-      A dynamic `argv` refuses by name (register #121) rather than running the
-      command with no arguments. `tests/process_exec_parity.rs` 1/1: stdout,
+      A runtime `[]String` argv is walked in IR into a pointer array and passed to
+      `tallow_process_execv`; literal arrays keep the no-allocation blob path. `tests/process_exec_parity.rs` 1/1: stdout,
       stderr, exit code and `success` identical on both planes.
 
 ## Gate sweep — 2026-10-20 (measured on HEAD 916ddfd)

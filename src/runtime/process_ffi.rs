@@ -6,9 +6,9 @@
 //! already captured output through `std::process::Command::output`; this is the
 //! same operation behind a C ABI.
 //!
-//! argv crosses the boundary as a NUL-separated blob plus a count, not as a
-//! pointer array: the codegen can emit one interned string constant without
-//! building an array of pointers in IR.
+//! argv crosses in two shapes: a NUL-separated blob plus a count for literal
+//! arrays (one interned constant, no loop in IR), and a real `*const *const
+//! c_char` array via `tallow_process_execv` for a runtime `[]String`.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -77,8 +77,61 @@ pub extern "C" fn tallow_process_exec(
             cursor = unsafe { cursor.add(bytes.len() + 1) };
         }
     }
+    run_with_args(&cmd, &args, out)
+}
 
-    match std::process::Command::new(&cmd).args(&args).output() {
+/// Run `cmd` with a real `argv` pointer array — the dynamic form.
+///
+/// Codegen uses this when the argument list is a runtime `[]String`: it calls
+/// `tallow_array_len` / `tallow_array_get` to build the pointer array in IR and
+/// hands it here. The blob entry point above stays for literal arrays, which
+/// need no loop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tallow_process_execv(
+    cmd: *const c_char,
+    argv: *const *const c_char,
+    argc: i64,
+    out: *mut ProcessOutputRaw,
+) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    unsafe {
+        *out = ProcessOutputRaw {
+            stdout: std::ptr::null_mut(),
+            stderr: std::ptr::null_mut(),
+            exit_code: -1,
+            success: 0,
+            ok: -1,
+        };
+    }
+    if cmd.is_null() {
+        return -1;
+    }
+    let cmd = unsafe { CStr::from_ptr(cmd) }.to_string_lossy().to_string();
+    if cmd.trim().is_empty() {
+        unsafe {
+            (*out).stderr = to_c("process.exec requires a command string");
+        }
+        return -1;
+    }
+    let mut args: Vec<String> = Vec::new();
+    if !argv.is_null() && argc > 0 {
+        let slots = unsafe { std::slice::from_raw_parts(argv, argc as usize) };
+        for slot in slots {
+            if slot.is_null() {
+                args.push(String::new());
+                continue;
+            }
+            args.push(unsafe { CStr::from_ptr(*slot) }.to_string_lossy().to_string());
+        }
+    }
+    run_with_args(&cmd, &args, out)
+}
+
+/// The shared tail: spawn, capture, fill `out`.
+fn run_with_args(cmd: &str, args: &[String], out: *mut ProcessOutputRaw) -> i32 {
+    match std::process::Command::new(cmd).args(args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
