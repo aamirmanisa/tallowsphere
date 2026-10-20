@@ -25,6 +25,14 @@ fn main() {
 }
 "#;
 
+const RESULT_NO_MATCH: &str = r#"
+fn main() {
+    let r = Ok(1)
+    let s = r match { Err(e) -> "err" }
+    print(s)
+}
+"#;
+
 const STR_WITH_DEFAULT: &str = r#"
 fn main() {
     let a = "a"
@@ -85,6 +93,11 @@ fn int_subject_without_a_matching_arm_fails_on_both_planes() {
 #[test]
 fn string_subject_without_a_matching_arm_fails_on_both_planes() {
     assert_both_planes_reject(STR_NO_MATCH);
+}
+
+#[test]
+fn result_subject_without_a_matching_arm_fails_on_both_planes() {
+    assert_both_planes_reject(RESULT_NO_MATCH);
 }
 
 #[test]

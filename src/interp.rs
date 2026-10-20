@@ -608,13 +608,16 @@ impl Value {
             // A declared enum prints its discriminant, which is what the native
             // plane stores. A synthetic value with no declaration behind it
             // (`Some(x)` from the Option convention) keeps its constructor form.
+            // A unit variant prints its discriminant, which is what the native
+            // plane stores. A data-carrying variant keeps its constructor form: the
+            // discriminant alone would throw the payload away.
             Value::Enum { variant, fields, discriminant, .. } => {
-                if *discriminant >= 0 && fields.is_empty() {
-                    discriminant.to_string()
-                } else if *discriminant >= 0 {
-                    discriminant.to_string()
-                } else if fields.is_empty() {
-                    variant.clone()
+                if fields.is_empty() {
+                    if *discriminant >= 0 {
+                        discriminant.to_string()
+                    } else {
+                        variant.clone()
+                    }
                 } else {
                     let inner: Vec<String> = fields.iter().map(|(_, v)| v.display()).collect();
                     format!("{variant}({})", inner.join(", "))
@@ -31987,14 +31990,14 @@ fn value_to_json(val: &Value) -> String {
         Value::Ok(v) => format!("{{\"Ok\":{}}}", value_to_json(v)),
         Value::Err(v) => format!("{{\"Err\":{}}}", value_to_json(v)),
         Value::Enum { variant, discriminant, fields, .. } => {
-            if *discriminant < 0 && fields.is_empty() {
-                format!("\"{}\"", variant)
-            } else if *discriminant < 0 {
+            if !fields.is_empty() {
                 let f: Vec<String> = fields
                     .iter()
                     .map(|(k, v)| format!("\"{}\":{}", k, value_to_json(v)))
                     .collect();
                 format!("{{\"{}\":{{{}}}}}", variant, f.join(","))
+            } else if *discriminant < 0 {
+                format!("\"{}\"", variant)
             } else if fields.is_empty() {
                 format!("{discriminant}")
             } else {
@@ -32792,7 +32795,8 @@ mod tests {
                 print(c)
             }
             "#);
-        assert_eq!(output, vec!["Red"]);
+        // Enums are integer-backed and print their discriminant on both planes.
+        assert_eq!(output, vec!["0"]);
     }
 
     #[test]

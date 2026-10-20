@@ -12797,8 +12797,12 @@ void tallow_async_runtime_shutdown(void) {
         // Emit default fallthrough block (only if no wildcard arm provided the default)
         let has_default_arm = default_label.is_some();
         if !has_default_arm {
+            // No arm matched. The interpreter raises a runtime error; the default
+            // value here was a silent wrong answer (register #123). The helper is
+            // `noreturn`, so this path never reaches the merge block.
             self.body.push_str(&format!("{default_fallthrough}:\n"));
-            self.emit_line(&format!("br label %{merge_label}"));
+            self.emit_line("call void @tallow_no_match(i32 0, i32 0)");
+            self.emit_line("unreachable");
         }
 
         // Emit each arm body
@@ -12930,12 +12934,7 @@ void tallow_async_runtime_shutdown(void) {
             let ty = &first.0.ty;
             let mut phi_args: Vec<String> = Vec::new();
             // Add entry for the default fallthrough block (if no wildcard arm)
-            if !has_default_arm {
-                phi_args.push(format!(
-                    "[ {}, %{default_fallthrough} ]",
-                    ty.default_value()
-                ));
-            }
+            // No PHI entry for the no-match path: it never reaches this merge.
             for (val, label) in &results {
                 let coerced = if val.ty != *ty {
                     self.coerce(val, ty)?
@@ -13032,8 +13031,12 @@ void tallow_async_runtime_shutdown(void) {
         // Emit default fallthrough block
         let has_default_arm = default_label.is_some();
         if !has_default_arm {
+            // No arm matched. The interpreter raises a runtime error; the default
+            // value here was a silent wrong answer (register #123). The helper is
+            // `noreturn`, so this path never reaches the merge block.
             self.body.push_str(&format!("{default_fallthrough}:\n"));
-            self.emit_line(&format!("br label %{merge_label}"));
+            self.emit_line("call void @tallow_no_match(i32 0, i32 0)");
+            self.emit_line("unreachable");
         }
 
         // Emit each arm body
@@ -13122,12 +13125,7 @@ void tallow_async_runtime_shutdown(void) {
             let phi = self.fresh_reg();
             let ty = &first.0.ty;
             let mut phi_args: Vec<String> = Vec::new();
-            if !has_default_arm {
-                phi_args.push(format!(
-                    "[ {}, %{default_fallthrough} ]",
-                    ty.default_value()
-                ));
-            }
+            // No PHI entry for the no-match path: it never reaches this merge.
             for (val, label) in &results {
                 let coerced = if val.ty != *ty {
                     self.coerce(val, ty)?
