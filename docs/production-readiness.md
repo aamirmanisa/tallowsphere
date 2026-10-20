@@ -138,8 +138,15 @@ defect, not a policy:
 
 ## P2 — quality
 
-- [x] **`cargo fmt` hangs** — MEASURED and worked around. `cargo fmt -p tallow -- --check` exceeds 400 s at ~1 s of CPU (blocked, not working); the same check via `rustfmt` directly over every tracked file takes 58-65 s. Root cause sits in cargo-fmt's single rustfmt invocation, not in rustfmt. `scripts/fmt-check.sh` provides the working check (`--write` to apply). Separately: the tree currently carries 13,132 rustfmt diff blocks, so a wholesale format is its own reviewed change, not a side effect of this item.
-      or fix the hang (unverified cause).
+- [x] **`cargo fmt` hangs** — MEASURED, and the mechanism is memory, not formatting.
+      `cargo fmt -p tallow -- --check` exceeded 400 s at ~1 s of CPU; the kernel then
+      OOM-killed rustfmt at **7.6 GB anon RSS / 11.5 GB VM** (`dmesg`: "Killed process
+      ... (rustfmt)"). The near-zero CPU was swap thrash, not a terminal loop. Direct
+      `rustfmt` over the same files, batched 150 at a time, completes in ~65 s with
+      bounded memory and reports the same 13,132 diff blocks. `scripts/fmt-check.sh`
+      does exactly that (`--write` to apply). A wholesale format remains its own
+      reviewed change.
+
 - [x] The gold linker is deprecated with known warnings — decide or document.  
       DECIDED: not used. .cargo/config.toml lines 55-59 record the measurement — it links, but cargo warns the linker is deprecated with known Rust bugs; lld is the real fix and is a package change.
 - [x] Remaining browser methods declared in `stdlib/browser.tl` but with no lowering are now ENUMERATED and pinned as loud refusals: `Page.goto_antibot`, `Page.links`, `Element.classes`. Each names itself on both planes in `tests/browser_unlowered_gaps.rs`; `docs/browser-native-gaps.md` records what closing each would take.
