@@ -4569,7 +4569,7 @@ void tallow_async_runtime_shutdown(void) {
                     }
                 } else {
                     // Non-Result pattern: treat as truthiness check + bind
-                    let cond_i1 = self.coerce_to_i1(&val)?;
+                    let cond_i1 = self.emit_truthy_i1(&val)?;
                     self.emit_line(&format!(
                         "br i1 {cond_i1}, label %{body_label}, label %{end_label}"
                     ));
@@ -4731,7 +4731,7 @@ void tallow_async_runtime_shutdown(void) {
                         }
                     }
                     UnOp::Not => {
-                        let bool_val = self.coerce_to_i1(&val)?;
+                        let bool_val = self.emit_truthy_i1(&val)?;
                         let reg = self.fresh_reg();
                         self.emit_line(&format!("{reg} = xor i1 {bool_val}, 1"));
                         Ok(LLValue::new(reg, LLType::I1))
@@ -5349,7 +5349,7 @@ void tallow_async_runtime_shutdown(void) {
                         }
                     }
                 } else {
-                    let cond_i1 = self.coerce_to_i1(&val)?;
+                    let cond_i1 = self.emit_truthy_i1(&val)?;
                     self.emit_line(&format!(
                         "br i1 {cond_i1}, label %{then_label}, label %{else_label}"
                     ));
@@ -5991,10 +5991,20 @@ void tallow_async_runtime_shutdown(void) {
         let lhs = self.emit_expr(left)?;
         let rhs = self.emit_expr(right)?;
 
+        // Optional equality. `nil` is a null box and a present value compares by
+        // payload — `false == nil` is false, `false == false` is true. Before
+        // this arm the operands fell through to integer coercion, which refused
+        // the conversion: the shape was unimplemented, not merely divergent.
+        if matches!(op, BinOp::Eq | BinOp::Neq)
+            && (lhs.ty == LLType::Optional || rhs.ty == LLType::Optional)
+        {
+            return self.emit_optional_eq(op == BinOp::Eq, &lhs, &rhs);
+        }
+
         // String + anything → concatenation
         if op == BinOp::Add && (lhs.ty == LLType::I8Ptr || rhs.ty == LLType::I8Ptr) {
-            let ls = self.coerce_to_string(&lhs)?;
-            let rs = self.coerce_to_string(&rhs)?;
+            let ls = self.coerce_to_concat_string(&lhs)?;
+            let rs = self.coerce_to_concat_string(&rhs)?;
             return self.emit_strcat(&ls, &rs);
         }
 
@@ -6347,6 +6357,10 @@ void tallow_async_runtime_shutdown(void) {
     /// can always emit `br i1 …`.
     fn emit_truthy_i1(&mut self, val: &LLValue) -> Result<String, String> {
         match &val.ty {
+            // An optional is a pointer, but "non-null" is not truthiness: a box
+            // holding `false`, `0` or "" is present and falsy. The box's kind tag
+            // selects the payload rule, matching interp.rs::Value::is_truthy.
+            LLType::Optional => self.emit_optional_truthy_i1(val),
             LLType::I1 | LLType::I64 | LLType::F64 | LLType::I8Ptr | LLType::Tagged => {
                 self.coerce_to_i1(val)
             }
@@ -6357,6 +6371,253 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_line(&format!("{reg} = icmp ne ptr {}, null", val.reg));
                 Ok(reg)
             }
+        }
+    }
+
+    /// Truthiness of a boxed optional (`T?`): absent is false; a present value
+    /// uses its payload's own rule. The box's kind tag (0 int, 1 string, 2 float,
+    /// 3 bool — `LLType::type_tag`) picks the rule, so `bool? false` is false and
+    /// a present `0` is false, exactly as `interp.rs::Value::is_truthy` reads
+    /// `Value::Bool(false)`, `Value::Int(0)` and `Value::String("")`.
+    fn emit_optional_truthy_i1(&mut self, val: &LLValue) -> Result<String, String> {
+        let slot = self.fresh_reg();
+        self.emit_line(&format!("{slot} = alloca i1"));
+        self.emit_line(&format!("store i1 false, ptr {slot}"));
+
+        let nil_l = self.fresh_label("opt.truth.nil");
+        let box_l = self.fresh_label("opt.truth.box");
+        let str_l = self.fresh_label("opt.truth.str");
+        let str_empty_l = self.fresh_label("opt.truth.str.empty");
+        let num_l = self.fresh_label("opt.truth.num");
+        let flt_l = self.fresh_label("opt.truth.float");
+        let int_l = self.fresh_label("opt.truth.int");
+        let end_l = self.fresh_label("opt.truth.end");
+
+        let is_null = self.fresh_reg();
+        self.emit_line(&format!("{is_null} = icmp eq ptr {}, null", val.reg));
+        self.emit_line(&format!(
+            "br i1 {is_null}, label %{nil_l}, label %{box_l}"
+        ));
+        self.emit_line(&format!("{nil_l}:"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{box_l}:"));
+        let kind_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{kind_gep} = getelementptr inbounds %struct.Optional, ptr {}, i32 0, i32 0",
+            val.reg
+        ));
+        let kind = self.fresh_reg();
+        self.emit_line(&format!("{kind} = load i64, ptr {kind_gep}"));
+        let pay_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{pay_gep} = getelementptr inbounds %struct.Optional, ptr {}, i32 0, i32 1",
+            val.reg
+        ));
+        let pay = self.fresh_reg();
+        self.emit_line(&format!("{pay} = load i64, ptr {pay_gep}"));
+        let is_str = self.fresh_reg();
+        self.emit_line(&format!("{is_str} = icmp eq i64 {kind}, 1"));
+        self.emit_line(&format!(
+            "br i1 {is_str}, label %{str_l}, label %{num_l}"
+        ));
+
+        self.emit_line(&format!("{str_l}:"));
+        let pay_null = self.fresh_reg();
+        self.emit_line(&format!("{pay_null} = icmp eq i64 {pay}, 0"));
+        self.emit_line(&format!(
+            "br i1 {pay_null}, label %{str_empty_l}, label %{int_l}"
+        ));
+        self.emit_line(&format!("{str_empty_l}:"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{num_l}:"));
+        let is_flt = self.fresh_reg();
+        self.emit_line(&format!("{is_flt} = icmp eq i64 {kind}, 2"));
+        self.emit_line(&format!(
+            "br i1 {is_flt}, label %{flt_l}, label %{int_l}"
+        ));
+        self.emit_line(&format!("{flt_l}:"));
+        let dbl = self.fresh_reg();
+        self.emit_line(&format!("{dbl} = bitcast i64 {pay} to double"));
+        let fnz = self.fresh_reg();
+        self.emit_line(&format!("{fnz} = fcmp une double {dbl}, 0.0"));
+        self.emit_line(&format!("store i1 {fnz}, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        // Strings and integers both arrive here: a string loads its first byte,
+        // an integer compares the payload to zero.
+        self.emit_line(&format!("{int_l}:"));
+        let is_string = self.fresh_reg();
+        self.emit_line(&format!("{is_string} = icmp eq i64 {kind}, 1"));
+        let str_bytes_l = self.fresh_label("opt.truth.bytes");
+        let int_bytes_l = self.fresh_label("opt.truth.zero");
+        self.emit_line(&format!(
+            "br i1 {is_string}, label %{str_bytes_l}, label %{int_bytes_l}"
+        ));
+        self.emit_line(&format!("{str_bytes_l}:"));
+        let sptr = self.fresh_reg();
+        self.emit_line(&format!("{sptr} = inttoptr i64 {pay} to ptr"));
+        let first = self.fresh_reg();
+        self.emit_line(&format!("{first} = load i8, ptr {sptr}"));
+        let snz = self.fresh_reg();
+        self.emit_line(&format!("{snz} = icmp ne i8 {first}, 0"));
+        self.emit_line(&format!("store i1 {snz}, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+        self.emit_line(&format!("{int_bytes_l}:"));
+        let inz = self.fresh_reg();
+        self.emit_line(&format!("{inz} = icmp ne i64 {pay}, 0"));
+        self.emit_line(&format!("store i1 {inz}, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{end_l}:"));
+        let out = self.fresh_reg();
+        self.emit_line(&format!("{out} = load i1, ptr {slot}"));
+        Ok(out)
+    }
+
+    /// `T? == nil`, `T? != nil`, and value equality against a present value.
+    /// `nil` is a null box. Two present boxes compare by kind and payload, so
+    /// `false == false` holds while `false == nil` does not — the distinction
+    /// the previous `i64` encoding could not make.
+    fn emit_optional_eq(&mut self, eq: bool, lhs: &LLValue, rhs: &LLValue) -> Result<LLValue, String> {
+        // A nil literal arrives as `i64 0`; everything else that is not an
+        // optional is boxed, which is what the interpreter's value comparison
+        // sees (`Bool(false)` against `Bool(false)`).
+        let as_box = |cg: &mut Self, v: &LLValue| -> Result<String, String> {
+            if v.ty == LLType::Optional {
+                Ok(v.reg.clone())
+            } else if v.ty == LLType::I64 && v.reg == "0" {
+                Ok("null".to_string())
+            } else {
+                cg.box_optional(v)
+            }
+        };
+        let l = as_box(self, lhs)?;
+        let r = as_box(self, rhs)?;
+
+        // Presence test: one side is the nil literal.
+        if r == "null" || l == "null" {
+            let other = if l == "null" { &r } else { &l };
+            let reg = self.fresh_reg();
+            let cmp = if eq { "eq" } else { "ne" };
+            self.emit_line(&format!("{reg} = icmp {cmp} ptr {other}, null"));
+            return Ok(LLValue::new(reg, LLType::I1));
+        }
+
+        // Both present-or-absent boxes: compare presence, then values.
+        let slot = self.fresh_reg();
+        self.emit_line(&format!("{slot} = alloca i1"));
+        self.emit_line(&format!("store i1 false, ptr {slot}"));
+
+        let l_null = self.fresh_reg();
+        self.emit_line(&format!("{l_null} = icmp eq ptr {l}, null"));
+        let r_null = self.fresh_reg();
+        self.emit_line(&format!("{r_null} = icmp eq ptr {r}, null"));
+        let any_null = self.fresh_reg();
+        self.emit_line(&format!("{any_null} = or i1 {l_null}, {r_null}"));
+
+        let null_l = self.fresh_label("opt.eq.null");
+        let val_l = self.fresh_label("opt.eq.value");
+        let str_l = self.fresh_label("opt.eq.str");
+        let kinds_l = self.fresh_label("opt.eq.kinds");
+        let flt_l = self.fresh_label("opt.eq.float");
+        let int_l = self.fresh_label("opt.eq.int");
+        let end_l = self.fresh_label("opt.eq.end");
+        self.emit_line(&format!(
+            "br i1 {any_null}, label %{null_l}, label %{val_l}"
+        ));
+
+        self.emit_line(&format!("{null_l}:"));
+        let both_null = self.fresh_reg();
+        self.emit_line(&format!("{both_null} = and i1 {l_null}, {r_null}"));
+        self.emit_line(&format!("store i1 {both_null}, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{val_l}:"));
+        let lk_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{lk_gep} = getelementptr inbounds %struct.Optional, ptr {l}, i32 0, i32 0"
+        ));
+        let lk = self.fresh_reg();
+        self.emit_line(&format!("{lk} = load i64, ptr {lk_gep}"));
+        let lp_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{lp_gep} = getelementptr inbounds %struct.Optional, ptr {l}, i32 0, i32 1"
+        ));
+        let lp = self.fresh_reg();
+        self.emit_line(&format!("{lp} = load i64, ptr {lp_gep}"));
+        let rk_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{rk_gep} = getelementptr inbounds %struct.Optional, ptr {r}, i32 0, i32 0"
+        ));
+        let rk = self.fresh_reg();
+        self.emit_line(&format!("{rk} = load i64, ptr {rk_gep}"));
+        let rp_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{rp_gep} = getelementptr inbounds %struct.Optional, ptr {r}, i32 0, i32 1"
+        ));
+        let rp = self.fresh_reg();
+        self.emit_line(&format!("{rp} = load i64, ptr {rp_gep}"));
+        let same_kind = self.fresh_reg();
+        self.emit_line(&format!("{same_kind} = icmp eq i64 {lk}, {rk}"));
+        let kinds_differ_l = self.fresh_label("opt.eq.differ");
+        self.emit_line(&format!(
+            "br i1 {same_kind}, label %{kinds_l}, label %{kinds_differ_l}"
+        ));
+        self.emit_line(&format!("{kinds_differ_l}:"));
+        self.emit_line(&format!("store i1 false, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{kinds_l}:"));
+        let is_str = self.fresh_reg();
+        self.emit_line(&format!("{is_str} = icmp eq i64 {lk}, 1"));
+        self.emit_line(&format!(
+            "br i1 {is_str}, label %{str_l}, label %{flt_l}"
+        ));
+        self.emit_line(&format!("{str_l}:"));
+        let ls = self.fresh_reg();
+        self.emit_line(&format!("{ls} = inttoptr i64 {lp} to ptr"));
+        let rs = self.fresh_reg();
+        self.emit_line(&format!("{rs} = inttoptr i64 {rp} to ptr"));
+        let cmp_s = self.fresh_reg();
+        self.emit_line(&format!("{cmp_s} = call i32 @strcmp(ptr {ls}, ptr {rs})"));
+        let eq_s = self.fresh_reg();
+        self.emit_line(&format!("{eq_s} = icmp eq i32 {cmp_s}, 0"));
+        self.emit_line(&format!("store i1 {eq_s}, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{flt_l}:"));
+        let is_flt = self.fresh_reg();
+        self.emit_line(&format!("{is_flt} = icmp eq i64 {lk}, 2"));
+        self.emit_line(&format!(
+            "br i1 {is_flt}, label %{int_l}.float, label %{int_l}"
+        ));
+        self.emit_line(&format!("{int_l}.float:"));
+        let ld = self.fresh_reg();
+        self.emit_line(&format!("{ld} = bitcast i64 {lp} to double"));
+        let rd = self.fresh_reg();
+        self.emit_line(&format!("{rd} = bitcast i64 {rp} to double"));
+        let cmp_f = self.fresh_reg();
+        self.emit_line(&format!("{cmp_f} = fcmp oeq double {ld}, {rd}"));
+        self.emit_line(&format!("store i1 {cmp_f}, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{int_l}:"));
+        let cmp_i = self.fresh_reg();
+        self.emit_line(&format!("{cmp_i} = icmp eq i64 {lp}, {rp}"));
+        self.emit_line(&format!("store i1 {cmp_i}, ptr {slot}"));
+        self.emit_line(&format!("br label %{end_l}"));
+
+        self.emit_line(&format!("{end_l}:"));
+        let out = self.fresh_reg();
+        self.emit_line(&format!("{out} = load i1, ptr {slot}"));
+        let negated = self.fresh_reg();
+        if eq {
+            Ok(LLValue::new(out, LLType::I1))
+        } else {
+            self.emit_line(&format!("{negated} = xor i1 {out}, true"));
+            Ok(LLValue::new(negated, LLType::I1))
         }
     }
 
@@ -9950,7 +10211,11 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(self.build_result_struct("WaitResult", &[
                     ("result", found_i1.clone(), LLType::I1),
                     ("matched", found_i1.clone(), LLType::I1),
-                    ("received", url.clone(), LLType::I8Ptr),
+                    // The interpreter's wait_result_fields sets `received` to Nil
+                    // here and carries the matched URL in `url`; boxing the URL
+                    // into a `bool?` slot was a different field with the same
+                    // name, not the same value.
+                    ("received", "null".to_string(), LLType::Optional),
                     ("elapsed_ms", elapsed.clone(), LLType::I64),
                     ("waited_ms", timeout.clone(), LLType::I64),
                     ("url", url.clone(), LLType::I8Ptr),
@@ -9997,7 +10262,10 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(self.build_result_struct("WaitResult", &[
                     ("result", found_i1.clone(), LLType::I1),
                     ("matched", found_i1.clone(), LLType::I1),
-                    ("received", url.clone(), LLType::I8Ptr),
+                    // The interpreter sets `received` from the observed flag for
+                    // a response wait (wait_result_fields extra). It previously
+                    // received the URL string, boxed into a bool? slot.
+                    ("received", found_i1.clone(), LLType::I1),
                     ("elapsed_ms", elapsed.clone(), LLType::I64),
                     ("waited_ms", timeout.clone(), LLType::I64),
                     ("url", url.clone(), LLType::I8Ptr),
@@ -10215,13 +10483,16 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(self.build_result_struct("WaitResult", &[
                     ("result", found_i1.clone(), LLType::I1),
                     ("matched", found_i1.clone(), LLType::I1),
-                    ("received", method.clone(), LLType::I8Ptr),
+                    // wait_result_fields puts the observed event *name* in
+                    // `event`, leaves `method` Nil, and never fills `received`
+                    // for an event wait. It previously landed in all three.
+                    ("received", "null".to_string(), LLType::Optional),
                     ("elapsed_ms", elapsed.clone(), LLType::I64),
                     ("waited_ms", timeout.clone(), LLType::I64),
                     ("url", "null".to_string(), LLType::Optional),
-                    ("method", method.clone(), LLType::I8Ptr),
+                    ("method", "null".to_string(), LLType::Optional),
                     ("status", "null".to_string(), LLType::Optional),
-                    ("event", "null".to_string(), LLType::Optional),
+                    ("event", method.clone(), LLType::I8Ptr),
                 ], &ok)?)
             }
             ("Page", "wait_for_function") => {
@@ -12003,7 +12274,7 @@ void tallow_async_runtime_shutdown(void) {
 
                 if then_is_simple && else_is_simple {
                     let cond = self.emit_expr(condition)?;
-                    let cond_i1 = self.coerce_to_i1(&cond)?;
+                    let cond_i1 = self.emit_truthy_i1(&cond)?;
 
                     // Evaluate both branches unconditionally (no branch)
                     let then_val = self.emit_block(then_block)?;
@@ -12029,7 +12300,7 @@ void tallow_async_runtime_shutdown(void) {
         }
 
         let cond = self.emit_expr(condition)?;
-        let cond_i1 = self.coerce_to_i1(&cond)?;
+        let cond_i1 = self.emit_truthy_i1(&cond)?;
 
         let then_label = self.fresh_label("if.then");
         let else_label = self.fresh_label("if.else");
@@ -13261,7 +13532,7 @@ void tallow_async_runtime_shutdown(void) {
         // Condition
         self.body.push_str(&format!("{cond_label}:\n"));
         let cond = self.emit_expr(condition)?;
-        let cond_i1 = self.coerce_to_i1(&cond)?;
+        let cond_i1 = self.emit_truthy_i1(&cond)?;
         self.emit_line(&format!(
             "br i1 {cond_i1}, label %{body_label}, label %{end_label}"
         ));
@@ -13284,8 +13555,8 @@ void tallow_async_runtime_shutdown(void) {
     fn emit_string_concat(&mut self, left: &Expr, right: &Expr) -> Result<LLValue, String> {
         let l = self.emit_expr(left)?;
         let r = self.emit_expr(right)?;
-        let ls = self.coerce_to_string(&l)?;
-        let rs = self.coerce_to_string(&r)?;
+        let ls = self.coerce_to_concat_string(&l)?;
+        let rs = self.coerce_to_concat_string(&r)?;
         self.emit_strcat(&ls, &rs)
     }
 
@@ -15573,7 +15844,7 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_stmt(stmt)?;
             }
         }
-        let cond_i1 = self.coerce_to_i1(&cond_val)?;
+        let cond_i1 = self.emit_truthy_i1(&cond_val)?;
         self.emit_line(&format!(
             "br i1 {cond_i1}, label %{keep_label}, label %{skip_label}"
         ));
@@ -16302,7 +16573,7 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_stmt(stmt)?;
             }
         }
-        let is_truthy = self.coerce_to_i1(&pred_val)?;
+        let is_truthy = self.emit_truthy_i1(&pred_val)?;
         self.emit_line(&format!(
             "br i1 {is_truthy}, label %{found_label}, label %{inc_label}"
         ));
@@ -16379,7 +16650,7 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_stmt(stmt)?;
             }
         }
-        let is_truthy = self.coerce_to_i1(&pred_val)?;
+        let is_truthy = self.emit_truthy_i1(&pred_val)?;
         self.emit_line(&format!(
             "br i1 {is_truthy}, label %{true_label}, label %{inc_label}"
         ));
@@ -16456,7 +16727,7 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_stmt(stmt)?;
             }
         }
-        let is_truthy = self.coerce_to_i1(&pred_val)?;
+        let is_truthy = self.emit_truthy_i1(&pred_val)?;
         self.emit_line(&format!(
             "br i1 {is_truthy}, label %{inc_label}, label %{false_label}"
         ));
@@ -16611,7 +16882,7 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_stmt(stmt)?;
             }
         }
-        let is_truthy = self.coerce_to_i1(&pred_val)?;
+        let is_truthy = self.emit_truthy_i1(&pred_val)?;
         self.emit_line(&format!(
             "br i1 {is_truthy}, label %{inc_count}, label %{inc_label}"
         ));
@@ -19506,16 +19777,10 @@ void tallow_async_runtime_shutdown(void) {
         }
     }
 
-    /// Render a `%struct.TallowResult` as an owned string the way the
-    /// interpreter's `display()` does: `Ok(<payload>)` / `Err(<payload>)`.
-    ///
-    /// Pure IR on purpose, matching [`coerce_to_string`]'s rule that string
-    /// conversion must not depend on the runtime archive (cross targets skip
-    /// it). A string payload (value_type 2) is used directly; an integer payload
-    /// (0) goes through `snprintf`; any other payload kind renders empty rather
-    /// than a fabricated value. Without this, interpolating a Result printed
-    /// `nil` on native where the interpreter printed `Ok("...")`.
-    fn emit_result_to_string(&mut self, val: &LLValue) -> Result<String, String> {
+    /// The payload half of a Result's rendering: tag, payload string and whether
+    /// the payload is a string. `Ok("x")` and the concat form `x` share it; only
+    /// the prefix and quoting differ (interp: `Value::as_string` vs the `+` arms).
+    fn emit_result_parts(&mut self, val: &LLValue) -> Result<(String, String, String), String> {
         let tag_gep = self.fresh_reg();
         self.emit_line(&format!(
             "{tag_gep} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 0",
@@ -19577,6 +19842,17 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!(
             "{payload} = select i1 {is_unit}, ptr {unit_lit}, ptr {payload_b}"
         ));
+        Ok((payload, is_str, tag))
+    }
+
+    /// Render a `%struct.TallowResult` as an owned string the way the
+    /// interpreter's `print` does: `Ok(<payload>)` / `Err(<payload>)`.
+    ///
+    /// Pure IR on purpose, matching [`coerce_to_string`]'s rule that string
+    /// conversion must not depend on the runtime archive (cross targets skip
+    /// it).
+    fn emit_result_to_string(&mut self, val: &LLValue) -> Result<String, String> {
+        let (payload, is_str, tag) = self.emit_result_parts(val)?;
 
         // Branch prefix: tag 0 = Ok, 1 = Err.
         let is_ok = self.fresh_reg();
@@ -19641,6 +19917,18 @@ void tallow_async_runtime_shutdown(void) {
             }
             _ => self.coerce_to_i64(val),
         }
+    }
+
+    /// `+` renders a Result by its *inner* value: the interpreter's concat arms
+    /// map `Value::Ok(inner) => inner.as_string()` (and the same for `Err`), while
+    /// `print` renders the wrapper. Selecting the arm by call site is the whole
+    /// of register #116's display convention.
+    fn coerce_to_concat_string(&mut self, val: &LLValue) -> Result<String, String> {
+        if val.ty == LLType::ResultPtr {
+            let (payload, _is_str, _tag) = self.emit_result_parts(val)?;
+            return Ok(payload);
+        }
+        self.coerce_to_string(val)
     }
 
     fn coerce_to_string(&mut self, val: &LLValue) -> Result<String, String> {
