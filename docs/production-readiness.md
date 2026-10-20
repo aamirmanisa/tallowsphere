@@ -189,6 +189,25 @@ defect, not a policy:
       command with no arguments. `tests/process_exec_parity.rs` 1/1: stdout,
       stderr, exit code and `success` identical on both planes.
 
+## Gate sweep — 2026-10-20 (measured on HEAD 916ddfd)
+
+| gate | command | result |
+|---|---|---|
+| lib suite | `cargo test --lib -- --test-threads=2` | **9136 passed / 0 failed / 33 ignored** (553 s) |
+| test-target accounting | `scripts/check_test_coverage.py` | 92 targets, 54 in CI, 38 excluded with a reason, **0 unaccounted** |
+| panic policy | `scripts/panic_policy_check.py` | **PASS** — 9 sites (main 2, interp 5, supply_chain 2), abort in `release`/`max` |
+| claims ledger | `scripts/claims_ledger_check.py` | **PASS (rc=0)** — 72 entries, 0 hard, 0 warnings |
+| capability registry | `scripts/check_capability_registry.py` | 3 Page entries, **0 mismatches** |
+| FFI symbols | `scripts/check_ffi_symbols.py` | 269 runtime fns, 231 emitted, **0 problems** |
+| optional parity | `cargo test --test optional_parity` | 2/2 |
+| WaitResult parity | `cargo test --test wait_url_parity` / `wait_net_parity` | 1/1 · 3/3 (live Chrome) |
+| process.exec parity | `cargo test --test process_exec_parity` | 1/1 |
+| Result truthiness | `cargo test --test result_truthiness_parity` | 1/1 |
+
+Not exercised here: `compliance_gate.py` (needs `--target-manifest`) and
+`no_regression_gate.py --current` (needs a fresh measurement run; CI runs its
+`--self-test`). Neither is a failure — both reject a bare invocation.
+
 ## Definition of 100%
 
 1. Every `Page` method either works identically on both planes (proven by a test
