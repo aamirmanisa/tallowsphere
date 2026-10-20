@@ -55,7 +55,12 @@ fn interpreted_program(url: &str) -> String {
         r#"{}    page.wait_for_url("{url}", 5000) match {{
         Ok(r) -> {{
             print(r.result)
+            print(r.matched)
+            print(r.received)
             print(r.url)
+            print(r.method)
+            print(r.status)
+            print(r.event)
         }}
         Err(e) -> print(e)
     }}
@@ -72,7 +77,12 @@ fn native_program(url: &str) -> String {
     format!(
         r#"{}    let r = page.wait_for_url("{url}", 5000)
     print(r.result)
+    print(r.matched)
+    print(r.received)
     print(r.url)
+    print(r.method)
+    print(r.status)
+    print(r.event)
     page.close()
     browser.close()
 }}
@@ -126,9 +136,13 @@ fn wait_for_url_reports_the_same_page_in_both_engines() {
         "native leg fell back to the interpreter:\n{native_err}"
     );
 
+    // result, matched, received, url, method, status, event — the deterministic
+    // half of `WaitResult`. `elapsed_ms`/`waited_ms` differ between runs by
+    // construction and are asserted separately by the wait_* suites' callers.
+    let expected = format!("true\ntrue\nnil\n{url}\nnil\nnil\nnil\n");
     assert_eq!(
-        interp_out, "true\n".to_string() + &url + "\n",
-        "the interpreter no longer reports a matched URL"
+        interp_out, expected,
+        "the interpreter no longer reports the same WaitResult fields"
     );
     assert_eq!(
         native_out, interp_out,

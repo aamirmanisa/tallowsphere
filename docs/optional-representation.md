@@ -73,10 +73,13 @@ Rules:
    wrote the URL string into `received`, which is declared `bool?`.
 4. **DONE** — all six `wait_*` arms (timeout, function, url, event, request,
    response) are lowered; `wait_url_parity` / `wait_net_parity` gate the value.
-5. **OPEN** — those two tests read `result` and `url` only. A field-by-field
-   `WaitResult` comparison against the interpreter (`received`, `method`,
-   `event`, `elapsed_ms`) still needs a browser-driven test; the code now fills
-   the same fields, but only the source-level comparison proves it.
+5. **DONE** — `tests/wait_url_parity.rs` now prints and compares every
+   deterministic field (`result`, `matched`, `received`, `url`, `method`,
+   `status`, `event`) on both engines, and `tests/wait_net_parity.rs` asserts the
+   per-wait shape the interpreter defines: response sets `received`, request and
+   event leave it absent, and the event wait puts the event *name* in `event`
+   only. `elapsed_ms`/`waited_ms` are excluded from the comparison — they differ
+   between runs by construction.
 
 ## Sites to change (inventory, `src/codegen.rs`)
 
