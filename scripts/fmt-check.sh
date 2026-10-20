@@ -29,7 +29,14 @@ fi
 out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
 status=0
-rustfmt --check --edition 2021 "${files[@]}" > "$out" 2>&1 || status=$?
+# Batched: one rustfmt call over every file grows without bound — a single call
+# reached 7.6 GB anon RSS on this 15 GB box and was OOM-killed. 150 files per call
+# keeps peak memory small and still finishes in about a minute.
+batch=150
+for ((i = 0; i < ${#files[@]}; i += batch)); do
+    chunk=("${files[@]:i:batch}")
+    rustfmt --check --edition 2021 "${chunk[@]}" >> "$out" 2>&1 || status=1
+done
 
 if [ "$status" -eq 0 ]; then
     echo "format: clean (${#files[@]} files)"
