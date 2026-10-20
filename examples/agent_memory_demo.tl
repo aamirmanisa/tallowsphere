@@ -7,7 +7,7 @@
     id:           task_id,
     timeout:      30.seconds,
     max_requests: 10,
-    can_write:    false,
+    can_write:    true,
     can_store:    true,
     can_spawn:    false,
     memory_limit: 128.mb,
