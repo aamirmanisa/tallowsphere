@@ -15,7 +15,10 @@ name: CI
 #                  tallow_1000x_upgrade_prompt.md, docs/mega/tallow-2.0-spec.md, .planning/*).
 #                  The anchors now resolve to docs/mega/claims-provenance-gaps.md, which records
 #                  each original anchor verbatim and is explicitly not a claim that the original
-#                  text still exists. The gate is rc=2 (warnings only) — the job accepts 0|2.
+#                  text still exists. The 26 remaining R4 sweep warnings were then attributed by
+#                  anchor (four new rows) or removed as false positives in the patterns themselves
+#                  (`BLAKE2s` matching "2s"; "Government & Military" matching a banned adjective).
+#                  Current: 72 entries, 0 hard, 0 warnings, rc=0. The job accepts 0|2.
 #   fmt            the tree is not cargo-fmt clean: `cargo fmt --all -- --check` reports 7,902
 #                  files and 121,519 diff lines (import-ordering style — `use std::sync::{Arc, mpsc}`
 #                  against `{mpsc, Arc}`), i.e. rustfmt has never been run across this workspace.

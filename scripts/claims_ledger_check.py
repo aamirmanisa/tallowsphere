@@ -50,10 +50,14 @@ STALE_DAYS = 90
 # §1 sweep patterns (kept parallel to scripts/claims_sweep.sh).
 SWEEP_PATTERNS = (
     ("numeric", re.compile(
-        r"[0-9][0-9,.]*\+?\s?(?:K concurrent|M concurrent|x faster|GB/s|MB/s|µs|us|ms|s|×)"
+        # A leading boundary keeps identifiers out: `BLAKE2s` contains "2s" but is
+        # a cipher name, not a duration claim.
+        r"(?<![A-Za-z0-9_])[0-9][0-9,.]*\+?\s?(?:K concurrent|M concurrent|x faster|GB/s|MB/s|µs|us|ms|s|×)"
         r"(?![0-9A-Za-z/])")),
     ("absolute", re.compile(
-        r"undetect|unblockable|military|quantum|guarantee|zero[ -]simulation|fastest|"
+        # `military` alone is also a tool category ("Government & Military"); the
+        # claim class is the "military-grade" adjective.
+        r"undetect|unblockable|military[- ]grade|quantum|guarantee|zero[ -]simulation|fastest|"
         r"100K|10M\+|DPDK|io_uring", re.I)),
     ("jurisdiction", re.compile(r"\b(?:CCPA|LGPD|PIPEDA|APPI|PIPL|HIPAA|SOX|PCI-DSS)\b")),
 )
