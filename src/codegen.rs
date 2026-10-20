@@ -4766,6 +4766,30 @@ void tallow_async_runtime_shutdown(void) {
 
             // ── Field Access ────────────────────────────────────────────
             ExprKind::FieldAccess { object, field } => {
+                // 1a. Field access on an UNBOUND Result-returning call must refuse.
+                // The unwrap path below needs a binding by design (unwrapping a call
+                // receiver would emit the call twice — measured: the FFI call appears
+                // twice in the IR). Without this guard the read lands on the
+                // %struct.TallowResult wrapper and falls through to a literal 0,
+                // which is the "silently wrong on one plane" state #120 forbids.
+                if let ExprKind::MethodCall { method, .. } = &object.kind {
+                    let known = matches!(
+                        method.as_str(),
+                        "authenticated_get" | "authenticated_request"
+                    );
+                    let payload_has_field = self
+                        .struct_layouts
+                        .get("AuthenticatedResponse")
+                        .map(|l| l.field_map.contains_key(field))
+                        .unwrap_or(false);
+                    if known && payload_has_field {
+                        return Err(format!(
+                            "`page.{method}(..).{field}`: bind the result first \
+                             (`let r = page.{method}(..); r.{field}`) — a field read on an unbound \
+                             Result inspects the wrapper, not the payload"
+                        ));
+                    }
+                }
                 // 1b. A Result<T> payload: unwrap behind a tag check. Both
                 // engines then refuse a failed call the same way instead of one
                 // printing Ok(...) and the other reading an unrelated offset
