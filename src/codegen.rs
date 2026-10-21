@@ -24605,11 +24605,45 @@ fn build_deterministic_clang_args_for_target(target: &TargetConfig) -> Vec<Strin
         // the flag directly. When running from MSYS/Git Bash environments, the
         // forward-slash prefix gets converted to a Windows path, breaking linking.
         // Skipped for now — deterministic builds handled by other flags.
+    } else if target.is_macos {
+        // `--build-id` is a GNU ld/LLD option. ld64 rejects it outright --
+        // "ld: unknown options: --build-id=sha1" -- so every native build on
+        // macOS failed to link. Mach-O needs no equivalent: ld64 derives LC_UUID
+        // from the content it emits, so the flag was never doing anything here
+        // that the linker does not already do.
     } else {
+        // ELF: a deterministic SHA-1 build ID.
         args.push("-Wl,--build-id=sha1".to_string());
     }
 
     args
+}
+
+#[cfg(test)]
+mod deterministic_linker_flag_tests {
+    use super::*;
+
+    /// `--build-id` is a GNU ld/LLD option. ld64 rejects it with "unknown
+    /// options", which broke every native macOS build until this was gated.
+    #[test]
+    fn macos_targets_never_receive_gnu_ld_flags() {
+        for name in ["arm64-macos", "x86_64-macos"] {
+            let target = TargetConfig::from_target_str(name).expect("target parses");
+            let args = build_deterministic_clang_args_for_target(&target);
+            assert!(
+                args.iter().all(|a| !a.contains("--build-id")),
+                "{name} must not pass a GNU-only linker flag: {args:?}"
+            );
+            assert!(args.iter().any(|a| a == "-Wdate-time"), "{name}: {args:?}");
+        }
+    }
+
+    #[test]
+    fn linux_targets_keep_the_deterministic_build_id() {
+        let target = TargetConfig::from_target_str("aarch64-linux").expect("target parses");
+        let args = build_deterministic_clang_args_for_target(&target);
+        assert!(args.iter().any(|a| a == "-Wl,--build-id=sha1"), "{args:?}");
+    }
 }
 
 /// Result of probing for a usable `clang`.
