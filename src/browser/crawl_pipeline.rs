@@ -1470,6 +1470,12 @@ mod tests {
                     }
                     Err(_) => break,
                 };
+                // The listener is non-blocking so the accept loop can poll.
+                // Windows and macOS make the ACCEPTED socket inherit that
+                // non-blocking state (Linux does not), so `read` below returned
+                // WouldBlock, the connection was dropped unread, and the client
+                // saw EINVAL / WSAECONNABORTED 10053. Force blocking here.
+                s.set_nonblocking(false).expect("accepted socket must be blocking");
                 accepted_srv.fetch_add(1, Ordering::SeqCst);
                 let mut buf = [0u8; 8192];
                 'conn: loop {
@@ -1607,6 +1613,9 @@ mod tests {
                         }
                         Err(_) => break,
                     };
+                    // See the note in transport_agent_cache_reuses_keepalive_connections:
+                    // accepted sockets inherit non-blocking mode on Windows/macOS.
+                    s.set_nonblocking(false).expect("accepted socket must be blocking");
                     hits_s.fetch_add(1, Ordering::SeqCst);
                     let mut buf = [0u8; 8192];
                     let mut head = Vec::new();

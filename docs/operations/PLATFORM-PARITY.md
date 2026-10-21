@@ -28,28 +28,23 @@ which selects glibc's `__rlimit_resource_t` on Apple targets as well; and
 `sandbox_pass` guarded a call to a Linux-only function with `cfg!()`, which is a
 boolean, not a compile-time remover.
 
-## The one open defect
+## The transport defect, and its cause
 
-Every remaining failure on both non-Linux platforms is the same class: a plain
-`ureq` GET to a loopback `TcpListener` succeeds on Linux and fails on macOS
-(`EINVAL`) and Windows (`WSAECONNABORTED`, 10053). On macOS two tests hit it, on
-Windows seven (all in `browser::crawl_pipeline`: the delta and transport
-families). The representative failure:
+Every remaining failure on both non-Linux platforms was the same class: a plain
+`ureq` GET to a loopback `TcpListener` succeeded on Linux and failed on macOS
+(`EINVAL`) and Windows (`WSAECONNABORTED`, 10053), across the
+`browser::crawl_pipeline` delta and transport families.
 
-```
-thread 'transport_agent_cache_reuses_keepalive_connections' panicked
-  phase A request: Io(Os { code: 22, kind: InvalidInput, message: "Invalid argument" })
-```
+Cause: the test mock servers bind a `TcpListener`, call
+`set_nonblocking(true)` so the accept loop can poll, then read the request from
+the accepted socket. Whether the ACCEPTED socket inherits the listener's
+non-blocking state is platform-specific — it does on Windows and macOS, it does
+not on Linux. So off Linux the first `read` returned `WouldBlock`, the server
+treated it as a client close and dropped the connection unread, and the client
+saw a reset (`10053`) or `EINVAL` depending on the kernel's framing of that
+reset.
 
-A plain `ureq` GET against a loopback `TcpListener` returns `EINVAL` on macOS and
-succeeds on Linux. Not yet diagnosed: the call is inside ureq/rustls, and the
-failing branch cannot be reproduced on this box (no macOS host, and the macOS
-leg of CI is the only place it runs). Recorded here rather than papered over with
-a `cfg` skip, because if a plain HTTP request fails with EINVAL on macOS it is a
-product defect, not a test defect.
-
-Next step for whoever picks it up: run the test on a macOS host with
-`RUST_BACKTRACE=full` and `strace`-equivalent (`dtruss` requires SIP off), and
-check whether `.cargo/config.toml`'s `aarch64-apple-darwin` rustflags
-(`+aes,+crc,...`) are producing a codegen path that the platform rejects. The
-same flags are used for the release build, so this is not test-only.
+Fix: both mock servers call `set_nonblocking(false)` on the accepted socket
+before reading. This is a test-harness defect, not a transport defect: the
+production code path was never involved, which is why it only ever appeared in
+tests that hand-roll a server.
