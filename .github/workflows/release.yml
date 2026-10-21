@@ -130,6 +130,15 @@ jobs:
             echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
           } >> "$GITHUB_ENV"
 
+      - name: System libraries the runtime archive references (Linux)
+        # libtallow.a carries objects that reference system lzma/bz2. Without
+        # these the archive builds but every program linking it fails with
+        # "/usr/bin/ld: cannot find -llzma" -- which is exactly what the
+        # packaged-binary smoke step caught on 2026-10-21.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y liblzma-dev libbz2-dev
+
       - name: Build (binary + runtime archive)
         shell: bash
         run: |
@@ -148,6 +157,12 @@ jobs:
           bash scripts/package_release.sh "${{ matrix.target }}" "$ver" --out dist
 
       - name: Smoke — the packaged binary compiles and runs a program
+        # Only where the artifact's architecture is the runner's. A cross-built
+        # aarch64 ELF or x86_64 Mach-O cannot execute here: on 2026-10-21 the
+        # aarch64 job died with "Exec format error" before it could prove
+        # anything. Cross targets get the structural check below instead, and
+        # the runtime proof comes from the native leg plus the CI test matrix.
+        if: matrix.label == 'linux-x86_64' || matrix.label == 'windows-x86_64' || matrix.label == 'macos-aarch64'
         shell: bash
         run: |
           set -euo pipefail
@@ -177,6 +192,27 @@ jobs:
               echo "$out" | head -1 | grep -qx 7
               ;;
           esac
+
+      - name: Structural check — cross-built archive
+        if: matrix.label == 'linux-aarch64' || matrix.label == 'macos-x86_64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          a=$(ls dist/*.tar.gz)
+          mkdir -p unpack
+          tar xzf "$a" -C unpack
+          test -x unpack/tallow
+          # The runtime archive must travel with the compiler, or programs that
+          # call a runtime symbol fail to link on the target machine.
+          test -f unpack/libtallow.a
+          # The architecture the tag promises, as recorded in the file header.
+          case "${{ matrix.target }}" in
+            aarch64-*) file unpack/tallow | grep -q 'aarch64' ;;
+            x86_64-*)  file unpack/tallow | grep -q 'x86_64'  ;;
+          esac
+          # The version is baked in at compile time; a mislabeled artifact is
+          # the failure this catches.
+          grep -aq "$(grep -m1 '^version' Cargo.toml | sed -E 's/^version *= *"([^"]+)".*/\1/')" unpack/tallow
 
       - name: Conformance — both planes against the packaged binary
         # Runs only where the archive's architecture matches the runner: an
