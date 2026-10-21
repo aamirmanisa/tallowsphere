@@ -77,7 +77,7 @@ inference of coercion rules here.
 Tests: `typeck::tests::string_literal_bound_to_int_annotation_is_an_error`,
 `typeck::tests::literal_bindings_that_fit_the_annotation_stay_clean`.
 
-Full suite after the change: **9,145 passed; 0 failed; 33 ignored** (485.82 s).
+Full suite after the change: **9,145 passed; 0 failed; 33 ignored** (500.91 s).
 
 ## 5. Documentation truth
 
