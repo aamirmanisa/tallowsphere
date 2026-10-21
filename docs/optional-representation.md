@@ -1,7 +1,18 @@
 # Optional representation in the native plane
 
-Status: **complete — steps 1–5 done, no open items.** Returns, printing, field
-store/load, truthiness, `== nil` and field-level WaitResult parity all work.
+Status: **the encoding is complete; the language around it is not.** Boxed
+`T?` produce, print, `== nil` and field store/load work on both planes, and
+implicit wrapping into an optional was fixed on 2026-10-21 (#135 — `return a`
+from a `-> i64?` function used to be refused when the value was not a literal).
+Two gaps remain open, both measured on 2026-10-21:
+
+- **#134 — an optional cannot be unwrapped natively.** `match` on a `T?` is
+  refused by codegen ("unsupported subject shape") and `??` is a type error on
+  both planes. A program can hold a `T?` and never read it.
+- **#136 — the type checker lets a `T?` bind to a `T`.** `let v: i64 = src(0)`
+  passes `tallow check`, then the native plane refuses at codegen and the
+  interpreter prints `nil` and fails on the next arithmetic.
+
 Arithmetic on an optional is not a gap: the type checker rejects it on both
 planes with `E0110 left operand of + must be numeric, got i64?`, so there is no
 divergence to fix. Operator chose the boxed encoding (option 1 of three in
