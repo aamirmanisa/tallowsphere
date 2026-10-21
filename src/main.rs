@@ -2674,7 +2674,21 @@ fn real_main() -> anyhow::Result<()> {
         print_version();
         return Ok(());
     }
-    let cli = Cli::parse();
+    // Script mode: `./app.tl` (with `#!/usr/bin/env tallow`) and `tallow app.tl`
+    // both arrive as a bare path in argv[1]. Rewrite to `run <path>` before clap
+    // sees it, so a `.tl` file is executable instead of being read as an unknown
+    // subcommand. A path that does not exist still gets clap's error, which names
+    // the missing subcommand.
+    let mut argv: Vec<String> = std::env::args().collect();
+    if let Some(first) = argv.get(1) {
+        let looks_like_script = first.ends_with(".tl")
+            && !first.starts_with('-')
+            && std::path::Path::new(first).is_file();
+        if looks_like_script {
+            argv.insert(1, "run".to_string());
+        }
+    }
+    let cli = Cli::parse_from(argv);
     let quiet = cli.quiet;
     let _verbose = cli.verbose;
     let _no_color = cli.no_color;
