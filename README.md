@@ -1,8 +1,8 @@
 <div align="center">
 
-# Tallow
+# Tallow Extraction Engine
 
-**A statically typed language that compiles to a native binary — with contracts, a real standard library, a browser runtime, and a toolchain that ships.**
+**A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
 ![status](https://img.shields.io/badge/status-1.1.3-informational?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
@@ -10,41 +10,72 @@
 ![backend](https://img.shields.io/badge/backend-LLVM%20%C2%B7%20clang%2018-2d2d2d?style=flat-square)
 ![artifact](https://img.shields.io/badge/linux--aarch64-stable-2ea44f?style=flat-square)
 
-[Install](#install) · [First program](#your-first-program) · [Scripts](#scripts) · [Command surface](#the-command-surface) · [Architecture](#architecture) · [Build](#building-from-source) · [Deploy](#hosting-and-deployment) · [Limits](#what-it-does-not-do-yet)
+[Extraction](#extraction-in-five-minutes) · [Install](#install) · [The language](#the-language-underneath) · [Architecture](#architecture) · [Build](#building-from-source) · [Deploy](#hosting-and-deployment) · [Limits](#what-it-does-not-do-yet)
 
 </div>
 
 ---
 
-Most languages ask you to choose between fast and readable, then hand you a build system to apologise for the choice. Tallow is built the other way round: a small typed language, no hidden runtime, compiled through LLVM into one executable that starts in milliseconds and links nothing you have to install.
+This repository is **the extraction engine of the Tallow language/runtime, published as the source tree it lives in.** Tallow is a statically typed systems language with an anti-bot scraping and OSINT runtime; this line of work is the schema-first extraction stack — its bindings in the compiler, HAR import, provenance records, and the CLI verbs that drive them.
 
-```tallow
-fn main() {
-    let names = ["ada", "grace", "edsger"]
-    for name in names {
-        print("hello, " + name)
-    }
-}
-```
+Two properties shape everything here.
+
+**Extraction is schema-first and local.** A contract is applied to an HTML file you already have. No LLM, no API key, no engine, no egress. The model-backed tier exists for pages a selector cannot cover, and it stays off until you name an engine and a policy that permits the transfer.
+
+**Nothing fails quietly.** A page that misses a required field writes no row and exits `1`. A refusal names its reason. A short read is an error, not a truncated string.
+
+## Extraction in five minutes
 
 ```console
-$ tallow run hello.tl
-hello, ada
-hello, grace
-hello, edsger
+$ cargo build --bin tallow        # or install a release, below
+
+$ ./target/debug/tallow schema check \
+    schemas/tallow/examples/product-listing.extraction.schema.json
+ok: … — tallow.extraction_schema.v1, 3 field(s)
+
+$ ./target/debug/tallow extract \
+    --schema schemas/tallow/examples/product-listing.extraction.schema.json \
+    --html /tmp/product.html --out /tmp/out
+extract: 1 item(s) → 1 row(s)
+  rows:       /tmp/out/run-<pid>.rows.jsonl
+  quarantine: /tmp/out/run-<pid>.quarantine.jsonl
+  schema: example.product_listing.v1 (no egress performed)
 ```
 
-That is the whole workflow. `tallow build hello.tl` leaves a native binary beside the source. `tallow check` tells you what is wrong before anything is compiled.
+[measured 2026-10-21 · release `v1.1.3` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
 
-## What this repository is
+Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
 
-This is the **engine**: lexer, parser, type checker, contract checker, LLVM code generator, interpreter, standard library, package manager, formatter, language server, browser runtime, and the operational crates the fleet runs on. The language surface — specification, tutorial, conformance cases — lives in [Tallow-Language](https://github.com/aamirmanisa/Tallow-Language).
+`tallow schema check` is the gate to run in CI before a run depends on a contract. `tallow plan dry-run <manifest>` prints exactly what would be fetched and performs no egress; it refuses a manifest whose requests omit their `compliance` block.
 
-**Two properties make it worth reading.**
+## The model-backed tier — optional, off by default
 
-*Every program has two execution planes.* The same source runs in the interpreter (`tallow run --interpret`) and compiles to a native binary (`tallow build`). That is not a convenience — it is the correctness harness. A codegen bug shows up as a disagreement between planes, and the suite runs both.
+For pages a selector cannot cover — layout that changes per visitor, content behind client-side rendering — there is an engine-agnostic extraction tier. It is off until an engine is named, and it refuses a third-party transfer that no policy permits:
 
-*Nothing fails quietly.* Refusals are typed and named: a missing file, a short read, a host missing from the outbound authorization register. Each produces a specific error and a non-zero exit, never a silently degraded result.
+```console
+$ export TALLOW_LLM_ENGINE=ollama
+$ export TALLOW_LLM_BASE_URL=http://localhost:11434
+$ export TALLOW_LLM_MODEL=llama3
+$ export TALLOW_LLM_PII_POLICY=no-pii     # required before content leaves the box
+```
+
+A loopback endpoint needs no policy; anything outside the box's zone needs one, and the refusal is by name rather than a silent downgrade. Spend is capped per run (16 model calls / 400k prompt characters); past the cap the tier refuses instead of continuing.
+
+The credential resolves from vault custody first, then the environment — never from `argv`, never from a `.tl` literal:
+
+```console
+$ tallow secrets set tallow-llm-api-key --origin https://your-endpoint   # echo off; 0600
+$ tallow secrets list
+```
+
+There is deliberately no `--password` flag: a secret on the command line is a secret in `ps` and in shell history.
+
+## What this is not
+
+- **Not SendTallow.** The file-transfer product is a separate surface.
+- **Not Sluice.** The cross-domain release gate is a separate published deliverable.
+- **Not a standalone package.** The FFI and codegen lowering arms live in the compiler and the declared surface lives in `stdlib/browser.tl`; the workspace is what builds.
+- **Not an anonymous scraper.** This repository carries the egress *policy*. The plane that makes traffic anonymous — deny-by-default SOCKS chokepoint, allowlist, Tor configuration, in-container firewall — is a separate repository. Neither is a working anonymous scraper without the other, and no claim here says otherwise.
 
 ## Install
 
@@ -54,7 +85,7 @@ This is the **engine**: lexer, parser, type checker, contract checker, LLVM code
 $ curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/install.sh | bash
 ```
 
-The installer resolves the newest release, verifies the archive checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before it reports success:
+The installer resolves the newest release, verifies the checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before reporting success:
 
 ```console
 fetching …/releases/download/v1.1.3/tallow-linux-aarch64-1.1.3.tar.gz
@@ -64,8 +95,6 @@ probe ok — native compile and run work
 ```
 
 [measured 2026-10-21 · release `v1.1.3` · commit `31d84f47e2`]
-
-Choose a prefix, pin a version, or install from a file:
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
@@ -93,33 +122,33 @@ tallow 1.1.3
   git: 31d84f47e2
 ```
 
-The `git:` line is provenance, not decoration: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so you can tell them apart.
+The `git:` line is provenance: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so the two are distinguishable.
 
-## Your first program
+## The language underneath
+
+The extraction stack is written in Tallow and lowered by Tallow's compiler, so the language is not a detail of this repository — it is the trunk.
 
 ```tallow
-// greet.tl
-fn greet(name: str) -> str {
-    return "hello, " + name
-}
-
 fn main() {
-    print(greet("world"))
+    let names = ["ada", "grace", "edsger"]
+    for name in names {
+        print("hello, " + name)
+    }
 }
 ```
 
 ```console
-$ tallow check greet.tl      # types and contracts; builds nothing
-1 items, 0 warning(s)
-
-$ tallow build greet.tl      # native binary beside the source
-$ ./greet
-hello, world
+$ tallow run hello.tl
+hello, ada
+hello, grace
+hello, edsger
 ```
 
-## Scripts
+**Two execution planes, one language.** Every program runs in the interpreter (`tallow run --interpret`) and compiles to a native binary (`tallow build`). That is not a convenience — it is the correctness harness: a codegen bug appears as a disagreement between planes, and every test that touches behaviour runs both.
 
-A `.tl` file with a shebang is a program you execute, not an argument to a subcommand:
+**Nothing hidden at run time.** A compiled program is a normal ELF binary linked against `libc` and the Tallow archive. No garbage collector, no VM handshake, no configuration lookup at startup.
+
+### Scripts
 
 ```tallow
 #!/usr/bin/env tallow
@@ -135,23 +164,21 @@ $ chmod +x lines.tl && ./lines.tl notes.txt
 3 lines in notes.txt
 ```
 
-The shebang line is blanked rather than removed, so a parse error still reports the line number you see in your editor. Arguments after the path reach the program: `./wc.tl notes.txt` gives `args[0] == "notes.txt"`.
+The shebang line is blanked rather than removed, so diagnostics still point at the line you wrote, and arguments after the path reach the program. Complete examples live in the language repository: [`wc.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/wc.tl), [`todo.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/todo.tl).
 
-Runnable examples live in the language repository: [`wc.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/wc.tl) and [`todo.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/todo.tl).
+The **language surface** — specification, tutorial, conformance cases — is a separate repository, [Tallow-Language](https://github.com/aamirmanisa/Tallow-Language). There is exactly one implementation of the compiler, and it lives here.
 
-## The command surface
-
-One binary, a deliberately flat set of verbs. The daily ones:
+## Command surface
 
 | Command | What it does |
 |---|---|
-| `tallow new <name>` | Scaffold a project with `tallow.toml` and `src/main.tl` |
+| `tallow schema check <file>` | Validate an extraction contract; the CI gate for one |
+| `tallow extract --schema … --html … --out …` | Extract rows from a local HTML file; no network access |
+| `tallow plan dry-run <file>` | Print what a request plan would fetch; no egress |
 | `tallow check <file>` | Parse, type-check, verify contracts — no code generation |
-| `tallow build <file>` | Emit IR, compile and link a native binary |
-| `tallow run <file>` | Build and execute; `--interpret` skips the compiler |
-| `tallow fmt` · `tallow lint` | Format; static analysis |
-| `tallow test` | Run project test files |
-| `tallow repl` · `tallow lsp` | Interactive shell; editor integration |
+| `tallow build <file>` · `tallow run <file>` | Compile and link; build and execute (`--interpret` skips the compiler) |
+| `tallow fmt` · `tallow lint` · `tallow test` | Format; static analysis; run project tests |
+| `tallow repl` · `tallow lsp` · `tallow doc` | Interactive shell; editor integration; documentation |
 | `tallow add/remove/install/update/tree/why` | Dependency management against `tallow.toml` and `tallow.lock` |
 | `tallow sbom` · `tallow sign` · `tallow verify` | CycloneDX SBOM; Ed25519 + SLSA signing and verification |
 | `tallow targets` | The compilation targets this build knows |
@@ -175,6 +202,7 @@ Operational verbs are documented in [`docs/`](docs/) and in `tallow --help`, whi
 | Front end | Lexing, error-recovering parsing, import resolution, type checking, contract verification | `src/lexer.rs`, `src/parser*.rs`, `src/typeck.rs` |
 | Back end | IR construction and emission, lowering of every stdlib call, link step | `src/codegen.rs` |
 | Interpreter | Independent execution plane for the same AST | `src/interp.rs` |
+| Extraction tier | Schema application, model tier, HAR import, provenance, smart extract | `src/browser/llm_extract.rs`, `src/browser/har_import.rs` |
 | Standard library | 111 modules: text, collections, files, JSON, HTTP, crypto, database, browser, CLI | `src/stdlib/` |
 | Browser runtime | Chrome over CDP: 138 files / 103,104 LOC, 163 device profiles, stealth and CAPTCHA handling | `src/browser/` |
 | Toolchain | Build, run, check, fmt, lint, test, doc, repl, lsp, packages, SBOM, signing | `src/main.rs`, `src/cli/` |
@@ -184,7 +212,7 @@ The engine is ~534,000 lines of Rust [measured 2026-10-21]. The browser runtime 
 
 ### The crates
 
-Each crate has its own README with setup, API and deployment notes.
+Each crate has its own page with setup, API and deployment notes.
 
 | Crate | What it is | README |
 |---|---|---|
@@ -212,13 +240,7 @@ $ cargo build --release --locked --bin tallow --lib
 
 The `--lib` target is the one that matters: it produces `libtallow.a`, which compiled programs link against. A binary built without it can emit IR and then fails at link time.
 
-Binary only — faster, but it cannot compile programs on its own:
-
-```console
-$ cargo build --release --bin tallow
-```
-
-Build prerequisites: Rust 1.98.1 (edition 2024), `clang`, `gcc`/`g++`, `cmake`, `pkg-config`, `perl`. The vendored BoringSSL is the reason `g++` is required; there is no pure-Rust build of the browser-impersonation backend.
+Build prerequisites: Rust 1.98.1 (edition 2024), `clang`, `gcc`/`g++`, `cmake`, `pkg-config`, `perl`. The vendored BoringSSL is why `g++` is required; there is no pure-Rust build of the browser-impersonation backend.
 
 On a small host, cap the build instead of watching it swap:
 
@@ -229,16 +251,7 @@ $ CARGO_BUILD_JOBS=2 systemd-run --scope -p MemoryMax=11G -- \
 
 [measured 2026-10-21 · 2-job scope · 14m 08s for binary + archive]
 
-### Release profile
-
-`[profile.release]` is tuned for the development loop. `[profile.max]` is fat LTO with one codegen unit and ships smaller binaries:
-
-```console
-$ cargo build --profile max --bin tallow     # ~20% smaller (36.6 vs 46.0 MB), ~8% less RSS
-$ cargo build --bin tallow                   # iterate with this
-```
-
-[measured 2026-10-16] `--profile max` costs about 11% more build time and has **no measurable runtime benefit** (median 12.81 vs 12.84 ms). Do not claim a speed win for it.
+`[profile.release]` is tuned for the development loop. `[profile.max]` is fat LTO with one codegen unit and ships smaller binaries — about 20% smaller (36.6 vs 46.0 MB) and ~8% less RSS, at ~11% more build time and **no measurable runtime benefit** (median 12.81 vs 12.84 ms) [measured 2026-10-16].
 
 ## Hosting and deployment
 
@@ -256,7 +269,26 @@ $ ln -sfn /opt/tallow/1.1.3 /opt/tallow/current
 $ ln -sf /opt/tallow/current/bin/tallow /usr/local/bin/tallow
 ```
 
-### Run the daemon
+### Run the extraction daemon
+
+`tallow-reader` keeps a warm browser pool and serves extraction over an authenticated HTTP API on loopback:
+
+```ini
+# /etc/systemd/system/tallow-reader.service
+[Service]
+ExecStart=/usr/local/bin/tallow-reader --pool-size 4
+User=tallow
+Restart=always
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/tallow-reader
+```
+
+The token is generated on first run and written `0600`. Endpoints, the Tor pool and the identity rules are on [the crate page](crates/tallow-reader/README.md).
+
+### Run the background daemon
 
 ```console
 $ tallow-daemon install      # writes and enables the systemd unit
@@ -286,17 +318,14 @@ $ cargo build --profile release --locked --target aarch64-unknown-linux-gnu --bi
 $ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.1.3 --out dist/
 ```
 
-The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)`. It writes `tallow-linux-<arch>-<version>.tar.gz` and its `.sha256`, and the commit is stamped into the binary's version output. Upload both files; the installer verifies the checksum before unpacking.
-
-## The egress plane
-
-This repository is the engine; the plane that makes its traffic anonymous is a separate repository (`tallow-scrape-sandbox`): the deny-by-default SOCKS chokepoint over an explicit allowlist, Tor configuration, and the in-container firewall. The engine carries the *policy* — Tor-first, proxy-aware, refusing a bare leak — not the plane. Neither is a working anonymous scraper without the other, and no claim here says otherwise.
+The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)`. It writes the archive and its `.sha256`, and stamps the commit into the binary's version output. Upload both; the installer verifies the checksum before unpacking.
 
 ## Verification
 
 | Gate | Result | Revision |
 |---|---|---|
 | `cargo test --lib` | **9,139 passed · 0 failed · 33 ignored** (526.18 s, 2 threads) | `31d84f47e2`, 2026-10-21 [measured] |
+| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, no egress | released 1.1.3 [measured] |
 | Conformance | **20/20 cases, 0 failures** against the installed 1.1.3 binary | 2026-10-21 [measured] |
 | Examples & tutorial | **10 programs**, identical output on both planes, 0 failures | 2026-10-21 [measured] |
 | Install probe | compiles and runs a program from the installed archive | 2026-10-21 [measured] |
@@ -321,16 +350,15 @@ $ python3 conformance/run.py --tallow $(command -v tallow)
 
 ## Documentation
 
+- [`docs/extraction-engine/`](docs/extraction-engine/) — the extraction product's spec, checklist and runbook
 - [`docs/INSTALL.md`](docs/INSTALL.md) — install, upgrade, uninstall
-- [`docs/CLI.md`](docs/CLI.md) — every verb and every exit code
-- [`TALLOW_SPEC.md`](TALLOW_SPEC.md) — the language specification
+- [`TALLOW_SPEC.md`](TALLOW_SPEC.md) — the language specification carried in this tree
 - [`stdlib/README.md`](stdlib/README.md) — the standard library map
 - [`conformance/README.md`](conformance/README.md) — the conformance harness
-- [`examples/`](examples/) — from hello world to scripts with arguments
 - [`SECURITY.md`](SECURITY.md) — reporting, scope, and the cryptographic-validation statement
 - [`docs/operations/stub-register.md`](docs/operations/stub-register.md) — every admitted stub, one row each
 - [`MANIFEST.md`](MANIFEST.md) — what this published tree contains and what was filtered
-- [Tallow-Language](https://github.com/aamirmanisa/Tallow-Language) — tutorial, spec, conformance cases
+- [Tallow-Language](https://github.com/aamirmanisa/Tallow-Language) — specification, tutorial, conformance cases
 
 ## Contributing
 
