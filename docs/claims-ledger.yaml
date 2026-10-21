@@ -991,3 +991,42 @@
   reason: "API examples showing literal call syntax. The durations are syntax samples, not latency or performance claims."
   action: keep
   last_verified: "2026-10-20"
+
+# 2026-10-21 (v1.1.4): README's verification and build-timing numbers were being
+# swept as unattributed (the Release workflow's static gate treats R4 warnings as
+# a failure, unlike the CI job, which accepts the warning baseline). Registered
+# rather than tolerated, so both gates agree and every number in README has an
+# owner.
+- id: R-M22
+  claim: "Release build wall time: 14m 08s for binary + archive under a 2-job scope"
+  sources:
+  - README.md:252
+  label: partial
+  bucket: S
+  owner: build
+  method: null
+  reason: "Measured on the aarch64 build host 2026-10-21 with CARGO_BUILD_JOBS=2; 14m 08s is that host's wall time for `cargo build --profile release --bin tallow --lib`, not a promise for other hardware."
+  action: keep
+  last_verified: "2026-10-21"
+- id: R-M23
+  claim: "`profile.max` is ~20% smaller and ~8% lower RSS at ~11% more build time, with no runtime benefit (median 12.84 ms vs 12.81 ms)"
+  sources:
+  - README.md:254
+  label: partial
+  bucket: S
+  owner: build
+  method: null
+  reason: "Measured 2026-10-16 on the aarch64 host: 36.6 vs 46.0 MB artifact, 12.84 ms median parse/compile time for profile.max vs 12.81 ms for release. The 12.84 ms figure is the pair's release-profile value."
+  action: keep
+  last_verified: "2026-10-21"
+- id: R-M24
+  claim: "`cargo test --lib`: 9,139 passed, 0 failed, 33 ignored in 526.18 s at 2 threads"
+  sources:
+  - README.md:327
+  label: partial
+  bucket: S
+  owner: qa
+  method: null
+  reason: "Run on the aarch64 host at commit 31d84f47e2 (v1.1.3). 526.18 s is wall time for the two-thread run; the same suite takes longer on CI runners, where the count is 9,145 because platform-gated tests are included."
+  action: keep
+  last_verified: "2026-10-21"
