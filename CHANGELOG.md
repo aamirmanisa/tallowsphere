@@ -4,6 +4,50 @@ All notable changes to Tallow are recorded here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.1.3] — 2026-10-21 — three defects a five-line script found
+
+Two example scripts for the language repository turned over three codegen and
+packaging defects in an hour. None was visible to the suite: no test in it read a
+file, exited from a conditional, or passed an argument to a program.
+
+### Added
+- **A `.tl` file is a program.** `tallow app.tl` runs it; a `#!/usr/bin/env tallow`
+  shebang is accepted (the line is blanked, not stripped, so spans still index the
+  original source); arguments after the path belong to the program
+  (`./wc.tl notes.txt` becomes `tallow run wc.tl -- notes.txt`).
+
+### Fixed
+- **`fs.read_file` had no native plane (#138).** The "could not open" report was
+  emitted from the ok block using a buffer defined in the fail block — invalid IR,
+  so clang 18 died in the register coalescer and every file-reading program fell
+  back to the interpreter. The report now lives on the fail path; the ok path
+  compares `fread()` against `st_size` and fails loudly on a short read.
+- **`exit()` inside a conditional produced invalid IR (#139).** `process.exit(n)`
+  emits `unreachable`, after which the enclosing `if` appended a dead `br`.
+  `emit_line` now drops a branch when the current block already ends in a
+  terminator.
+- **`install.sh` advertised "latest" and installed 1.1.1 (#140).** `VERSION` was a
+  literal, so it requested an asset that never existed. It now resolves
+  `/releases/latest` after argument parsing and exits 2 with a usable message when
+  it cannot.
+
+## [v1.1.2] — 2026-10-21 — a Result cannot be dropped
+
+### Fixed
+- **A discarded `Result` was silent success (#133).** Both planes now run the same
+  rule: a `Result`-valued call whose value nobody reads, in a non-final statement
+  of a block, is checked — `Err` writes to stderr and exits 1.
+- **`match` on a `T?` now compiles (#134).** The payload type comes from the
+  callee's signature instead of being refused.
+- **Returning a computed value from a `-> T?` function was refused on the native
+  plane (#135).** `coerce` now boxes any non-optional value whose slot is optional;
+  unwrapping (`T?` → `T`) is still refused, because it needs a check the compiler
+  cannot invent.
+
+### Changed
+- Register rows #129, #130 and #132 were re-measured rather than restated; see
+  `docs/operations/stub-register.md` for the corrected premises.
+
 ## [v1.1.1] — 2026-10-10 — the deployment's fix, landed (prepared on `v1`, local-only)
 
 v1.1 released a gate whose deployment ran a fix the release did not contain. The installed binary had been
