@@ -167,9 +167,17 @@ pub struct CfTVersionInfo {
 /// Returns the browser install directory: `<data_dir>/tallow/browsers/`.
 /// Creates the directory if it does not exist.
 pub fn browser_install_dir() -> Result<PathBuf, BrowserError> {
-    let base = dirs::data_dir().ok_or_else(|| {
-        BrowserError::DownloadFailed("cannot determine data directory".to_string())
-    })?;
+    // `dirs::data_dir()` is platform-shaped: XDG_DATA_HOME on Linux, but
+    // ~/Library/Application Support on macOS and %APPDATA% on Windows, which
+    // ignore XDG entirely. TALLOW_DATA_HOME is the cross-platform override --
+    // needed by the test harness, and useful to an operator who wants browser
+    // installs on a different volume.
+    let base = match std::env::var_os("TALLOW_DATA_HOME") {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => dirs::data_dir().ok_or_else(|| {
+            BrowserError::DownloadFailed("cannot determine data directory".to_string())
+        })?,
+    };
     let dir = base.join("tallow").join("browsers");
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| {
@@ -1824,7 +1832,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("create fake XDG root");
         let prior = std::env::var("XDG_DATA_HOME").ok();
-        unsafe { std::env::set_var("XDG_DATA_HOME", &root) };
+        let prior_tallow = std::env::var("TALLOW_DATA_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", &root);
+            // macOS/Windows ignore XDG_DATA_HOME; TALLOW_DATA_HOME is the
+            // override browser_install_dir() actually reads there.
+            std::env::set_var("TALLOW_DATA_HOME", &root);
+        }
 
         let browsers = root.join("tallow").join("browsers");
         // The fixture must be built under the HOST platform's directory name:
@@ -1865,6 +1879,10 @@ mod tests {
         match prior {
             Some(v) => unsafe { std::env::set_var("XDG_DATA_HOME", v) },
             None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
+        }
+        match prior_tallow {
+            Some(v) => unsafe { std::env::set_var("TALLOW_DATA_HOME", v) },
+            None => unsafe { std::env::remove_var("TALLOW_DATA_HOME") },
         }
         let _ = std::fs::remove_dir_all(&root);
     }
