@@ -880,6 +880,11 @@ impl<'a> CodeGen<'a> {
 
             // System libraries required by tokio, tungstenite, native-tls, etc.
             if cg.target.is_windows {
+                // lld, not the MSVC linker: linking a 500 MB staticlib with
+                // link.exe on the release runner died with LNK1120 and printed
+                // no symbol names, which is not a diagnosable failure. lld names
+                // the unresolved symbol.
+                cmd.arg("-fuse-ld=lld");
                 cmd.args([
                     "-lws2_32",
                     "-lbcrypt",
@@ -899,6 +904,7 @@ impl<'a> CodeGen<'a> {
                     "-lmsvcrt",
                     "-lvcruntime",
                     "-lucrt",
+                    "-llegacy_stdio_definitions",
                 ]);
             } else if cg.target.is_macos {
                 // Mach-O: libssl/libcrypto do not exist on the system (only
