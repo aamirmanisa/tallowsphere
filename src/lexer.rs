@@ -1070,6 +1070,16 @@ fn is_ident_continue(ch: u8) -> bool {
 
 /// Tokenize source text. Returns (tokens, errors).
 pub fn tokenize(source: &str) -> (Vec<Token>, Vec<LexError>) {
+    // A `#!` line at byte 0 is the script's interpreter line, not program text
+    // (`#!/usr/bin/env -S tallow`). Blank it instead of stripping it so every
+    // span still indexes the original source, unchanged.
+    if source.starts_with("#!") {
+        let cut = source.find('\n').unwrap_or(source.len());
+        let mut blanked = String::with_capacity(source.len());
+        blanked.push_str(&" ".repeat(cut));
+        blanked.push_str(&source[cut..]);
+        return Lexer::new(&blanked).tokenize();
+    }
     Lexer::new(source).tokenize()
 }
 
@@ -1078,6 +1088,19 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<LexError>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shebang_line_is_not_program_text() {
+        let (tokens, errors) = tokenize("#!/usr/bin/env -S tallow\nfn main() { print(1) }\n");
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert!(tokens.iter().any(|t| matches!(t.kind, TokenKind::Fn)));
+        // Spans stay aligned with the original text: the `fn` still starts on line 2.
+        let fn_tok = tokens
+            .iter()
+            .find(|t| matches!(t.kind, TokenKind::Fn))
+            .expect("fn token");
+        assert_eq!(fn_tok.span.start, 25); // the shebang line is 25 bytes incl. newline
+    }
 
     /// Helper: tokenize and assert zero errors, return token kinds.
     fn kinds(source: &str) -> Vec<TokenKind> {
