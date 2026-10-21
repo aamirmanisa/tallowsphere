@@ -174,7 +174,13 @@ fn tor_circuit_test_failure_is_not_refusal_wording() {
     );
 }
 
+// Requires the tallow mesh: a WireGuard interface (wg0) with 10.77.0.1 bound.
+// A GitHub runner has neither, so the test failed every CI run with
+// AddrNotAvailable (os error 99). Ignored rather than cfg-skipped so it can
+// still be run deliberately on a mesh host:
+//   cargo test --test veil_connect_cli -- --ignored
 #[test]
+#[ignore = "requires the tallow mesh interface (wg0 + 10.77.0.1); run on a mesh host with --ignored"]
 fn mesh_bridge_down_refuses() {
     let hub = TcpListener::bind("127.0.0.1:0").expect("hub");
     let hub_addr = hub.local_addr().expect("addr").to_string();
@@ -233,6 +239,7 @@ fn usage_errors_exit_2() {
 /// listener on the mesh address. Proves: connect assertion, hand-off env,
 /// SOCKS CONNECT through the bridge by mesh name, byte pump, policy denials.
 #[test]
+#[ignore = "requires the tallow mesh interface (wg0 + 10.77.0.1); run on a mesh host with --ignored"]
 fn mesh_rung_end_to_end_through_bridge() {
     // 1. mock mesh DNS: any A query → 10.77.0.1
     let dns_sock = UdpSocket::bind("127.0.0.1:0").expect("dns");
