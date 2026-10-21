@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: stable
+          toolchain: 1.98.1
 
       - name: Assert tag ↔ Cargo.toml version consistency
         shell: bash
@@ -102,9 +102,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # The toolchain must be the one rust-toolchain.toml pins (1.98.1). Asking
+      # for `stable` installs the target's std for stable only, while cargo then
+      # runs the pinned 1.98.1 toolchain -- which has no std for the cross
+      # targets, so every cross build died with E0463 "can't find crate for
+      # `core`" (linux-aarch64 and macos-x86_64 on 2026-10-21).
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: stable
+          toolchain: 1.98.1
           targets: ${{ matrix.target }}
 
       - name: Cross toolchain (aarch64 Linux)
