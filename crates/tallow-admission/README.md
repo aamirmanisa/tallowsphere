@@ -1,117 +1,159 @@
+<div align="center">
+
 # tallow-admission
 
-Mesh-door admission core for Tallow — the first production port of the
-`veil v0` reference core (artifacts/tallow-veil-mesh-2026-09-27/tools/veil_core.js).
+**A door that cannot be told apart from a wall.**
 
-**What it is.** The riskiest mechanism of the mesh door, as a pure,
-transport-agnostic library:
+![cover](https://img.shields.io/badge/cover-260%20bytes%2C%20byte--identical-1f6feb?style=flat-square)
+![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
+![unsafe](https://img.shields.io/badge/unsafe-forbidden-2ea44f?style=flat-square)
 
-1. **Authenticated device admission** — X25519 ephemeral ECDH mixed against
-   the pinned server static key, Ed25519 device identity, transcript-bound,
-   timestamped, HKDF-derived directional AEAD keys (ChaCha20-Poly1305).
-2. **Probe-indistinguishability** — every unauthenticated outcome (garbage,
-   HTTP probes, silent lingerers, unknown/revoked devices, tampered or stale
-   handshakes, replays) receives byte-identical cover bytes: the 260-byte
-   "ordinary 404" (`sha256 f23589f6…158bfe`).
+</div>
 
-**Architecture.** The protocol lives in pure state machines —
-`ServerSession` / `ClientSession` — that consume bytes and emit `Action`s
-(`Write` / `Cover` / `Close`); no I/O inside. `io` is a thin blocking
-loopback layer (thread-per-connection, `dial_call` / `dial_call_on` one-shot
-client). The **loopback-first daemon binary `tallow-admissiond`** (`src/bin/`,
-task-1.4 packaging) wraps the same core, binds loopback-only by default, and
-loads registry/key files; production sits behind Caddy with real key material.
-The **operator client `tallow-mesh`** (`src/bin/`, task-1.5 MVP) makes
-one-shot admitted calls with **announced rungs** (`direct` / `ssh` forward /
-`tor` via SOCKS5) and mints device keys (`keygen`, 0600) for the registry
-ceremony.
+---
 
-## Port mapping (mechanical rename at first port)
+Every authenticated service leaks the same fact: something is there. A port that answers differently to a wrong key than to a wrong path tells an observer which is which, and that difference is enough to map a private network from the outside.
 
-| reference (veil v0) | this port |
+This crate is the admission handshake for the Tallow mesh door, built so that **every unauthenticated outcome looks like an ordinary web server answering a path that does not exist** — same bytes, same length, same timing shape.
+
+## What it is
+
+1. **Authenticated device admission.** X25519 ephemeral ECDH mixed against a pinned server static key; Ed25519 device identity; transcript binding; timestamp freshness; HKDF-derived directional AEAD keys (ChaCha20-Poly1305).
+2. **Probe indistinguishability.** Garbage, HTTP probes, silent lingerers, unknown or revoked devices, tampered handshakes, stale timestamps, replays — all receive the same 260-byte cover response, byte-identical to an ordinary 404. Its digest is a constant in the crate: `cover::COVER_SHA256_HEX`.
+
+The protocol is a pair of pure state machines. `ServerSession` and `ClientSession` consume bytes and emit `Action`s (`Write`, `Cover`, `Close`) — there is no I/O inside them, which is what makes the adversarial matrix testable without sockets.
+
+## What it is not
+
+- **Not a TLS replacement.** It runs *behind* a terminable proxy (Caddy in the reference deployment); TLS is terminated at the edge and admission decides who gets past it.
+- **Not a general authentication framework.** One device identity, one role, one registry. There is no OAuth, no session store, no password reset.
+- **Not invisibility.** It defeats probing and enumeration of the door. It does not hide that the host exists, nor does it claim to.
+
+## Quick start
+
+### As a library
+
+```rust
+use tallow_admission::server::{ServerCore, StaticRegistry};
+use tallow_admission::{cover, COVER_LEN};
+
+// The cover is a constant, not a computed response.
+assert_eq!(cover().len(), COVER_LEN);
+```
+
+### The loopback daemon
+
+```console
+$ cargo run -p tallow-admission --bin tallow-admissiond -- \
+    --registry dev-registry.json --listen 127.0.0.1:9410
+```
+
+```
+--print-dev-registry   print the deterministic dev device registry (JSON), exit
+--print-dev-server     print the deterministic dev server public keys (JSON), exit
+--listen <addr>        bind address (default 127.0.0.1:9410)
+--registry <path>      device registry JSON (required)
+--server-key <path>    server key material {ed_seed_hex, x_seed_hex}
+--audit <path|->       audit destination (default: - = stdout)
+--allow-non-loopback   permit a non-loopback bind (default: refuse)
+```
+
+The daemon refuses a non-loopback bind unless you say otherwise. That default is deliberate: an admission surface on a public interface is a surface someone will probe, and the operator should have decided that explicitly.
+
+### The operator client
+
+```console
+$ tallow-mesh keygen --out device.json          # 0600, refuses to overwrite
+$ tallow-mesh call --act status --rung tor --host 127.0.0.1 --port 9410 --device-key device.json
+```
+
+Rungs are announced, never guessed: `direct`, `ssh` (forwarded on loopback), `tor` (via SOCKS5). If the requested rung is unavailable, the client stops and says so (`rc=1`) rather than silently falling back to a path the operator did not choose.
+
+## Configuration
+
+| Variable | Effect | Default |
+|---|---|---|
+| `TALLOW_ADMISSION_RATE_BURST` | Token-bucket burst per source | 20 |
+| `TALLOW_ADMISSION_RATE_REFILL` | Tokens per second | 10 |
+
+Constants that are deliberately not configurable:
+
+| Constant | Value | Why |
+|---|---|---|
+| `PRE_AUTH_TOTAL` | 15 s | A per-read timeout is not a deadline; a peer dribbling one byte per interval would hold a thread forever |
+| `MAX_PRE_AUTH_CONNECTIONS` | 32 | Over the cap the connection gets cover bytes and closes — indistinguishable from traffic |
+| `SESSION_IDLE_TIMEOUT` | 30 s | An authenticated session that goes silent is closed; `{"act":"ping"}` keeps it open |
+| Rate-limit map | 4,096 sources | Bounded, pruned only when buckets refill to full |
+
+**Deployment note.** Behind a terminating proxy every peer looks like the proxy, so the per-source bucket degenerates into a global rate. Either size the budget for that or terminate admission at the edge.
+
+## Deploying it
+
+The reference shape is: TLS terminated by Caddy, `tallow-admissiond` bound to loopback, real key material loaded from protected files.
+
+```ini
+# /etc/systemd/system/tallow-admissiond.service
+[Unit]
+Description=Tallow mesh-door admission
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/tallow-admissiond \
+  --listen 127.0.0.1:9410 \
+  --registry /var/lib/tallow/registry.json \
+  --server-key /etc/tallow/server-key.json \
+  --audit /var/log/tallow/admission.jsonl
+User=tallow
+Restart=always
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Run it as an unprivileged user with a read-only filesystem apart from the registry and log paths. The daemon runs on deterministic **dev** keys, with a loud warning, when `--server-key` is absent — that is for rehearsal only; a production door must load real material or the pin means nothing.
+
+## Design notes
+
+**Why a constant cover rather than a generated 404.** A generated response varies with the request — headers, body length, timing. A constant is the only shape that is provably identical for every refusal, and a digest test locks it.
+
+**Why the rx-counter rule is strict.** Frames must arrive strictly increasing; out-of-order delivery is refused *before* decryption and does not advance the high-water mark. The control plane runs over one reliable ordered transport, so a reordering window would add state and buy nothing.
+
+**Why the total deadline, not an idle timeout.** The pre-auth phase has one fixed budget computed at accept time. Once authenticated, the connection switches to idle semantics so long sessions are never cut off mid-operation.
+
+**Why pre-fix behaviour is kept as a test.** Two adversarial properties — drip-fed pre-auth connections and counter replay — are preserved as executable proofs of the *unfixed* code beside the tripwires that assert the fixed behaviour. A regression that reverts the fix fails the tripwire, not a comment.
+
+## Verification
+
+```console
+$ cargo test -p tallow-admission
+$ cargo test -p tallow-admission --test battery -- --nocapture
+$ cargo test -p tallow-admission --test verify_v -- --nocapture
+$ cargo test -p tallow-admission --test daemon_smoke -- --nocapture
+```
+
+26 test functions in the crate source [measured 2026-10-21], plus the integration batteries:
+
+| Suite | Covers |
 |---|---|
-| `V1S` / `V1A` / `V1C` | `T1S` / `T1A` / `T1C` |
-| `veil-v0` transcript label | `tallow-v0` |
-| `veil-v0/c2s`, `veil-v0/s2c` | `tallow-v0/c2s`, `tallow-v0/s2c` |
-| DER SPKI (44 B) pubkeys on the wire | raw 32 B X25519 pubkeys |
-| `veil-test/…` seeds | `tallow-test/…` seeds (`devkeys`) |
+| `tests/battery.rs` | S0–S10: happy path, 50-frame echo integrity, transcript replay, tampered signature, stale timestamp, unknown/revoked device, forged server (client-side pin), cover-equality matrix 6/6, RBAC, key separation |
+| `tests/loopback.rs` | Real sockets, happy path and cover scenarios |
+| `tests/verify_v.rs` | Length and timestamp boundaries (including the 119 s in-window control), coalesced forged messages, oversized-frame deadline, replay tripwire |
+| `tests/daemon_smoke.rs` | The real daemon binary: minting, echo, RBAC deny, unknown-device cover, audit contents |
+| `tests/mesh_client.rs` | All three rungs, unavailable-rung refusal, `keygen` permissions |
 
-Cover bytes are unchanged (fidelity-anchored by test).
+## Limits
 
-## Tests
+| Limit | Detail |
+|---|---|
+| Registry integration | `StaticRegistry` + file loading today; backing it with a live device store is the deployed-gate work |
+| No key rotation | Server identity is a file; rotating it means redistributing the pin |
+| One process per door | No clustering or shared session state |
+| Cover is HTTP-404 shaped | A network that expects a different server personality needs its own cover, which is a wire change by design |
 
-- `cargo test` — battery-equivalent suite (`tests/battery.rs`, S0–S10):
-  happy path + 50-frame echo integrity, transcript replay, tampered sig,
-  stale ts, unknown/revoked device, forged server (client-side pin),
-  cover-equality matrix 6/6, RBAC allow/deny + audit lines, key separation.
-- `tests/loopback.rs` — real-socket happy path + cover scenarios.
-- `tests/verify_v.rs` — VERITY V-series adversarial edges (length/timestamp
-  boundaries incl. the 119 s in-window positive control; coalesced
-  msg1+forged msg3; oversized-frame deadline; policy surface; the
-  rx-counter-replay tripwire, now asserting rejection — flipped 2026-10-15
-  when v1 hardening landed).
-- `tests/daemon_smoke.rs` — drives the real `tallow-admissiond` binary:
-  dev-registry minting, operator echo, RBAC deny, unknown-device cover,
-  audit-file contents.
-- `tests/mesh_client.rs` — end-to-end `tallow-mesh` MVP: the three rungs
-  (direct · ssh guard+loopback · tor against a mock SOCKS5 proxy), rung
-  unavailability stops announced (rc=1), unknown-device refusal (empty
-  stdout), `keygen` 0600 + no-overwrite.
+## License
 
-## Hardening status
-
-**DONE (2026-10-15) — rx-counter monotonicity on `AeadChan::open`.** The
-counter in a received frame must be strictly greater than the highest already
-opened; anything else is refused with `AeadError::Replay` *before* decryption,
-and a refused frame does not advance the high-water mark. Enforced in
-`src/aead.rs`; the pre-fix behaviour is kept as an executable proof
-(`proof_replay_is_processed_on_the_unfixed_code`) and the integration tripwire
-`v6_v1_sealed_frame_replay_rejected` asserts the session now CLOSES on replay.
-
-Policy: strictly increasing, no reordering window. This is a request/response
-control plane over one reliable, ordered transport, so out-of-order delivery is
-not expected; a window would add state and buy nothing here.
-
-**DONE (2026-10-15) — total pre-auth deadline + pre-auth connection cap.**
-`PRE_AUTH_TIMEOUT` is a per-*read* timeout, so a peer dribbling one byte per
-interval reset it forever and held a connection — and its thread — open
-indefinitely; `serve` also spawned an unbounded thread per accepted connection
-with no accounting. Both are now bounded in `src/io.rs`:
-
-- `PRE_AUTH_TOTAL` (= `CLIENT_DEADLINE`, 15 s) is fixed at accept time and
-  clamps every pre-auth read via `next_read_timeout`. It applies to the
-  **pre-auth phase only**: once `session.is_authenticated()` the connection
-  reverts to `SESSION_IDLE_TIMEOUT` idle semantics, so long admitted sessions
-  are never cut off.
-- `MAX_PRE_AUTH_CONNECTIONS` (32) caps concurrent pre-auth connections. Over
-  the cap the connection gets `cover()` and is closed, so a refusal is not
-  distinguishable from ordinary traffic. Slots are held by an RAII guard
-  (`PreAuthSlot`), so no exit path can leak one.
-
-`next_read_timeout` is pure and clock-injected, so the deadline arithmetic is
-unit-testable without sleeping. Pre-fix behaviour is kept as an executable
-proof (`proof_drip_survives_the_total_budget_on_the_unfixed_arithmetic`).
-
-## v1 hardening status
-
-Landed:
-
-- **Keepalive / idle policy inside authenticated sessions.** `SESSION_IDLE_TIMEOUT`
-  (30 s) closes a silent session; a client that needs to hold one open sends
-  `{"act":"ping"}` inside that window. Any authenticated frame refreshes the
-  deadline, and `ping` is allowed for both roles because it touches no state and
-  returns no data — no second wire format, no new frame type.
-- **Rate limiting per source.** `ratelimit::SourceLimiter` is a token bucket per
-  TCP peer (burst 20, refill 10/s) checked *before* a pre-auth slot is claimed,
-  so connect/close churn is refused without occupying the concurrency budget.
-  Refusal is the same cover-bytes-then-close shape as the over-cap path. The map
-  is bounded at 4,096 sources and prunes only buckets that have refilled to full.
-  Tunable with `TALLOW_ADMISSION_RATE_BURST` and `TALLOW_ADMISSION_RATE_REFILL`.
-  **Deployment note:** behind a terminating proxy every peer is the proxy, so the
-  bucket becomes a global rate — set the budget accordingly or terminate
-  admission at the edge.
-
-Still open (needs the deployed gate, not this crate):
-
-- Registry integration: back `DeviceRegistry` with the console device store
-  (mint/revoke); production server keys from protected key files.
+MIT — see the repository `LICENSE` and `NOTICE`.
