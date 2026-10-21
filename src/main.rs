@@ -8526,14 +8526,30 @@ fn real_main() -> anyhow::Result<()> {
                 payload: &serde_json::Value,
             ) -> Result<(), String> {
                 use std::io::Write;
-                use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-                let mut opts = std::fs::OpenOptions::new();
-                opts.create(true).append(true).mode(0o600);
-                let mut file = opts
+
+                // Mode 0600 is a POSIX concept. Windows has no mode bits to
+                // set: the file inherits the directory ACL, which is the same
+                // rule the secret store states in stdlib/secrets.rs. The
+                // `cfg` is a real split, not a `cfg!()` runtime test, so the
+                // unix-only imports do not exist in the Windows build at all.
+                #[cfg(unix)]
+                let mut file = {
+                    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+                    let mut opts = std::fs::OpenOptions::new();
+                    opts.create(true).append(true).mode(0o600);
+                    let file = opts
+                        .open(path)
+                        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+                    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                        .map_err(|e| format!("cannot enforce mode 0600 on {}: {e}", path.display()))?;
+                    file
+                };
+                #[cfg(not(unix))]
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
                     .open(path)
                     .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-                file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| format!("cannot enforce mode 0600 on {}: {e}", path.display()))?;
                 let line = serde_json::to_string(payload)
                     .map_err(|e| format!("payload encode failed: {e}"))?;
                 writeln!(file, "{line}")
