@@ -114,3 +114,5 @@ artifacts/**/frames-*.json
 # personal-identity research — keep out of git
 broker_probe/
 exposure_discovery.json
+# Phase 1 smoke-ladder receipts are generated, not source.
+artifacts/phase1/
