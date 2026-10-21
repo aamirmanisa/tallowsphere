@@ -25,8 +25,13 @@ regression targets nothing ran, and thirteen RustSec advisories.
 - `zip` 2.4.2 → 9.0.0 (RUSTSEC-2026-0367/-0368/-0369). The upgrade also closed a
   zip-slip: `src/browser/trace.rs` extracted entries with `zip.join(entry.name())`
   and now uses `enclosed_name()`, which refuses absolute and `..` paths.
-- `cargo audit`: 13 advisories → 0. `deny.toml` gains `bzip2-1.0.6` for zip 9's
-  pure-Rust bzip2 decoder; `cargo deny check` is green on all four axes.
+- `cargo audit`: 13 advisories → 0. `deny.toml` gains `bzip2-1.0.6` (zip 9's
+  pure-Rust bzip2 decoder) and `Apache-2.0 WITH LLVM-exception` (the cranelift
+  family, reached only with the optional JIT feature), and records the
+  `mach`/RUSTSEC-2020-0168 acceptance that `region` forces on macOS. Verified
+  the way CI runs it — `cargo deny --all-features check` — which is what caught
+  both of those; the earlier plain `cargo deny check` never saw the optional
+  dependency set.
 
 ### Fixed
 - **The workspace did not build on macOS or Windows.** `landlock` (Linux LSM) was
