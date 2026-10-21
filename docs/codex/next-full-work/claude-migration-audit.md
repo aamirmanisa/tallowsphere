@@ -2,7 +2,7 @@
 
 ## Scope
 
-This note closes the `.claude/` item in [docs/codex/next-full-checklist.md](~/Nixe/docs/codex/next-full-checklist.md) by auditing the currently tracked-dirty `.claude` files against the current Codex-first workspace setup documented in [docs/codex/workspace-optimization.md](~/Nixe/docs/codex/workspace-optimization.md).
+This note closes the `.claude/` item in [docs/codex/next-full-checklist.md](../next-full-checklist.md) by auditing the currently tracked-dirty `.claude` files against the current Codex-first workspace setup documented in [docs/codex/workspace-optimization.md](../workspace-optimization.md).
 
 Files read for this audit:
 

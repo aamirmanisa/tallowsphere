@@ -76,7 +76,7 @@ Important output:
 Active instruction context right now is:
 
 - System/developer-level runtime instructions (from this Codex session; not files in your repo).
-- Workspace `AGENTS.md` for current directory: [tallowsphere/AGENTS.md](E:/Nixe/AGENTS.md)
+- Workspace `AGENTS.md` for current directory: [AGENTS.md](../../AGENTS.md)
 ...
 Yes: the nearest `AGENTS.md` in the directory you’re working in wins over broader workspace guidance
 ```
@@ -93,7 +93,7 @@ Important output:
 Active instruction sources for this session:
 
 1. Highest priority (not file-based in repo): system + developer instructions from the harness.
-2. Repo instruction file currently active at your cwd: [`tallowsphere/AGENTS.md`](tallowsphere/AGENTS.md).
+2. Repo instruction file currently active at your cwd: [`AGENTS.md`](../../AGENTS.md).
 ...
 Yes: nearest `AGENTS.md` wins over broader workspace guidance for files in its subtree.
 ```

@@ -94,7 +94,8 @@ pub async fn extract(
         handle.session_id.clone(),
         Some(idx),
         Some(Arc::clone(target)),
-    );
+    )
+    .await;
 
     // Stealth profile (Chrome UA). Keeps Cloudflare/datacenter checks happy.
     let profile = StealthProfile::chrome_linux();

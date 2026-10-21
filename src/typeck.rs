@@ -64,6 +64,44 @@ pub enum Type {
     Unknown,
 }
 
+/// The primitive kind a literal has to inhabit, or `""` when the type is not a
+/// primitive (a struct, a map, `Unknown`) and the check must not fire.
+fn base_kind(t: &Type) -> &'static str {
+    match t {
+        Type::String => "str",
+        Type::Int(_) => "int",
+        Type::Float(_) => "float",
+        Type::Bool => "bool",
+        Type::Named(n) => match n.as_str() {
+            "str" | "String" | "string" => "str",
+            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
+            | "u128" | "usize" | "int" => "int",
+            "f32" | "f64" | "float" => "float",
+            "bool" => "bool",
+            _ => "",
+        },
+        _ => "",
+    }
+}
+
+/// Human-readable name for a type in diagnostics.
+fn type_label(t: &Type) -> String {
+    match t {
+        Type::Void => "nil".to_string(),
+        Type::Bool => "bool".to_string(),
+        Type::Int(_) => "int".to_string(),
+        Type::Float(_) => "float".to_string(),
+        Type::String => "str".to_string(),
+        Type::Bytes => "bytes".to_string(),
+        Type::Char => "char".to_string(),
+        Type::Optional(inner) => format!("{}?", type_label(inner)),
+        Type::Array(inner) => format!("[{}]", type_label(inner)),
+        Type::Named(name) => name.clone(),
+        Type::Private(inner) | Type::Secret(inner) => type_label(inner),
+        other => format!("{other:?}"),
+    }
+}
+
 impl Type {
     /// Is this type private or wraps a private type?
     pub fn is_private(&self) -> bool {
@@ -1103,6 +1141,7 @@ impl<'a> TypeChecker<'a> {
                 };
                 if ty.is_some() {
                     self.check_optional_binding(&resolved, value, locals, value.span);
+                    self.check_declared_literal(&resolved, value, value.span);
                 }
                 self.check_expr(value, locals);
                 locals.insert(
@@ -1121,6 +1160,7 @@ impl<'a> TypeChecker<'a> {
                 };
                 if ty.is_some() {
                     self.check_optional_binding(&resolved, value, locals, value.span);
+                    self.check_declared_literal(&resolved, value, value.span);
                 }
                 self.check_expr(value, locals);
                 locals.insert(
@@ -1220,6 +1260,48 @@ impl<'a> TypeChecker<'a> {
                 "E0116",
                 "cannot bind `T?` to a `T` without a check -- test it (`== nil`) or match on it"
                     .to_string(),
+                span,
+            );
+        }
+    }
+
+    /// A literal whose kind cannot inhabit the declared type is an error at the
+    /// binding site. With an annotation the declared type wins, so inference
+    /// alone never sees the contradiction: `let x: i64 = "nope"` used to check
+    /// clean and print the string. Only literal kinds are compared — no
+    /// coercion rules are invented here, so numeric widening (`1` into `f64`)
+    /// stays legal and everything non-literal is left to inference.
+    fn check_declared_literal(&mut self, declared: &Type, value: &Expr, span: Span) {
+        let literal = match &value.kind {
+            ExprKind::StringLit(_) | ExprKind::Interpolation(_) => "str",
+            ExprKind::IntLit(_) => "int",
+            ExprKind::FloatLit(_) => "float",
+            ExprKind::BoolLit(_) => "bool",
+            _ => return,
+        };
+        let mut slot = declared;
+        loop {
+            match slot {
+                Type::Optional(inner) | Type::Private(inner) | Type::Secret(inner) => slot = inner,
+                _ => break,
+            }
+        }
+        let kind = base_kind(slot);
+        if kind.is_empty() {
+            // Not a primitive (struct, map, unresolved alias): nothing to compare.
+            return;
+        }
+        let fits = matches!(
+            (literal, kind),
+            ("str", "str") | ("int", "int") | ("int", "float") | ("float", "float") | ("bool", "bool")
+        );
+        if !fits {
+            self.diags.error(
+                "E0117",
+                format!(
+                    "cannot bind a {literal} literal to `{}`: the annotation is the type, and no conversion is applied",
+                    type_label(declared)
+                ),
                 span,
             );
         }
@@ -3474,6 +3556,33 @@ mod tests {
         let (env, _) = check("fn pi() -> f64 { 3.14 }");
         let sig = env.functions.get("pi").unwrap();
         assert!(matches!(sig.return_type, Type::Float(FloatSize::F64)));
+    }
+
+    #[test]
+    fn string_literal_bound_to_int_annotation_is_an_error() {
+        let (_, diags) = check("fn main() { let x: i64 = \"nope\"\n print(x) }");
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0117"),
+            "expected E0117 for `let x: i64 = \"nope\"`, got {:?}",
+            diags.items.iter().map(|d| (d.code, &d.msg)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn literal_bindings_that_fit_the_annotation_stay_clean() {
+        for src in [
+            "fn main() { let x: f64 = 1\n print(x) }",
+            "fn main() { let x: i64 = 1\n print(x) }",
+            "fn main() { let x: str? = \"a\"\n print(x) }",
+            "fn main() { let x: bool = true\n print(x) }",
+        ] {
+            let (_, diags) = check(src);
+            assert!(
+                !diags.items.iter().any(|d| d.code == "E0117"),
+                "unexpected E0117 for {src}: {:?}",
+                diags.items.iter().map(|d| (d.code, &d.msg)).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

@@ -1,9 +1,9 @@
 # Versioning & release-tag policy (V1)
 
-> **Scope (2026-10-15).** This policy governs Tallow **language/workspace** release tags (`~/Nixe`).
-> `scripts/release_gate.sh` and `.github/workflows/release.yml`, which it names as the mechanical
-> checks, are not in this repository — the release gate brings its own battery and the workflow runs the
-> workspace's installer E2E. This repository's own tags and CI are described in `MANIFEST.md`
+> **Scope (2026-10-21).** This policy governs Tallow release tags in this repository. The two mechanical
+> checks it names live in different places: `.github/workflows/release.yml` **is** in this repository and
+> builds the published artifact, while `scripts/release_gate.sh` is not — the release gate brings its own
+> battery. This repository's own tags and CI are described in `MANIFEST.md`
 > (§ "Tags", § "CI carried, and what was left behind").
 
 Scope: Tallow `v*` release tags, the Cargo version, and the freeze convention.

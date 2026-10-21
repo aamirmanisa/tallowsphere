@@ -755,67 +755,68 @@ fn telegram_alert(args: Vec<Value>) -> StdlibResult {
     Ok(Value::Int(status.as_u16() as i128))
 }
 
-/// Browser-based price scraping using Tallow's CDP engine.
-/// Phase 4 contract stub — API surface defined, live browser gated.
+/// Page-backed scrape of a single product URL.
+///
+/// Not wired to a live browser here: the engine's browser path is human-gated
+/// and requires a `Page` the caller owns. This refuses rather than returning a
+/// payload that says "contract_stub" — a caller that did not read the status
+/// field would otherwise treat a scrape that never happened as a result.
 fn browser_scrape(args: Vec<Value>) -> StdlibResult {
     let url = extract_string(&args, 0, "url")?;
     let retailer = extract_string(&args, 1, "retailer")?;
-    let _selector = args.get(2).and_then(|v| {
-        if let Value::String(s) = v { Some(s.clone()) } else { None }
-    }).unwrap_or_default();
 
-    // Contract: browser_scrape uses Tallow's CDP browser to:
-    // 1. Launch stealth browser (BrowserProcess::launch)
-    // 2. Navigate to URL (page.navigate, wait for JS render)
-    // 3. Extract price via page.evaluate_expression
-    // 4. Return structured price data
-    //
-    // Status: non-live contract stub (Phase 4 pattern).
-    // Live browser execution is human-gated per Tallow governance.
-    Ok(serde_json_to_value(&serde_json::json!({
-        "status": "contract_stub",
-        "url": url,
-        "retailer": retailer,
-        "browser_required": true,
-        "live_execution": false,
-        "phase": 4,
-        "note": "Live browser scraping is human-gated. This stub documents the API contract."
-    })))
+    Err(format!(
+        "deals.browser_scrape({url}, {retailer}) is not available: it needs a live browser page. \
+Use deals.stealth_scrape(url, retailer) for a page-backed fetch, or drive tallow.browser directly."
+    ))
 }
 
-/// Generate an affiliate link from a product URL.
-/// Supports Amazon Associates, Skimlinks, and generic affiliate patterns.
+/// Build an affiliate link for a product URL.
+///
+/// Credentials are never embedded in source. The tag comes from the third
+/// argument or `TALLOW_AFFILIATE_TAG`; publisher ids/keys for the wrapper
+/// networks come from the environment. When one is missing this returns an
+/// error instead of a link — the previous default provider had no match arm and
+/// fell through to `url.to_string()`, so "generate an affiliate link" returned
+/// the input unchanged and looked like success.
 fn generate_affiliate_link(args: Vec<Value>) -> StdlibResult {
     let url = extract_string(&args, 0, "url")?;
     let retailer = extract_string(&args, 1, "retailer")?;
-    let tag = args.get(2).and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None });
+    let tag = args.get(2).and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None })
+        .or_else(|| std::env::var("TALLOW_AFFILIATE_TAG").ok())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "generate_affiliate_link: no affiliate tag — pass it as the third argument or set TALLOW_AFFILIATE_TAG".to_string())?;
     let provider = args.get(3).and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None })
-        .unwrap_or_else(|| "skimlinks".to_string());
+        .unwrap_or_else(|| retailer.to_ascii_lowercase());
 
     let affiliate_url = match provider.as_str() {
-        "viglink" | "sovrn" => {
-            format!("https://redirect.viglink.com?key=INSERT_KEY&u={}", url_escape(&url))
-        }
         "amazon" => {
-            let tag = tag.unwrap_or_else(|| "tallowdeals-20".to_string());
             if let Some(dp_pos) = url.find("/dp/") {
                 let asin_start = dp_pos + 4;
                 let asin_end = url[asin_start..].find('/').map_or(url.len(), |p| asin_start + p);
                 let asin = &url[asin_start..asin_end.min(url.len())];
-                format!("https://shop-06.example/dp/{asin}?tag={tag}")
+                format!("https://www.amazon.com/dp/{asin}?tag={tag}")
             } else {
                 format!("{url}?tag={tag}")
             }
         }
-        "walmart" => {
-            format!("{url}?affiliateOverride=default")
+        "walmart" => format!("{url}?u1={tag}"),
+        "skimlinks" | "homedepot" | "lowes" | "target" | "costco" => {
+            let id = std::env::var("TALLOW_SKIMLINKS_ID").ok()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| format!(
+                    "generate_affiliate_link: provider '{provider}' needs a Skimlinks publisher id — set TALLOW_SKIMLINKS_ID"))?;
+            format!("https://go.skimresources.com?id={id}&url={}", url_escape(&url))
         }
-        "homedepot" | "lowes" | "target" | "costco" => {
-            // Skimlinks-style: wrap in redirect
-            format!("https://go.skimresources.com?id=XXXXX&url={}", 
-                url_escape(&url))
+        "viglink" | "sovrn" => {
+            let key = std::env::var("TALLOW_VIGLINK_KEY").ok()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| format!(
+                    "generate_affiliate_link: provider '{provider}' needs a VigLink key — set TALLOW_VIGLINK_KEY"))?;
+            format!("https://redirect.viglink.com?key={key}&u={}", url_escape(&url))
         }
-        _ => url.to_string(),
+        other => return Err(format!(
+            "generate_affiliate_link: unknown provider '{other}' (supported: amazon, walmart, skimlinks, viglink, sovrn, homedepot, lowes, target, costco)")),
     };
 
     Ok(Value::String(affiliate_url))
@@ -1500,15 +1501,18 @@ fn score_urgency(args: Vec<Value>) -> StdlibResult {
     })))
 }
 
-/// LLM-powered deal classification (contract stub).
+/// Model-assisted deal classification.
+///
+/// No model endpoint is configured in this build, so this refuses. Deterministic
+/// scoring remains available and is what the pipeline uses.
 fn llm_classify(args: Vec<Value>) -> StdlibResult {
-    let _title = extract_string(&args, 0, "title")?;
-    let _price = extract_f64(&args, 1, "price")?;
-    Ok(serde_json_to_value(&serde_json::json!({
-        "status": "contract_stub",
-        "phase": 5,
-        "note": "LLM classification is human-gated. Deterministic scoring available via score_deal_quality."
-    })))
+    let title = extract_string(&args, 0, "title")?;
+    let price = extract_f64(&args, 1, "price")?;
+
+    Err(format!(
+        "deals.llm_classify({title:?}, {price}) is not available: no model endpoint is configured. \
+Use deals.score_deal_quality(discount_pct, is_anomaly, confidence, trend) or deals.categorize_deal(title)."
+    ))
 }
 
 // -- 1000x Engine: Stock Checker ────────────────────────────────────────────
@@ -2160,5 +2164,57 @@ fn serde_json_to_value(json: &serde_json::Value) -> Value {
             }).collect();
             Value::Map(entries)
         }
+    }
+}
+
+#[cfg(test)]
+mod honesty_tests {
+    use super::*;
+
+    fn call(name: &str, args: Vec<Value>) -> StdlibResult {
+        dispatch(name, args).expect("function is registered")
+    }
+
+    #[test]
+    fn affiliate_link_carries_the_configured_tag() {
+        let out = call("generate_affiliate_link", vec![
+            Value::String("https://www.amazon.com/dp/B000TEST/ref=x".into()),
+            Value::String("amazon".into()),
+            Value::String("mytag-20".into()),
+        ]).expect("amazon link with a tag");
+        let Value::String(link) = out else { panic!("expected a string, got {out:?}") };
+        assert_eq!(link, "https://www.amazon.com/dp/B000TEST?tag=mytag-20");
+    }
+
+    #[test]
+    fn unknown_provider_is_refused_not_passed_through() {
+        let err = call("generate_affiliate_link", vec![
+            Value::String("https://example.com/p/1".into()),
+            Value::String("example".into()),
+            Value::String("tag-1".into()),
+            Value::String("nosuchnetwork".into()),
+        ]).expect_err("unknown provider must refuse");
+        assert!(err.contains("unknown provider"), "unexpected error: {err}");
+        assert!(err.contains("supported:"), "refusal must name the alternatives: {err}");
+    }
+
+    #[test]
+    fn browser_scrape_refuses_and_names_the_alternative() {
+        let err = call("browser_scrape", vec![
+            Value::String("https://example.com/p/1".into()),
+            Value::String("example".into()),
+        ]).expect_err("browser_scrape must refuse");
+        assert!(err.contains("not available"), "unexpected error: {err}");
+        assert!(err.contains("stealth_scrape"), "refusal must name the alternative: {err}");
+    }
+
+    #[test]
+    fn llm_classify_refuses_and_names_the_alternative() {
+        let err = call("llm_classify", vec![
+            Value::String("A deal".into()),
+            Value::Float(9.99),
+        ]).expect_err("llm_classify must refuse");
+        assert!(err.contains("no model endpoint"), "unexpected error: {err}");
+        assert!(err.contains("score_deal_quality"), "refusal must name the alternative: {err}");
     }
 }

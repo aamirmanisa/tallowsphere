@@ -8,7 +8,7 @@ It does not assess similarly named directories such as `probe_browser_*`.
 ## Status Basis
 
 - `git status --short --ignored=matching -- 'probe_*'` reports all three files as `!!` (ignored, not tracked).
-- [`tallowsphere/.gitignore`](tallowsphere/.gitignore) contains `/probe_*`, so these files are intentionally excluded from version control.
+- [`.gitignore`](../../../.gitignore) contains `/probe_*`, so these files are intentionally excluded from version control.
 - `git grep` across tracked files found no references to `probe_0.txt`, `probe_1.txt`, or `probe_2.txt`.
 
 ## Findings

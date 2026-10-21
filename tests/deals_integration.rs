@@ -511,13 +511,9 @@ fn p5_full_five_phase_pipeline() {
         print("conf:" + confidence.to_string())
 
         // ── Phase 3: Distribution ────────────────────────────────────
-        // Generate affiliate link
-        let aff = deals.generate_affiliate_link("http://example.com/dp/TEST123", "amazon")
+        // Generate affiliate link (tag is required; there is no default)
+        let aff = deals.generate_affiliate_link("http://example.com/dp/TEST123", "amazon", "testtag-20")
         print("aff:" + aff.slice(0, 30))
-
-        // Browser scrape contract
-        let browser = deals.browser_scrape("http://example.com/product", "teststore")
-        print("browser:" + browser["status"])
 
         // ── Phase 4: Scale-out ─────────────────────────────────────
         // These functions now perform REAL fetches against the loopback
@@ -546,9 +542,6 @@ fn p5_full_five_phase_pipeline() {
 
         let urgency = deals.score_urgency(discount_pct, is_anomaly)
         print("urg:" + urgency["urgency_score"].to_string())
-
-        let llm = deals.llm_classify(title, price)
-        print("llm:" + llm["status"])
 
         deal_count = deal_count + 1
         if is_error {
@@ -584,11 +577,11 @@ fn p5_full_five_phase_pipeline() {
     assert!(output.iter().any(|l| l.starts_with("error:")),
         "Phase 2: error detection should run");
 
-    // Verify Phase 3: affiliate + browser + discord
-    assert!(output.iter().any(|l| l.starts_with("aff:")),
-        "Phase 3: affiliate link should be generated");
-    assert!(output.iter().any(|l| l.starts_with("browser:")),
-        "Phase 3: browser contract should return");
+    // Verify Phase 3: affiliate link carries the tag that was passed in
+    let aff = output.iter().find(|l| l.starts_with("aff:"))
+        .expect("Phase 3: affiliate link should be generated");
+    assert!(aff.contains("amazon.com"), "affiliate link must target the retailer: {aff}");
+    assert!(aff.contains("tag=testtag-20"), "affiliate link must carry the tag: {aff}");
 
     // Verify Phase 4: scale-out contracts perform REAL fetches against the
     // loopback fixture and return honest results (no more contract_stub):
@@ -611,8 +604,6 @@ fn p5_full_five_phase_pipeline() {
         "Phase 5: headline generation should run");
     assert!(output.iter().any(|l| l.starts_with("urg:")),
         "Phase 5: urgency scoring should run");
-    assert!(output.iter().any(|l| l.starts_with("llm:")),
-        "Phase 5: LLM contract should return");
 
     println!("\n✓ All 5 phases verified in a single pipeline run.");
 }
