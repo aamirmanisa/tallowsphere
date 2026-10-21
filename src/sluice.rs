@@ -99,7 +99,15 @@ const KT_LOG_LOCK_POLL_MS: u64 = 20;
 /// kernel when the holder dies, so there is no stale lock for an operator to clear by hand.
 #[derive(Debug)]
 struct ReceiptLogLock {
+    /// The KT log itself. Never locked: on Windows a byte-range lock is
+    /// mandatory, so locking the data file would make every reader of the
+    /// locked range fail with os error 33 (which is exactly what happened to
+    /// 11 tests on the first Windows run).
     file: std::fs::File,
+    /// The sidecar (`<log>.lock`) that carries the mutual exclusion. Locking a
+    /// sidecar keeps advisory semantics on Unix and avoids mandatory-lock
+    /// interference with the data file on Windows.
+    lock: std::fs::File,
 }
 
 impl ReceiptLogLock {
@@ -127,14 +135,27 @@ impl ReceiptLogLock {
                     log_path.display()
                 ))
             })?;
+        // Sidecar lock: `<log>.lock`. See the struct comment for why the data
+        // file itself is not the lock target.
+        let lock_path = log_path.with_extension("lock");
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|e| {
+                DraftError::Io(format!(
+                    "cannot open the KT lock file '{}': {e}",
+                    lock_path.display()
+                ))
+            })?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait);
         loop {
-            // `File::try_lock` is the std cross-platform advisory lock (flock
-            // on Unix, LockFileEx on Windows) — the receipt log is locked by
-            // path here, not by a Unix descriptor, so this compiles and behaves
-            // the same on every target the CLI builds for.
-            match file.try_lock() {
-                Ok(()) => return Ok(Self { file }),
+            // `File::try_lock` is std's cross-platform advisory lock: flock on
+            // Unix, LockFileEx on Windows.
+            match lock.try_lock() {
+                Ok(()) => return Ok(Self { file, lock }),
                 Err(std::fs::TryLockError::WouldBlock) => {}
                 Err(std::fs::TryLockError::Error(err)) => {
                     return Err(DraftError::Io(format!(
@@ -160,7 +181,8 @@ impl Drop for ReceiptLogLock {
     fn drop(&mut self) {
         // The kernel releases this on exit anyway; unlocking here keeps a same-process test honest
         // and makes the guard's scope the thing that defines the critical section.
-        let _ = self.file.unlock();
+        let _ = self.lock.unlock();
+        let _ = &self.file;
     }
 }
 
