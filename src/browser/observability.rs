@@ -454,6 +454,12 @@ pub fn serve_metrics(
 /// Read one small request and write a single response. A per-connection read
 /// timeout keeps a slow/broken client from stalling the serving loop.
 fn handle_metrics_connection(mut stream: std::net::TcpStream, dashboard: &ObservabilityDashboard) {
+    // The listener is non-blocking so the accept loop can observe the stop
+    // flag. On Windows and macOS the ACCEPTED socket inherits that state (on
+    // Linux it does not), so without this the first read returned WouldBlock,
+    // the endpoint answered with an empty 0-byte response, and the Prometheus
+    // scrape failed. Verified on the macOS CI leg.
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
 
     let mut buf = [0u8; 1024];
