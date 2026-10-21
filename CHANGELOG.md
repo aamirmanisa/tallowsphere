@@ -4,7 +4,7 @@ All notable changes to Tallow are recorded here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
-## [Unreleased] — 2026-10-21 — the dependency tree the CI gates were failing on
+## [v1.1.4] — 2026-10-21 — green on three platforms, and no advisory left open
 
 Seven of the ten red CI jobs were arguing about code, not about policy. This
 change settles the four that were genuinely broken in the dependency tree: two
@@ -80,6 +80,55 @@ regression targets nothing ran, and thirteen RustSec advisories.
   call was a `cfg!()` runtime test around a `#[cfg(target_os = "linux")]`
   function — a `cfg!()` never removes the call site; it is now a real `cfg` split,
   and the syscall-table test is Linux-gated.
+
+### Fixed (platform test parity — the rest of the red)
+
+The first pass above made the crate *compile* off Linux. These are the failures
+that were left once it ran there.
+
+- **Accepted sockets inherited the listener's non-blocking mode.** A listener is
+  set non-blocking so its accept loop can poll; on Windows and macOS the socket
+  returned by `accept()` inherits that state (on Linux it does not). The first
+  read returned `WouldBlock`, each server treated it as a closed client and
+  dropped the connection unread, and the peer reported `EINVAL` (macOS) or
+  `WSAECONNABORTED`/10053 (Windows). Three sites:
+  - the two hand-rolled mock servers in `browser::crawl_pipeline` (7 Windows and
+    2 macOS test failures) — `set_nonblocking(false)` on the accepted socket;
+  - **`browser::observability::serve_metrics` — shipping code.** On macOS a
+    Prometheus scrape of the metrics port got a zero-byte response. Same fix,
+    with the reason at the call site.
+- **`sluice`'s receipt log locked the data file, which Windows refuses to share.**
+  `LockFileEx` is a mandatory lock, so every reader of the KT log got
+  `os error 33` (11 Windows failures). The lock moved to a `<log>.lock` sidecar;
+  the log itself is never held while being read.
+- **Four macOS tests asserted platform assumptions, not product behaviour**:
+  a 50 ms heartbeat interval that overshot to 157 ms on a loaded runner (now
+  2 s), a hard-coded `linux-arm64` install directory (`BrowserPlatform::detect()`),
+  Landlock paths compared uncanonicalised (`/var` vs `/private/var`), and JA4T
+  expected to be `derived` on a platform where it is correctly `unavailable`.
+- **Windows fixture failures**: `File::open()` then `set_modified` (Access
+  denied), `PATH` joined with `:` instead of `;`, a TOML fixture carrying a
+  backslash path, and provenance paths normalised with `\` instead of `/`.
+- **`browser_install_dir` ignored `TALLOW_DATA_HOME`**, which is the only
+  writable location macOS and Windows give an installed tool.
+
+### Fixed (production gates)
+
+- **`Tallow Production CI Gates` could never pass.** Its gate list invoked
+  `scripts/phase1_smoke_ladder.py`, which existed only in the older Nixe
+  workspace and was never carried into this repository, so `p2-006-phase1-smoke`
+  exited 2 on every commit. The ladder is now part of the tree and passes
+  (17 rungs, `pass=17 warn=0 fail=0`); its generated receipt is gitignored.
+
+### Verified
+
+- CI run `39655436215` on `1836329f`: **17 of 17 jobs green**.
+- `Tallow Production CI Gates` run `39655436090` on the same tree: success.
+- Tests: Linux 9,145 / macOS 9,140 / Windows 9,108 — zero failures on each.
+  The 33 ignored tests are the same set everywhere (mesh-only and
+  privileged-environment cases).
+- `docs/operations/PLATFORM-PARITY.md` states, per platform, what builds, what
+  runs, and what refuses on purpose.
 
 
 ## [v1.1.3] — 2026-10-21 — three defects a five-line script found
