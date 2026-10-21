@@ -146,6 +146,12 @@ pub mod runtime;
 pub mod runtime_caps;
 pub mod safety_pass;
 pub mod sandbox_pass;
+// The real runtime installs seccomp/Landlock from a `pre_exec` hook. Neither
+// exists on Windows, so that build gets the same five entry points refusing.
+#[cfg(unix)]
+pub mod sandbox_runtime;
+#[cfg(not(unix))]
+#[path = "sandbox_runtime_nonunix.rs"]
 pub mod sandbox_runtime;
 pub mod sast_pass;
 pub mod sbom;

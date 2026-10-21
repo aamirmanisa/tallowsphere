@@ -14,6 +14,9 @@ path = "src/lib.rs"
 crate-type = ["lib", "staticlib"]
 
 [dependencies]
+# Cross-platform terminal input for the masked credential prompt (already in the
+# lock via indicatif); the hand-rolled termios path could not build on Windows.
+console = "0.16"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 anyhow = "1"

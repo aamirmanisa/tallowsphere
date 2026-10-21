@@ -269,17 +269,24 @@ impl SecretStore {
         // (import_export.rs uses the same 0600-or-refuse pattern).
         let write_result = (|| -> Result<(), String> {
             use std::io::Write as _;
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&self.path)
-                .map_err(|e| format!("open: {e}"))?;
+            let mut opts = fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut file = opts.open(&self.path).map_err(|e| format!("open: {e}"))?;
             file.write_all(json.as_bytes()).map_err(|e| format!("write: {e}"))?;
-            file.set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("chmod: {e}"))
+            // 0600 where the platform has it. Windows has no portable owner-only
+            // bit; the file inherits the directory ACL instead.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(0o600))
+                    .map_err(|e| format!("chmod: {e}"))?;
+            }
+            Ok::<(), String>(())
         })();
         // `sealed_map` holds ciphertext only (indistinguishable from random
         // without the KEK), so unlike the legacy XOR path there is no

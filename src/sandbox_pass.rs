@@ -548,10 +548,18 @@ impl SeccompPolicy {
 /// - Compile-time validation in `SandboxPass` remains fully intact and
 ///   unchanged.
 pub fn install_seccomp_filter(policy: &SeccompPolicy) -> Result<(), String> {
-    if !cfg!(target_os = "linux") {
-        return Err("install_seccomp_filter: seccomp is Linux-only".to_string());
+    // The Linux implementation is `#[cfg(target_os = "linux")]`, so the call has
+    // to be gated too: a `cfg!()` runtime test still type-checks the call site on
+    // macOS/Windows, where the function does not exist.
+    #[cfg(target_os = "linux")]
+    {
+        install_seccomp_linux(policy)
     }
-    install_seccomp_linux(policy)
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = policy;
+        Err("install_seccomp_filter: seccomp is Linux-only".to_string())
+    }
 }
 
 /// Build the classic BPF (cBPF) instruction list implementing `policy`.
@@ -837,6 +845,7 @@ fn safe_fn() {
     }
 
     #[test]
+    #[cfg(target_os = "linux")] // syscall_number() is the Linux table
     fn test_sandbox_realistic_network_syscalls_resolve() {
         // The runtime allow-list for a sandboxed fetch function must resolve
         // common networking + process syscalls on both x86_64 and aarch64.

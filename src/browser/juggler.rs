@@ -16,8 +16,14 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
+// The pipe transport below passes file descriptors 3/4 to the child, so it is
+// Unix-only; the Windows build gets a `launch` that refuses with that reason
+// instead of a module that does not compile.
+#[cfg(unix)]
 use std::os::fd::OwnedFd;
+#[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -50,6 +56,7 @@ impl JugglerClient {
     /// so the caller can delete it on browser exit (W2-10 / S4). `None` means
     /// the caller supplied an explicit `user_data_dir`.
     /// Blocks until Firefox signals readiness (`Juggler listening to the pipe`).
+    #[cfg(unix)]
     pub fn launch(
         config: &BrowserConfig,
     ) -> Result<(Child, Self, Option<std::path::PathBuf>), BrowserError> {
@@ -207,6 +214,25 @@ impl JugglerClient {
     }
 
     /// Send a command and block for its result.
+    /// Windows: the Juggler pipe transport is unavailable.
+    ///
+    /// `-juggler-pipe` hands the browser two descriptors (3 = commands in,
+    /// 4 = responses out) that are only expressible as inherited file
+    /// descriptors on a Unix-like OS. Rather than ship a silent no-op, the
+    /// launch refuses and names the working alternative.
+    #[cfg(not(unix))]
+    pub fn launch(
+        config: &BrowserConfig,
+    ) -> Result<(Child, Self, Option<std::path::PathBuf>), BrowserError> {
+        let _ = config;
+        Err(BrowserError::ConnectionFailed(
+            "the Firefox/Camoufox Juggler transport passes its protocol pipes as \
+             file descriptors 3 and 4, which requires a Unix-like OS; use the \
+             Chromium/CDP backend on this platform"
+                .to_string(),
+        ))
+    }
+
     pub fn send(
         &self,
         method: &str,

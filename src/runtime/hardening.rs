@@ -69,12 +69,12 @@ fn ensure_nofile_floor(floor: libc::rlim_t) -> io::Result<()> {
 }
 
 /// The resource argument type differs by libc: glibc names it
-/// `__rlimit_resource_t`, musl (and the BSDs) take a plain `c_int`. Naming the
-/// alias here is what lets one source tree build for both (musl target found
-/// this: `__rlimit_resource_t` does not exist there).
-#[cfg(all(unix, not(target_env = "musl")))]
+/// `__rlimit_resource_t`; musl, the BSDs and macOS take a plain `c_int`.
+/// Keying on `target_env = "gnu"` rather than "not musl" is what stopped this
+/// from failing on macOS, where the glibc type does not exist either.
+#[cfg(all(unix, target_env = "gnu"))]
 pub type RlimitResource = libc::__rlimit_resource_t;
-#[cfg(all(unix, target_env = "musl"))]
+#[cfg(all(unix, not(target_env = "gnu")))]
 pub type RlimitResource = libc::c_int;
 
 /// Read a resource limit via `getrlimit(2)`.

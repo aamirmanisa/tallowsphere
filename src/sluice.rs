@@ -115,7 +115,6 @@ impl ReceiptLogLock {
     }
 
     fn acquire_with_wait(log_path: &Path, wait: u64) -> Result<Self, DraftError> {
-        use std::os::unix::io::AsRawFd;
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -130,16 +129,19 @@ impl ReceiptLogLock {
             })?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait);
         loop {
-            // SAFETY: `file` owns a valid descriptor for as long as this guard lives.
-            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-                return Ok(Self { file });
-            }
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() != Some(libc::EWOULDBLOCK) {
-                return Err(DraftError::Io(format!(
-                    "cannot lock the KT log '{}': {err}",
-                    log_path.display()
-                )));
+            // `File::try_lock` is the std cross-platform advisory lock (flock
+            // on Unix, LockFileEx on Windows) — the receipt log is locked by
+            // path here, not by a Unix descriptor, so this compiles and behaves
+            // the same on every target the CLI builds for.
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { file }),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(err)) => {
+                    return Err(DraftError::Io(format!(
+                        "cannot lock the KT log '{}': {err}",
+                        log_path.display()
+                    )))
+                }
             }
             if std::time::Instant::now() >= deadline {
                 return Err(DraftError::Io(format!(
@@ -156,10 +158,9 @@ impl ReceiptLogLock {
 
 impl Drop for ReceiptLogLock {
     fn drop(&mut self) {
-        use std::os::unix::io::AsRawFd;
         // The kernel releases this on exit anyway; unlocking here keeps a same-process test honest
         // and makes the guard's scope the thing that defines the critical section.
-        unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
+        let _ = self.file.unlock();
     }
 }
 
