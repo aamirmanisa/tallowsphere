@@ -8,7 +8,7 @@
 | Surface | Linux | macOS | Windows |
 |---|---|---|---|
 | `cargo check --workspace --all-targets` | pass | pass | pass |
-| `cargo test --lib` | 9,145 passed / 0 failed | 9,136 passed / 5 failed → 4 fixed, 1 open | not run (CI stops at check/build) |
+| `cargo test --lib` | 9,145 passed / 0 failed | 9,138 passed / 2 failed | 9,100 passed / 8 failed |
 | Native plane (clang link) | pass | pass | not supported (`blst`/BoringSSL C deps) |
 | Firefox/Camoufox Juggler transport | yes | yes | **refuses at launch** — fd 3/4 pipe passing is Unix-only; Chromium/CDP is the supported backend |
 | seccomp-BPF + Landlock sandbox | yes | refuses (`Err`) | refuses (`Err`) |
@@ -30,8 +30,11 @@ boolean, not a compile-time remover.
 
 ## The one open defect
 
-`browser::crawl_pipeline::tests::transport_agent_cache_reuses_keepalive_connections`
-fails on macOS only:
+Every remaining failure on both non-Linux platforms is the same class: a plain
+`ureq` GET to a loopback `TcpListener` succeeds on Linux and fails on macOS
+(`EINVAL`) and Windows (`WSAECONNABORTED`, 10053). On macOS two tests hit it, on
+Windows seven (all in `browser::crawl_pipeline`: the delta and transport
+families). The representative failure:
 
 ```
 thread 'transport_agent_cache_reuses_keepalive_connections' panicked

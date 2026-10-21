@@ -2805,9 +2805,13 @@ mod tests {
         let artifact = dir.join("small.bin");
         std::fs::write(&artifact, vec![0u8; 4096]).expect("write the artifact the plan names");
         let plan_path = dir.join("plan.json");
+        // JSON-escape the path: on Windows it contains backslashes, and an
+        // unescaped C:\Users... makes the golden plan invalid JSON (the test
+        // then fails at "invalid escape at line 1 column 42").
+        let artifact_json = artifact.display().to_string().replace('\\', "\\\\");
         std::fs::write(
             &plan_path,
-            GOLDEN_PLAN_V1.replace("ARTIFACT", &artifact.display().to_string()),
+            GOLDEN_PLAN_V1.replace("ARTIFACT", &artifact_json),
         )
         .expect("write the plan");
         let log_path = dir.join("golden.ktlog");
