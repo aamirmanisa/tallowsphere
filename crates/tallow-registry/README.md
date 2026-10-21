@@ -1,61 +1,136 @@
+<div align="center">
+
 # tallow-registry
 
-Fleet registry skeleton + **receipt format v1** for the Tallow mesh
-(checklist task 2.2). Local by design: a file-backed device registry and an
-append-only, hash-chained, Ed25519-signed receipts ledger, with a CLI as the
-v1 "registry service" shape.
+**Who is in the fleet, and a ledger of everything that happened to it — append-only, hash-chained, signed.**
 
-**Format spec:** `Nixe/artifacts/tallow-mega-mesh-2026-09-27/registry/RECEIPT-FORMAT-v1.md`.
+![receipts](https://img.shields.io/badge/receipts-v1%20%C2%B7%20Ed25519%20%C2%B7%20SHA--256-1f6feb?style=flat-square)
+![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
 
-## Layout
+</div>
 
-- `store` — `registry.json` device rows: `{id, role, status, ed_pub_hex,
-  created_ms, updated_ms, notes}`; atomic writes (tmp + rename).
-- `receipt` — receipt v1: canonical-JSON body (`v, seq, kind, ts_ms, actor,
-  subject, data, prev`), `sha256` body digest, Ed25519 signature
-  (`sig{alg,key_fp,sig_hex}`), `prev` chain. Strict parsing — unknown fields
-  are rejected so nothing unsigned rides along.
-- `ledger` — `receipts.jsonl`: `append` enforces seq + `prev` linkage against
-  the head; `verify` re-checks the whole file (parse, seq, chain, signatures).
-- `bridge` — registry row → `tallow_admission::DeviceEntry` (the mint → door
-  path preview for item 2.4).
+---
 
-## CLI
+A fleet that cannot prove what happened to it is a fleet you have to trust. This crate gives you two files: a registry of devices with their public keys, and a receipts ledger where every entry is signed, chained to the one before it, and verifiable by anyone holding the public key.
 
-```bash
-target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl init
-target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl \
-  mint --id operator-1 --role owner --ed-pub-hex <64 hex>
-target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl \
-  revoke --id guest-1
-target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl list --json
-target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl \
-  receipts --kind device.mint --limit 5 --json
-target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl verify-ledger
+## What it is
+
+| Module | Contents |
+|---|---|
+| `store` | `registry.json`: device rows `{id, role, status, ed_pub_hex, created_ms, updated_ms, notes}`; atomic writes (temp file + rename) so a crash cannot leave a half-written registry |
+| `receipt` | Receipt v1: canonical-JSON body (`v, seq, kind, ts_ms, actor, subject, data, prev`), SHA-256 digest, Ed25519 signature, `prev` chain |
+| `ledger` | `receipts.jsonl`: append enforces sequence and chain linkage against the head; verify re-checks parse, sequence, chain and every signature |
+| `pins` | Peer pin registry (`pins.json`) — out-of-band identity/SPKI pins with fail-closed resolution, never trust-on-first-use |
+| `bridge` | Registry row → `tallow_admission::server::DeviceEntry`, the mint → door path |
+| `canonical` | Canonical JSON encoding — key order independent, deterministic escaping |
+
+**Strict parsing is the point.** An unknown field in a receipt is rejected rather than ignored: anything that rides along unsigned is a place to hide a modification.
+
+## What it is not
+
+- **Not a database.** Two JSON files, read whole. A fleet large enough to need indexing needs a different store.
+- **Not anchored.** The chain proves internal consistency and detects edits after the fact; it does not prove to a third party when an entry was written. RFC 3161 / SCITT-class anchoring is a later rung, and the README says so instead of implying it.
+- **Not multi-writer.** One actor key per ledger.
+
+## Quick start
+
+```console
+$ cargo build -p tallow-registry
+
+# create the two files
+$ ./target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl init
+
+# admit a device (its Ed25519 public key, hex)
+$ ./target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl \
+    mint --id operator-1 --role owner --ed-pub-hex <64 hex chars>
+
+# look at what the fleet contains
+$ ./target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl list --json
+$ ./target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl receipts --kind device.mint --limit 5 --json
+
+# prove the ledger has not been edited
+$ ./target/debug/tallow-registry --registry registry.json --ledger receipts.jsonl verify-ledger
 ```
 
-- Default actor key = deterministic DEV material (`tallow-test/registry/actor`)
-  with a loud warning; `--key <file>` loads `{"seed_hex": "<64 hex>"}`.
-- `verify-ledger` exits `0` clean / `3` broken (tamper, chain break, bad sig).
+`verify-ledger` exits `0` when the chain, sequence and signatures all check out, and `3` when anything is broken — a tampered line, a missing entry, a bad signature.
 
-## Receipt kinds (v1)
+### As a library
 
-Implemented by the CLI: `device.mint`, `device.revoke`. Reserved for the
-spine (door events, windows, jobs): `door.auth`, `window.open`,
-`window.close`, `job.run`.
+```rust
+use tallow_registry::Ledger;
 
-## Tests
+let ledger = Ledger::new("receipts.jsonl");   // opens or creates on first append
+let verdict = ledger.verify(&public_key);     // LedgerVerdict, same check as the CLI
+```
 
-- `cargo test` — canonical encoding (order independence, escaping), receipt
-  sign/verify/tamper, strict-parse rejection, ledger chain enforcement +
-  file-tamper detection, query filters, store roundtrip + validation,
-  bridge mapping.
-- `tests/cli_smoke.rs` — drives the real binary: init → mint ×2 → revoke →
-  list → receipts (chain-linkage asserted) → verify (ok) → file tamper →
-  verify exits 3.
+The same verification the CLI performs is available in-process, so a service can refuse to start on a broken ledger rather than discovering it later.
 
-## v1 limits (documented, not bugs)
+## Configuration
 
-Single actor key per ledger; no key rotation; no external anchoring
-(RFC 3161 / SCITT-class is a later rung); payloads should stay
-integer/short-string JSON (no floats in v1 conventions).
+| Flag | Meaning |
+|---|---|
+| `--registry <path>` | Device registry file |
+| `--ledger <path>` | Receipts ledger (JSONL, append-only) |
+| `--key <file>` | Actor signing key: `{"seed_hex": "<64 hex>"}` |
+| `--actor <name>` | Actor label recorded in receipts |
+
+Without `--key`, the CLI runs on deterministic **dev** key material (`tallow-test/registry/actor`) and prints a loud warning. That is fine for a demo and unacceptable for a real ledger: dev keys are public, so every receipt they signed is forgeable by anyone who reads this repository.
+
+## Deploying it
+
+The registry is a library plus a CLI; the "service" shape is a scheduled or on-demand invocation, not a daemon.
+
+```ini
+# /etc/systemd/system/tallow-registry-verify.service
+[Unit]
+Description=Verify the Tallow receipts ledger
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tallow-registry \
+  --registry /var/lib/tallow/registry.json \
+  --ledger /var/lib/tallow/receipts.jsonl \
+  --key /etc/tallow/registry-actor.json \
+  verify-ledger
+User=tallow
+```
+
+Pair it with a timer (`OnCalendar=daily`) and page on exit code `3`. A ledger nobody verifies is a log.
+
+Operational rules learned from the format:
+
+- **Back up the ledger by copying it, never by rewriting it.** Order is the chain.
+- **Keep `--key` outside the repository and outside the backup of the ledger.** A stolen ledger plus a stolen key is a forgeable history.
+- **Payloads stay integer/short-string JSON.** v1 conventions exclude floats, because canonical encoding of floats is a compatibility trap.
+
+## Receipt kinds
+
+| Kind | Written by |
+|---|---|
+| `device.mint` | `tallow-registry mint` |
+| `device.revoke` | `tallow-registry revoke` |
+| `job.run` | `tallow-jobs` |
+| `locator.scorecard` / `locator.refusal` | `tallow-locator` |
+| `door.auth`, `window.open`, `window.close` | reserved for the mesh spine |
+
+## Verification
+
+```console
+$ cargo test -p tallow-registry
+$ cargo test -p tallow-registry --test cli_smoke
+```
+
+7 test functions in the crate source [measured 2026-10-21], plus a CLI smoke test that drives the real binary through init → mint ×2 → revoke → list → receipts (asserting chain linkage) → verify → file tamper → verify exits `3`.
+
+## Limits
+
+| Limit | Detail |
+|---|---|
+| Single actor key | Rotation is not implemented; a new key starts a new ledger |
+| No external anchoring | The chain is only as trustworthy as the file it lives in |
+| No compaction | The ledger grows forever; that is the cost of an append-only record |
+| No floats in payloads | v1 convention; use integers and strings |
+
+## License
+
+MIT — see the repository `LICENSE` and `NOTICE`.
