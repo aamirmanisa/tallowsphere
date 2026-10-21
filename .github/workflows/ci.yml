@@ -244,6 +244,12 @@ jobs:
           --test struct_array_parity
           --test structured_data_parity
           --test transfer_chunk_parity
+          --test exit_in_conditional
+          --test fs_read_file_native
+          --test native_fn_decl
+          --test optional_implicit_wrap
+          --test optional_match_unwrap
+          --test script_mode
           -- --test-threads=2
 
   # Behavioral parity: interpreter vs native codegen, byte-for-byte stdout + exit code.
@@ -295,7 +301,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: stable
+          # rust-toolchain.toml pins 1.98.1, so `cargo clippy` resolves to that
+          # toolchain; installing clippy only for `stable` left the component
+          # absent and the job failed with "'cargo-clippy' is not installed for
+          # the toolchain '1.98.1-x86_64-unknown-linux-gnu'".
+          toolchain: 1.98.1
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo clippy --locked --all-targets -- -W clippy::all

@@ -9,8 +9,7 @@ edition = "2021"
 
 [dependencies]
 # EXACTLY the version tallow-crypto pins (crates/tallow-crypto/Cargo.toml).
-libcrux-aesgcm = "=0.0.8"
-libcrux-platform = "=0.0.3"
+aes-gcm = "0.10"
 
 [profile.release]
 opt-level = 3

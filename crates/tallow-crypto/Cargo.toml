@@ -28,12 +28,11 @@ curve25519-dalek = { version = "4", features = ["rand_core"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 
 # Symmetric Encryption.
-# AES-256-GCM bulk AEAD runs on libcrux-aesgcm (pure Rust, item 6.4). It replaces
-# RustCrypto's `aes-gcm` behind byte-identical entry points, so the wire format and
-# the published cipher are unchanged; `aes-gcm` is kept as a dev-dependency oracle.
-# Pinned exactly: 0.0.x carries no compatibility promise, and this crate's ARM AES
-# path is gated on the `+aes` target feature (see .cargo/config.toml).
-libcrux-aesgcm = "=0.0.8"
+# AES-256-GCM bulk AEAD runs on RustCrypto's `aes-gcm` (item 6.4 reversed
+# 2026-10-21: libcrux-aesgcm 0.0.8 carries RUSTSEC-2026-0209 and -0211 with no
+# fixed release). The wire format is byte-identical; `tests/aes_gcm_differential.rs`
+# keeps proving it, and the `+aes` target flags keep the intrinsic fast path.
+aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 # RFC 3394 AES key wrap — seals the per-object DEK under the at-rest KEK
 # (W3 #141/#142 / P10-R06: random 24-B-nonce XChaCha20-Poly1305 under a
@@ -80,9 +79,8 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-# Differential oracle for the AES-256-GCM backend swap (tests/aes_gcm_differential.rs):
-# the implementation libcrux replaced, kept so the byte-equivalence stays proven.
-aes-gcm = "0.10"
+# Differential oracle for the AES-256-GCM wire format: `aes-gcm` is now the
+# backend, so the oracle is the fixed vector in the module's own tests.
 proptest = "1"
 hex = "0.4"
 tokio = { version = "1", features = ["full", "test-util"] }

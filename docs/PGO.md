@@ -119,7 +119,10 @@ RUSTFLAGS=""                    -> both ABSENT
 RUSTFLAGS="-Ccodegen-units=16"  -> both ABSENT
 ```
 
-Without them libcrux-aesgcm silently selects its bitsliced fallback: **111 MB/s vs 973 MB/s**. So:
+Without them the AES-256-GCM backend silently selects its bitsliced fallback. Measured on this box
+(aarch64, 8 MiB x 16, `benchmarks/cliff-probe`): **65.6 MB/s vs 128.3 MB/s** with RustCrypto
+`aes-gcm` 0.10, the backend the crate has used since the 2026-10-21 libcrux removal. The same
+harness on the retired libcrux 0.0.8 backend measured 99.3 vs 984.6 MB/s. So:
 
 * **the pipeline as first written would have shipped a binary with an ~8.8× crypto regression** — a
   PGO build is exactly the kind of build where "just add `-Cprofile-use`" looks complete.

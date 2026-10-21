@@ -405,7 +405,18 @@ pub fn open_trace_viewer(trace_path: &Path) -> Result<(), BrowserError> {
         let mut entry = archive.by_index(i).map_err(|e| {
             BrowserError::FileNotFound(format!("zip entry error: {e}"))
         })?;
-        let out_path = tmp.join(entry.name());
+        // `enclosed_name()` refuses absolute paths and `..` components, so an
+        // archive cannot write outside the temp dir. zip 9 made `name()` fallible
+        // as well; the enclosed form is both the safe and the compiling one.
+        let out_path = match entry.enclosed_name() {
+            Some(rel) => tmp.join(rel),
+            None => {
+                return Err(BrowserError::FileNotFound(format!(
+                    "zip entry has an unsafe path: {:?}",
+                    entry.name()
+                )))
+            }
+        };
 
         if entry.is_dir() {
             std::fs::create_dir_all(&out_path).map_err(|e| {
@@ -607,7 +618,7 @@ mod tests {
 
         // Check file list
         let names: Vec<String> = (0..archive.len())
-            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .map(|i| archive.by_index(i).unwrap().name().expect("zip entry name").to_string())
             .collect();
 
         assert!(names.contains(&"actions.jsonl".to_string()));
@@ -765,7 +776,7 @@ mod tests {
 
         // Should still have actions.jsonl, network.jsonl, and metadata.json
         let names: Vec<String> = (0..archive.len())
-            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .map(|i| archive.by_index(i).unwrap().name().expect("zip entry name").to_string())
             .collect();
         assert!(names.contains(&"actions.jsonl".to_string()));
         assert!(names.contains(&"network.jsonl".to_string()));

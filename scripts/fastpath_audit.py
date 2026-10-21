@@ -6,7 +6,9 @@ than by runtime CPU detection. When the build flag is missing, the code silently
 runs a slow fallback: no error, no runtime symptom, identical output bytes.
 
 Measured on this project (2026-10-16, aarch64, 8 MiB x 32 iterations of
-AES-256-GCM via crates/tallow-crypto -> libcrux-aesgcm 0.0.8):
+AES-256-GCM via crates/tallow-crypto -> libcrux-aesgcm 0.0.8; that backend was
+replaced by RustCrypto aes-gcm 0.10 on 2026-10-21, whose numbers are 65.6 vs
+128.3 MB/s on the same box -- the check logic here is backend-agnostic):
 
     no flags                      98.7 MB/s   <- the silent fallback in place
     -C target-feature=+aes       909.3 MB/s   <- 9.2x

@@ -1,29 +1,34 @@
 # cliff-probe
 
-Measures whether a build actually selected libcrux-aesgcm's AES fast path — the
+Measures whether a build actually selected the AES-256-GCM hardware path — the
 B7 cliff class. See [`docs/CRYPTO-FASTPATH-AUDIT.md`](../../docs/CRYPTO-FASTPATH-AUDIT.md)
 for the findings and the mechanism.
 
-**Run it from OUTSIDE the tallowsphere tree.** Inside the tree, the repository's
-own `.cargo/config.toml` supplies `-C target-feature=+aes` for aarch64, so every
-configuration looks fast and the cliff is invisible. (That is the config working
-as intended — it just makes this probe useless in-place.)
+Backend as of 2026-10-21: RustCrypto `aes-gcm` 0.10 (libcrux-aesgcm 0.0.8 was
+removed for RUSTSEC-2026-0209 / -0211). The probe therefore measures `aes-gcm`.
 
-Use **one target dir per configuration**: libcrux's build script enables its SIMD
-module conditionally but does not declare `cargo:rerun-if-env-changed`, so a
-shared target dir reuses stale output.
+Run it either way, but note the trap: this directory sits inside the tallowsphere
+tree, so the repository's `.cargo/config.toml` supplies `-C target-feature=+aes`
+for aarch64 whenever `RUSTFLAGS` is unset. Exporting `RUSTFLAGS` — **including as
+an empty string** — disables that table, which is how the slow arm is produced.
+
+Use **one target dir per configuration**, so neither arm can reuse the other's
+artifacts.
 
 ```bash
-#                        expected on the aarch64 box, 8 MiB x 32:
-cargo run --release -q                                              #  ~99 MB/s   fallback
-RUSTFLAGS="-C target-feature=+aes" cargo run --release -q           # ~909 MB/s   fast path
-LIBCRUX_DISABLE_SIMD128=1 cargo run --release -q                    #  ~15 MB/s   bitsliced
-RUSTFLAGS="-C target-feature=+aes" LIBCRUX_DISABLE_SIMD128=1 \
-    cargo run --release -q                                          #  ~15 MB/s   +aes buys nothing
+# aarch64 box, 8 MiB x 16, measured 2026-10-21:
+CARGO_TARGET_DIR=/tmp/cp-plain RUSTFLAGS="" \
+    cargo run --release -q                                          #   65.6 MB/s  bitsliced
+CARGO_TARGET_DIR=/tmp/cp-aes \
+    RUSTFLAGS="-C target-feature=+aes --cfg aes_armv8" \
+    cargo run --release -q                                          #  128.3 MB/s  fast path
 ```
 
-The `compile-time:` line is the field that tracks the 9.2×; `platform:` reports
-`aes_ni=true` in **all four** configurations, which is what makes the cliff silent.
+For reference, the retired libcrux 0.0.8 backend on the same harness measured
+99.3 MB/s bitsliced and 984.6 MB/s with `+aes` — the ~7.7× fast-path gap between
+the two backends is the measured cost of the security fix, not a build-flag
+regression.
 
-To settle the open x86_64 question, run this on an x86_64 host with and without
-`-C target-feature=+aes,+avx2`.
+The `compile-time:` line is the field that tracks the cliff. On x86_64 the
+production flags add `+avx2,+pclmulqdq`; re-run there to confirm the same
+selection logic.

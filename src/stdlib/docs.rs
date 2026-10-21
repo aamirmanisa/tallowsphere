@@ -6339,7 +6339,7 @@ mod tests {
         ];
         for name in &expected_files {
             assert!(
-                archive.file_names().any(|f| f == *name),
+                archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == *name)),
                 "xlsx should contain {name}"
             );
         }
@@ -6803,7 +6803,7 @@ mod tests {
         ];
         for name in &expected_files {
             assert!(
-                archive.file_names().any(|f| f == *name),
+                archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == *name)),
                 "docx should contain {name}"
             );
         }
@@ -6892,7 +6892,7 @@ mod tests {
         for i in 1..=3 {
             let name = format!("xl/worksheets/sheet{i}.xml");
             assert!(
-                archive.file_names().any(|f| f == name),
+                archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == name)),
                 "should contain {name}"
             );
         }
@@ -7057,8 +7057,8 @@ mod tests {
         let reader = Cursor::new(&bytes);
         let archive = zip::ZipArchive::new(reader).expect("valid ZIP");
 
-        assert!(archive.file_names().any(|f| f == "word/header1.xml"), "should have header file");
-        assert!(archive.file_names().any(|f| f == "word/footer1.xml"), "should have footer file");
+        assert!(archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == "word/header1.xml")), "should have header file");
+        assert!(archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == "word/footer1.xml")), "should have footer file");
 
         // Read header
         let reader2 = Cursor::new(&bytes);
@@ -7132,7 +7132,7 @@ mod tests {
         let reader = Cursor::new(&bytes);
         let archive = zip::ZipArchive::new(reader).expect("valid ZIP");
 
-        assert!(archive.file_names().any(|f| f == "word/media/image1.png"), "should have image file");
+        assert!(archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == "word/media/image1.png")), "should have image file");
 
         let reader2 = Cursor::new(&bytes);
         let mut archive2 = zip::ZipArchive::new(reader2).unwrap();
@@ -7601,7 +7601,7 @@ mod tests {
             "ppt/slides/slide2.xml",
         ];
         for name in &expected {
-            assert!(archive.file_names().any(|f| f == *name), "pptx should contain {name}");
+            assert!(archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == *name)), "pptx should contain {name}");
         }
     }
 
@@ -7681,9 +7681,9 @@ mod tests {
         let reader = Cursor::new(&bytes);
         let archive = zip::ZipArchive::new(reader).expect("valid ZIP");
         // Title slide + 2 content slides = 3
-        assert!(archive.file_names().any(|f| f == "ppt/slides/slide1.xml"));
-        assert!(archive.file_names().any(|f| f == "ppt/slides/slide2.xml"));
-        assert!(archive.file_names().any(|f| f == "ppt/slides/slide3.xml"));
+        assert!(archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == "ppt/slides/slide1.xml")));
+        assert!(archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == "ppt/slides/slide2.xml")));
+        assert!(archive.file_names().any(|f| f.is_ok_and(|n| n.as_ref() == "ppt/slides/slide3.xml")));
     }
 
     #[test]

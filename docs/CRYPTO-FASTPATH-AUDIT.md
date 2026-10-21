@@ -1,5 +1,16 @@
 # Crypto fast-path audit — the B7 cliff class
 
+> **Superseded in part (2026-10-21).** This audit measured `libcrux-aesgcm` 0.0.8,
+> which was removed from `tallow-crypto` because of RUSTSEC-2026-0209 (no AAD
+> length limit) and RUSTSEC-2026-0211 (non-constant-time tag comparison), neither
+> fixed in any published release. AES-256-GCM is back on RustCrypto `aes-gcm`
+> 0.10 and the same harness (`benchmarks/cliff-probe`, 8 MiB × 16, this box)
+> measures **65.6 MB/s** bitsliced vs **128.3 MB/s** with `+aes`, against 99.3 vs
+> 984.6 MB/s for libcrux. The *cliff class* described below — a silent
+> compile-time fast path — is unchanged and still guarded by the `flags` arm in
+> `scripts/pgo_ab.sh`; only the absolute throughput figures moved, and the ~7.7×
+> gap on aarch64 is the measured price of the security fix.
+
 **Sheet item:** U-F12 · **Date:** 2026-10-16 · **Method:** measurement, not source reading
 **Gate:** `python3 scripts/fastpath_audit.py --release-workflow <path> --binary <path>`
 

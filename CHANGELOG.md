@@ -4,6 +4,55 @@ All notable changes to Tallow are recorded here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [Unreleased] — 2026-10-21 — the dependency tree the CI gates were failing on
+
+Seven of the ten red CI jobs were arguing about code, not about policy. This
+change settles the four that were genuinely broken in the dependency tree: two
+platform builds, a test that could not pass on a host without softhsm, six
+regression targets nothing ran, and thirteen RustSec advisories.
+
+### Security
+- **`libcrux-aesgcm` 0.0.8 → RustCrypto `aes-gcm` 0.10 (item 6.4 reversed).**
+  libcrux 0.0.8 carries RUSTSEC-2026-0209 (no AAD length limit) and
+  RUSTSEC-2026-0211 (non-constant-time tag comparison); 0.0.8 is the newest
+  published release and the upstream fixes are unmerged. Wire format is
+  byte-identical — `tests/aes_gcm_differential.rs` proves it against eight
+  ciphertexts generated from the 1.1.x libcrux backend, NIST CAVS vectors, and a
+  tamper case. Measured cost on aarch64: 128.3 MB/s vs 984.6 MB/s with `+aes`
+  (7.7×) — recorded in `docs/CRYPTO-FASTPATH-AUDIT.md`.
+- `rustls` 0.23.45 → 0.23.46, `rustls-webpki` 0.103.15 → 0.103.16,
+  `webpki-roots` 1.0.6 → 1.0.10, `webpki-root-certs` 1.0.9 → 1.0.10.
+- `zip` 2.4.2 → 9.0.0 (RUSTSEC-2026-0367/-0368/-0369). The upgrade also closed a
+  zip-slip: `src/browser/trace.rs` extracted entries with `zip.join(entry.name())`
+  and now uses `enclosed_name()`, which refuses absolute and `..` paths.
+- `cargo audit`: 13 advisories → 0. `deny.toml` gains `bzip2-1.0.6` for zip 9's
+  pure-Rust bzip2 decoder; `cargo deny check` is green on all four axes.
+
+### Fixed
+- **The workspace did not build on macOS or Windows.** `landlock` (Linux LSM) was
+  declared unconditionally in the root and `tallow-daemon`; `landlock-0.4.7`
+  calls `libc::prctl`, absent off-Linux, so both crates failed at compile. Moved
+  under `[target.'cfg(target_os = "linux")'.dependencies]`.
+- **`crypto::test_hsm_list_slots` failed on every host without softhsm.** It
+  unwrapped `Hsm.list_slots()`, which correctly returns "no PKCS#11 provider
+  module found". Now skips on that environmental error and still fails on any
+  other.
+- **Six regression targets ran in no pipeline**: `exit_in_conditional`,
+  `fs_read_file_native`, `native_fn_decl`, `optional_implicit_wrap`,
+  `optional_match_unwrap`, `script_mode`. Added to the contract job;
+  `check_test_coverage.py` now reports `103 targets: 66 in CI, 37 excluded with a
+  reason, 0 unaccounted`.
+- **Clippy job could not start**: the workflow installed clippy for `stable`
+  while `rust-toolchain.toml` pins 1.98.1. Job now pins the same toolchain.
+
+### Changed
+- `scripts/sbom.snapshot.json`, `scripts/crypto-inventory.json` and
+  `crates/CANONICAL-SYNC.sha256` regenerated (204 pinned files) — all three drift
+  gates pass.
+- `docs/PGO.md`, `scripts/pgo_ab.sh`, `benchmarks/cliff-probe` re-measured against
+  `aes-gcm`; the old 111/973 MB/s figures described a backend that no longer ships.
+
+
 ## [v1.1.3] — 2026-10-21 — three defects a five-line script found
 
 Two example scripts for the language repository turned over three codegen and
