@@ -893,6 +893,23 @@ impl<'a> CodeGen<'a> {
                     "-ladvapi32",
                     "-lcrypt32",
                     "-lsecur32",
+                    // Shell/UI/COM surface the archive's crates import:
+                    // dirs -> SHGetKnownFolderPath, notify/winreg -> advapi32,
+                    // windows-sys -> the rest. lld named SHGetKnownFolderPath as
+                    // the first unresolved symbol once the MSVC linker's bare
+                    // LNK1120 was replaced; the others are the same family and
+                    // exported by every Windows SDK. Naming a library the SDK
+                    // provides is free; omitting one costs a 45-minute CI round.
+                    "-lshell32",
+                    "-lshlwapi",
+                    "-luser32",
+                    "-lcomctl32",
+                    "-loleacc",
+                    "-luxtheme",
+                    "-ldwmapi",
+                    "-lwinmm",
+                    "-lwintrust",
+                    "-lrpcrt4",
                     "-lkernel32",
                     "-lole32",
                     "-loleaut32",
