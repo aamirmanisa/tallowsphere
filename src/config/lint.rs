@@ -1300,10 +1300,18 @@ mod tests {
     use crate::config::test_support::TempDir;
 
     fn clean_privacy_config(secret_path: &Path) -> String {
+        // Escape for a TOML basic string: on Windows the path contains
+        // backslashes, and an unescaped C:\Users... makes the document
+        // invalid TOML (which the lint then reports as E7001, failing a test
+        // that is about a CLEAN config).
+        let escaped = secret_path
+            .display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
         format!(
             "schema_version = 1\nprofile = \"privacy\"\nformat = \"json\"\nno_color = true\n\
-             telemetry = false\n\n[secrets]\nkeyfile = \"file:{}\"\n",
-            secret_path.display()
+             telemetry = false\n\n[secrets]\nkeyfile = \"file:{escaped}\"\n"
         )
     }
 
@@ -1527,9 +1535,9 @@ mod tests {
         let tmp = TempDir::new("lint-secret-dir");
         let sub = tmp.join("dir-target");
         std::fs::create_dir(&sub).expect("mkdir");
+        let escaped = sub.display().to_string().replace('\\', "\\\\");
         let text = format!(
-            "schema_version = 1\n[secrets]\nbad = \"file:{}\"\n",
-            sub.display()
+            "schema_version = 1\n[secrets]\nbad = \"file:{escaped}\"\n"
         );
         let loaded = load_from_str(&text, None);
         let report = lint(&loaded, &LintOptions::default());
@@ -1992,6 +2000,7 @@ mod tests {
     }
 
     #[test]
+#[cfg(unix)] // asserts the POSIX scratch-root policy (/tmp, /var/tmp)
     fn sbd_scratch_root_members_fire_and_static_checks_ignore_the_probe_gate() {
         // Probes disabled on purpose: W7301/W7302 are pure artifact text and
         // must score anyway (a `file:` target needs neither to exist nor to be
@@ -2123,6 +2132,7 @@ mod tests {
     }
 
     #[test]
+#[cfg(unix)] // asserts the POSIX scratch-root policy (/tmp, /var/tmp)
     fn sbd_pack_id_codes_and_scratch_roots_are_pinned() {
         assert_eq!(SBD_PACK_ID, "tallow-secure-by-default-pack-v1");
         for code in [

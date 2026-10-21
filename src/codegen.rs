@@ -37970,6 +37970,7 @@ fn main() {
     /// clang, run it, and check the task really ran and `spawn_await` returned the
     /// value. Skips loudly (like the other clang tests) when clang is absent.
     #[test]
+    #[cfg(unix)] // links a native module with clang; no clang on the Windows runner
     fn e304_compiled_spawn_and_await_run_natively() {
         let Some(clang_path) = super::find_clang() else {
             eprintln!("skipping clang test: clang not found");

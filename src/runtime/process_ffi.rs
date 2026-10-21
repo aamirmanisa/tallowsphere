@@ -169,6 +169,7 @@ mod tests {
     use std::ffi::CString;
 
     #[test]
+    #[cfg(unix)] // the test invokes /bin/sh, which Windows does not have
     fn exec_captures_stdout_stderr_and_status() {
         let cmd = CString::new("/bin/sh").unwrap();
         let argv: Vec<&str> = vec!["-c", "printf out; printf err 1>&2; exit 3"];

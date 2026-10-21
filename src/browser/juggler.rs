@@ -820,6 +820,7 @@ mod tests {
     /// spawning anything — the probe binary does not exist, so a spawn attempt
     /// would surface as a launch error, not a refusal (N3).
     #[test]
+    #[cfg(unix)] // the pre-spawn refusal path is the Unix launch; Windows refuses earlier by design
     fn launch_refuses_before_spawn_when_contract_proxy_is_malformed() {
         let _guard = crate::browser::zone::ZONE_ENV_LOCK
             .lock()

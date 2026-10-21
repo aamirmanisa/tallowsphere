@@ -1197,7 +1197,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("payload.bin");
         std::fs::write(&path, PAYLOAD).expect("write fixture");
-        let path = path.to_string_lossy().to_string();
+        // Forward slashes: a Windows path inside a Tallow string literal is a
+        // backslash-escape sequence (C:\Users -> invalid escape \U).
+        let path = path.to_string_lossy().replace('\\', "/");
 
         let run = |src: &str| -> (Vec<String>, Option<String>) {
             let (tokens, lex_errs) = crate::lexer::tokenize(src);

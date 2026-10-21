@@ -121,7 +121,11 @@ mod tests {
         assert!(!pool.is_null());
         assert_eq!(tallow_ippool_active(pool), 0);
         assert_eq!(tallow_ippool_capacity(pool), 4);
-        assert_eq!(tallow_ippool_backend_name(pool) as usize, b"memory\0".as_ptr() as usize);
+        // Compare content, not pointer identity: the two `b"memory\0"` literals
+        // are separate statics, and whether the linker merges them is a
+        // toolchain detail (it does on GNU ld, it does not on MSVC).
+        let name = unsafe { std::ffi::CStr::from_ptr(tallow_ippool_backend_name(pool)) };
+        assert_eq!(name.to_str().unwrap(), "memory");
 
         // Empty pool → acquire returns null with an error.
         assert!(tallow_ippool_acquire(pool).is_null());

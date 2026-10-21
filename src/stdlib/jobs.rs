@@ -1184,6 +1184,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // the test seam spawns `sh -c`, which Windows does not have
     fn run_now_never_exceeds_global_cap() {
         // Real short-lived `sh` children via the test seam + a B/E marker log.
         let path = temp_store_path("cap2");
@@ -1276,6 +1277,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // the test seam spawns `sh -c`, which Windows does not have
     fn run_now_per_job_max_parallel_honored() {
         let path = temp_store_path("perjob");
         let log = std::env::temp_dir().join(format!(

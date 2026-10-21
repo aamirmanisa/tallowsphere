@@ -1467,7 +1467,15 @@ mod tests {
         }
         let found = {
             let old = std::env::var_os("PATH").unwrap_or_default();
-            let combined = format!("{}:{}", tmp.display(), old.to_string_lossy());
+            // join_paths uses the platform separator (';' on Windows, ':' on
+            // Unix); a hard-coded ':' made the entry part of the previous path
+            // element and find_on_path returned None.
+            let combined = std::env::join_paths(
+                std::iter::once(tmp.clone()).chain(std::env::split_paths(&old)),
+            )
+            .expect("join PATH")
+            .to_string_lossy()
+            .to_string();
             // SAFETY: single-threaded test; restoring PATH before returning.
             unsafe { std::env::set_var("PATH", &combined) };
             let r = find_on_path(&["fake-browser-xyz"]);
@@ -1705,9 +1713,17 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        let subdir = root.join("chrome-headless-shell-linux-arm64");
+        // Platform-correct layout: find_installed_binary() looks for the host
+        // platform's directory and binary name (.exe on Windows), so a
+        // hard-coded linux-arm64 fixture is invisible off Linux.
+        let platform = BrowserPlatform::detect().expect("host platform");
+        let subdir = root.join(format!("chrome-headless-shell-{}", platform.as_cft_str()));
         std::fs::create_dir_all(&subdir).expect("create fixture subdir");
-        let binary = subdir.join("chrome-headless-shell");
+        let binary = subdir.join(if cfg!(windows) {
+            "chrome-headless-shell.exe"
+        } else {
+            "chrome-headless-shell"
+        });
         std::fs::write(&binary, b"#!/bin/sh\necho fake-chrome\n").expect("write fake binary");
         (root, binary)
     }
@@ -1777,7 +1793,9 @@ mod tests {
         let len = std::fs::metadata(&binary).expect("stat").len() as usize;
         std::fs::write(&binary, vec![b'X'; len]).expect("tamper");
         let touched = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
-        std::fs::File::open(&binary)
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&binary)
             .expect("open for set_modified")
             .set_modified(touched)
             .expect("touch mtime");
@@ -1807,7 +1825,9 @@ mod tests {
 
         let len = std::fs::metadata(&binary).expect("stat").len() as usize;
         std::fs::write(&binary, vec![b'Y'; len]).expect("same-size tamper");
-        std::fs::File::open(&binary)
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&binary)
             .expect("open")
             .set_modified(original_mtime)
             .expect("restore original mtime");
@@ -1848,10 +1868,11 @@ mod tests {
             "chrome-headless-shell-{}",
             BrowserPlatform::detect().expect("host platform").as_cft_str()
         );
+        let exe = if cfg!(windows) { "chrome-headless-shell.exe" } else { "chrome-headless-shell" };
         let good = browsers.join("chrome-headless-shell-999.0.0.2");
         std::fs::create_dir_all(good.join(&host_dir)).expect("good dir");
         std::fs::write(
-            good.join(&host_dir).join("chrome-headless-shell"),
+            good.join(&host_dir).join(exe),
             b"#!/bin/sh\necho fake\n",
         )
         .expect("good binary");
@@ -1860,7 +1881,7 @@ mod tests {
         let tampered = browsers.join("chrome-headless-shell-999.0.0.1");
         std::fs::create_dir_all(tampered.join(&host_dir))
             .expect("tampered dir");
-        let tampered_bin = tampered.join(&host_dir).join("chrome-headless-shell");
+        let tampered_bin = tampered.join(&host_dir).join(exe);
         std::fs::write(&tampered_bin, b"#!/bin/sh\necho fake\n").expect("tampered binary");
         write_blake3_checksum(&tampered).expect("tampered checksum");
         std::fs::write(&tampered_bin, b"#!/bin/sh\necho OWNED\n").expect("tamper after checksum");

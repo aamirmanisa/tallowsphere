@@ -399,9 +399,13 @@ mod tests {
             torrc.contains("CookieAuthentication 1"),
             "torrc must enable cookie auth: {torrc}"
         );
+        let want = format!(
+            "CookieAuthFile {}",
+            data_dir.join("control_auth_cookie").display()
+        );
         assert!(
-            torrc.contains("CookieAuthFile /tmp/tor-test/instance_3/control_auth_cookie"),
-            "torrc must pin CookieAuthFile to the instance data dir: {torrc}"
+            torrc.contains(&want),
+            "torrc must pin CookieAuthFile to the instance data dir ({want}): {torrc}"
         );
         // The cookie path the manager authenticates with must be derivable
         // from the rendered torrc (one source of truth).
