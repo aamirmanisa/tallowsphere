@@ -20064,6 +20064,14 @@ void tallow_async_runtime_shutdown(void) {
         if matches!(target, LLType::Optional) && val.ty != LLType::Optional && val.reg == "0" {
             return Ok("null".to_string());
         }
+        // Wrapping *into* an optional is implicit, as it is in the interpreter:
+        // `return x` from a `-> T?` function, `let s: T? = x`, or an argument to a
+        // `T?` parameter all box the value. Unwrapping is not: `T?` -> `T` needs
+        // an explicit match or `??`, so it still fails loudly below.
+        if matches!(target, LLType::Optional) && !matches!(val.ty, LLType::Optional) {
+            let boxed = self.box_optional(val)?;
+            return Ok(boxed);
+        }
         if matches!(val.ty, LLType::Optional) || matches!(target, LLType::Optional) {
             return Err(format!(
                 "optional values have no native lowering yet ({:?} -> {:?}); \
