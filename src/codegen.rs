@@ -909,7 +909,19 @@ impl<'a> CodeGen<'a> {
                 // OpenSSL, lzma and bz2 symbols -- measured on the shipped
                 // 1.1.3 libtallow.a, 1,545 defined OpenSSL symbols and 19
                 // lzma/bz2 symbols, with no member left unresolved by them.
-                cmd.args(["-lpthread", "-lm", "-lc++", "-lz"]);
+                // Mach-O has no -l flags for the system frameworks the
+                // archive's crates call into: security-framework (Sec*, CMS*,
+                // Authorization*), core-foundation (CF*), notify/fsevents
+                // (FSEventStream*), SystemConfiguration. Without them the link
+                // ends in "Undefined symbols for architecture arm64".
+                cmd.args([
+                    "-lpthread", "-lm", "-lc++", "-lz",
+                    "-framework", "Security",
+                    "-framework", "CoreFoundation",
+                    "-framework", "CoreServices",
+                    "-framework", "SystemConfiguration",
+                    "-framework", "IOKit",
+                ]);
             } else if !cg.target.is_wasm {
                 // -lz: codegen emits zlib compress2/uncompress for compress.deflate/inflate.
                 // -llzma/-lbz2: the runtime staticlib transitively pulls in the
