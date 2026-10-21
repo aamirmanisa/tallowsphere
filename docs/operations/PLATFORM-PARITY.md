@@ -8,7 +8,7 @@
 | Surface | Linux | macOS | Windows |
 |---|---|---|---|
 | `cargo check --workspace --all-targets` | pass | pass | pass |
-| `cargo test --lib` | 9,145 passed / 0 failed | 9,138 passed / 2 failed | 9,100 passed / 8 failed |
+| `cargo test --lib` | 9,145 passed / 0 failed | 9,140 passed / 0 failed | 9,108 passed / 0 failed |
 | Native plane (clang link) | pass | pass | not supported (`blst`/BoringSSL C deps) |
 | Firefox/Camoufox Juggler transport | yes | yes | **refuses at launch** — fd 3/4 pipe passing is Unix-only; Chromium/CDP is the supported backend |
 | seccomp-BPF + Landlock sandbox | yes | refuses (`Err`) | refuses (`Err`) |
@@ -28,23 +28,37 @@ which selects glibc's `__rlimit_resource_t` on Apple targets as well; and
 `sandbox_pass` guarded a call to a Linux-only function with `cfg!()`, which is a
 boolean, not a compile-time remover.
 
-## The transport defect, and its cause
+## The one class of bug that took the longest
 
-Every remaining failure on both non-Linux platforms was the same class: a plain
-`ureq` GET to a loopback `TcpListener` succeeded on Linux and failed on macOS
-(`EINVAL`) and Windows (`WSAECONNABORTED`, 10053), across the
-`browser::crawl_pipeline` delta and transport families.
+Every failure on both non-Linux platforms, from 37 on Windows and 5 on macOS
+down to zero, came from a single mechanism: a listener set non-blocking so its
+accept loop can poll, whose **accepted** socket inherits that non-blocking state
+on Windows and macOS (it does not on Linux). The first read then returns
+`WouldBlock`, the server treats it as a closed client, drops the connection
+unread, and the peer reports `EINVAL` (macOS) or `WSAECONNABORTED` / 10053
+(Windows).
 
-Cause: the test mock servers bind a `TcpListener`, call
-`set_nonblocking(true)` so the accept loop can poll, then read the request from
-the accepted socket. Whether the ACCEPTED socket inherits the listener's
-non-blocking state is platform-specific — it does on Windows and macOS, it does
-not on Linux. So off Linux the first `read` returned `WouldBlock`, the server
-treated it as a client close and dropped the connection unread, and the client
-saw a reset (`10053`) or `EINVAL` depending on the kernel's framing of that
-reset.
+It appeared in three shapes:
 
-Fix: both mock servers call `set_nonblocking(false)` on the accepted socket
-before reading. This is a test-harness defect, not a transport defect: the
-production code path was never involved, which is why it only ever appeared in
-tests that hand-roll a server.
+- two hand-rolled mock servers in `browser::crawl_pipeline` (7 Windows tests,
+  2 macOS tests) — fixed by `set_nonblocking(false)` on the accepted socket;
+- `browser::observability::serve_metrics`, which is SHIPPING code: a macOS
+  Prometheus scrape got a zero-byte response — fixed the same way;
+- earlier, `sluice`'s `File::try_lock` on Windows, where `LockFileEx` is
+  mandatory rather than advisory, so locking the log file blocked every reader
+  (fixed by locking a `<log>.lock` sidecar).
+
+`browser::socks_shim` and `stdlib net.accept` already forced accepted sockets
+back to blocking; that is why the SOCKS shim and user-level TCP never showed the
+symptom.
+
+## Final state
+
+CI run 39649906928 on `22a7020`: **17 of 17 jobs green** — Check, Clippy,
+Security Audit, Dependency Check, SBOM, SBOM drift, CBOM drift, Canonical pins,
+Claims ledger, Wire conformance, Zero-trust conformance, Parity, Contract and
+CLI suites, Perf regression gate, Test (Linux), Test (macOS), Test (Windows).
+
+Tests by platform: Linux 9,145 / macOS 9,140 / Windows 9,108, zero failures.
+The 33 ignored tests are the same set on every platform: mesh-only and
+privileged-environment cases.
