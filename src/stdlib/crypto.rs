@@ -12770,6 +12770,7 @@ mod tests {
     }
 
     #[test]
+#[cfg(unix)] // uses POSIX absolute paths (/usr/lib, /nonexistent)
     fn pkcs11_policy_rejects_relative_and_missing_paths() {
         let err = super::validate_module_path("libsofthsm2.so").unwrap_err();
         assert!(err.contains("absolute"), "got: {err}");
@@ -12792,6 +12793,7 @@ mod tests {
     }
 
     #[test]
+#[cfg(unix)] // uses POSIX absolute paths (/usr/lib, /nonexistent)
     fn pkcs11_policy_rejects_directory_paths() {
         let err = super::validate_module_path("/usr/lib").unwrap_err();
         assert!(err.contains("regular file"), "got: {err}");

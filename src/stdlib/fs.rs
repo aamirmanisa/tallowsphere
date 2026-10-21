@@ -643,9 +643,11 @@ mod tests {
         let path = tmp.path().join("payload.bin");
         std::fs::write(&path, PAYLOAD).unwrap();
 
+        // Forward slashes: a Windows path inside a Tallow string literal is a
+        // backslash-escape sequence (C:\Users -> invalid escape \U).
         let src = format!(
             "fn main() {{ let b = fs.read_bytes(\"{}\")\n print(b) }}",
-            path.to_string_lossy()
+            path.to_string_lossy().replace('\\', "/")
         );
         let (tokens, lex_errs) = crate::lexer::tokenize(&src);
         assert!(lex_errs.is_empty(), "lex errors: {lex_errs:?}");

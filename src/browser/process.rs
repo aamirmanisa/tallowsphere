@@ -2250,6 +2250,7 @@ mod landlock_tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "linux")] // asserts the Linux Landlock root set
     fn landlock_read_paths_core_roots_profile_and_extra() {
         let cfg = BrowserConfig {
             chrome_path: PathBuf::from("/nonexistent/not-a-browser"),
