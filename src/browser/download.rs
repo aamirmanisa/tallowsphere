@@ -1827,19 +1827,26 @@ mod tests {
         unsafe { std::env::set_var("XDG_DATA_HOME", &root) };
 
         let browsers = root.join("tallow").join("browsers");
+        // The fixture must be built under the HOST platform's directory name:
+        // list_installed() filters by the running platform, so a hard-coded
+        // "linux-arm64" made this test unpassable on macOS and Windows.
+        let host_dir = format!(
+            "chrome-headless-shell-{}",
+            BrowserPlatform::detect().expect("host platform").as_cft_str()
+        );
         let good = browsers.join("chrome-headless-shell-999.0.0.2");
-        std::fs::create_dir_all(good.join("chrome-headless-shell-linux-arm64")).expect("good dir");
+        std::fs::create_dir_all(good.join(&host_dir)).expect("good dir");
         std::fs::write(
-            good.join("chrome-headless-shell-linux-arm64").join("chrome-headless-shell"),
+            good.join(&host_dir).join("chrome-headless-shell"),
             b"#!/bin/sh\necho fake\n",
         )
         .expect("good binary");
         write_blake3_checksum(&good).expect("good checksum");
 
         let tampered = browsers.join("chrome-headless-shell-999.0.0.1");
-        std::fs::create_dir_all(tampered.join("chrome-headless-shell-linux-arm64"))
+        std::fs::create_dir_all(tampered.join(&host_dir))
             .expect("tampered dir");
-        let tampered_bin = tampered.join("chrome-headless-shell-linux-arm64").join("chrome-headless-shell");
+        let tampered_bin = tampered.join(&host_dir).join("chrome-headless-shell");
         std::fs::write(&tampered_bin, b"#!/bin/sh\necho fake\n").expect("tampered binary");
         write_blake3_checksum(&tampered).expect("tampered checksum");
         std::fs::write(&tampered_bin, b"#!/bin/sh\necho OWNED\n").expect("tamper after checksum");

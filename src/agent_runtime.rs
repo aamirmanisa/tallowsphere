@@ -1147,11 +1147,13 @@ mod tests {
 
     #[test]
     fn heartbeat_resets_timer() {
-        let mut rt = make_runtime(Some(Duration::from_millis(50)), None, None, None);
-        std::thread::sleep(Duration::from_millis(30));
+        // Interval 2s, sleeps 50ms: the assertion is about the RESET, not about
+        // scheduler punctuality. At 50ms/30ms a loaded CI runner overshot to
+        // 157ms and failed the test (macOS leg, 2026-10-21).
+        let mut rt = make_runtime(Some(Duration::from_secs(2)), None, None, None);
+        std::thread::sleep(Duration::from_millis(50));
         rt.heartbeat(); // reset
-        std::thread::sleep(Duration::from_millis(30));
-        // Total 60ms elapsed but only 30ms since last heartbeat (interval is 50ms)
+        std::thread::sleep(Duration::from_millis(50));
         assert_eq!(rt.pre_step().unwrap(), StepAction::Continue);
     }
 
