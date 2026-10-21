@@ -25,10 +25,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="$ROOT/target/$TARGET/release"
 
 case "$TARGET" in
-    *-windows-*) BIN="$BIN_DIR/tallow.exe"; LABEL="windows-$(echo "$TARGET" | cut -d- -f1)"; EXT="zip" ;;
-    *-apple-darwin) BIN="$BIN_DIR/tallow"; LABEL="macos-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
-    *-linux-musl) BIN="$BIN_DIR/tallow"; LABEL="linux-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
-    *-linux-gnu) BIN="$BIN_DIR/tallow"; LABEL="linux-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
+    *-windows-*)
+        BIN="$BIN_DIR/tallow.exe"
+        # cargo names a staticlib after the crate on MSVC: tallow.lib, not
+        # libtallow.a. The compiler's own search (find_runtime_lib_for_target)
+        # looks for exactly this name beside the binary.
+        RUNTIME_LIB="$BIN_DIR/tallow.lib"
+        LABEL="windows-$(echo "$TARGET" | cut -d- -f1)"; EXT="zip" ;;
+    *-apple-darwin) BIN="$BIN_DIR/tallow"; RUNTIME_LIB="$BIN_DIR/libtallow.a"; LABEL="macos-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
+    *-linux-musl) BIN="$BIN_DIR/tallow"; RUNTIME_LIB="$BIN_DIR/libtallow.a"; LABEL="linux-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
+    *-linux-gnu) BIN="$BIN_DIR/tallow"; RUNTIME_LIB="$BIN_DIR/libtallow.a"; LABEL="linux-$(echo "$TARGET" | cut -d- -f1)"; EXT="tar.gz" ;;
     *) echo "unsupported target: $TARGET" >&2; exit 2 ;;
 esac
 
@@ -43,7 +49,7 @@ fi
 # runtime symbol fails to link on a machine that has no build tree — measured
 # 2026-10-20: the installed binary could not run `print(find(true))` because
 # tallow_print_optional was unresolved.
-RUNTIME_A="$BIN_DIR/libtallow.a"
+RUNTIME_A="$RUNTIME_LIB"
 if [ ! -f "$RUNTIME_A" ]; then
     echo "missing $RUNTIME_A — build it too: cargo build --profile release --locked --target $TARGET --lib" >&2
     exit 1
