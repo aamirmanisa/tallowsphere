@@ -50,6 +50,12 @@ ignore = [
     "RUSTSEC-2026-0163",
     "RUSTSEC-2026-0165",
     "RUSTSEC-2026-0167",
+    # mach 0.3.2 (RUSTSEC-2020-0168, unmaintained) — reachable only through the
+    # optional JIT feature: cranelift-jit -> region 2.2.0 -> mach. No safe
+    # upgrade exists (region pins mach 0.3; the maintained fork is mach2, a
+    # different crate name). Used for macOS VM-region bookkeeping on a path that
+    # never parses untrusted input. Re-check when region moves to mach2.
+    "RUSTSEC-2020-0168",
 ]
 
 [licenses]
@@ -78,6 +84,12 @@ allow = [
     # (Julian Seward's original terms, BSD-like); added 2026-10-21 with the zip
     # upgrade that removed RUSTSEC-2026-0367/-0368/-0369.
     "bzip2-1.0.6",
+    # Apache-2.0 WITH LLVM-exception — the cranelift family (codegen, bforest,
+    # bitset, codegen-meta/-shared, entity, frontend, module, native, settings,
+    # wasmtime-*) reached only when the optional JIT feature is enabled. The
+    # exception is the standard LLVM runtime carve-out and is FSF-approved;
+    # denied before only because the gate had never been run with --all-features.
+    "Apache-2.0 WITH LLVM-exception",
 ]
 confidence-threshold = 0.8
 
