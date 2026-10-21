@@ -1101,6 +1101,9 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     self.infer_expr_type(value, locals)
                 };
+                if ty.is_some() {
+                    self.check_optional_binding(&resolved, value, locals, value.span);
+                }
                 self.check_expr(value, locals);
                 locals.insert(
                     name.clone(),
@@ -1116,6 +1119,9 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     self.infer_expr_type(value, locals)
                 };
+                if ty.is_some() {
+                    self.check_optional_binding(&resolved, value, locals, value.span);
+                }
                 self.check_expr(value, locals);
                 locals.insert(
                     name.clone(),
@@ -1193,6 +1199,29 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Break | StmtKind::Continue => {}
             StmtKind::Defer { .. } => {}
+        }
+    }
+
+    /// `T?` may flow into a `T?` slot (it is wrapped implicitly), but it may not
+    /// flow into a `T` slot: that is an unwrap with no check, and neither plane
+    /// can run it (register #136).
+    fn check_optional_binding(
+        &mut self,
+        declared: &Type,
+        value: &Expr,
+        locals: &HashMap<String, VarInfo>,
+        span: Span,
+    ) {
+        if matches!(declared, Type::Optional(_)) {
+            return;
+        }
+        if matches!(self.infer_expr_type(value, locals), Type::Optional(_)) {
+            self.diags.error(
+                "E0116",
+                "cannot bind `T?` to a `T` without a check -- test it (`== nil`) or match on it"
+                    .to_string(),
+                span,
+            );
         }
     }
 
@@ -1516,6 +1545,12 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Assign { target, value } => {
                 self.check_expr(target, locals);
                 self.check_expr(value, locals);
+                if let ExprKind::Ident(name) = &target.kind {
+                    if let Some(var_info) = locals.get(name) {
+                        let declared = var_info.ty.clone();
+                        self.check_optional_binding(&declared, value, locals, value.span);
+                    }
+                }
                 // Check that target is mutable
                 if let ExprKind::Ident(name) = &target.kind {
                     if let Some(var_info) = locals.get(name) {
