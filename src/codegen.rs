@@ -900,6 +900,16 @@ impl<'a> CodeGen<'a> {
                     "-lvcruntime",
                     "-lucrt",
                 ]);
+            } else if cg.target.is_macos {
+                // Mach-O: libssl/libcrypto do not exist on the system (only
+                // through Homebrew, which a release cannot assume), and the C++
+                // runtime is libc++, not libstdc++. Naming the Linux libraries
+                // here failed the 1.1.4 release with "ld: library 'ssl' not
+                // found". They were never required: the archive defines its own
+                // OpenSSL, lzma and bz2 symbols -- measured on the shipped
+                // 1.1.3 libtallow.a, 1,545 defined OpenSSL symbols and 19
+                // lzma/bz2 symbols, with no member left unresolved by them.
+                cmd.args(["-lpthread", "-lm", "-lc++", "-lz"]);
             } else if !cg.target.is_wasm {
                 // -lz: codegen emits zlib compress2/uncompress for compress.deflate/inflate.
                 // -llzma/-lbz2: the runtime staticlib transitively pulls in the
