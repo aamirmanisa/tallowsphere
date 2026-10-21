@@ -1,25 +1,25 @@
 {
   "schema": "tallow-bench/1",
-  "generated_at": "2026-10-16T15:37:37Z",
+  "generated_at": "2026-10-21T15:34:17Z",
   "binary": {
-    "path": "/usr/local/bin/tallow",
-    "sha256": "bfad86d432313d2b34970563321f25e2311e077afa2fe9b1a931377ad6ed352b",
-    "version_raw": "tallow 1.1.1"
+    "path": "target/release/tallow",
+    "sha256": "06fcd4a7d0cd06d8f471dd6e5c02627b60e067f4b3408216d27882c2bad06d5d",
+    "version_raw": "tallow 1.1.3"
   },
   "corpus": {
     "glob": "examples/*.tl",
-    "files": 58,
-    "sha256": "9218374662ea5573b6dfc87ff8c785c09915756d73599527f30f93318186ddaf"
+    "files": 57,
+    "sha256": "dc45d5af0884961bd9b3527dbbf2868bfcef690d19c2b46e3e59452c286da22d"
   },
   "environment": {
-    "arch": "aarch64",
     "kernel": "6.8.0-146-generic",
-    "cpu": "unknown",
+    "arch": "aarch64",
+    "cpu": "0xd0c",
     "cpus": 8,
     "loadavg": [
-      13.2,
-      9.8,
-      5.37
+      2.56,
+      2.35,
+      2.23
     ]
   },
   "params": {
@@ -28,249 +28,246 @@
     "parser_mode": "recover"
   },
   "metrics": {
-    "files_total": 58,
-    "files_ok": 51,
-    "success_rate": 0.8793,
-    "unresolved": 7,
-    "check_ms_median": 13.674,
-    "check_ms_min": 9.15,
-    "check_ms_p95": 23.64,
-    "check_ms_max": 39.658,
-    "throughput_files_per_s": 70.897,
-    "peak_rss_mb": 22.7
+    "files_total": 57,
+    "files_ok": 57,
+    "success_rate": 1.0,
+    "unresolved": 0,
+    "check_ms_median": 12.025,
+    "check_ms_min": 8.725,
+    "check_ms_p95": 14.986,
+    "check_ms_max": 21.763,
+    "throughput_files_per_s": 82.233,
+    "peak_rss_mb": 20.8
   },
   "per_file": {
     "examples/agent_demo.tl": {
-      "ok": false,
-      "median_ms": 14.748
+      "ok": true,
+      "median_ms": 11.204
     },
     "examples/agent_memory_demo.tl": {
-      "ok": false,
-      "median_ms": 21.045
+      "ok": true,
+      "median_ms": 11.585
     },
     "examples/agent_valid.tl": {
       "ok": true,
-      "median_ms": 13.327
+      "median_ms": 12.083
     },
     "examples/bail_test.tl": {
       "ok": true,
-      "median_ms": 12.239
+      "median_ms": 10.93
     },
     "examples/browser_demo.tl": {
       "ok": true,
-      "median_ms": 16.909
+      "median_ms": 11.363
     },
     "examples/browser_full_demo.tl": {
-      "ok": false,
-      "median_ms": 19.734
+      "ok": true,
+      "median_ms": 12.496
     },
     "examples/browser_plugins_demo.tl": {
-      "ok": false,
-      "median_ms": 12.033
+      "ok": true,
+      "median_ms": 11.702
     },
     "examples/channels_demo.tl": {
       "ok": true,
-      "median_ms": 12.441
+      "median_ms": 11.977
     },
     "examples/closure_advanced.tl": {
       "ok": true,
-      "median_ms": 12.345
+      "median_ms": 10.411
     },
     "examples/closure_capture.tl": {
       "ok": true,
-      "median_ms": 10.904
+      "median_ms": 11.738
     },
     "examples/dealhunter.tl": {
       "ok": true,
-      "median_ms": 20.311
+      "median_ms": 13.015
     },
     "examples/dealhunter_pipeline.tl": {
       "ok": true,
-      "median_ms": 10.417
+      "median_ms": 12.177
     },
     "examples/enums.tl": {
       "ok": true,
-      "median_ms": 13.938
+      "median_ms": 10.723
     },
     "examples/error_handling.tl": {
       "ok": true,
-      "median_ms": 14.852
-    },
-    "examples/financial_e2e_test.tl": {
-      "ok": false,
-      "median_ms": 13.759
+      "median_ms": 12.002
     },
     "examples/fn_array_param.tl": {
       "ok": true,
-      "median_ms": 12.456
+      "median_ms": 11.952
     },
     "examples/full_demo.tl": {
       "ok": true,
-      "median_ms": 16.852
+      "median_ms": 12.306
     },
     "examples/hello_simple.tl": {
       "ok": true,
-      "median_ms": 14.027
+      "median_ms": 12.1
     },
     "examples/hof_chain.tl": {
       "ok": true,
-      "median_ms": 10.802
+      "median_ms": 12.799
     },
     "examples/hof_full.tl": {
       "ok": true,
-      "median_ms": 10.556
+      "median_ms": 11.777
     },
     "examples/hof_test.tl": {
       "ok": true,
-      "median_ms": 14.668
+      "median_ms": 12.257
     },
     "examples/if_let_test.tl": {
       "ok": true,
-      "median_ms": 13.618
+      "median_ms": 12.187
     },
     "examples/int_match_default.tl": {
       "ok": true,
-      "median_ms": 11.903
+      "median_ms": 11.77
     },
     "examples/integration_test.tl": {
       "ok": true,
-      "median_ms": 15.3
+      "median_ms": 12.947
     },
     "examples/interp_test.tl": {
       "ok": true,
-      "median_ms": 9.711
+      "median_ms": 11.551
     },
     "examples/interpolation.tl": {
       "ok": true,
-      "median_ms": 17.125
+      "median_ms": 11.494
     },
     "examples/ippool_demo.tl": {
       "ok": true,
-      "median_ms": 10.756
+      "median_ms": 10.99
     },
     "examples/legal_valid.tl": {
       "ok": true,
-      "median_ms": 15.977
+      "median_ms": 11.82
     },
     "examples/live_tor_test.tl": {
       "ok": true,
-      "median_ms": 17.892
+      "median_ms": 13.715
     },
     "examples/map_test.tl": {
       "ok": true,
-      "median_ms": 17.106
+      "median_ms": 11.717
     },
     "examples/match_test.tl": {
       "ok": true,
-      "median_ms": 11.97
+      "median_ms": 11.681
     },
     "examples/mega_test.tl": {
       "ok": true,
-      "median_ms": 16.789
+      "median_ms": 12.655
     },
     "examples/msurface_one.tl": {
-      "ok": false,
-      "median_ms": 14.694
+      "ok": true,
+      "median_ms": 12.372
     },
     "examples/negative_test.tl": {
       "ok": true,
-      "median_ms": 10.703
+      "median_ms": 11.771
     },
     "examples/phone_osint.tl": {
       "ok": true,
-      "median_ms": 10.4
+      "median_ms": 12.292
     },
     "examples/pqc_crypto.tl": {
       "ok": true,
-      "median_ms": 11.799
+      "median_ms": 13.397
     },
     "examples/privacy_valid.tl": {
       "ok": true,
-      "median_ms": 14.724
+      "median_ms": 12.509
     },
     "examples/public_source_get_batch.tl": {
       "ok": true,
-      "median_ms": 11.618
+      "median_ms": 11.539
     },
     "examples/question_mark_test.tl": {
       "ok": true,
-      "median_ms": 11.748
+      "median_ms": 12.852
     },
     "examples/recursive_test.tl": {
       "ok": true,
-      "median_ms": 15.011
+      "median_ms": 12.235
     },
     "examples/relay_room_auth_demo.tl": {
       "ok": true,
-      "median_ms": 14.529
+      "median_ms": 10.439
     },
     "examples/relay_room_bytes_demo.tl": {
       "ok": true,
-      "median_ms": 18.112
+      "median_ms": 12.564
     },
     "examples/relay_room_demo.tl": {
       "ok": true,
-      "median_ms": 18.596
+      "median_ms": 11.512
     },
     "examples/relay_room_multi_demo.tl": {
       "ok": true,
-      "median_ms": 12.297
+      "median_ms": 11.708
     },
     "examples/result_test.tl": {
       "ok": true,
-      "median_ms": 15.992
+      "median_ms": 12.048
     },
     "examples/scrape_speed_test.tl": {
-      "ok": false,
-      "median_ms": 17.935
+      "ok": true,
+      "median_ms": 11.828
     },
     "examples/self_host.tl": {
       "ok": true,
-      "median_ms": 20.883
+      "median_ms": 20.734
     },
     "examples/showcase.tl": {
       "ok": true,
-      "median_ms": 15.832
+      "median_ms": 12.698
     },
     "examples/sitescan_demo.tl": {
       "ok": true,
-      "median_ms": 10.74
+      "median_ms": 12.047
     },
     "examples/sqlite_demo.tl": {
       "ok": true,
-      "median_ms": 10.373
+      "median_ms": 11.73
     },
     "examples/stdlib_codegen_test.tl": {
       "ok": true,
-      "median_ms": 12.919
+      "median_ms": 12.995
     },
     "examples/string_compare_test.tl": {
       "ok": true,
-      "median_ms": 14.187
+      "median_ms": 10.679
     },
     "examples/string_ops.tl": {
       "ok": true,
-      "median_ms": 14.884
+      "median_ms": 12.429
     },
     "examples/struct_array.tl": {
       "ok": true,
-      "median_ms": 17.249
+      "median_ms": 12.582
     },
     "examples/structs.tl": {
       "ok": true,
-      "median_ms": 11.272
+      "median_ms": 12.679
     },
     "examples/test_dealhunter.tl": {
       "ok": true,
-      "median_ms": 14.665
+      "median_ms": 12.025
     },
     "examples/tor_single_test.tl": {
       "ok": true,
-      "median_ms": 10.005
+      "median_ms": 12.6
     },
     "examples/while_test.tl": {
       "ok": true,
-      "median_ms": 10.411
+      "median_ms": 11.762
     }
-  }
+  },
+  "note": "Re-measured 2026-10-21 on aarch64 after the corpus settled at 57 files and the seven non-checking examples were fixed (success_rate 0.8793 -> 1.0, unresolved 7 -> 0). The previous baseline described a 58-file corpus with 7 unresolved and could not be compared: the gate's corpus_sha check rejects it, which is what the red Perf job was reporting. Binary: target/release/tallow built from 5f9c133 (v1.1.3+). Params: iters 7, warmup 2, parser_mode recover -- the same parameters as the superseded file."
 }
