@@ -214,8 +214,6 @@ fn load(path: &Path) -> Result<BTreeMap<String, Entry>, String> {
 /// Write atomically with mode 0600 set *at creation*, so the secret is never
 /// briefly world-readable between write and chmod.
 fn save(path: &Path, entries: &BTreeMap<String, Entry>) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
-
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     }
@@ -252,11 +250,14 @@ fn save(path: &Path, entries: &BTreeMap<String, Entry>) -> Result<(), String> {
 
     let tmp = path.with_extension("json.tmp");
     {
-        let mut fh = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut fh = opts
             .open(&tmp)
             .map_err(|e| format!("open {}: {e}", tmp.display()))?;
         fh.write_all(body.as_bytes())
@@ -266,9 +267,24 @@ fn save(path: &Path, entries: &BTreeMap<String, Entry>) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("rename into {}: {e}", path.display()))?;
     // Belt and braces: rename preserves the tmp's mode, but assert the invariant
     // rather than assume it.
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|e| format!("chmod {}: {e}", path.display()))?;
+    restrict_to_owner(path)?;
+    Ok(())
+}
+
+/// Owner-only permissions where the platform has them.
+///
+/// On Windows there is no portable 0600 bit; the file inherits the directory
+/// ACL, and the parent directory is what protects the store. Saying so here is
+/// better than a `set_permissions` that would fail the whole `set` on Windows.
+fn restrict_to_owner(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("chmod {}: {e}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -284,60 +300,30 @@ fn now_iso() -> String {
 
 // ── masked read ──────────────────────────────────────────────────────────────
 
-/// Restores the terminal on drop — the single place echo is turned back on, so
-/// an early return or a panic cannot leave the operator's terminal deaf.
-struct EchoGuard {
-    fd: libc::c_int,
-    saved: Option<libc::termios>,
-}
-
-impl Drop for EchoGuard {
-    fn drop(&mut self) {
-        if let Some(t) = self.saved.as_ref() {
-            unsafe {
-                libc::tcsetattr(self.fd, libc::TCSAFLUSH, t);
-            }
-        }
-    }
-}
-
-/// Read a line with the terminal echo disabled.
+/// Read a line with echo disabled.
 ///
-/// Falls back to a plain line read when stdin is not a TTY (a pipe), which is
-/// what lets the tests drive it — the secret still never comes from argv.
+/// `console`'s `read_secure_line` is the cross-platform implementation: tcsetattr
+/// on Unix, the console mode API on Windows. It returns `NotATty` when stdin is a
+/// pipe, which is what lets the tests drive it — the secret still never comes
+/// from argv.
 fn read_masked(prompt: &str) -> Result<String, String> {
-    let fd = libc::STDIN_FILENO;
-    let is_tty = unsafe { libc::isatty(fd) } == 1;
+    use console::Term;
 
-    let guard = if is_tty {
-        let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-        if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
-            return Err(format!("tcgetattr: {}", std::io::Error::last_os_error()));
-        }
-        let mut raw = saved;
-        raw.c_lflag &= !libc::ECHO;
-        if unsafe { libc::tcsetattr(fd, libc::TCSAFLUSH, &raw) } != 0 {
-            return Err(format!("tcsetattr: {}", std::io::Error::last_os_error()));
-        }
-        EchoGuard {
-            fd,
-            saved: Some(saved),
-        }
-    } else {
-        EchoGuard { fd, saved: None }
-    };
-
-    eprint!("{prompt}");
-    let _ = std::io::stderr().flush();
-
-    let mut line = String::new();
-    let read = std::io::stdin().lock().read_line(&mut line);
-    drop(guard); // echo restored before anything else can fail
-    if is_tty {
-        eprintln!();
+    if !Term::stdout().is_term() || !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        // Piped input (tests, scripts): plain read, no echo to disable.
+        eprint!("{prompt}");
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut line)
+            .map_err(|e| format!("read: {e}"))?;
+        return Ok(line.trim_end_matches(['\r', '\n']).to_string());
     }
-    read.map_err(|e| format!("read: {e}"))?;
-    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+
+    Term::stderr()
+        .read_secure_line()
+        .map_err(|e| format!("{prompt}read failed: {e}"))
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────

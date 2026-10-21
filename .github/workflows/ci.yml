@@ -277,8 +277,14 @@ jobs:
           test "$n" -ge 1
       - name: Build debug tallow (--locked)
         run: cargo build --locked --bin tallow
-      - name: Ensure clang present (native path links via clang)
-        run: command -v clang >/dev/null || { sudo apt-get update && sudo apt-get install -y clang; }
+      - name: Ensure the native toolchain (clang + liblzma/libbz2)
+        # The native plane links generated programs through clang, and the
+        # runtime archive references -llzma and -lbz2. Without the dev packages
+        # every parity test fails at link time with "cannot find -llzma", which
+        # looks like a code defect and is not one.
+        run: |
+          command -v clang >/dev/null || sudo apt-get update
+          sudo apt-get install -y clang liblzma-dev libbz2-dev
       - name: Run parity runner (DIVERGE fails)
         run: |
           set -uo pipefail
@@ -313,6 +319,13 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    # rustsec/audit-check reports its verdict by POSTing a check run, and the
+    # repository default token is read-only: with no `checks: write` the action
+    # fails at `Resource not accessible by integration` *after* a clean scan
+    # (0 vulnerabilities), turning a pass into a red job.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2 (SHA pin)

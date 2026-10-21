@@ -57,6 +57,30 @@ regression targets nothing ran, and thirteen RustSec advisories.
 - `docs/PGO.md`, `scripts/pgo_ab.sh`, `benchmarks/cliff-probe` re-measured against
   `aes-gcm`; the old 111/973 MB/s figures described a backend that no longer ships.
 
+### Fixed (cross-platform)
+- **The crate did not compile for Windows.** Fifteen `std::os::unix` /
+  `libc` uses sat outside any `cfg` gate. Each now has a real branch or an honest
+  refusal, not a stub that pretends to work:
+  - `sluice.rs` receipt-log lock: `libc::flock` → `File::try_lock`/`unlock`
+    (flock on Unix, `LockFileEx` on Windows), same semantics, no `unsafe`.
+  - `cli/secrets_cmd.rs` masked prompt: hand-rolled `termios` →
+    `console::Term::read_secure_line` (already in the dependency graph); the
+    0600 write is `cfg(unix)`-gated with a note that Windows inherits the
+    directory ACL.
+  - `stdlib/secrets.rs` store write: same 0600 gate.
+  - `sandbox_runtime`: Unix implementation behind `cfg(unix)`; the non-Unix
+    module exposes the same five entry points and returns `Err`, because a
+    `run_sandboxed` that returned `Ok` would claim a confinement that is not
+    there.
+  - `browser/juggler.rs`: the `pre_exec` + fd 3/4 pipe launch is `cfg(unix)`;
+    on Windows `launch` refuses and names the Chromium/CDP backend.
+- **The crate did not compile for macOS.** `RlimitResource` was keyed on
+  `not(target_env = "musl")`, so it selected glibc's `__rlimit_resource_t` on
+  Apple targets too; now keyed on `target_env = "gnu"`. `sandbox_pass`'s seccomp
+  call was a `cfg!()` runtime test around a `#[cfg(target_os = "linux")]`
+  function — a `cfg!()` never removes the call site; it is now a real `cfg` split,
+  and the syscall-table test is Linux-gated.
+
 
 ## [v1.1.3] — 2026-10-21 — three defects a five-line script found
 
