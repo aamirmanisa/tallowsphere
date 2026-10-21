@@ -108,3 +108,39 @@ fn the_shebang_line_does_not_shift_diagnostics() {
         "the diagnostic must point at line 2 (the code), not line 1 (the shebang); got: {err}"
     );
 }
+
+#[test]
+fn arguments_after_the_script_path_reach_the_program() {
+    // `./app.tl one` must become `tallow run app.tl -- one`. Without the `--`,
+    // clap reads `one` as its own argument and refuses the whole run.
+    let dir = workdir("args");
+    let path = script(
+        &dir,
+        "args.tl",
+        "#!/usr/bin/env tallow\nfn main() {\n    let a = env.args()\n    print(\"got:\" + a[0] + \"/\" + a.len().to_string())\n}\n",
+    );
+    let bin_dir = bin().parent().expect("bin dir").to_path_buf();
+    let path_env = format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default());
+    let mut attempt = 0;
+    let out = loop {
+        match std::process::Command::new(&path)
+            .arg("one")
+            .env("PATH", &path_env)
+            .env("TALLOW_ALLOW_DIRECT", "1")
+            .output()
+        {
+            Ok(out) => break out,
+            Err(e) if e.raw_os_error() == Some(26) && attempt < 20 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(e) => panic!("exec script: {e}"),
+        }
+    };
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "got:one/1\n");
+}

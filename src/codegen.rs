@@ -21071,9 +21071,28 @@ void tallow_async_runtime_shutdown(void) {
     // ── IR Emission Utilities ───────────────────────────────────────────────
 
     fn emit_line(&mut self, line: &str) {
+        // A block that already ended cannot take another branch. `exit` and
+        // `panic` emit `unreachable`, and every enclosing `if` then appended a
+        // dead `br label %merge` after it — LLVM rejects instructions after a
+        // terminator, and reports it as a numbering error ("expected %181 or
+        // greater"), which hides the real cause. Dropping the dead branch is
+        // the correct repair: the block is already terminated.
+        if line.starts_with("br ") && self.block_already_terminated() {
+            return;
+        }
         self.body.push_str("  ");
         self.body.push_str(line);
         self.body.push('\n');
+    }
+
+    /// True when the instruction most recently emitted in the current block is a
+    /// terminator. A label line ends with ':' and starts a fresh block.
+    fn block_already_terminated(&self) -> bool {
+        let last = self.body.trim_end().rsplit('\n').next().unwrap_or("").trim();
+        if last.is_empty() || last.ends_with(':') {
+            return false;
+        }
+        last == "unreachable" || last.starts_with("ret ") || last.starts_with("br ")
     }
 
     fn fresh_reg(&mut self) -> String {
@@ -22820,7 +22839,16 @@ impl<'a> CodeGen<'a> {
         self.emit_line(&format!(
             "{_ew} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {err_buf}, i64 256, ptr {err_fmt}, ptr {sysmsg}, i64 {errno64})"
         ));
-        self.emit_line(&format!("br label %{done_label}"));
+        // Report on the FAIL path, where `err_buf` is defined. It used to be
+        // printed from the ok block, which both referenced a value from a
+        // sibling block (invalid IR — LLVM 18 died in the register coalescer)
+        // and exited 1 after every successful read.
+        let _ep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{_ep} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {err_buf})"
+        ));
+        self.emit_line("call void @exit(i32 1)");
+        self.emit_line("unreachable");
 
         // Ok path: seek to end, get size, seek back, read, close
         self.emit_line(&format!("{ok_label}:"));
@@ -22864,26 +22892,27 @@ impl<'a> CodeGen<'a> {
         let _close = self.fresh_reg();
         self.emit_line(&format!("{_close} = call i32 @fclose(ptr {file})"));
 
-        // A read failure must be LOUD. This arm used to return an empty string,
-        // which made a missing file indistinguishable from an empty one — a
-        // silent wrong value. The compiled path has no Result shape here (see
-        // `do_read_file` in stdlib/fs.rs), so it fails closed with the syscall's
-        // message, exactly as the interpreter raises a runtime error.
-        let _ep = self.fresh_reg();
+        // A short read is a failure too: returning a truncated buffer as if it
+        // were the whole file is the same silent-wrong-value class as the empty
+        // string this arm used to return.
+        let read_ok = self.fresh_reg();
+        self.emit_line(&format!("{read_ok} = icmp eq i64 {_read}, {size}"));
+        let short_label = self.fresh_label("fopen.short");
         self.emit_line(&format!(
-            "{_ep} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {err_buf})"
+            "br i1 {read_ok}, label %{done_label}, label %{short_label}"
+        ));
+        self.emit_line(&format!("{short_label}:"));
+        let short_msg = self.intern_string("fs.read_file: short read");
+        let _sw = self.fresh_reg();
+        self.emit_line(&format!(
+            "{_sw} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {short_msg})"
         ));
         self.emit_line("call void @exit(i32 1)");
-        self.emit_line(&format!("br label %{done_label}"));
+        self.emit_line("unreachable");
 
-        // Done: phi to select the result (the fail edge is dead after exit()).
+        // Done: every failing arm above terminates, so the value is the buffer.
         self.emit_line(&format!("{done_label}:"));
-        let result = self.fresh_reg();
-        self.emit_line(&format!(
-            "{result} = phi ptr [ {err_buf}, %{fail_label} ], [ {buf}, %{ok_label} ]"
-        ));
-
-        Ok(LLValue::new(result, LLType::I8Ptr))
+        Ok(LLValue::new(buf, LLType::I8Ptr))
     }
 
     fn emit_fs_write_file(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
@@ -33342,7 +33371,18 @@ mod tests {
         assert!(ir.contains("fopen.fail"), "should have fail label");
         assert!(ir.contains("fopen.ok"), "should have ok label");
         assert!(ir.contains("fopen.done"), "should have done label");
-        assert!(ir.contains("phi ptr"), "should have phi for result");
+        // Every failing arm reports and exits, so the result needs no phi. The
+        // phi this test used to require selected a buffer defined in a sibling
+        // block, which is invalid IR — LLVM 18 died in the register coalescer
+        // and every program that read a file lost its native plane (#138).
+        assert!(
+            !ir.contains("phi ptr"),
+            "terminating failure arms mean no phi: {ir}"
+        );
+        assert!(
+            ir.contains("fopen.short"),
+            "a short read must fail loudly, not return a truncated string"
+        );
     }
 
     #[test]

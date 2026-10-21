@@ -2685,7 +2685,14 @@ fn real_main() -> anyhow::Result<()> {
             && !first.starts_with('-')
             && std::path::Path::new(first).is_file();
         if looks_like_script {
+            // Everything after the path belongs to the program, not to tallow:
+            // `./wc.tl notes.txt` becomes `tallow run wc.tl -- notes.txt`.
+            // Without the `--`, clap reads the first program argument as its
+            // own and refuses with "unexpected argument".
             argv.insert(1, "run".to_string());
+            if argv.len() > 3 {
+                argv.insert(3, "--".to_string());
+            }
         }
     }
     let cli = Cli::parse_from(argv);
