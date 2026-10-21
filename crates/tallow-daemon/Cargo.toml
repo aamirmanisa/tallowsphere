@@ -34,10 +34,14 @@ base64 = "0.22"
 blake3 = "1"
 sha2 = "0.10"
 hmac = "0.12"
-landlock = "0.4"
 # Row #127 (batch-4 lane M): revocation check-at-use gate at the session
 # admission seam (`src/revocation_gate.rs`).
 tallow-svid = { path = "../tallow-svid" }
+
+# Landlock is Linux-only; executor.rs cfg-gates both call sites and refuses on
+# other targets. Declaring it unconditionally broke macOS/Windows builds.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

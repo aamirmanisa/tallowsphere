@@ -37,7 +37,7 @@ rand_core_06 = { package = "rand_core", version = "0.6", features = ["getrandom"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 serde = { version = "1", features = ["derive"] }
 futures-util = "0.3"
-zip = "2"
+zip = "9"
 dirs = "5"
 # Logging standard (T-127/R-6.3): `tracing` facade + subscriber. Versions are
 # the exact ones already pinned in Cargo.lock (0.1.44 / 0.3.23) so `--offline`
@@ -58,7 +58,6 @@ argon2 = "0.5"
 bcrypt = "0.16"
 scrypt = "0.11"
 ed25519-dalek = { version = "2.2", features = ["rand_core"] }
-landlock = "0.4"
 curve25519-dalek = { version = "4.1", features = ["rand_core"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 flate2 = "1.1"
@@ -329,6 +328,12 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1.4"
+
+# Landlock is a Linux LSM (kernel >= 5.13). Both call sites are cfg-gated and
+# return "landlock is Linux-only" elsewhere; declaring the crate unconditionally
+# made every non-Linux build fail inside landlock-0.4.7 (libc::prctl absent).
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
 
 [dev-dependencies]
 insta = "1"

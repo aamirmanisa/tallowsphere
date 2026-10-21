@@ -1,54 +1,60 @@
-//! B7 cliff-class probe: does `-C target-feature=+aes` actually select
-//! libcrux-aesgcm's AES fast path, or does the crate dispatch at runtime?
+//! B7 cliff-class probe: does `-C target-feature=+aes` actually select the
+//! AES-NI/ARMv8 path in the AES-256-GCM backend, or does it fall back to a
+//! bitsliced implementation?
 //!
-//! Build it once per configuration and compare the RESULT line. Imports mirror
-//! crates/tallow-crypto/src/symmetric/aes_gcm.rs exactly.
+//! Backend note (2026-10-21): tallow-crypto moved from libcrux-aesgcm 0.0.8 back
+//! to RustCrypto `aes-gcm` 0.10 (two unfixed RustSec advisories in the former).
+//! This probe now measures the AES-GCM backend the crate actually links.
+//!
+//! Build it once per configuration and compare the RESULT line:
 //!
 //!     cd benchmarks/cliff-probe
-//!     cargo run --release -q                                  # ~99 MB/s
-//!     RUSTFLAGS="-C target-feature=+aes" cargo run --release -q   # ~909 MB/s
+//!     cargo run --release -q
+//!     RUSTFLAGS="-C target-feature=+aes" cargo run --release -q
 //!
-//! See docs/CRYPTO-FASTPATH-AUDIT.md for the full table and the mechanism.
-//! Use a distinct CARGO_TARGET_DIR per configuration: the build script that
-//! enables libcrux's SIMD module does not declare
-//! `cargo:rerun-if-env-changed`, so a shared target dir reuses stale output.
+//! Use a distinct CARGO_TARGET_DIR per configuration when comparing, so a stale
+//! artifact from the other configuration cannot be reused.
 
 use std::time::Instant;
 
-use libcrux_aesgcm::aes_gcm_256::{Key as LKey, Nonce as LNonce, Tag as LTag};
-use libcrux_aesgcm::{AeadConsts as _, AesGcm256};
+use aes_gcm::aead::{Aead, Payload};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 
 const MIB: usize = 1 << 20;
 
 fn main() {
-    let key: LKey = [0x42u8; 32].into();
-    let nonce: LNonce = [0x24u8; 12].into();
+    let key = [0x42u8; 32];
+    let nonce_bytes = [0x24u8; 12];
     let pt = vec![0xABu8; 8 * MIB];
-    let mut ct = vec![0u8; pt.len()];
-    let mut tag: LTag = [0u8; AesGcm256::TAG_LEN].into();
+    let cipher = Aes256Gcm::new_from_slice(&key).expect("32-byte key");
+    let nonce = Nonce::from_slice(&nonce_bytes);
 
-    // What the crate believes about this machine, at runtime.
-    println!(
-        "platform: simd128={} simd256={} aes_ni={}",
-        libcrux_platform::simd128_support(),
-        libcrux_platform::simd256_support(),
-        libcrux_platform::aes_ni_support()
-    );
-    // What the compiler baked in. This is the field that tracks the 9x.
     println!(
         "compile-time: cfg(target_feature=\"aes\")={} arch={}",
         cfg!(target_feature = "aes"),
         std::env::consts::ARCH
     );
 
+    let seal = |buf: &[u8]| {
+        cipher
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: buf,
+                    aad: b"",
+                },
+            )
+            .expect("encrypt")
+    };
+
     for _ in 0..2 {
-        key.encrypt(&mut ct, &mut tag, &nonce, b"", &pt).unwrap();
+        std::hint::black_box(seal(&pt));
     }
 
-    let iters = 32;
+    let iters = 16;
     let t = Instant::now();
     for _ in 0..iters {
-        key.encrypt(&mut ct, &mut tag, &nonce, b"", &pt).unwrap();
+        std::hint::black_box(seal(&pt));
     }
     let elapsed = t.elapsed().as_secs_f64();
     let mb = (iters * pt.len()) as f64 / (1024.0 * 1024.0);

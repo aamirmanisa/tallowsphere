@@ -49,7 +49,9 @@ fi
 #     RUSTFLAGS unset              -> target-feature=+aes, --cfg aes_armv8   present
 #     RUSTFLAGS=""                 -> both ABSENT
 #     RUSTFLAGS="-Ccodegen-units=16" -> both ABSENT
-# Without them libcrux-aesgcm silently assembles its bitsliced fallback: 111 MB/s vs 973 MB/s.
+# Without them the AES-256-GCM backend silently assembles its bitsliced fallback: measured
+# 2026-10-21 on aarch64 (8 MiB x 16, benchmarks/cliff-probe) at 65.6 MB/s vs 128.3 MB/s for
+# RustCrypto aes-gcm 0.10, the backend in use since the libcrux 0.0.8 removal.
 # So a PGO build that "just adds -Cprofile-use" would ship an ~8.8x crypto regression, and a PGO A/B
 # that only sets RUSTFLAGS on some arms would compare two different configurations. These two flags
 # are therefore re-stated here for EVERY arm, and the `flags` arm below asserts they reach rustc.

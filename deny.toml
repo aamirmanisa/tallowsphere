@@ -74,6 +74,10 @@ allow = [
     # CDLA-Permissive-2.0 — webpki-roots / webpki-root-certs (Mozilla root
     # store data), same allowance as the product workspace.
     "CDLA-Permissive-2.0",
+    # bzip2-1.0.6 — libbz2-rs-sys, zip 9's pure-Rust bzip2 decoder. Permissive
+    # (Julian Seward's original terms, BSD-like); added 2026-10-21 with the zip
+    # upgrade that removed RUSTSEC-2026-0367/-0368/-0369.
+    "bzip2-1.0.6",
 ]
 confidence-threshold = 0.8
 
