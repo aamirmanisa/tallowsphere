@@ -2298,7 +2298,13 @@ mod landlock_tests {
         let profile = std::env::temp_dir().join(format!("tallow-chrome-{}-1", std::process::id()));
         let _ = std::fs::create_dir_all(&profile);
         let paths = browser_landlock_read_paths_with(&cfg, &profile, None);
-        assert!(paths.iter().any(|p| p == &bin_dir), "install tree: {paths:?}");
+        // Compare after canonicalize: macOS resolves /var -> /private/var, so a
+        // raw comparison against env::temp_dir() fails for a correct result.
+        let want = bin_dir.canonicalize().unwrap_or_else(|_| bin_dir.clone());
+        assert!(
+            paths.iter().any(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == want),
+            "install tree: {paths:?}"
+        );
 
         // Real managed browser on this box (when present): its directory too.
         let managed = find_chrome_path();

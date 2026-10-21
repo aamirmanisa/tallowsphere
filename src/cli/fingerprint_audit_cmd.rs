@@ -1913,8 +1913,15 @@ mod tests {
         assert_eq!(report.exit_code(), 0);
         // Cohort without a dataset is the honest undefined state.
         assert_eq!(report.cohort.state, "undefined");
-        // JA4T derived from the (test-injected) MTU.
-        assert_eq!(report.ja4t.state, "derived");
+        // JA4T is derived from Linux's /proc/sys/net/ipv4/tcp_rmem. Off Linux
+        // there is no such file, and the honest state is "unavailable" -- the
+        // module deliberately never fabricates a fingerprint. Asserting
+        // "derived" on macOS (where this test also runs) was wrong.
+        if cfg!(target_os = "linux") {
+            assert_eq!(report.ja4t.state, "derived");
+        } else {
+            assert_eq!(report.ja4t.state, "unavailable");
+        }
         // JSON round-trip shape.
         let json: serde_json::Value =
             serde_json::from_str(&report.to_json().expect("json")).expect("valid json");
