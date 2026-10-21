@@ -14,7 +14,7 @@
 # compiling and running a program.
 set -euo pipefail
 
-VERSION="${TALLOW_VERSION:-1.1.1}"
+VERSION="${TALLOW_VERSION:-}"
 PREFIX="${PREFIX:-$HOME/.local}"
 FROM=""
 REPO="${TALLOW_REPO:-aamirmanisa/tallowsphere}"
@@ -30,6 +30,22 @@ while [ $# -gt 0 ]; do
         *) echo "unknown argument: $1" >&2; usage 1 ;;
     esac
 done
+
+# The default is "the latest published release", resolved at run time. Pinning a
+# literal version here is how this script came to advertise "latest" while
+# installing 1.1.1 three releases after it stopped being current — and after the
+# tag it named had no assets at all.
+if [ -z "$VERSION" ]; then
+    _api="https://api.github.com/repos/$REPO/releases/latest"
+    VERSION="$(curl -fsSL "$_api" 2>/dev/null \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' \
+        | head -n 1)"
+    if [ -z "$VERSION" ]; then
+        echo "cannot determine the latest release of $REPO (no network, or none published yet)" >&2
+        echo "  pass --version <v> or --from <archive>" >&2
+        exit 2
+    fi
+fi
 
 case "$(uname -s)" in
     Linux)  os=linux ;;

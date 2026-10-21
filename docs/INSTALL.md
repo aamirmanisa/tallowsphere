@@ -26,7 +26,7 @@ or, from a checkout:
 ```sh
 ./install.sh --prefix "$HOME/.local"        # user install
 sudo ./install.sh --prefix /usr/local      # system install
-./install.sh --from dist/tallow-linux-aarch64-1.1.1.tar.gz
+./install.sh --from dist/tallow-linux-aarch64-1.1.2.tar.gz
 ```
 
 The installer unpacks both files into `PREFIX/bin`, checks the published
@@ -68,12 +68,12 @@ ran.
 ## Verify a download
 
 ```sh
-sha256sum -c tallow-linux-x86_64-1.1.1.tar.gz.sha256
-cosign verify-blob --certificate tallow-linux-x86_64-1.1.1.tar.gz.pem \
-  --signature tallow-linux-x86_64-1.1.1.tar.gz.sig \
+sha256sum -c tallow-linux-x86_64-1.1.2.tar.gz.sha256
+cosign verify-blob --certificate tallow-linux-x86_64-1.1.2.tar.gz.pem \
+  --signature tallow-linux-x86_64-1.1.2.tar.gz.sig \
   --certificate-identity-regexp 'https://github.com/aamirmanisa/tallowsphere/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  tallow-linux-x86_64-1.1.1.tar.gz
+  tallow-linux-x86_64-1.1.2.tar.gz
 ```
 
 ## Troubleshooting
