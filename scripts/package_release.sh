@@ -65,7 +65,21 @@ rm -f "$ARCHIVE" "$ARCHIVE.sha256"
 if [ "$EXT" = "zip" ]; then
     cp "$BIN" "$STAGE/tallow.exe"
     cp "$RUNTIME_A" "$STAGE/tallow.lib"
-    (cd "$STAGE" && zip -q -9 "$ARCHIVE" tallow.exe tallow.lib) || { echo "zip failed (install zip or pass a linux target)" >&2; exit 1; }
+    # `zip` is not on the Windows runner's PATH (measured 2026-10-21: the
+    # release failed with "zip: command not found" after a clean build). Git
+    # Bash has cygpath but no zip; 7-Zip is installed on the GitHub Windows
+    # images, and Compress-Archive is the last resort.
+    if command -v zip >/dev/null 2>&1; then
+        (cd "$STAGE" && zip -q -9 "$ARCHIVE" tallow.exe tallow.lib)
+    elif [ -x "/c/Program Files/7-Zip/7z.exe" ]; then
+        WARCHIVE="$(cygpath -w "$ARCHIVE")"
+        (cd "$STAGE" && "/c/Program Files/7-Zip/7z.exe" a -tzip -mx=9 "$WARCHIVE" tallow.exe tallow.lib >/dev/null)
+    else
+        WPATH="$(cygpath -w "$STAGE")\\tallow.exe"
+        WLIB="$(cygpath -w "$STAGE")\\tallow.lib"
+        WARCHIVE="$(cygpath -w "$ARCHIVE")"
+        powershell -NoProfile -Command "Compress-Archive -Path '$WPATH','$WLIB' -DestinationPath '$WARCHIVE' -Force"
+    fi
 else
     cp "$BIN" "$STAGE/tallow"
     cp "$RUNTIME_A" "$STAGE/libtallow.a"
