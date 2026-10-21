@@ -239,7 +239,13 @@ jobs:
       - name: Attest build provenance (SLSA L2)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: 'dist/*.tar.gz'
+          # Both archive shapes: the Windows leg produces a .zip, and a
+          # tar.gz-only glob made the attest step fail with
+          # "Could not find subject at path dist/*.tar.gz" after the Windows
+          # archive had already been built, signed and smoke-tested.
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
