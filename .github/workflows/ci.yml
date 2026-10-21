@@ -176,6 +176,14 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install the native link dependencies (clang, liblzma, libbz2)
+        # First, before any test runs: the native plane links generated programs
+        # through clang and the runtime archive references -llzma and -lbz2.
+        # Installing this later only fixed the parity runner, after the
+        # cargo-test steps had already failed at link time.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang liblzma-dev libbz2-dev
       - name: Capability registry matches the code
         run: |
           python3 scripts/census_page_methods.py

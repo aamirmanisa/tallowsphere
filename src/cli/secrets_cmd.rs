@@ -618,6 +618,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // asserts a POSIX mode bit; Windows has no 0600 to check
     fn round_trip_writes_0600_and_never_serializes_via_derive() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tmpdir("roundtrip");
