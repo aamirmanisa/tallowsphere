@@ -3953,8 +3953,24 @@ void tallow_async_runtime_shutdown(void) {
 
     fn emit_block(&mut self, block: &Block) -> Result<Option<LLValue>, String> {
         let mut last_val = None;
-        for stmt in &block.stmts {
+        let total = block.stmts.len();
+        for (i, stmt) in block.stmts.iter().enumerate() {
             last_val = self.emit_stmt(stmt)?;
+            // A `Result` thrown away mid-block is checked (#133). The *last*
+            // statement of a block is the block's value — a tail `try_parse(s)`
+            // in a closure or a `-> Result<T>` function is returned, not
+            // discarded — so it is exempt.
+            if i + 1 < total {
+                if let (StmtKind::Expr { expr }, Some(val)) = (&stmt.kind, &last_val) {
+                    if val.ty == LLType::ResultPtr
+                        && matches!(&expr.kind, ExprKind::Call { callee, .. }
+                            if matches!(&callee.kind, ExprKind::Ident(n)
+                                if n != "Ok" && n != "Err"))
+                    {
+                        self.emit_unhandled_result_exit1(val);
+                    }
+                }
+            }
         }
         Ok(last_val)
     }
@@ -4593,6 +4609,10 @@ void tallow_async_runtime_shutdown(void) {
 
             StmtKind::Expr { expr } => {
                 let val = self.emit_expr(expr)?;
+                // A `Result` evaluated as a statement is discarded. If it is an
+                // `Err`, that discard must not read as success (#133): the error
+                // goes to stderr and the process exits 1, matching the
+                // interpreter's `UnhandledResult`.
                 Ok(Some(val))
             }
 
@@ -12831,6 +12851,19 @@ void tallow_async_runtime_shutdown(void) {
             return self.emit_result_match(&subj, arms, payload_kind);
         }
 
+        // `T?` match — the only way to unwrap an optional (#134). The inner type
+        // comes from the program: the callee's declared return type, or the
+        // annotation/initialiser that bound the name.
+        if subj.ty == LLType::Optional {
+            let inner = self.optional_inner_type(subject, 0).ok_or_else(|| {
+                "cannot type this match subject: an optional must come from a \
+                 function whose `-> T?` return type is declared, or from a \
+                 `let x: T? = …` binding"
+                    .to_string()
+            })?;
+            return self.emit_optional_match(&subj, arms, inner);
+        }
+
         // Check if any arm uses tuple patterns
         let is_tuple_match = arms
             .iter()
@@ -12895,6 +12928,241 @@ void tallow_async_runtime_shutdown(void) {
         }
 
         Ok(LLValue::new("0".into(), LLType::I64))
+    }
+
+    /// The `T` in a `T?` expression, when the program states it.
+    ///
+    /// `match` needs the static type of the bound payload, and the box itself
+    /// only carries a runtime tag. Resolution walks: a call to a function with a
+    /// `-> T?` return type, or a `let` binding whose annotation or initialiser
+    /// leads to one.
+    fn optional_inner_type(&self, expr: &Expr, depth: u32) -> Option<LLType> {
+        if depth > 6 {
+            return None;
+        }
+        match &expr.kind {
+            ExprKind::Call { callee, .. } => {
+                let ExprKind::Ident(name) = &callee.kind else {
+                    return None;
+                };
+                self.merged_items.iter().find_map(|item| match item {
+                    Item::Fn(f) if &f.name == name => {
+                        f.return_type.as_ref().and_then(|t| match &t.kind {
+                            TypeExprKind::Optional(inner) => Some(self.resolve_type(inner)),
+                            _ => None,
+                        })
+                    }
+                    _ => None,
+                })
+            }
+            ExprKind::Ident(name) => self.merged_items.iter().find_map(|item| match item {
+                Item::Fn(f) => optional_let_value(&f.body, name)
+                    .and_then(|v| self.optional_inner_type(v, depth + 1)),
+                _ => None,
+            }),
+            _ => None,
+        }
+    }
+
+    /// `match opt { Some(x) -> …, None -> … }` on the compiled plane.
+    ///
+    /// The box is a null pointer when absent and a `%struct.Optional` otherwise
+    /// (register #119). The payload is stored as `i64`, so both arms funnel
+    /// through an `i64` slot and the result is converted back to the arm type.
+    fn emit_optional_match(
+        &mut self,
+        subject: &LLValue,
+        arms: &[MatchArm],
+        inner: LLType,
+    ) -> Result<LLValue, String> {
+        let some_arm = arms.iter().find(|a| {
+            matches!(&a.pattern, Pattern::Variant { name, .. } if name == "Some")
+        });
+        let none_arm = arms.iter().find(|a| {
+            matches!(&a.pattern, Pattern::Variant { name, .. } if name == "None")
+                || matches!(&a.pattern, Pattern::Ident(n) if n == "None")
+        });
+        let wildcard = arms
+            .iter()
+            .find(|a| matches!(&a.pattern, Pattern::Wildcard));
+
+        if some_arm.is_none() && wildcard.is_none() {
+            return Err(
+                "cannot compile this match natively: an optional match needs a \
+                 `Some(x)` arm and a `None` or wildcard arm"
+                    .into(),
+            );
+        }
+
+        let slot = self.fresh_reg();
+        self.emit_line(&format!("{slot} = alloca i64"));
+        let is_nil = self.fresh_reg();
+        self.emit_line(&format!(
+            "{is_nil} = icmp eq ptr {}, null",
+            subject.reg
+        ));
+        let l_some = self.fresh_label("opt.some");
+        let l_none = self.fresh_label("opt.none");
+        let l_done = self.fresh_label("opt.done");
+
+        if none_arm.is_some() || wildcard.is_some() {
+            self.emit_line(&format!(
+                "br i1 {is_nil}, label %{l_none}, label %{l_some}"
+            ));
+        } else {
+            self.emit_line(&format!(
+                "br i1 {is_nil}, label %{l_none}, label %{l_some}"
+            ));
+        }
+
+        // ── Some arm: load the payload and bind it ──────────────────────────
+        self.body.push_str(&format!("{l_some}:\n"));
+        let pay_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{pay_gep} = getelementptr inbounds %struct.Optional, ptr {}, i32 0, i32 1",
+            subject.reg
+        ));
+        let raw = self.fresh_reg();
+        self.emit_line(&format!("{raw} = load i64, ptr {pay_gep}"));
+        let payload = self.payload_as_type(&raw, &inner);
+        let saved: Vec<(String, Option<(String, LLType)>)> = match some_arm {
+            Some(arm) => match &arm.pattern {
+                Pattern::Variant { fields, .. } => fields
+                    .iter()
+                    .filter_map(|f| match &f.pattern {
+                        Pattern::Ident(bind) => {
+                            let prev = self.variables.get(bind).cloned();
+                            // A variable is an address: store the payload into a
+                            // slot and bind the slot, exactly as a parameter is
+                            // bound.
+                            let alloca = self.fresh_reg();
+                            self.emit_line(&format!("{alloca} = alloca {}", inner.to_ir()));
+                            self.emit_line(&format!(
+                                "store {} {payload}, ptr {alloca}",
+                                inner.to_ir()
+                            ));
+                            self.variables
+                                .insert(bind.clone(), (alloca, inner.clone()));
+                            Some((bind.clone(), prev))
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let arm = some_arm.or(wildcard).expect("checked above");
+        let some_val = self.emit_expr(&arm.body)?;
+        let some_i64 = self.to_i64_bits(&some_val)?;
+        self.emit_line(&format!("store i64 {some_i64}, ptr {slot}"));
+        for (name, prev) in saved {
+            match prev {
+                Some(v) => {
+                    self.variables.insert(name, v);
+                }
+                None => {
+                    self.variables.remove(&name);
+                }
+            }
+        }
+        self.emit_line(&format!("br label %{l_done}"));
+
+        // ── None arm ────────────────────────────────────────────────────────
+        self.body.push_str(&format!("{l_none}:\n"));
+        match none_arm.or(wildcard) {
+            Some(arm) => {
+                let v = self.emit_expr(&arm.body)?;
+                let bits = self.to_i64_bits(&v)?;
+                self.emit_line(&format!("store i64 {bits}, ptr {slot}"));
+                self.emit_line(&format!("br label %{l_done}"));
+            }
+            None => {
+                let msg = self.intern_string("match on a nil optional with no `None` arm");
+                self.emit_stderr_write(&msg);
+                self.emit_line("call void @exit(i32 1)");
+                self.emit_line("unreachable");
+            }
+        }
+
+        self.body.push_str(&format!("{l_done}:\n"));
+        let out = self.fresh_reg();
+        self.emit_line(&format!("{out} = load i64, ptr {slot}"));
+        let final_reg = self.from_i64_bits(&out, &some_val.ty);
+        Ok(LLValue::new(final_reg, some_val.ty.clone()))
+    }
+
+    /// The payload of a box as `ty`, from its stored `i64`.
+    fn payload_as_type(&mut self, raw: &str, ty: &LLType) -> String {
+        match ty {
+            LLType::I64 | LLType::I32 | LLType::I8 => raw.to_string(),
+            LLType::I1 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = icmp ne i64 {raw}, 0"));
+                r
+            }
+            LLType::I8Ptr => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = inttoptr i64 {raw} to ptr"));
+                r
+            }
+            LLType::F64 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = bitcast i64 {raw} to double"));
+                r
+            }
+            _ => raw.to_string(),
+        }
+    }
+
+    /// Any scalar as its `i64` bit pattern (for the shared result slot).
+    fn to_i64_bits(&mut self, val: &LLValue) -> Result<String, String> {
+        Ok(match &val.ty {
+            LLType::I64 | LLType::I32 | LLType::I8 => val.reg.clone(),
+            LLType::I1 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = zext i1 {} to i64", val.reg));
+                r
+            }
+            LLType::I8Ptr => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = ptrtoint ptr {} to i64", val.reg));
+                r
+            }
+            LLType::F64 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = bitcast double {} to i64", val.reg));
+                r
+            }
+            other => {
+                return Err(format!(
+                    "cannot use a `{other:?}` as the value of an optional match arm"
+                ))
+            }
+        })
+    }
+
+    /// The inverse of `to_i64_bits`, back to the arm's static type.
+    fn from_i64_bits(&mut self, bits: &str, ty: &LLType) -> String {
+        match ty {
+            LLType::I64 | LLType::I32 | LLType::I8 => bits.to_string(),
+            LLType::I1 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = icmp ne i64 {bits}, 0"));
+                r
+            }
+            LLType::I8Ptr => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = inttoptr i64 {bits} to ptr"));
+                r
+            }
+            LLType::F64 => {
+                let r = self.fresh_reg();
+                self.emit_line(&format!("{r} = bitcast i64 {bits} to double"));
+                r
+            }
+            _ => bits.to_string(),
+        }
     }
 
     /// Emit match on a tuple — binds Pattern::Tuple elements then evaluates body.
@@ -20074,8 +20342,8 @@ void tallow_async_runtime_shutdown(void) {
         }
         if matches!(val.ty, LLType::Optional) || matches!(target, LLType::Optional) {
             return Err(format!(
-                "optional values have no native lowering yet ({:?} -> {:?}); \
-                 see docs/optional-representation.md",
+                "cannot use an optional where a plain value is expected ({:?} -> {:?}): \
+                 unwrap it with `match` or test it with `== nil` (register #136)",
                 val.ty, target
             ));
         }
@@ -37985,4 +38253,23 @@ mod runtime_archive_selection {
     fn nothing_exists_is_none() {
         assert_eq!(pick_runtime_archive(None, Vec::new()), None);
     }
+}
+
+/// The value expression bound to `name` by a `let` in this block, if any.
+fn optional_let_value<'a>(block: &'a Block, name: &str) -> Option<&'a Expr> {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            StmtKind::Let { name: n, value, .. } if n == name => return Some(value),
+            StmtKind::Var { name: n, value, .. } if n == name => return Some(value),
+            StmtKind::For { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::Loop { body } => {
+                if let Some(v) = optional_let_value(body, name) {
+                    return Some(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }

@@ -1,17 +1,18 @@
 # Optional representation in the native plane
 
-Status: **the encoding is complete; the language around it is not.** Boxed
-`T?` produce, print, `== nil` and field store/load work on both planes, and
-implicit wrapping into an optional was fixed on 2026-10-21 (#135 — `return a`
-from a `-> i64?` function used to be refused when the value was not a literal).
-Two gaps remain open, both measured on 2026-10-21:
+Status: **complete on both planes.** Boxed `T?` produce, print, `== nil`, field
+store/load and now `match`-unwrapping all work, and the two planes agree. Three
+gaps were closed on 2026-10-21:
 
-- **#134 — an optional cannot be unwrapped natively.** `match` on a `T?` is
-  refused by codegen ("unsupported subject shape") and `??` is a type error on
-  both planes. A program can hold a `T?` and never read it.
-- **#136 — the type checker lets a `T?` bind to a `T`.** `let v: i64 = src(0)`
-  passes `tallow check`, then the native plane refuses at codegen and the
-  interpreter prints `nil` and fails on the next arithmetic.
+- **#135 — implicit wrapping.** `return a` from a `-> i64?` function, an `i64`
+  argument to an `i64?` parameter, and `String?` returns used to be refused on
+  the native plane whenever the value was not a literal. `coerce` now boxes.
+- **#134 — unwrapping.** `match` on a `T?` compiles: the inner type comes from
+  the callee's declared `-> T?` return type or the binding's annotation, `Some(x)`
+  binds the payload with that type, `None` takes the absent branch. There is no
+  `??` operator in the language.
+- **#136 — binding.** `let v: i64 = <T?>` is now `E0116`, not a program that
+  passes `tallow check` and then fails on both planes.
 
 Arithmetic on an optional is not a gap: the type checker rejects it on both
 planes with `E0110 left operand of + must be numeric, got i64?`, so there is no
@@ -48,8 +49,7 @@ Rules:
   a hard error.
 - `some x` allocates a 16-byte box, stores `tag = 1` and the payload as `i64`
   (booleans zero-extended, floats bitcast, strings `ptrtoint`).
-- Reading an optional (`x ?? default`, field access, `match` on presence) loads
-  the tag; null means absent.
+- Reading an optional (`match` on presence) loads the tag; null means absent.
 - Printing an optional renders `nil` when null, otherwise the payload rendered
   by the *inner* type — so `bool?` prints `true`/`false` and `String?` prints the
   string, matching the interpreter.

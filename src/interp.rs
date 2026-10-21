@@ -1726,7 +1726,8 @@ impl Interpreter {
         env.push_scope();
         let mut last = Value::Nil;
 
-        for stmt in &block.stmts {
+        let total = block.stmts.len();
+        for (i, stmt) in block.stmts.iter().enumerate() {
             // P1: pop the block scope before propagating a runtime error; a bare
             // `?` here leaked one scope per failing statement.
             last = match self.exec_stmt(stmt, env) {
@@ -1736,6 +1737,22 @@ impl Interpreter {
                     return Err(e);
                 }
             };
+            // A `Result` thrown away mid-block is not success (#133). The last
+            // statement is the block's value (a closure tail, a `-> Result<T>`
+            // return), so it is exempt.
+            if i + 1 < total {
+                if let StmtKind::Expr { expr } = &stmt.kind {
+                    let direct_call = matches!(&expr.kind, ExprKind::Call { callee, .. }
+                        if matches!(&callee.kind, ExprKind::Ident(n)
+                            if n != "Ok" && n != "Err"));
+                    if direct_call {
+                        if let Value::Err(e) = &last {
+                            env.pop_scope();
+                            return Err(RuntimeError::UnhandledResult(e.as_string()));
+                        }
+                    }
+                }
+            }
             // Check for early return or loop control
             match &last {
                 Value::Return(_) | Value::Break | Value::Continue => {
