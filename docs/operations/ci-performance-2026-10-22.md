@@ -294,3 +294,24 @@ Two defects, both invisible on Linux, both found by
 is doing exactly the job it was added for: it costs ~8 minutes on a PR and
 caught two release-blocking defects that the full Windows suite would only have
 found after a tag.
+
+## Validation of the final Windows configuration
+
+Two build-only dispatches on HEAD `3ab22a7` / `216dba5` after the target-dir
+cache was removed and packaging moved to `-mx=5`:
+
+| run | cache state | sccache | binary build | package | unit time |
+|---|---|---|---|---|---|
+| `39805710372` | cold (flags changed by `incremental = false`) | miss | 1202 s | **32 s** | — |
+| `39811358720` | warm | 93.24 % | **943 s** | **28 s** | 1762 s |
+
+Packaging went 190–238 s → **28–32 s**, the change the local benchmark
+predicted. The build sitting at 943 s against the 885 s taken by the same
+shape earlier is a 6 % difference in both wall and unit time — runner variance,
+not a regression, and the cold run in between confirms sccache is working again
+after the key change. Total Windows job: ~1365 s at the pre-work baseline →
+~1160 s, and the remaining time is the 448 s build-script block plus the link,
+neither of which a cache can touch.
+
+`Test (Windows)` in CI stays green at these commits (compile plane 88–124 s
+warm against 488 s cold).
