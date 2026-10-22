@@ -43,7 +43,15 @@ All of these were declared in `stdlib/*.tl` and undefined at runtime.
 
 ## Known remaining gaps — not fixed, stated
 
-1. **17 browser functions are stubs with no implementation.**
+1. **17 browser functions were stubs with no implementation — 9 are now live.**
+   The current-page registry (interp binds the Page it creates) plus CDP-backed
+   implementations landed for `page_extract_all_text`, `page_extract_all_attrs`,
+   `page_capture_dom_snapshot`, `page_structured_data`, `page_text_redacted`,
+   `page_block_non_essential`, `page_wait_for_stable`, `page_detect_pagination`
+   and `page_handle_cookie_consent`, each exercised against a live page or a
+   local fixture. While testing them, `goto()` was found to report success while
+   the tab sat on `chrome-error://chromewebdata/`; it now returns a navigation
+   failure instead. The remaining stubs in `stdlib/browser.tl` are:
    `stdlib/browser.tl` declares them with empty bodies and a `// Runtime:` or
    `// native:` comment; no Rust handler exists for any of them:
    `page_is_wordfence_challenge`, `page_bypass_wordfence`,

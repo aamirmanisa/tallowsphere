@@ -128,6 +128,186 @@ fn page_capture_dom_snapshot() -> StdlibResult {
     eval_on_bound_page("document.documentElement.outerHTML")
 }
 
+/// Run `f` against the bound page, or explain precisely why there is none.
+fn with_bound_page<T>(
+    f: impl FnOnce(&crate::browser::Page) -> Result<T, String>,
+) -> Result<T, String> {
+    let handle = current_page().ok_or_else(|| {
+        "browser: no page bound — call browser.page_extract_all_text() and friends only after \
+         a Page exists (Browser.launch(...).new_page()); otherwise use the Page handle directly"
+            .to_string()
+    })?;
+    let page = handle
+        .downcast_ref::<crate::browser::Page>()
+        .ok_or_else(|| "browser: the bound handle is not a Page".to_string())?;
+    f(page)
+}
+
+/// `page_text_redacted() -> String` — visible text with PII redacted. Uses the
+/// same `redact_pii` the offline extractor uses, so the two paths cannot drift.
+fn page_text_redacted() -> StdlibResult {
+    match eval_on_bound_page("document.body ? document.body.innerText : ''")? {
+        Value::String(text) => Ok(Value::String(redact_pii(&text))),
+        other => Err(format!(
+            "page_text_redacted: expected text from the page, got {}",
+            crate::interp::type_name(&other)
+        )),
+    }
+}
+
+/// `page_block_non_essential() -> Result<()>` — blocks images, fonts, media and
+/// stylesheets at the CDP level, which is the only place blocking actually
+/// saves bytes (a JS filter would still download them).
+fn page_block_non_essential() -> StdlibResult {
+    with_bound_page(|page| {
+        let client = page.client.clone();
+        let blocked = serde_json::json!({
+            "urls": [
+                "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.svg", "*.ico",
+                "*.woff", "*.woff2", "*.ttf", "*.otf",
+                "*.mp4", "*.webm", "*.mp3", "*.css"
+            ]
+        });
+        crate::interp::get_browser_runtime()
+            .block_on(client.send_command_with_session(
+                "Network.setBlockedURLs",
+                Some(blocked),
+                &page.session_id,
+            ))
+            .map_err(|e| format!("page_block_non_essential: {e}"))?;
+        Ok(Value::Ok(Box::new(Value::Nil)))
+    })
+}
+
+/// `page_wait_for_stable(timeout_ms, quiesce_ms) -> Result<()>` — waits until
+/// the document stops changing. Stability is measured on the document itself
+/// (size of the serialized DOM plus visible text), sampled every 50 ms.
+fn page_wait_for_stable(args: Vec<Value>) -> StdlibResult {
+    let timeout_ms = args
+        .first()
+        .map(Value::as_string)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(30_000);
+    let quiesce_ms = args
+        .get(1)
+        .map(Value::as_string)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(500);
+    with_bound_page(|page| {
+        let started = std::time::Instant::now();
+        let mut last = String::new();
+        let mut stable_since = std::time::Instant::now();
+        loop {
+            let signature = crate::interp::get_browser_runtime()
+                .block_on(page.evaluate_expression(
+                    "(document.documentElement.outerHTML.length) + ':' + \
+                     ((document.body && document.body.innerText.length) || 0)",
+                ))
+                .map(|v| v.to_string())
+                .map_err(|e| format!("page_wait_for_stable: {e}"))?;
+            if signature != last {
+                last = signature;
+                stable_since = std::time::Instant::now();
+            } else if stable_since.elapsed().as_millis() as u64 >= quiesce_ms {
+                return Ok(Value::Ok(Box::new(Value::Nil)));
+            }
+            if started.elapsed().as_millis() as u64 >= timeout_ms {
+                return Err(format!(
+                    "page_wait_for_stable: timed out after {timeout_ms} ms without {quiesce_ms} ms of stability"
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    })
+}
+
+/// `page_detect_pagination() -> PaginationInfo?` — reads the current document's
+/// own links; returns null when the page offers no way forward.
+fn page_detect_pagination() -> StdlibResult {
+    let js = r#"(() => {
+        const next = document.querySelector('a[rel="next"], link[rel="next"]');
+        const nums = document.querySelectorAll('a[href*="page="], a[href*="/page/"], .pagination a').length;
+        const more = Array.from(document.querySelectorAll('button, a')).find(
+            e => /load more|show more|more results|view more/i.test(e.textContent || ''));
+        if (next) return {strategy: 'next_button', next_url: next.href || next.getAttribute('href') || '', total_links: nums};
+        if (more) return {strategy: 'load_more', next_url: '', total_links: nums};
+        if (nums >= 2) return {strategy: 'numbered', next_url: '', total_links: nums};
+        return null;
+    })()"#;
+    match eval_on_bound_page(js)? {
+        Value::Nil => Ok(Value::Nil),
+        Value::Map(entries) => {
+            let get = |k: &str| {
+                entries
+                    .iter()
+                    .find(|(key, _)| key.as_string() == k)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or(Value::Nil)
+            };
+            Ok(Value::Struct {
+                name: "PaginationInfo".to_string(),
+                fields: vec![
+                    ("strategy".to_string(), get("strategy")),
+                    ("next_url".to_string(), get("next_url")),
+                    (
+                        "total_links".to_string(),
+                        Value::Int(get("total_links").as_string().parse().unwrap_or(0)),
+                    ),
+                ],
+            })
+        }
+        other => Err(format!(
+            "page_detect_pagination: unexpected page answer: {}",
+            crate::interp::type_name(&other)
+        )),
+    }
+}
+
+/// `page_handle_cookie_consent(strategy) -> bool` — clicks the first visible
+/// consent control that matches the requested strategy (accept / reject /
+/// dismiss). Returns whether anything was clicked; `false` means "no banner
+/// found or button not matched", never "pretended to dismiss".
+fn page_handle_cookie_consent(args: Vec<Value>) -> StdlibResult {
+    let strategy = args
+        .first()
+        .map(Value::as_string)
+        .unwrap_or_else(|| "accept".to_string());
+    let js = format!(
+        r#"(() => {{
+            const strategy = {strategy};
+            const sets = {{
+                accept: ['button#onetrust-accept-btn-handler', '#onetrust-accept-btn-handler',
+                         'button[aria-label*="Accept" i]', 'button[title*="Accept" i]',
+                         '.cc-btn.cc-allow', '#accept-cookies'],
+                reject: ['#onetrust-reject-all-handler', 'button[aria-label*="Reject" i]',
+                         '.cc-btn.cc-deny'],
+                dismiss: ['button[aria-label*="Close" i]', '.cc-btn.cc-dismiss', '#close-cookies']
+            }};
+            const visible = e => e && e.offsetParent !== null;
+            for (const sel of (sets[strategy] || sets.accept)) {{
+                const el = document.querySelector(sel);
+                if (visible(el)) {{ el.click(); return true; }}
+            }}
+            const byText = Array.from(document.querySelectorAll('button, a')).find(e =>
+                visible(e) && (strategy === 'reject'
+                    ? /^(reject|decline|refuse) (all )?/i
+                    : strategy === 'dismiss'
+                        ? /^(close|dismiss)$/i
+                        : /^(accept|allow|agree|got it)/i).test((e.textContent || '').trim()));
+            if (byText) {{ byText.click(); return true; }}
+            return false;
+        }})()"#,
+        strategy = serde_json::to_string(&strategy).map_err(|e| e.to_string())?
+    );
+    match eval_on_bound_page(&js)? {
+        Value::Bool(clicked) => Ok(Value::Bool(clicked)),
+        other => Err(format!(
+            "page_handle_cookie_consent: unexpected page answer: {}",
+            crate::interp::type_name(&other)
+        )),
+    }
+}
+
 /// `page_structured_data() -> StructuredData` — JSON-LD + OpenGraph from the
 /// live page, parsed by the same `structured_data_extract` the offline path uses.
 fn page_structured_data() -> StdlibResult {
@@ -666,6 +846,11 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "page_extract_all_attrs" => Some(page_extract_all_attrs(args)),
         "page_capture_dom_snapshot" => Some(page_capture_dom_snapshot()),
         "page_structured_data" => Some(page_structured_data()),
+        "page_text_redacted" => Some(page_text_redacted()),
+        "page_block_non_essential" => Some(page_block_non_essential()),
+        "page_wait_for_stable" => Some(page_wait_for_stable(args)),
+        "page_detect_pagination" => Some(page_detect_pagination()),
+        "page_handle_cookie_consent" => Some(page_handle_cookie_consent(args)),
         "page_cache_create" => Some(page_cache_create(args)),
         "fallback_service_status" | "browser_fallback_service_status" => {
             Some(fallback_service_status(args))
