@@ -4263,6 +4263,48 @@ impl Interpreter {
             return Ok(denied);
         }
 
+        // Browser free-function forms of the Page callback registrations
+        // (`browser.page_on_console(handler)` and friends). They cannot live in
+        // the stdlib router because the handler name must be resolved against
+        // THIS interpreter's function table; forward them to the Page method on
+        // the bound page, which already registers and arms the events.
+        if let Some(dot) = name.find('.') {
+            let (module, function) = (&name[..dot], &name[dot + 1..]);
+            if module == "browser"
+                && matches!(
+                    function,
+                    "page_on_console"
+                        | "page_on_error"
+                        | "page_on_request"
+                        | "page_on_response"
+                        | "page_on_filechooser"
+                        | "page_on_download"
+                        | "page_expose_function"
+                        | "page_expose_binding"
+                )
+            {
+                let handle = crate::stdlib::browser::current_page_handle().ok_or_else(|| {
+                    RuntimeError::Error(
+                        "browser: no page bound — create a Page first (Browser.launch(...).new_page())"
+                            .to_string(),
+                    )
+                })?;
+                let receiver = Value::BrowserObject(BrowserHandle {
+                    kind: "Page".to_string(),
+                    handle,
+                });
+                let method = function.trim_start_matches("page_").to_string();
+                let result = self.call_method(receiver, &method, positional)?;
+                // The Page method returns Result<EventListener|ExposedFunction>
+                // for `?`-style callers; the .tl free-function declarations return
+                // the struct directly, so unwrap the Ok here and leave Err alone.
+                return Ok(match result {
+                    Value::Ok(inner) => *inner,
+                    other => other,
+                });
+            }
+        }
+
         // Module-qualified stdlib dispatch (e.g., "fs.read_file", "time.now")
         // These arrive via the __module_ mechanism in eval_expr (line 1162-1170)
         if let Some(dot_pos) = name.find('.') {

@@ -33,6 +33,12 @@ fn current_page() -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
     CURRENT_PAGE.with(|slot| slot.borrow().clone())
 }
 
+/// The bound page handle, for callers that must reach the interpreter (the
+/// callback registrations resolve a Tallow function name there).
+pub fn current_page_handle() -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
+    current_page()
+}
+
 /// Evaluate `js` on the bound page and return the CDP result as a `Value`.
 fn eval_on_bound_page(js: &str) -> StdlibResult {
     let handle = current_page().ok_or_else(|| {
