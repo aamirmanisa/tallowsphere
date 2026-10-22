@@ -112,7 +112,7 @@ jobs:
           toolchain: 1.98.1
           targets: ${{ matrix.target }}
 
-      - name: Compiler cache (sccache, GitHub Actions backend)
+      - name: Compiler cache (sccache)
         # Every tag rebuilt 543 crates from scratch. The five build jobs took
         # 12-16 minutes each and almost all of it was dependencies that had not
         # changed since the previous tag. sccache keys each object on compiler,
@@ -121,11 +121,31 @@ jobs:
         # the tallow crate itself recompiles.
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
-      - name: Enable sccache
+      - name: Enable sccache (local object store)
+        # Measured on the first cached attempt (cold 39704345890, warm 39708330189):
+        # the GitHub-cache backend recorded 716 failed writes out of 992 compiles on
+        # linux-x86_64 and delivered an 11.8% hit rate. The repository cache is
+        # already largely spent on the ten CI jobs' 300-700 MB rust-cache entries,
+        # so per-object writes do not survive. One archive per target is the shape
+        # that fits: a single entry, restored whole, no per-object traffic.
         shell: bash
         run: |
           echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$GITHUB_WORKSPACE/.sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=2500M" >> "$GITHUB_ENV"
+          echo "SCCACHE_LOG=error" >> "$GITHUB_ENV"
+          echo "SCCACHE_ERROR_LOG=$GITHUB_WORKSPACE/sccache-error.log" >> "$GITHUB_ENV"
+
+      - name: Restore the compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}/.sccache
+          # The exact key never repeats; restore-keys finds the newest cache for
+          # this triple, which is what makes a tag that only touches src/ hit.
+          key: sccache-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            sccache-${{ matrix.label }}-
 
       - name: Cache the crate registry
         # The compiler cache stores objects, not crates. Restoring ~/.cargo keeps
@@ -184,7 +204,12 @@ jobs:
         # it a regression is indistinguishable from a cold cache.
         if: always()
         shell: bash
-        run: sccache --show-stats || true
+        run: |
+          sccache --show-stats || true
+          if [ -s sccache-error.log ]; then
+            echo "sccache error log:"
+            tail -20 sccache-error.log
+          fi
 
       - name: Package archive
         shell: bash
