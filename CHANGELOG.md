@@ -4,6 +4,31 @@ All notable changes to Tallow are recorded here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.1.5] — 2026-10-22 — `String.parse()` compiles
+
+One gap, and it was the kind that only shows up when you re-measure your own
+claims instead of re-reading them.
+
+`String.parse()` had no codegen lowering. The interpreter ran it, the native
+backend refused the build by name, and `--require-native` therefore rejected
+every program that converted a string to a number — including
+`examples/error_handling.tl`. The README said "10 programs identical on both
+planes"; the honest count was nine, and that is what it said for one release.
+
+Now lowered: `tallow_str_parse_i64` (`src/runtime/string_ffi.rs`) parses with
+the interpreter's own `str::parse::<i64>`, so the accepted spelling is identical
+(optional sign, ASCII digits, no whitespace, no separators, no radix prefix).
+Unparseable text exits 1 with the interpreter's exact sentence,
+`runtime error: cannot parse '<s>' as number`. Float text is **refused by name**
+— ``native plane cannot carry it through this integer ABI; use `.to_float()` ``
+— rather than truncated, because a truncation would be the silent divergence
+this codebase exists to avoid; the interpreter returns `Float` there and the two
+planes deliberately differ, visibly.
+
+Verified: `examples/error_handling.tl` now runs identically on both planes
+(stdout byte-identical, both rc 0), `cargo test --lib string_ffi` 3 passed,
+`tests/interp_codegen_parity.rs::string_parse_*` 2 passed.
+
 ## [v1.1.4] — 2026-10-21 — green on three platforms, and no advisory left open
 
 Seven of the ten red CI jobs were arguing about code, not about policy. This

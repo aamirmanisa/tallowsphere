@@ -149,3 +149,95 @@ fn parity_examples_run_in_interpreter() {
     }
     println!("All {} parity examples run in interpreter", examples.len());
 }
+
+// ── String.parse(): the native lowering added 2026-10-22 ────────────────────
+//
+// Before this, `.parse()` had no codegen lowering and `--require-native`
+// refused every program that used it (stub register row 141). These two tests
+// pin the behaviour that replaced that refusal: integer text agrees on both
+// planes, and text that is not a number fails with the interpreter's own
+// sentence instead of becoming a silent 0.
+
+fn write_probe(name: &str, source: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("parse_parity");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, source).unwrap();
+    path
+}
+
+fn run_plane(path: &std::path::Path, native: bool) -> std::process::Output {
+    let mut cmd = Command::new(TALLOW_BIN);
+    cmd.arg("run");
+    if native {
+        cmd.arg("--require-native");
+    } else {
+        cmd.arg("--interpret");
+    }
+    cmd.arg(path).output().unwrap()
+}
+
+#[test]
+fn string_parse_of_integers_is_identical_on_both_planes() {
+    let path = write_probe(
+        "parse_ints.tl",
+        r#"fn parse_port(s: String) -> Result<i64> {
+    let n = s.parse()
+    if n < 0 {
+        bail "port must be positive"
+    }
+    if n > 65535 {
+        bail "port too large"
+    }
+    Ok(n)
+}
+
+fn main() {
+    print(parse_port("8080"))
+    print(parse_port("70000"))
+    print(parse_port("-1"))
+    print("42".parse())
+}
+"#,
+    );
+
+    let interpreted = run_plane(&path, false);
+    let native = run_plane(&path, true);
+
+    let i_out = String::from_utf8_lossy(&interpreted.stdout).to_string();
+    let n_out = String::from_utf8_lossy(&native.stdout).to_string();
+    assert!(
+        native.status.success(),
+        "native plane refused an integer parse: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(i_out, n_out, "stdout diverged between planes");
+    assert!(i_out.contains("Ok(8080)"), "unexpected output: {i_out}");
+}
+
+#[test]
+fn string_parse_of_non_numbers_fails_with_the_interpreter_wording() {
+    let path = write_probe(
+        "parse_bad.tl",
+        r#"fn main() {
+    print("abc".parse())
+}
+"#,
+    );
+
+    let interpreted = run_plane(&path, false);
+    let native = run_plane(&path, true);
+
+    let i_err = String::from_utf8_lossy(&interpreted.stderr).to_string();
+    let n_err = String::from_utf8_lossy(&native.stderr).to_string();
+    assert!(!interpreted.status.success(), "interpreter accepted 'abc'");
+    assert!(!native.status.success(), "native plane accepted 'abc'");
+    assert!(
+        i_err.contains("cannot parse 'abc' as number"),
+        "interpreter wording changed: {i_err}"
+    );
+    assert!(
+        n_err.contains("cannot parse 'abc' as number"),
+        "native wording differs from the interpreter: {n_err}"
+    );
+}
