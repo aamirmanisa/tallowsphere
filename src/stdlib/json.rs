@@ -78,13 +78,17 @@ pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option
                 Some(Value::String(k)) => k.clone(),
                 _ => return Some(Err("json.get: expected a String key".into())),
             };
+            // The second argument is the default, matching the map builtin:
+            // without it `map.get(k, 0)` returned nil and word-count loops died
+            // on "cannot apply Add to nil and int" (measured 2026-10-22).
+            let fallback = args.get(1).cloned().unwrap_or(Value::Nil);
             Some(Ok(match object {
                 Value::Map(m) => m
                     .iter()
                     .find(|(k, _)| matches!(k, Value::String(s) if *s == key))
                     .map(|(_, v)| v.clone())
-                    .unwrap_or(Value::Nil),
-                _ => Value::Nil,
+                    .unwrap_or(fallback),
+                _ => fallback,
             }))
         }
         "at" => {
@@ -92,12 +96,13 @@ pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option
                 Some(Value::Int(i)) => *i,
                 _ => return Some(Err("json.at: expected an Int index".into())),
             };
+            let fallback = args.get(1).cloned().unwrap_or(Value::Nil);
             Some(Ok(match object {
                 Value::Array(items) => usize::try_from(idx)
                     .ok()
                     .and_then(|i| items.get(i).cloned())
-                    .unwrap_or(Value::Nil),
-                _ => Value::Nil,
+                    .unwrap_or(fallback),
+                _ => fallback,
             }))
         }
         "len" => Some(Ok(match object {
