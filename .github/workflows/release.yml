@@ -147,17 +147,9 @@ jobs:
             sccache-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
             sccache-${{ matrix.label }}-
 
-      - name: Cache the crate registry
-        # The compiler cache stores objects, not crates. Restoring ~/.cargo keeps
-        # `cargo fetch` off the network on a warm run. Target artifacts are
-        # deliberately NOT cached here: a release target dir is ~3 GB per triple
-        # and five of them evict each other from the 10 GB repository cache.
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          key: ${{ matrix.label }}
-          cache-targets: false
-          cache-all-crates: true
-
+      # No registry cache here on purpose. Measured: it cost 103 s on Windows to
+      # restore 0.6 GB of crates the prefetch below fetches in 4-78 s, and the
+      # repository's 10 GB cache budget is what the compiler archives need.
       - name: Pre-fetch the dependency graph
         shell: bash
         run: cargo fetch --locked --target ${{ matrix.target }}
@@ -189,15 +181,55 @@ jobs:
         shell: bash
         run: sudo apt-get update && sudo apt-get install -y liblzma-dev libbz2-dev
 
-      - name: Build (binary + runtime archive)
+      - name: Keep the scanner off the build tree (Windows)
+        # windows-latest runs Defender with real-time scanning on by default, and
+        # this build writes a 46 MB executable and a 527 MB static archive. The
+        # exclusion is best-effort: a runner that refuses the cmdlet still builds,
+        # it just pays the scan.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction Stop
+          Add-MpPreference -ExclusionPath "$env:CARGO_HOME" -ErrorAction Stop
+          Add-MpPreference -ExclusionProcess "rustc.exe" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "link.exe" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "lib.exe" -ErrorAction SilentlyContinue
+
+      - name: Build (binary)
         shell: bash
         run: |
-          cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow
+          start=$(date +%s)
+          cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow --timings=json
+          echo "::notice::bin build $(( $(date +%s) - start ))s"
+
+      - name: Where the build spent its time
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          files = sorted(glob.glob('target/cargo-timings/cargo-timing-*.json'))
+          if not files:
+              print('no timings file')
+          else:
+              d = json.load(open(files[-1]))['units']
+              top = sorted(d, key=lambda u: -u.get('duration', 0))[:12]
+              total = sum(u.get('duration', 0) for u in d)
+              print(f'units: {len(d)}  total unit time: {total:.1f}s')
+              for u in top:
+                  print(f"  {u.get('duration', 0):8.1f}s  {u.get('mode','?'):8} {u.get('name','?')}")
+          PY
+
+      - name: Build (runtime archive)
+        shell: bash
+        run: |
           # libtallow.a is the archive the compiler links compiled programs
           # against; it must be shipped beside the binary (see
           # scripts/package_release.sh) or every program that calls a runtime
           # symbol fails to link on a machine without a build tree.
+          start=$(date +%s)
           cargo build --profile release --locked --target ${{ matrix.target }} --lib
+          echo "::notice::lib build $(( $(date +%s) - start ))s"
 
       - name: Compiler cache statistics
         # The hit rate is the number that explains a fast or slow build; without
