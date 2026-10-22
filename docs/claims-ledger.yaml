@@ -1020,13 +1020,13 @@
   action: keep
   last_verified: "2026-10-21"
 - id: R-M24
-  claim: "`cargo test --lib`: 9,147 passed, 0 failed, 33 ignored in 321.14 s at the released commit"
+  claim: "`cargo test --lib`: 9,150 passed, 0 failed, 33 ignored in 368.99 s at the released commit"
   sources:
   - README.md:327
   label: partial
   bucket: S
   owner: qa
   method: null
-  reason: "Run by the Release gate job of run 39692481848 on the exact tree tagged v1.1.4 (0dfad23a52). 321.14 s is that job's wall time; the local two-thread run of the previous commit took 526.18 s for 9,139 tests, so the figure is job- and machine-specific. Supersedes the 1.1.3 figure recorded here before 2026-10-22."
+  reason: "Run by the Release gate job of run 39701447979 on the exact tree tagged v1.1.5 (a3ecdbe7b5). 368.99 s is that job's wall time with the default thread count; the figure is job- and machine-specific and tracks the suite size (three string_ffi tests were added in 1.1.5). Supersedes the 1.1.4 figure (9,147 in 321.14 s)."
   action: keep
   last_verified: "2026-10-22"
