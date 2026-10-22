@@ -13,31 +13,26 @@ struct Frame {
 
 impl Frame {
     /// Get the full HTML content of this frame.
-    fn content(self) -> String {
-        // native: evaluates document.documentElement.outerHTML
-    }
+    // native: evaluates document.documentElement.outerHTML
+    native fn content(self) -> String
 
     /// Find the first element matching a CSS selector within this frame.
     /// Returns nil if no element matches or frame is cross-origin.
-    fn query_selector(self, selector: String) -> Element? {
-        // native: frame.contentDocument.querySelector(selector)
-    }
+    // native: frame.contentDocument.querySelector(selector)
+    native fn query_selector(self, selector: String) -> Element?
 
     /// Find all elements matching a CSS selector within this frame.
     /// Returns empty array if no elements match or frame is cross-origin.
-    fn query_selector_all(self, selector: String) -> []Element {
-        // native: frame.contentDocument.querySelectorAll(selector)
-    }
+    // native: frame.contentDocument.querySelectorAll(selector)
+    native fn query_selector_all(self, selector: String) -> []Element
 
     /// Get the inner HTML of the frame's body element.
-    fn inner_html(self) -> String {
-        // native: evaluates frame.contentDocument.body.innerHTML
-    }
+    // native: evaluates frame.contentDocument.body.innerHTML
+    native fn inner_html(self) -> String
 }
 
 /// Get all frames in the current page.
 /// Cross-origin iframes return just url + name; same-origin frames
 /// support full interaction (content, query_selector, etc.).
-fn page_frames() -> []Frame {
-    // native: CDP Page.getFrameTree → parse_frame_tree
-}
+// native: CDP Page.getFrameTree → parse_frame_tree
+native fn page_frames() -> []Frame

@@ -4,11 +4,11 @@ module tallow.yahoo
 /// Real-time quote: price, change, volume, PE, market cap
 native fn quote(ticker: String) -> Quote
 /// Historical OHLCV data
-native fn history(ticker: String, period: String, interval: String) -> [Bar]
+native fn history(ticker: String, period: String, interval: String) -> []Bar
 /// Options chain for a ticker
 native fn options_chain(ticker: String, expiration: String) -> Map
 /// Search for tickers by name
-native fn search(query: String) -> [SearchResult]
+native fn search(query: String) -> []SearchResult
 
 struct Quote {
     symbol: String,

@@ -8,40 +8,33 @@ struct Chan<T> {
 }
 
 /// Create a bounded channel
-fn channel<T>(capacity: usize) -> Chan<T> {
-    // native: creates bounded channel
-}
+// native: creates bounded channel
+native fn channel<T>(capacity: usize) -> Chan<T>
 
 /// Create an unbounded channel
-fn unbounded<T>() -> Chan<T> {
-    // native: creates unbounded channel
-}
+// native: creates unbounded channel
+native fn unbounded<T>() -> Chan<T>
 
 impl Chan<T> {
     /// Send value to channel (blocks if full)
-    fn send(self, value: T) -> Result<()> {
-        // native: sends value
-    }
+    // native: sends value
+    native fn send(self, value: T) -> Result<()>
 
     /// Receive value from channel (blocks if empty)
-    fn recv(self) -> Result<T> {
-        // native: receives value
-    }
+    // native: receives value
+    native fn recv(self) -> Result<T>
 
     /// Try to receive without blocking
-    fn try_recv(self) -> T? {
-        // native: returns nil if empty
-    }
+    // native: returns nil if empty
+    native fn try_recv(self) -> T?
 
     /// Close the channel
-    fn close(self) {
-        // native: closes channel
-    }
+    // native: closes channel
+    native fn close(self)
 
     /// Number of items in channel
-    fn len(self) -> usize {
-        // native: current queue length
-    }
+    // native: current queue length
+    native fn len(self) -> usize
 }
 
 /// Mutex for mutual exclusion
@@ -49,20 +42,17 @@ struct Mutex<T> {
     // internal: OS mutex wrapping T
 }
 
-fn mutex<T>(value: T) -> Mutex<T> {
-    // native: creates mutex
-}
+// native: creates mutex
+native fn mutex<T>(value: T) -> Mutex<T>
 
 impl Mutex<T> {
     /// Lock and get mutable reference
-    fn lock(self) -> Result<T> {
-        // native: acquires lock, returns guard
-    }
+    // native: acquires lock, returns guard
+    native fn lock(self) -> Result<T>
 
     /// Try to lock without blocking
-    fn try_lock(self) -> T? {
-        // native: returns nil if already locked
-    }
+    // native: returns nil if already locked
+    native fn try_lock(self) -> T?
 }
 
 /// Atomic integer
@@ -70,9 +60,8 @@ struct AtomicI64 {
     // internal: atomic i64
 }
 
-fn atomic(value: i64) -> AtomicI64 {
-    // native: creates atomic
-}
+// native: creates atomic
+native fn atomic(value: i64) -> AtomicI64
 
 impl AtomicI64 {
     fn load(self) -> i64 { /* native */ }
@@ -87,9 +76,8 @@ struct WaitGroup {
     // internal: counter
 }
 
-fn wait_group() -> WaitGroup {
-    // native: creates wait group
-}
+// native: creates wait group
+native fn wait_group() -> WaitGroup
 
 impl WaitGroup {
     fn add(self, count: i64) { /* native */ }

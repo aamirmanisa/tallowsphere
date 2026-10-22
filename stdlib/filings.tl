@@ -4,18 +4,18 @@ module tallow.filings
 /// Parse SEC filing HTML into structured sections
 native fn parse(html: String, form_type: String) -> Filing
 /// List section names from a parsed filing
-native fn sections(filing: Filing) -> [String]
+native fn sections(filing: Filing) -> []String
 /// Get text of a specific section
 native fn section_text(filing: Filing, section_name: String) -> String
 /// Extract key financial metrics from filing HTML
 native fn extract_metrics(html: String) -> FilingMetrics
 /// Extract risk factors from filing
-native fn risk_factors(html: String) -> [String]
+native fn risk_factors(html: String) -> []String
 
 struct Filing {
     form_type: String,
     section_count: Int,
-    sections: [FilingSection],
+    sections: []FilingSection,
 }
 
 struct FilingSection {

@@ -13,7 +13,7 @@ struct DistributionPlan {
     concurrency: Int,
     batch_size: Int,
     num_batches: Int,
-    batches: [[String]],
+    batches: [[]String],
 }
 
 // Create a rate limiter that allows max_per_second requests per second.
@@ -33,4 +33,4 @@ fn RateLimiter.available(self) -> Float
 fn RateLimiter.backoff(attempt: Int) -> Int
 
 // Distribute URLs into batched groups for concurrent processing.
-fn RateLimiter.distribute(urls: [String], concurrency: Int) -> DistributionPlan
+fn RateLimiter.distribute(urls: []String, concurrency: Int) -> DistributionPlan

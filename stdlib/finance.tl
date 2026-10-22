@@ -6,9 +6,9 @@ native fn pv(fv: Float, rate: Float, periods: Int) -> Float
 /// Future Value: FV = PV * (1 + r)^n
 native fn fv(pv: Float, rate: Float, periods: Int) -> Float
 /// Net Present Value of cash flows
-native fn npv(rate: Float, cashflows: [Float]) -> Float
+native fn npv(rate: Float, cashflows: []Float) -> Float
 /// Internal Rate of Return (Newton solver)
-native fn irr(cashflows: [Float]) -> Float
+native fn irr(cashflows: []Float) -> Float
 /// Payment for loan/annuity
 native fn pmt(principal: Float, rate: Float, periods: Int) -> Float
 

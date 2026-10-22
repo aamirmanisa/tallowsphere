@@ -36,9 +36,8 @@ fn from_path(path: String) -> String {
 }
 
 /// Detect MIME type from file content (magic bytes)
-fn from_bytes(data: Bytes) -> String {
-    // native: inspects magic bytes to detect type
-}
+// native: inspects magic bytes to detect type
+native fn from_bytes(data: Bytes) -> String
 
 /// Check if MIME type is text-based
 fn is_text(mime: String) -> bool {

@@ -15,25 +15,21 @@ struct Element {
 }
 
 /// Parse HTML string into document
-fn parse(input: String) -> Document {
-    // native: parses HTML into DOM tree
-}
+// native: parses HTML into DOM tree
+native fn parse(input: String) -> Document
 
 /// Parse HTML bytes into document
-fn parse_bytes(input: Bytes) -> Document {
-    // native: parses HTML bytes (auto-detects encoding)
-}
+// native: parses HTML bytes (auto-detects encoding)
+native fn parse_bytes(input: Bytes) -> Document
 
 impl Document {
     /// Select elements matching CSS selector
-    fn select(self, selector: String) -> []Element {
-        // native: CSS selector query, returns matching elements
-    }
+    // native: CSS selector query, returns matching elements
+    native fn select(self, selector: String) -> []Element
 
     /// Select first element matching CSS selector
-    fn select_one(self, selector: String) -> Element? {
-        // native: returns first match or nil
-    }
+    // native: returns first match or nil
+    native fn select_one(self, selector: String) -> Element?
 
     /// Get document title
     fn title(self) -> String? {
@@ -47,16 +43,14 @@ impl Document {
     }
 
     /// Get document text content (no tags)
-    fn text(self) -> String {
-        // native: extracts all text nodes
-    }
+    // native: extracts all text nodes
+    native fn text(self) -> String
 }
 
 impl Element {
     /// Get element text content
-    fn text(self) -> String {
-        // native: text content of element and children
-    }
+    // native: text content of element and children
+    native fn text(self) -> String
 
     /// Get attribute value
     fn attr(self, name: String) -> String? {
@@ -69,29 +63,24 @@ impl Element {
     }
 
     /// Get inner HTML
-    fn inner_html(self) -> String {
-        // native: HTML content inside this element
-    }
+    // native: HTML content inside this element
+    native fn inner_html(self) -> String
 
     /// Get outer HTML (including this element's tag)
-    fn outer_html(self) -> String {
-        // native: HTML including this element
-    }
+    // native: HTML including this element
+    native fn outer_html(self) -> String
 
     /// Select children matching CSS selector
-    fn select(self, selector: String) -> []Element {
-        // native: CSS selector within this element's subtree
-    }
+    // native: CSS selector within this element's subtree
+    native fn select(self, selector: String) -> []Element
 
     /// Get parent element
-    fn parent(self) -> Element? {
-        // native: parent node
-    }
+    // native: parent node
+    native fn parent(self) -> Element?
 
     /// Get child elements
-    fn children(self) -> []Element {
-        // native: direct child elements
-    }
+    // native: direct child elements
+    native fn children(self) -> []Element
 
     /// Get element class list
     fn classes(self) -> []String {

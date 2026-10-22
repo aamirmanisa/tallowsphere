@@ -35,13 +35,11 @@ struct CsrfRequest {
 impl CsrfSession {
     /// Extract CSRF tokens from a URL.
     /// Visits the page in browser mode and detects all known token patterns.
-    fn extract(url: String) -> CsrfSession {
-        // native: launches browser, visits landing page, extracts tokens
-    }
+    // native: launches browser, visits landing page, extracts tokens
+    native fn extract(url: String) -> CsrfSession
 
     /// Sign a request with extracted CSRF tokens.
     /// Returns a new CsrfRequest with CSRF headers/fields injected.
-    fn sign_request(session: CsrfSession, request: CsrfRequest) -> CsrfRequest {
-        // native: copies request with added CSRF token headers/body fields
-    }
+    // native: copies request with added CSRF token headers/body fields
+    native fn sign_request(session: CsrfSession, request: CsrfRequest) -> CsrfRequest
 }

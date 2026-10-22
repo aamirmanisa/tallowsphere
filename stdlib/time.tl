@@ -3,19 +3,16 @@
 // Time handling with Duration literals and timezone support.
 
 /// Current timestamp
-fn now() -> Timestamp {
-    // native: returns current UTC timestamp
-}
+// native: returns current UTC timestamp
+native fn now() -> Timestamp
 
 /// Current monotonic time (for measuring elapsed)
-fn monotonic() -> u64 {
-    // native: monotonic nanoseconds
-}
+// native: monotonic nanoseconds
+native fn monotonic() -> u64
 
 /// Sleep for duration
-fn sleep(d: Duration) {
-    // native: blocks current task for duration
-}
+// native: blocks current task for duration
+native fn sleep(d: Duration)
 
 /// Timestamp (UTC, nanosecond precision)
 struct Timestamp {
@@ -40,14 +37,12 @@ impl i64 {
 
 impl Timestamp {
     /// Format timestamp as ISO 8601 string
-    fn to_iso(self) -> String {
-        // native: "2026-03-01T14:23:11Z"
-    }
+    // native: "2026-03-01T14:23:11Z"
+    native fn to_iso(self) -> String
 
     /// Format with custom pattern
-    fn format(self, pattern: String) -> String {
-        // native: formats using strftime-like pattern
-    }
+    // native: formats using strftime-like pattern
+    native fn format(self, pattern: String) -> String
 
     /// Unix timestamp in seconds
     fn unix(self) -> i64 {
@@ -86,9 +81,8 @@ impl Duration {
 }
 
 /// Parse ISO 8601 string
-fn parse_iso(s: String) -> Result<Timestamp> {
-    // native: parses ISO 8601 timestamp
-}
+// native: parses ISO 8601 timestamp
+native fn parse_iso(s: String) -> Result<Timestamp>
 
 /// Measure execution time of a block
 fn measure<T>(f: fn() -> T) -> (T, Duration) {

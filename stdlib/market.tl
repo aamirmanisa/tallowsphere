@@ -4,7 +4,7 @@ module tallow.market
 /// Combined quote + key financials
 native fn summary(ticker: String) -> MarketSummary
 /// Sector performance snapshot (SPY + XLF/XLK/XLE/XLV/XLI/XLP/XLY/XLU/XLB/XLRE)
-native fn sector_performance() -> [SectorPerformance]
+native fn sector_performance() -> []SectorPerformance
 
 struct MarketSummary {
     ticker: String,

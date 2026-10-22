@@ -8,7 +8,7 @@ module tallow.heston
 /// Heston European option price via Carr-Madan integration
 native fn price(call_put: String, S: Float, K: Float, T: Float, r: Float, kappa: Float, theta: Float, sigma: Float, v0: Float, rho: Float) -> Float
 /// Grid-search calibration of Heston parameters
-native fn calibrate(call_put: String, market_prices: [Float], strikes: [Float], S: Float, T: Float, r: Float) -> HestonParams
+native fn calibrate(call_put: String, market_prices: []Float, strikes: []Float, S: Float, T: Float, r: Float) -> HestonParams
 /// Implied volatility surface point from Heston
 native fn implied_vol(call_put: String, market_price: Float, S: Float, K: Float, T: Float, r: Float, kappa: Float, theta: Float, sigma: Float, v0: Float, rho: Float) -> Float
 

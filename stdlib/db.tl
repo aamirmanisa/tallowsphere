@@ -24,9 +24,8 @@ enum Driver {
 }
 
 /// Connect to a database
-fn connect(url: String) -> Result<Connection> {
-    // native: opens connection pool
-}
+// native: opens connection pool
+native fn connect(url: String) -> Result<Connection>
 
 /// Query result row
 struct Row {
@@ -35,34 +34,28 @@ struct Row {
 
 impl Connection {
     /// Execute a query and return rows
-    fn query(self, sql: String, params: []Value) -> Result<[]Row> {
-        // native: executes parameterized query
-    }
+    // native: executes parameterized query
+    native fn query(self, sql: String, params: []Value) -> Result<[]Row>
 
     /// Execute a query returning a single row
-    fn query_one(self, sql: String, params: []Value) -> Result<Row> {
-        // native: executes query, expects exactly one row
-    }
+    // native: executes query, expects exactly one row
+    native fn query_one(self, sql: String, params: []Value) -> Result<Row>
 
     /// Execute a statement (INSERT, UPDATE, DELETE) returning affected rows
-    fn execute(self, sql: String, params: []Value) -> Result<u64> {
-        // native: executes parameterized statement
-    }
+    // native: executes parameterized statement
+    native fn execute(self, sql: String, params: []Value) -> Result<u64>
 
     /// Begin a transaction
-    fn begin(self) -> Result<Transaction> {
-        // native: starts transaction
-    }
+    // native: starts transaction
+    native fn begin(self) -> Result<Transaction>
 
     /// Close the connection
-    fn close(self) -> Result<()> {
-        // native: closes connection pool
-    }
+    // native: closes connection pool
+    native fn close(self) -> Result<()>
 
     /// Check connection health
-    fn ping(self) -> Result<()> {
-        // native: pings database
-    }
+    // native: pings database
+    native fn ping(self) -> Result<()>
 }
 
 /// Database transaction
@@ -71,21 +64,17 @@ struct Transaction {
 }
 
 impl Transaction {
-    fn query(self, sql: String, params: []Value) -> Result<[]Row> {
-        // native: query within transaction
-    }
+    // native: query within transaction
+    native fn query(self, sql: String, params: []Value) -> Result<[]Row>
 
-    fn execute(self, sql: String, params: []Value) -> Result<u64> {
-        // native: execute within transaction
-    }
+    // native: execute within transaction
+    native fn execute(self, sql: String, params: []Value) -> Result<u64>
 
-    fn commit(self) -> Result<()> {
-        // native: commits transaction
-    }
+    // native: commits transaction
+    native fn commit(self) -> Result<()>
 
-    fn rollback(self) -> Result<()> {
-        // native: rolls back transaction
-    }
+    // native: rolls back transaction
+    native fn rollback(self) -> Result<()>
 }
 
 /// SQLite-specific: open file database
@@ -100,19 +89,15 @@ fn sqlite_memory() -> Result<Connection> {
 
 /// Row helper methods
 impl Row {
-    fn get_string(self, col: String) -> Result<String> {
-        // native: gets column as string
-    }
+    // native: gets column as string
+    native fn get_string(self, col: String) -> Result<String>
 
-    fn get_i64(self, col: String) -> Result<i64> {
-        // native: gets column as i64
-    }
+    // native: gets column as i64
+    native fn get_i64(self, col: String) -> Result<i64>
 
-    fn get_f64(self, col: String) -> Result<f64> {
-        // native: gets column as f64
-    }
+    // native: gets column as f64
+    native fn get_f64(self, col: String) -> Result<f64>
 
-    fn get_bool(self, col: String) -> Result<bool> {
-        // native: gets column as bool
-    }
+    // native: gets column as bool
+    native fn get_bool(self, col: String) -> Result<bool>
 }

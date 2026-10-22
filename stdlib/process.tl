@@ -3,14 +3,12 @@
 // Shell execution requires can_execute in agent context.
 
 /// Execute a shell command
-fn exec(cmd: String) -> Output {
-    // native: runs command in default shell
-}
+// native: runs command in default shell
+native fn exec(cmd: String) -> Output
 
 /// Execute with arguments
-fn exec(cmd: String, args: []String) -> Output {
-    // native: runs command with arguments
-}
+// native: runs command with arguments
+native fn exec(cmd: String, args: []String) -> Output
 
 /// Command output
 struct Output {
@@ -27,9 +25,8 @@ impl Output {
 }
 
 /// Spawn a background process
-fn spawn(cmd: String, args: []String) -> Process {
-    // native: starts process without waiting
-}
+// native: starts process without waiting
+native fn spawn(cmd: String, args: []String) -> Process
 
 /// Process handle
 struct Process {
@@ -39,27 +36,22 @@ struct Process {
 
 impl Process {
     /// Wait for process to finish
-    fn wait(self) -> Output {
-        // native: blocks until process exits
-    }
+    // native: blocks until process exits
+    native fn wait(self) -> Output
 
     /// Kill the process
-    fn kill(self) {
-        // native: sends SIGKILL
-    }
+    // native: sends SIGKILL
+    native fn kill(self)
 
     /// Check if still running
-    fn is_running(self) -> bool {
-        // native: checks process status
-    }
+    // native: checks process status
+    native fn is_running(self) -> bool
 }
 
 /// Exit current process with code
-fn exit(code: i32) {
-    // native: exits with status code
-}
+// native: exits with status code
+native fn exit(code: i32)
 
 /// Get current process ID
-fn pid() -> u32 {
-    // native: returns current PID
-}
+// native: returns current PID
+native fn pid() -> u32

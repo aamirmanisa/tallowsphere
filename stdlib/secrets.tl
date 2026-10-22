@@ -6,7 +6,7 @@
 struct SecretStore {
     path: String,
     count: Int,
-    keys: [String],
+    keys: []String,
 }
 
 // Open or create a secrets store at the given file path
@@ -22,7 +22,7 @@ fn SecretStore.get(self, key: String) -> String?
 fn SecretStore.delete(self, key: String) -> SecretStore
 
 // List all stored keys (values are hidden)
-fn SecretStore.list(self) -> [String]
+fn SecretStore.list(self) -> []String
 
 // Export all secrets as a Map (keys and values)
 fn SecretStore.export(self) -> Map<String, String>
