@@ -3,8 +3,8 @@
 #
 #   ./install.sh                     # latest release for this machine into ~/.local
 #   ./install.sh --prefix /usr/local # system-wide (run with sudo)
-#   ./install.sh --from dist/tallow-linux-aarch64-1.1.1.tar.gz
-#   ./install.sh --version 1.1.1
+#   ./install.sh --from dist/tallow-linux-aarch64-1.1.5.tar.gz
+#   ./install.sh --version 1.1.5
 #
 # Two files are installed, always into the same directory:
 #   tallow        the compiler
