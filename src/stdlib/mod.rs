@@ -384,6 +384,12 @@ pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option
             return Some(result);
         }
     }
+    // JsonValue accessors. `json.parse_value` returns plain runtime values, not a
+    // tagged struct, so there is no struct name to match on; the dispatcher there
+    // refuses struct receivers so a user type keeps its own `get`/`len`/… methods.
+    if let Some(result) = json::dispatch_method(object, method, args.clone()) {
+        return Some(result);
+    }
     if let Value::Struct { name, .. } = object {
         match name.as_str() {
             // `url.parse` returns a struct named `URL`, but nothing ever routed that name here —

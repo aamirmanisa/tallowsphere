@@ -41,6 +41,35 @@ pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option
                 .map(|(k, v)| (Value::String(k), Value::String(v)))
                 .collect(),
         ))),
+        // Methods declared in stdlib/url.tl as plain Tallow bodies. The
+        // interpreter does not execute `.tl` method bodies for a native struct,
+        // so each of these was unreachable: `u.domain()` died with
+        // "unknown method: .domain() on URL" (measured 2026-10-22).
+        "domain" => Some(Ok(Value::String(field_string(fields, "host")))),
+        "is_secure" => Some(Ok(Value::Bool(field_string(fields, "scheme") == "https"))),
+        "param" => {
+            let key = match args.first() {
+                Some(Value::String(s)) => s.clone(),
+                _ => return Some(Err("url.param: expected a String name".into())),
+            };
+            let value = parse_query(&field_string(fields, "query"))
+                .into_iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| Value::String(v))
+                .unwrap_or(Value::Nil);
+            Some(Ok(value))
+        }
+        "with_path" => {
+            // Declared in stdlib/url.tl as `URL { ...self, path: path }`. The
+            // struct-update form is not something the runtime executes for a
+            // native struct, so the method was unreachable and every call died
+            // with "unknown method: .with_path() on URL" (measured 2026-10-22).
+            let path = match args.first() {
+                Some(Value::String(s)) => s.clone(),
+                _ => return Some(Err("url.with_path: expected a String path".into())),
+            };
+            Some(Ok(rebuild(fields, Some(("path", Value::String(path))))))
+        }
         "with_param" => {
             let key = match args.first() {
                 Some(Value::String(s)) => s.clone(),
