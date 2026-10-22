@@ -359,8 +359,19 @@ jobs:
         # every parity test fails at link time with "cannot find -llzma", which
         # looks like a code defect and is not one.
         run: |
-          command -v clang >/dev/null || sudo apt-get update
-          sudo apt-get install -y clang liblzma-dev libbz2-dev
+          # `apt-get update` unconditionally, and retry it. On 2026-10-22 this
+          # step failed with "404 Not Found" for liblzma-dev because the image's
+          # cached package index pointed at a mirror revision that had already
+          # rolled; the old form only updated when clang was missing, so a stale
+          # index survived. A 404 from a mirror is infrastructure, and it must not
+          # read as a parity defect.
+          for attempt in 1 2 3; do
+            sudo apt-get update -o Acquire::Retries=3 && break
+            echo "apt-get update failed (attempt $attempt); retrying"
+            sleep 10
+          done
+          sudo apt-get install -y -o Acquire::Retries=3 --fix-missing \
+            clang liblzma-dev libbz2-dev
       - name: Run parity runner (DIVERGE fails)
         run: |
           set -uo pipefail
