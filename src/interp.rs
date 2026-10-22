@@ -17451,6 +17451,9 @@ impl Interpreter {
 
                                 let handle: std::sync::Arc<dyn std::any::Any + Send + Sync> =
                                     std::sync::Arc::new(page);
+                                // Bind this page as the one the module-level
+                                // `browser.page_*` helpers act on.
+                                crate::stdlib::browser::bind_current_page(handle.clone());
                                 Ok(Value::Ok(Box::new(Value::BrowserObject(BrowserHandle {
                                     kind: "Page".to_string(),
                                     handle,

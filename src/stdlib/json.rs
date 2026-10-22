@@ -191,7 +191,7 @@ fn do_parse_value(args: Vec<Value>) -> StdlibResult {
     Ok(json_to_value(&parsed))
 }
 
-fn json_to_value(v: &serde_json::Value) -> Value {
+pub(crate) fn json_to_value(v: &serde_json::Value) -> Value {
     match v {
         serde_json::Value::Null => Value::Nil,
         serde_json::Value::Bool(b) => Value::Bool(*b),
