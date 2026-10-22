@@ -10,6 +10,140 @@ use crate::interp::Value;
 use regex::Regex;
 use std::sync::LazyLock;
 
+// ── Current-page registry ────────────────────────────────────────────────
+//
+// `stdlib/browser.tl` declares module-level `page_*` helpers that take no Page
+// argument (`page_extract_all_text(selector)` and friends). A live page is not
+// reachable from a free function unless something binds it, so the interpreter
+// registers the Page it just created or navigated here, and these helpers act
+// on that page. Without a bound page they keep answering with the explicit
+// "no page bound" refusal instead of pretending to work.
+thread_local! {
+    static CURRENT_PAGE: std::cell::RefCell<
+        Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+/// Register the page that subsequent `browser.page_*` free functions act on.
+pub fn bind_current_page(handle: std::sync::Arc<dyn std::any::Any + Send + Sync>) {
+    CURRENT_PAGE.with(|slot| *slot.borrow_mut() = Some(handle));
+}
+
+fn current_page() -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
+    CURRENT_PAGE.with(|slot| slot.borrow().clone())
+}
+
+/// Evaluate `js` on the bound page and return the CDP result as a `Value`.
+fn eval_on_bound_page(js: &str) -> StdlibResult {
+    let handle = current_page().ok_or_else(|| {
+        "browser: no page bound — call browser.page_extract_all_text() and friends only after \
+         a Page exists (Browser.launch(...).new_page()); otherwise use the Page handle directly"
+            .to_string()
+    })?;
+    let page = handle
+        .downcast_ref::<crate::browser::Page>()
+        .ok_or_else(|| "browser: the bound handle is not a Page".to_string())?;
+    // The CDP client's reader task lives on the interpreter's browser runtime;
+    // driving the future on any other runtime times out (measured: the call
+    // waited on a response no task was reading).
+    let value = crate::interp::get_browser_runtime()
+        .block_on(page.evaluate_expression(js))
+        .map_err(|e| format!("browser: {e}"))?;
+    Ok(super::json::json_to_value(&value))
+}
+
+/// `page_extract_all_text(selector) -> [String]` — one CDP round trip.
+fn page_extract_all_text(args: Vec<Value>) -> StdlibResult {
+    let selector = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("page_extract_all_text: expected a selector string".into()),
+    };
+    let js = format!(
+        "Array.from(document.querySelectorAll({sel})).map(e => (e.textContent || '').trim())",
+        sel = serde_json::to_string(&selector).map_err(|e| e.to_string())?
+    );
+    match eval_on_bound_page(&js)? {
+        Value::Array(items) => Ok(Value::Array(
+            items
+                .into_iter()
+                .map(|v| Value::String(v.as_string()))
+                .collect(),
+        )),
+        other => Err(format!(
+            "page_extract_all_text: expected an array from the page, got {}",
+            crate::interp::type_name(&other)
+        )),
+    }
+}
+
+/// `page_extract_all_attrs(selector, attrs) -> [Map<String, String>]`.
+fn page_extract_all_attrs(args: Vec<Value>) -> StdlibResult {
+    let selector = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("page_extract_all_attrs: expected a selector string".into()),
+    };
+    let attrs: Vec<String> = match args.get(1) {
+        Some(Value::Array(items)) => items.iter().map(|v| v.as_string()).collect(),
+        _ => return Err("page_extract_all_attrs: expected an array of attribute names".into()),
+    };
+    let js = format!(
+        "Array.from(document.querySelectorAll({sel})).map(e => {{ const o = {{}}; {body}; return o; }})",
+        sel = serde_json::to_string(&selector).map_err(|e| e.to_string())?,
+        body = attrs
+            .iter()
+            .map(|a| format!(
+                "o[{name}] = e.getAttribute({name}) || '';",
+                name = serde_json::to_string(a).unwrap_or_else(|_| "\"\"".into())
+            ))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    match eval_on_bound_page(&js)? {
+        Value::Array(items) => Ok(Value::Array(
+            items
+                .into_iter()
+                .map(|v| match v {
+                    Value::Map(entries) => Value::Map(
+                        entries
+                            .into_iter()
+                            .map(|(k, val)| (k, Value::String(val.as_string())))
+                            .collect(),
+                    ),
+                    other => Value::Map(vec![(
+                        Value::String("value".to_string()),
+                        Value::String(other.as_string()),
+                    )]),
+                })
+                .collect(),
+        )),
+        other => Err(format!(
+            "page_extract_all_attrs: expected an array from the page, got {}",
+            crate::interp::type_name(&other)
+        )),
+    }
+}
+
+/// `page_capture_dom_snapshot() -> String` — the live document's outer HTML.
+fn page_capture_dom_snapshot() -> StdlibResult {
+    eval_on_bound_page("document.documentElement.outerHTML")
+}
+
+/// `page_structured_data() -> StructuredData` — JSON-LD + OpenGraph from the
+/// live page, parsed by the same `structured_data_extract` the offline path uses.
+fn page_structured_data() -> StdlibResult {
+    let html = match page_capture_dom_snapshot()? {
+        Value::String(s) => s,
+        other => {
+            return Err(format!(
+                "page_structured_data: expected HTML from the page, got {}",
+                crate::interp::type_name(&other)
+            ))
+        }
+    };
+    structured_data_extract(vec![Value::String(html)])
+}
+
+
 /// Machine-readable schema tag for the browser surface manifest.
 pub const SURFACE_SCHEMA_VERSION: &str = "tallow.browser_surface_manifest.v1";
 /// Machine-readable schema tag for the Phase 4 local fallback service status.
@@ -525,6 +659,13 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         // which already handles sitemap indexes and gzipped sitemaps.
         "crawler_from_sitemap" => Some(crawler_from_sitemap(args)),
         "crawler_from_links" => Some(crawler_from_links(args)),
+        // Live-page helpers: they act on the page the interpreter last created or
+        // navigated (see CURRENT_PAGE above). Bound 2026-10-22; each does one CDP
+        // round trip and returns real page data, not a placeholder.
+        "page_extract_all_text" => Some(page_extract_all_text(args)),
+        "page_extract_all_attrs" => Some(page_extract_all_attrs(args)),
+        "page_capture_dom_snapshot" => Some(page_capture_dom_snapshot()),
+        "page_structured_data" => Some(page_structured_data()),
         "page_cache_create" => Some(page_cache_create(args)),
         "fallback_service_status" | "browser_fallback_service_status" => {
             Some(fallback_service_status(args))
@@ -1502,6 +1643,51 @@ mod tests {
         // shape-based, so a sentence with no PII-shaped tokens is unchanged.
         let prose = "The quick brown fox jumps over the lazy dog.";
         assert_eq!(redact_pii(prose), prose);
+    }
+
+    // ── live-page helpers (added 2026-10-22) ──
+
+    #[test]
+    fn live_page_helpers_refuse_when_no_page_is_bound() {
+        // No browser is launched in a unit test, so the registry is empty. Each
+        // helper must say so — the failure mode this replaces was silence.
+        for (name, args) in [
+            ("page_extract_all_text", vec![Value::String("h1".into())]),
+            (
+                "page_extract_all_attrs",
+                vec![
+                    Value::String("a".into()),
+                    Value::Array(vec![Value::String("href".into())]),
+                ],
+            ),
+            ("page_capture_dom_snapshot", vec![]),
+            ("page_structured_data", vec![]),
+        ] {
+            let result = super::dispatch(name, args)
+                .unwrap_or_else(|| panic!("{name} is not routed through browser::dispatch"));
+            let message = result.expect_err("must refuse without a bound page");
+            assert!(
+                message.contains("no page bound"),
+                "{name} refused with the wrong message: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn live_page_helpers_are_routed_by_name() {
+        // The dispatch table — not the .tl declaration — is what makes a name
+        // callable; this pins all four so a rename cannot silently unwire them.
+        for name in [
+            "page_extract_all_text",
+            "page_extract_all_attrs",
+            "page_capture_dom_snapshot",
+            "page_structured_data",
+        ] {
+            assert!(
+                super::dispatch(name, vec![]).is_some(),
+                "{name} has no dispatch arm"
+            );
+        }
     }
 
     #[test]

@@ -759,12 +759,74 @@ impl Page {
                                     || event_frame == frame_id.as_deref())
                             {
                                 let resolved_frame =
-                                    frame_id.unwrap_or_else(|| self.frame_id.clone());
-                                return Ok(NavigationResult {
-                                    url: url.to_string(),
-                                    frame_id: resolved_frame,
-                                    status_code,
-                                });
+                                    frame_id.clone().unwrap_or_else(|| self.frame_id.clone());
+                                // The lifecycle event only says the frame finished
+                                // loading — it does not say it loaded the page we
+                                // asked for. Chromium fires DOMContentLoaded on its
+                                // own error document too, so a blocked navigation
+                                // (HTTP 429, DNS failure, refused TLS) returned Ok
+                                // with the requested URL and an empty title.
+                                // Measured 2026-10-22 on a Yahoo article: goto()
+                                // reported success while location.href was
+                                // chrome-error://chromewebdata/.
+                                let probe = match tokio::time::timeout(
+                                    std::time::Duration::from_millis(750),
+                                    self.evaluate_expression(
+                                        "JSON.stringify({u: location.href, o: performance.timeOrigin, e: (document.documentElement.className === 'neterror' || !!document.querySelector('#main-frame-error'))})",
+                                    ),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(v)) => v
+                                        .as_str()
+                                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+                                    _ => None,
+                                };
+                                let is_error_doc = probe
+                                    .as_ref()
+                                    .and_then(|p| p.get("e"))
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let current_url = probe
+                                    .as_ref()
+                                    .and_then(|p| p.get("u"))
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string);
+                                if is_error_doc
+                                    || current_url
+                                        .as_deref()
+                                        .is_some_and(|u| u.starts_with("chrome-error://"))
+                                {
+                                    return Err(BrowserError::NavigationFailed(
+                                        super::error::NavigationError::ChromeNetError(
+                                            "page did not load — Chromium rendered an error page"
+                                                .to_string(),
+                                        ),
+                                    ));
+                                }
+                                // Without a navigate reply there is no frame id, so a
+                                // lifecycle event can belong to the document we are
+                                // leaving. Only accept it when the document really
+                                // changed (timeOrigin is minted per document) — the
+                                // same guard the poll above uses. An unverifiable
+                                // event falls through to the poll instead of
+                                // reporting a load that may not have happened.
+                                let new_document = probe
+                                    .as_ref()
+                                    .and_then(|p| p.get("o"))
+                                    .and_then(|v| v.as_f64())
+                                    .map(|now| match doc_epoch {
+                                        Some(before) => (now - before).abs() > 0.5,
+                                        None => true,
+                                    })
+                                    .unwrap_or(false);
+                                if new_document {
+                                    return Ok(NavigationResult {
+                                        url: current_url.unwrap_or_else(|| url.to_string()),
+                                        frame_id: resolved_frame,
+                                        status_code,
+                                    });
+                                }
                             }
                         }
                     }
