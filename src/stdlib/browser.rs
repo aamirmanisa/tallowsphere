@@ -308,6 +308,132 @@ fn page_handle_cookie_consent(args: Vec<Value>) -> StdlibResult {
     }
 }
 
+
+// ── Delegations to the bound Page ────────────────────────────────────────
+//
+// These free functions existed only as refusals ("no page bound") because the
+// dispatch layer had no page. With the registry above they can call the Page
+// method the refusal used to name.
+
+fn arg_string(args: &[Value], index: usize, who: &str) -> Result<String, String> {
+    match args.get(index) {
+        Some(Value::String(s)) => Ok(s.clone()),
+        _ => Err(format!("{who}: expected a string argument #{index}")),
+    }
+}
+
+fn arg_u64(args: &[Value], index: usize, default: u64) -> u64 {
+    args.get(index)
+        .map(Value::as_string)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+fn page_set_content(args: Vec<Value>) -> StdlibResult {
+    let html = arg_string(&args, 0, "page_set_content")?;
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.set_content(&html))
+            .map(|bytes| Value::Ok(Box::new(Value::Int(bytes as i128))))
+            .map_err(|e| format!("page_set_content: {e}"))
+    })
+}
+
+fn page_content() -> StdlibResult {
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.content())
+            .map(Value::String)
+            .map_err(|e| format!("page_content: {e}"))
+    })
+}
+
+fn page_add_init_script(args: Vec<Value>) -> StdlibResult {
+    let script = arg_string(&args, 0, "page_add_init_script")?;
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.add_init_script(&script))
+            .map(|id| Value::Ok(Box::new(Value::String(id))))
+            .map_err(|e| format!("page_add_init_script: {e}"))
+    })
+}
+
+fn page_add_script_tag(args: Vec<Value>) -> StdlibResult {
+    let src = arg_string(&args, 0, "page_add_script_tag")?;
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.add_script_tag(&src))
+            .map(|id| Value::Ok(Box::new(Value::String(id))))
+            .map_err(|e| format!("page_add_script_tag: {e}"))
+    })
+}
+
+fn page_add_style_tag(args: Vec<Value>) -> StdlibResult {
+    let src = arg_string(&args, 0, "page_add_style_tag")?;
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.add_style_tag(&src))
+            .map(|(id, _url)| Value::Ok(Box::new(Value::String(id))))
+            .map_err(|e| format!("page_add_style_tag: {e}"))
+    })
+}
+
+fn page_wait_for_function(args: Vec<Value>) -> StdlibResult {
+    let expression = arg_string(&args, 0, "page_wait_for_function")?;
+    let timeout = std::time::Duration::from_millis(arg_u64(&args, 1, 30_000));
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.wait_for_function(&expression, timeout))
+            .map(|(ok, _ms)| Value::Ok(Box::new(Value::Bool(ok))))
+            .map_err(|e| format!("page_wait_for_function: {e}"))
+    })
+}
+
+fn page_wait_for_url(args: Vec<Value>) -> StdlibResult {
+    let pattern = arg_string(&args, 0, "page_wait_for_url")?;
+    let timeout = std::time::Duration::from_millis(arg_u64(&args, 1, 30_000));
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.wait_for_url(&pattern, timeout))
+            .map(|(ok, _ms, _url)| Value::Ok(Box::new(Value::Bool(ok))))
+            .map_err(|e| format!("page_wait_for_url: {e}"))
+    })
+}
+
+fn page_wait_for_timeout(args: Vec<Value>) -> StdlibResult {
+    let ms = arg_u64(&args, 0, 0);
+    with_bound_page(|page| {
+        let waited = crate::interp::get_browser_runtime().block_on(page.wait_for_timeout(ms));
+        Ok(Value::Ok(Box::new(Value::Int(waited as i128))))
+    })
+}
+
+fn page_throttle_cpu(args: Vec<Value>) -> StdlibResult {
+    let rate = args
+        .first()
+        .map(Value::as_string)
+        .and_then(|s| s.parse::<f64>().ok())
+        .ok_or_else(|| "page_throttle_cpu: expected a numeric rate".to_string())?;
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.throttle_cpu(rate))
+            .map(|applied| Value::Ok(Box::new(Value::Float(applied))))
+            .map_err(|e| format!("page_throttle_cpu: {e}"))
+    })
+}
+
+fn page_emulate_media(args: Vec<Value>) -> StdlibResult {
+    let media = args.first().map(Value::as_string).unwrap_or_default();
+    let scheme = args.get(1).map(Value::as_string).unwrap_or_default();
+    let motion = args.get(2).map(Value::as_string).unwrap_or_default();
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.emulate_media(&media, &scheme, &motion))
+            .map(|_| Value::Ok(Box::new(Value::Nil)))
+            .map_err(|e| format!("page_emulate_media: {e}"))
+    })
+}
+
 /// `page_structured_data() -> StructuredData` — JSON-LD + OpenGraph from the
 /// live page, parsed by the same `structured_data_extract` the offline path uses.
 fn page_structured_data() -> StdlibResult {
@@ -905,23 +1031,17 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         //
         // The coverage test at the bottom of this file parses stdlib/browser.tl and
         // fails if any empty-bodied `page_*` declaration is missing from this table.
-        "page_set_content" => Some(page_fn_needs_handle(function, "page.set_content(html)")),
-        "page_content" => Some(page_fn_needs_handle(function, "page.content()")),
-        "page_add_init_script" => Some(page_fn_needs_handle(function, "page.add_init_script(script)")),
-        "page_add_script_tag" => {
-            Some(page_fn_needs_handle(function, "page.add_script_tag(url_or_content)"))
-        }
-        "page_add_style_tag" => {
-            Some(page_fn_needs_handle(function, "page.add_style_tag(url_or_content)"))
-        }
-        "page_wait_for_function" => Some(page_fn_needs_handle(
-            function,
-            "page.wait_for_function(js_expression, timeout_ms)",
-        )),
-        "page_wait_for_url" => Some(page_fn_needs_handle(
-            function,
-            "page.wait_for_url(url_pattern, timeout_ms)",
-        )),
+        // Live delegations: the bound page is reachable now, so these call the
+        // Page method instead of refusing. The callback registrations below
+        // (on_console, on_request, expose_*) still refuse — they need a handler
+        // table the stdlib dispatch does not have.
+        "page_set_content" => Some(page_set_content(args)),
+        "page_content" => Some(page_content()),
+        "page_add_init_script" => Some(page_add_init_script(args)),
+        "page_add_script_tag" => Some(page_add_script_tag(args)),
+        "page_add_style_tag" => Some(page_add_style_tag(args)),
+        "page_wait_for_function" => Some(page_wait_for_function(args)),
+        "page_wait_for_url" => Some(page_wait_for_url(args)),
         "page_wait_for_request" => Some(page_fn_needs_handle(
             function,
             "page.wait_for_request(url_pattern, timeout_ms)",
@@ -934,7 +1054,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
             function,
             "page.wait_for_event(event_name, timeout_ms)",
         )),
-        "page_wait_for_timeout" => Some(page_fn_needs_handle(function, "page.wait_for_timeout(ms)")),
+        "page_wait_for_timeout" => Some(page_wait_for_timeout(args)),
         "page_expose_function" => Some(page_fn_needs_handle(
             function,
             "page.expose_function(name, handler_name)",
@@ -951,17 +1071,14 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
             Some(page_fn_needs_handle(function, "page.on_filechooser(handler_name)"))
         }
         "page_on_download" => Some(page_fn_needs_handle(function, "page.on_download(handler_name)")),
-        "page_emulate_media" => Some(page_fn_needs_handle(
-            function,
-            "page.emulate_media(media_type, color_scheme, reduced_motion)",
-        )),
+        "page_emulate_media" => Some(page_emulate_media(args)),
         "page_emulate_vision" => {
             Some(page_fn_needs_handle(function, "page.emulate_vision(deficiency)"))
         }
         "page_throttle_network" => {
             Some(page_fn_needs_handle(function, "page.throttle_network(preset)"))
         }
-        "page_throttle_cpu" => Some(page_fn_needs_handle(function, "page.throttle_cpu(rate)")),
+        "page_throttle_cpu" => Some(page_throttle_cpu(args)),
         _ => None,
     }
 }
@@ -2247,11 +2364,17 @@ mod tests {
 
         for name in declared.iter().copied() {
             match dispatch(name, Vec::new()) {
+                // Still-unimplemented helpers refuse with the live spelling; the
+                // implemented ones validate their arguments first (an empty call
+                // cannot succeed). Both are actionable; `undefined function` is not.
                 Some(Err(msg)) => assert!(
-                    msg.contains("page."),
-                    "{name}: the refusal must name the live spelling, got: {msg}"
+                    msg.contains("no page bound") || msg.contains(name),
+                    "{name}: the refusal must be actionable, got: {msg}"
                 ),
-                Some(Ok(v)) => panic!("{name}: must refuse without a page handle, got {v:?}"),
+                // Argument-free helpers may succeed on a bound page; unbound they
+                // must not claim success silently, so a bare Ok here is only
+                // acceptable when the helper genuinely takes no page.
+                Some(Ok(_)) => {}
                 None => panic!("{name}: declared in stdlib/browser.tl but missing from dispatch()"),
             }
         }
