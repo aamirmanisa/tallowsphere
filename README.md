@@ -4,7 +4,7 @@
 
 **A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
-![status](https://img.shields.io/badge/status-1.1.4-informational?style=flat-square)
+![status](https://img.shields.io/badge/status-1.1.5-informational?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&logo=rust&logoColor=white)
 ![backend](https://img.shields.io/badge/backend-LLVM%20%C2%B7%20clang%2018-2d2d2d?style=flat-square)
@@ -42,7 +42,7 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-22 · release `v1.1.4` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
+[measured 2026-10-22 · release `v1.1.5` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
 
 Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
 
@@ -88,18 +88,18 @@ $ curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/ins
 The installer resolves the newest release, verifies the checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before reporting success:
 
 ```console
-fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.1.4/tallow-linux-aarch64-1.1.4.tar.gz
-tallow-linux-aarch64-1.1.4.tar.gz: OK
-installed tallow 1.1.4 into /root/.local/bin
+fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.1.5/tallow-linux-aarch64-1.1.5.tar.gz
+tallow-linux-aarch64-1.1.5.tar.gz: OK
+installed tallow 1.1.5 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
-[measured 2026-10-22 · release `v1.1.4` · commit `0dfad23a52`]
+[measured 2026-10-22 · release `v1.1.5` · commit `a3ecdbe7b5`]
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
-$ curl -fsSL …/install.sh | bash -s -- --version 1.1.4
-$ ./install.sh --from ./tallow-linux-aarch64-1.1.4.tar.gz    # air-gapped
+$ curl -fsSL …/install.sh | bash -s -- --version 1.1.5
+$ ./install.sh --from ./tallow-linux-aarch64-1.1.5.tar.gz    # air-gapped
 ```
 
 ### What the machine needs
@@ -108,7 +108,7 @@ $ ./install.sh --from ./tallow-linux-aarch64-1.1.4.tar.gz    # air-gapped
 |---|---|---|
 | **clang** | Tallow emits LLVM IR and asks `clang` to assemble and link it | 14–18; 18.1.3 is what every measurement here used. Override with `TALLOW_CLANG` |
 | **linux-aarch64** | The only platform with a published build | Everything else: [build from source](#building-from-source) |
-| **~575 MB disk** | 46 MB compiler + 527 MB static archive | The archive is not optional: every program links against it |
+| **~575 MB disk** | 46 MB compiler + 528 MB static archive | The archive is not optional: every program links against it |
 
 `clang` is required at **run time**, not only at build time — the compiler invokes it for each program it builds. A machine without `clang` can execute pre-built binaries but cannot compile anything.
 
@@ -116,11 +116,11 @@ $ ./install.sh --from ./tallow-linux-aarch64-1.1.4.tar.gz    # air-gapped
 
 ```console
 $ tallow --version
-tallow 1.1.4
+tallow 1.1.5
   platform: linux
   arch: aarch64
-  build: 2026-10-21T23:30:51Z
-  git: 0dfad23a52
+  build: 2026-10-22T01:00:09Z
+  git: a3ecdbe7b5
 ```
 
 The `git:` line is provenance: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so the two are distinguishable.
@@ -265,8 +265,8 @@ $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
 For a fleet, keep versions side by side so an upgrade is a symlink swap and rollback is a directory:
 
 ```console
-$ install -d /opt/tallow/1.1.4 && tar -xzf tallow-linux-aarch64-1.1.4.tar.gz -C /opt/tallow/1.1.4
-$ ln -sfn /opt/tallow/1.1.4 /opt/tallow/current
+$ install -d /opt/tallow/1.1.5 && tar -xzf tallow-linux-aarch64-1.1.5.tar.gz -C /opt/tallow/1.1.5
+$ ln -sfn /opt/tallow/1.1.5 /opt/tallow/current
 $ ln -sf /opt/tallow/current/bin/tallow /usr/local/bin/tallow
 ```
 
@@ -316,7 +316,7 @@ ENTRYPOINT ["tallow"]
 
 ```console
 $ cargo build --profile release --locked --target aarch64-unknown-linux-gnu --bin tallow --lib
-$ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.1.4 --out dist/
+$ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.1.5 --out dist/
 ```
 
 The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)`. It writes the archive and its `.sha256`, and stamps the commit into the binary's version output. Upload both; the installer verifies the checksum before unpacking.
@@ -325,10 +325,10 @@ The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)
 
 | Gate | Result | Revision |
 |---|---|---|
-| `cargo test --lib` | **9,147 passed · 0 failed · 33 ignored** (321.14 s) | `0dfad23a52`, 2026-10-21 [measured] |
-| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, no egress | released 1.1.4 [measured] |
-| Conformance | **17 programs × 2 planes, 0 failures** against the installed 1.1.4 binary | 2026-10-22 [measured] |
-| Examples & tutorial | **9 of 10 programs** byte-identical on both planes; `error_handling.tl` uses `String.parse`, which has no native lowering — the documented interpreter fallback runs it and `--require-native` refuses (registered, stub #138) | 2026-10-22 [measured] |
+| `cargo test --lib` | **9,150 passed · 0 failed · 33 ignored** (368.99 s) | `a3ecdbe7b5`, 2026-10-22 [measured] |
+| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, no egress | released 1.1.5 [measured] |
+| Conformance | **18 programs × 2 planes, 0 failures** against the installed 1.1.5 binary | 2026-10-22 [measured] |
+| Examples & tutorial | **10 of 10 programs** byte-identical on both planes, including `error_handling.tl` (`String.parse` now lowers natively) | 2026-10-22 [measured] |
 | Install probe | compiles and runs a program from the installed archive | 2026-10-21 [measured] |
 
 ```console
@@ -344,7 +344,7 @@ $ python3 conformance/run.py --tallow $(command -v tallow)
 | Limit | Detail | Status |
 |---|---|---|
 | **musl targets** | The browser backend needs BoringSSL's C++, which has no musl `g++` on this host (`MUSL_RC=101`) | blocked; needs an Alpine build host |
-| **Archive size** | `libtallow.a` is 527 MB; `strip` recovers ~11%, so the fix is a `cdylib` or a crate split | open |
+| **Archive size** | `libtallow.a` is 528 MB; `strip` recovers ~11%, so the fix is a `cdylib` or a crate split | open |
 | **Platform builds** | Only `linux-aarch64` has a published artifact; x86_64, macOS and Windows have no CI-produced binary | open |
 | **Declared types vs values** | `let x: i64 = "nope"` passes `check` with 0 warnings — the annotation is not enforced against the initialiser | open (#137) |
 | **Interpreter coercion** | In some stdlib arms the interpreter coerces an argument where the compiled leg refuses, so a wrong-typed call can pass `check` and return a plausible answer | open; recorded as a language-level question |
