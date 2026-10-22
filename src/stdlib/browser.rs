@@ -309,6 +309,66 @@ fn page_handle_cookie_consent(args: Vec<Value>) -> StdlibResult {
 }
 
 
+
+fn wait_result(
+    matched: bool,
+    elapsed_ms: u64,
+    method: Option<&str>,
+    url: Option<String>,
+) -> Value {
+    Value::Struct {
+        name: "WaitResult".to_string(),
+        fields: vec![
+            ("result".to_string(), Value::Bool(matched)),
+            ("matched".to_string(), Value::Bool(matched)),
+            ("received".to_string(), Value::Bool(matched)),
+            ("elapsed_ms".to_string(), Value::Int(elapsed_ms as i128)),
+            ("waited_ms".to_string(), Value::Int(elapsed_ms as i128)),
+            (
+                "url".to_string(),
+                url.map(Value::String).unwrap_or(Value::Nil),
+            ),
+            (
+                "method".to_string(),
+                method.map(|m| Value::String(m.to_string())).unwrap_or(Value::Nil),
+            ),
+        ],
+    }
+}
+
+fn page_wait_for_request(args: Vec<Value>) -> StdlibResult {
+    let pattern = arg_string(&args, 0, "page_wait_for_request")?;
+    let timeout = std::time::Duration::from_millis(arg_u64(&args, 1, 30_000));
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.wait_for_request(&pattern, timeout))
+            .map(|(ok, ms, url)| wait_result(ok, ms, Some("Network.requestWillBeSent"), Some(url)))
+            .map_err(|e| format!("page_wait_for_request: {e}"))
+    })
+}
+
+fn page_wait_for_response(args: Vec<Value>) -> StdlibResult {
+    let pattern = arg_string(&args, 0, "page_wait_for_response")?;
+    let timeout = std::time::Duration::from_millis(arg_u64(&args, 1, 30_000));
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.wait_for_response(&pattern, timeout))
+            .map(|(ok, ms, url)| wait_result(ok, ms, Some("Network.responseReceived"), Some(url)))
+            .map_err(|e| format!("page_wait_for_response: {e}"))
+    })
+}
+
+fn page_wait_for_event(args: Vec<Value>) -> StdlibResult {
+    let name = arg_string(&args, 0, "page_wait_for_event")?;
+    let timeout = std::time::Duration::from_millis(arg_u64(&args, 1, 30_000));
+    with_bound_page(|page| {
+        crate::interp::get_browser_runtime()
+            .block_on(page.wait_for_event(&name, timeout))
+            .map(|(ok, ms, method)| wait_result(ok, ms, Some(&method), None))
+            .map_err(|e| format!("page_wait_for_event: {e}"))
+    })
+}
+
 // ── Delegations to the bound Page ────────────────────────────────────────
 //
 // These free functions existed only as refusals ("no page bound") because the
@@ -1042,18 +1102,9 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "page_add_style_tag" => Some(page_add_style_tag(args)),
         "page_wait_for_function" => Some(page_wait_for_function(args)),
         "page_wait_for_url" => Some(page_wait_for_url(args)),
-        "page_wait_for_request" => Some(page_fn_needs_handle(
-            function,
-            "page.wait_for_request(url_pattern, timeout_ms)",
-        )),
-        "page_wait_for_response" => Some(page_fn_needs_handle(
-            function,
-            "page.wait_for_response(url_pattern, timeout_ms)",
-        )),
-        "page_wait_for_event" => Some(page_fn_needs_handle(
-            function,
-            "page.wait_for_event(event_name, timeout_ms)",
-        )),
+        "page_wait_for_request" => Some(page_wait_for_request(args)),
+        "page_wait_for_response" => Some(page_wait_for_response(args)),
+        "page_wait_for_event" => Some(page_wait_for_event(args)),
         "page_wait_for_timeout" => Some(page_wait_for_timeout(args)),
         "page_expose_function" => Some(page_fn_needs_handle(
             function,
