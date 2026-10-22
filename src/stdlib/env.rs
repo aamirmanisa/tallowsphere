@@ -13,6 +13,20 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "get" | "cwd" | "home" | "args" => None,
 
         "home_dir" => Some(env_home_dir(&args)),
+        // `env.require(name) -> Result<String>`: the environment variable must be
+        // present, and its absence is the error — the counterpart to `env.get_or`.
+        // Declared in stdlib/env.tl with an empty body and absent from every
+        // dispatcher until the surface audit of 2026-10-22.
+        "require" => {
+            let name = match args.first() {
+                Some(Value::String(s)) => s.clone(),
+                _ => return Some(Err("env.require expects a String name".into())),
+            };
+            Some(match std::env::var(&name) {
+                Ok(v) => Ok(Value::String(v)),
+                Err(_) => Err(format!("env.require: {name} is not set")),
+            })
+        }
         "config_dir" => Some(env_config_dir(&args)),
         "data_dir" => Some(env_data_dir(&args)),
         "temp_dir" => Some(env_temp_dir(&args)),

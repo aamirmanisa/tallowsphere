@@ -13,6 +13,18 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "range" => Some(rand_range(&args)),
         "uuid" => Some(rand_uuid()),
         "token" => Some(rand_token(&args)),
+        // `rand.shuffle(items) -> [T]`: an unbiased Fisher-Yates shuffle of the
+        // input, returning a new array. Declared in stdlib/rand.tl with an empty
+        // body and absent from every dispatcher until the 2026-10-22 audit.
+        "shuffle" => {
+            let mut items = match args.first() {
+                Some(Value::Array(items)) => items.clone(),
+                _ => return Some(Err("rand.shuffle expects an array argument".into())),
+            };
+            use rand::seq::SliceRandom;
+            items.shuffle(&mut rand::rng());
+            Some(Ok(Value::Array(items)))
+        }
         _ => None,
     }
 }
