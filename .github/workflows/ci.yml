@@ -91,9 +91,14 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Test
+        # 4 threads, not 2: the suite is 9,147 independent unit tests and the
+        # runner has 4 cores. At 2 threads the executing half alone was ~5
+        # minutes of a 9.5-minute job. Measured on run 39701448323 (2 threads:
+        # 555 s) against the first 4-thread run; revert if a timing-sensitive
+        # test fails.
         run: |
           set -o pipefail
-          cargo test --locked --lib -- --test-threads=2 2>&1 | tee "$RUNNER_TEMP/test.log"
+          cargo test --locked --lib -- --test-threads=4 2>&1 | tee "$RUNNER_TEMP/test.log"
       # Every failing test is labelled pre-existing or caused by RUNNING it at the
       # base revision (scripts/attribute_failure.py, docs/FAILURE-ATTRIBUTION.md).
       # That costs a build of the base tree, on failure only -- the label is proven
@@ -112,7 +117,7 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo test --locked --lib -- --test-threads=2
+      - run: cargo test --locked --lib -- --test-threads=4
 
   test-macos:
     name: Test (macOS)
@@ -124,7 +129,7 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo test --locked --lib -- --test-threads=2
+      - run: cargo test --locked --lib -- --test-threads=4
 
   # Zero-trust conformance: negative boundary probes (browser-zone predicate refusals,
   # non-loopback CDP connect refusals, the CDP relay's 8 MiB frame cap — loopback only, no network).

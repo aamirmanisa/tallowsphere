@@ -112,6 +112,36 @@ jobs:
           toolchain: 1.98.1
           targets: ${{ matrix.target }}
 
+      - name: Compiler cache (sccache, GitHub Actions backend)
+        # Every tag rebuilt 543 crates from scratch. The five build jobs took
+        # 12-16 minutes each and almost all of it was dependencies that had not
+        # changed since the previous tag. sccache keys each object on compiler,
+        # flags and source hash, so unchanged crates -- and BoringSSL's C++
+        # translation units -- are hits across tags and across the matrix; only
+        # the tallow crate itself recompiles.
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Enable sccache
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
+      - name: Cache the crate registry
+        # The compiler cache stores objects, not crates. Restoring ~/.cargo keeps
+        # `cargo fetch` off the network on a warm run. Target artifacts are
+        # deliberately NOT cached here: a release target dir is ~3 GB per triple
+        # and five of them evict each other from the 10 GB repository cache.
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.label }}
+          cache-targets: false
+          cache-all-crates: true
+
+      - name: Pre-fetch the dependency graph
+        shell: bash
+        run: cargo fetch --locked --target ${{ matrix.target }}
+
       - name: Cross toolchain (aarch64 Linux)
         # This runner is x86_64. Building aarch64 here needs a C and C++ cross
         # compiler: btls-sys compiles C++ (cbs.cc) and cc-rs otherwise invokes the
@@ -148,6 +178,13 @@ jobs:
           # scripts/package_release.sh) or every program that calls a runtime
           # symbol fails to link on a machine without a build tree.
           cargo build --profile release --locked --target ${{ matrix.target }} --lib
+
+      - name: Compiler cache statistics
+        # The hit rate is the number that explains a fast or slow build; without
+        # it a regression is indistinguishable from a cold cache.
+        if: always()
+        shell: bash
+        run: sccache --show-stats || true
 
       - name: Package archive
         shell: bash
