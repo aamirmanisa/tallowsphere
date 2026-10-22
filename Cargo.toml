@@ -1,6 +1,6 @@
 [package]
 name = "tallow"
-version = "1.1.4"
+version = "1.1.5"
 edition = "2024"
 description = "The Tallow programming language — privacy-first systems language"
 license = "MIT"

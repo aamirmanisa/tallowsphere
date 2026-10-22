@@ -1478,6 +1478,8 @@ void tallow_async_runtime_shutdown(void) {
         // the replacement syntax and the replace-all rule cannot drift between
         // the engines (the old POSIX regcomp/regexec IR was a different regex
         // language and replaced only the first match — t_7a8efe20).
+        // `String.parse()` integer lowering (src/runtime/string_ffi.rs).
+        ir.push_str("declare i32 @tallow_str_parse_i64(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_regex_is_match(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_regex_replace(ptr, ptr, ptr)\n");
         ir.push('\n');
@@ -6579,6 +6581,72 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line("unreachable");
     }
 
+    /// `String.parse()` -> `i64`, via `tallow_str_parse_i64`.
+    ///
+    /// The interpreter is dynamically typed at this call: an integer string
+    /// becomes `Int`, anything else that parses as a float becomes `Float`, and
+    /// only a string that is neither raises `cannot parse '<s>' as number`. The
+    /// native plane has one static type per expression, so this lowers the
+    /// integer case and **refuses** the float case by name instead of truncating
+    /// it. Unparseable text exits 1 with the interpreter's own wording, so the
+    /// only divergence left is float input, and that one is visible.
+    fn emit_string_parse_i64(&mut self, obj: &LLValue) -> LLValue {
+        let out = self.fresh_reg();
+        self.emit_line(&format!("{out} = alloca i64"));
+        let rc = self.fresh_reg();
+        self.emit_line(&format!(
+            "{rc} = call i32 @tallow_str_parse_i64(ptr {}, ptr {out})",
+            obj.reg
+        ));
+        let is_not_number = self.fresh_reg();
+        self.emit_line(&format!("{is_not_number} = icmp eq i32 {rc}, 1"));
+        let is_float = self.fresh_reg();
+        self.emit_line(&format!("{is_float} = icmp eq i32 {rc}, 2"));
+
+        let l_check = self.fresh_label("parse.check");
+        let l_not_number = self.fresh_label("parse.notnumber");
+        let l_float = self.fresh_label("parse.float");
+        let l_ok = self.fresh_label("parse.ok");
+        self.emit_line(&format!(
+            "br i1 {is_not_number}, label %{l_not_number}, label %{l_check}"
+        ));
+
+        self.body.push_str(&format!("{l_check}:\n"));
+        self.emit_line(&format!("br i1 {is_float}, label %{l_float}, label %{l_ok}"));
+
+        // Same sentence the interpreter prints, write-for-write.
+        self.body.push_str(&format!("{l_not_number}:\n"));
+        let pre = self.intern_string("runtime error: cannot parse '");
+        self.emit_stderr_write(&pre);
+        self.emit_stderr_write(&obj.reg);
+        let post = self.intern_string("' as number");
+        self.emit_stderr_write(&post);
+        let nl = self.intern_string("\n");
+        self.emit_stderr_write(&nl);
+        self.emit_line("call void @exit(i32 1)");
+        self.emit_line("unreachable");
+
+        // A float is a number the interpreter would have returned; say so
+        // instead of rounding it into an integer.
+        self.body.push_str(&format!("{l_float}:\n"));
+        let fpre = self.intern_string(
+            "runtime error: .parse() lowers to an integer on the native plane; '",
+        );
+        self.emit_stderr_write(&fpre);
+        self.emit_stderr_write(&obj.reg);
+        let fpost = self.intern_string("' is a float — use .to_float()");
+        self.emit_stderr_write(&fpost);
+        let fnl = self.intern_string("\n");
+        self.emit_stderr_write(&fnl);
+        self.emit_line("call void @exit(i32 1)");
+        self.emit_line("unreachable");
+
+        self.body.push_str(&format!("{l_ok}:\n"));
+        let value = self.fresh_reg();
+        self.emit_line(&format!("{value} = load i64, ptr {out}"));
+        LLValue::new(value, LLType::I64)
+    }
+
     /// `.len` on a `Bytes` value (t_70cad4f2) -> the DECODED byte count, via
     /// `tallow_bytes_len` (src/runtime/fs_ffi.rs). The native value is the
     /// base64 text, so `strlen` would answer 24 for 16 raw bytes while the
@@ -8306,6 +8374,9 @@ void tallow_async_runtime_shutdown(void) {
                         return Ok(LLValue::new(buf, LLType::I8Ptr));
                     }
                     return Ok(obj);
+                }
+                "parse" => {
+                    return Ok(self.emit_string_parse_i64(&obj));
                 }
                 "to_int" | "parse_int" => {
                     // Use strtol(str, NULL, 10) for base-10 parsing

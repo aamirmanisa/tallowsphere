@@ -27,6 +27,7 @@ pub mod env_ffi;
 pub mod enterprise_ffi;
 pub mod fetch;
 pub mod fs_ffi;
+pub mod string_ffi;
 pub mod gzip_ffi;
 pub mod hardening;
 pub mod html_ffi;
