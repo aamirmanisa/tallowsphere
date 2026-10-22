@@ -136,6 +136,38 @@ jobs:
           echo "SCCACHE_LOG=error" >> "$GITHUB_ENV"
           echo "SCCACHE_ERROR_LOG=$GITHUB_WORKSPACE/sccache-error.log" >> "$GITHUB_ENV"
 
+      - name: Restore the Windows target directory
+        # Measured on the instrumented run (39720235342): with 93% sccache hits the
+        # Windows binary build still spent 448 s of unit time re-running build
+        # scripts -- btls-sys 207 s, aws-lc-sys 126 s, zstd-sys 46 s,
+        # libsqlite3-sys 39 s, blst 30 s -- because a fresh target dir has no
+        # fingerprint to reuse. sccache caches compilations, not build-script
+        # executions. Caching this one target dir (the other four legs keep the
+        # cheaper object cache only) is what turns that 448 s into a fingerprint
+        # check.
+        if: runner.os == 'Windows'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: target/${{ matrix.target }}
+          key: target-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            target-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            target-${{ matrix.label }}-
+
+      - name: Linker (Windows)
+        # link.exe with ThinLTO is the single largest unit in the Windows build
+        # (321.9 s for the tallow binary alone). lld-link is the LLVM linker and is
+        # present on the windows-latest image; fall back to link.exe if it is not.
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if command -v lld-link >/dev/null 2>&1; then
+            echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link" >> "$GITHUB_ENV"
+            echo "using lld-link"
+          else
+            echo "lld-link absent; keeping link.exe"
+          fi
+
       - name: Restore the compiler cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
