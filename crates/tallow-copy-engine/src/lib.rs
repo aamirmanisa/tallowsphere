@@ -2334,6 +2334,10 @@ mod tests {
         );
     }
 
+    // Unix-only fixture: the test creates symlinks with std::os::unix. Windows
+    // has no std::os::unix, and creating a Windows symlink needs a privilege the
+    // CI runner may not hold — the policy itself is covered on unix.
+    #[cfg(unix)]
     #[test]
     fn preserve_link_is_skipped_when_it_already_matches() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2377,6 +2381,9 @@ mod tests {
         );
     }
 
+    // Unix-only fixture: a UnixListener is the special file under test, and
+    // std::os::unix does not exist on Windows.
+    #[cfg(unix)]
     #[test]
     fn plan_dir_skips_special_files_explicitly() {
         let tmp = tempfile::tempdir().unwrap();
