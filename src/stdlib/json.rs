@@ -15,6 +15,22 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         // Declared in stdlib/json.tl with an empty `// native:` body and previously
         // absent from every dispatcher. Implemented 2026-10-12.
         "parse_value" => Some(do_parse_value(args)),
+        // json.to_json_pretty — same serialization as to_string, indented.
+        // Declared in stdlib/json.tl with an empty body and unreachable until the
+        // 2026-10-22 surface audit.
+        "to_json_pretty" => match args.first() {
+            Some(val) => {
+                let compact = tallow_value_to_json(val);
+                match serde_json::from_str::<serde_json::Value>(&compact) {
+                    Ok(parsed) => match serde_json::to_string_pretty(&parsed) {
+                        Ok(pretty) => Some(Ok(Value::String(pretty))),
+                        Err(e) => Some(Err(format!("json.to_json_pretty: {e}"))),
+                    },
+                    Err(e) => Some(Err(format!("json.to_json_pretty: {e}"))),
+                }
+            }
+            None => Some(Err("json.to_json_pretty requires a value argument".into())),
+        },
         // json.to_string — serialize any Value to JSON string
         "to_string" => {
             if let Some(val) = args.first() {
