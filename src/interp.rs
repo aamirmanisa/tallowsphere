@@ -1196,6 +1196,15 @@ pub struct Interpreter {
     spawn_results: std::collections::HashMap<usize, std::sync::mpsc::Receiver<Vec<u8>>>,
     /// Next goroutine spawn id (monotonic).
     next_spawn_id: usize,
+    /// Completion flag per spawned task: set when the child thread finishes
+    /// (success or error). Backs `is_done()` / `spawn_status()`.
+    spawn_done: std::collections::HashMap<usize, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Cancellation request per spawned task. `cancel()` sets it; the child
+    /// interpreter checks it at every function call, which is the cooperative
+    /// boundary — a task that never calls anything is not interruptible.
+    spawn_cancel: std::collections::HashMap<usize, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// This interpreter's own cancellation flag (Some only inside a task).
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Cooperative task scheduler (F1). `Some` = coop mode: `spawn` /
     /// `spawn_agent_async` enqueue interpreter-side tasks instead of starting
     /// eager OS threads, and `await` / `spawn_await` on a task handle drive the
@@ -1267,6 +1276,9 @@ impl Interpreter {
             thread_handles: Vec::new(),
             spawn_results: std::collections::HashMap::new(),
             next_spawn_id: 0,
+            spawn_done: std::collections::HashMap::new(),
+            spawn_cancel: std::collections::HashMap::new(),
+            cancel_flag: None,
             sched: if std::env::var("TALLOW_SCHED").map(|v| v == "coop").unwrap_or(false) {
                 Some(crate::task_sched::Scheduler::new())
             } else {
@@ -3679,6 +3691,13 @@ impl Interpreter {
                 let spawn_id = self.next_spawn_id;
                 self.next_spawn_id += 1;
                 self.spawn_results.insert(spawn_id, rx);
+                // Completion + cancellation flags for this task. `done` is set by
+                // the thread on any exit path; `cancel` is checked by the child at
+                // every function call.
+                let done_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                self.spawn_done.insert(spawn_id, done_flag.clone());
+                self.spawn_cancel.insert(spawn_id, cancel_flag.clone());
 
                 // 6. Spawn the thread
                 let handle = std::thread::spawn(move || {
@@ -4257,6 +4276,17 @@ impl Interpreter {
         let positional: Vec<Value> = args.iter().map(|(_, v)| v.clone()).collect();
         let named_args = args; // keep for named matching
 
+        // Cooperative cancellation boundary. A task cancelled via
+        // `handle.cancel()` stops at its next function call, which is why the
+        // check lives here and not inside the evaluator loop.
+        if let Some(flag) = &self.cancel_flag {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(RuntimeError::Error(
+                    "agent task cancelled".to_string(),
+                ));
+            }
+        }
+
         // R2 runtime capability policy gate (opt-in; src/runtime_caps.rs).
         // No policy attached → no behavior change (historical semantics).
         if let Some(denied) = self.check_fs_capability(name, &positional) {
@@ -4665,11 +4695,25 @@ impl Interpreter {
                         .sched_join(key as u64, waiter)
                         .map(|v| Value::Ok(Box::new(v)));
                 }
+                let was_cancelled = self
+                    .spawn_cancel
+                    .get(&key)
+                    .map(|f| f.load(std::sync::atomic::Ordering::SeqCst))
+                    .unwrap_or(false);
                 return match self.spawn_results.remove(&key) {
                     Some(rx) => match rx.recv() {
                         Ok(bytes) => {
                             let val =
                                 crate::agent_comm::channel_bytes_to_value(&bytes).unwrap_or(Value::Nil);
+                            // A cancelled task's child exits through the error
+                            // path and its value does not survive the channel;
+                            // saying Ok(nil) would report success for work that
+                            // was abandoned.
+                            if was_cancelled {
+                                return Ok(Value::Err(Box::new(Value::String(
+                                    "agent task cancelled".to_string(),
+                                ))));
+                            }
                             Ok(Value::Ok(Box::new(val)))
                         }
                         Err(_) => Ok(Value::Err(Box::new(Value::String(
@@ -4948,11 +4992,20 @@ impl Interpreter {
                 let spawn_id = self.next_spawn_id;
                 self.next_spawn_id += 1;
                 self.spawn_results.insert(spawn_id, rx);
+                // Completion + cancellation flags for this task. `done` is set by
+                // the thread on any exit path; `cancel` is checked by the child at
+                // every function call.
+                let done_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                self.spawn_done.insert(spawn_id, done_flag.clone());
+                self.spawn_cancel.insert(spawn_id, cancel_flag.clone());
 
                 let fn_params: Vec<String> =
                     child_func.params.iter().map(|p| p.name.clone()).collect();
                 let fn_body = child_func.body.clone();
                 let fn_name2 = func_name.clone();
+                let cancel_flag_for_child = cancel_flag.clone();
+                let done_flag_for_child = done_flag.clone();
 
                 let handle = std::thread::spawn(move || {
                     let evaluated_args: Vec<Value> = args_bytes
@@ -4971,6 +5024,7 @@ impl Interpreter {
                         ti.type_qualifiers = core.type_qualifiers.clone();
                         ti.program_args = core.program_args.clone();
                         ti.agent_runtime = Some(child_runtime);
+                        ti.cancel_flag = Some(cancel_flag_for_child.clone());
                         let mut call_env = Env::new();
                         for (i, pn) in fn_params.iter().enumerate() {
                             let v = evaluated_args.get(i).cloned().unwrap_or(Value::Nil);
@@ -5003,6 +5057,7 @@ impl Interpreter {
                     let _ = tx.send(
                         crate::agent_comm::value_to_channel_bytes(&out_val).unwrap_or_default(),
                     );
+                    done_flag_for_child.store(true, std::sync::atomic::Ordering::SeqCst);
                 });
                 self.thread_handles.push(handle);
                 if let Some(ref mut rt) = self.agent_runtime {
@@ -13478,6 +13533,62 @@ impl Interpreter {
         } else {
             (method, None)
         };
+        // Agent task handles are spawn ids (Ints). `handle.is_done()`,
+        // `handle.cancel()` and `handle.status()` read the registries that
+        // spawn_agent_async fills, so the methods documented on AgentHandle<T>
+        // in stdlib/agent.tl are answerable for the handles the runtime returns.
+        if let Value::Int(id) = object {
+            let id = id as usize;
+            match method {
+                "is_done" => {
+                    let done = self
+                        .spawn_done
+                        .get(&id)
+                        .map(|f| f.load(std::sync::atomic::Ordering::SeqCst))
+                        .unwrap_or(false);
+                    return Ok(Value::Bool(done));
+                }
+                "cancel" => {
+                    let flag = self.spawn_cancel.get(&id).cloned();
+                    return match flag {
+                        Some(f) => {
+                            f.store(true, std::sync::atomic::Ordering::SeqCst);
+                            Ok(Value::Ok(Box::new(Value::Nil)))
+                        }
+                        None => Ok(Value::Err(Box::new(Value::String(
+                            "cancel: unknown agent handle".to_string(),
+                        )))),
+                    };
+                }
+                "status" => {
+                    let done = self
+                        .spawn_done
+                        .get(&id)
+                        .map(|f| f.load(std::sync::atomic::Ordering::SeqCst))
+                        .unwrap_or(false);
+                    let cancelled = self
+                        .spawn_cancel
+                        .get(&id)
+                        .map(|f| f.load(std::sync::atomic::Ordering::SeqCst))
+                        .unwrap_or(false);
+                    // Cancellation wins the label: a cancelled task also
+                    // finishes (done=true), and reporting "Completed" for it
+                    // would claim work that was abandoned.
+                    let status = if cancelled {
+                        "Cancelled"
+                    } else if done {
+                        "Completed"
+                    } else if self.spawn_done.contains_key(&id) {
+                        "Running"
+                    } else {
+                        "Unknown"
+                    };
+                    return Ok(Value::String(status.to_string()));
+                }
+                _ => {}
+            }
+        }
+
         // Turbofish-guided parse: "42".parse::<f64>() / parse::<i32>()
         if method == "parse" && turbofish.is_some() {
             if let Value::String(ref s) = object {
