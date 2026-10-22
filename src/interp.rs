@@ -17511,6 +17511,338 @@ impl Interpreter {
                     }
 
                     // ── Page methods ──
+                    // WordPress / Wordfence / challenge handling. Declared in
+                    // stdlib/browser.tl with empty bodies and unreachable until
+                    // 2026-10-22. Each reads the live document; none of them
+                    // pretends to succeed on a site that does not match.
+                    ("Page", "is_wordfence_challenge") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let js = "(() => { const t = (document.title || '').toLowerCase(); \
+                                  const b = (document.body ? document.body.innerText : '').slice(0, 600).toLowerCase(); \
+                                  return t.includes('one moment') || t.includes('just a moment') \
+                                      || b.includes('wordfence') || b.includes('checking your browser') \
+                                      || !!document.querySelector('.wf-active, #wordfenceBlocked'); })()";
+                        let is_wf = get_browser_runtime()
+                            .block_on(page.evaluate_expression(js))
+                            .ok()
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        Ok(Value::Ok(Box::new(Value::Bool(is_wf))))
+                    }
+                    ("Page", "bypass_wordfence") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let rt = get_browser_runtime();
+                        let challenge_js = "(() => { const t = (document.title || '').toLowerCase(); \
+                                  const b = (document.body ? document.body.innerText : '').slice(0, 600).toLowerCase(); \
+                                  return t.includes('one moment') || t.includes('just a moment') \
+                                      || b.includes('wordfence') || b.includes('checking your browser'); })()";
+                        // The challenge solves itself in the page; waiting is the
+                        // bypass. Bounded so a page that never clears is reported,
+                        // not spun on forever.
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                        loop {
+                            let still = rt
+                                .block_on(page.evaluate_expression(challenge_js))
+                                .ok()
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            if !still {
+                                let url = rt
+                                    .block_on(page.url())
+                                    .unwrap_or_default();
+                                return Ok(Value::Ok(Box::new(Value::String(url))));
+                            }
+                            if std::time::Instant::now() >= deadline {
+                                return Ok(Value::Err(Box::new(Value::String(
+                                    "bypass_wordfence: the challenge did not clear within 30 s"
+                                        .to_string(),
+                                ))));
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                        }
+                    }
+                    ("Page", "navigate_bypass_wordfence") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let url = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        let rt = get_browser_runtime();
+                        match rt.block_on(page.navigate(
+                            &url,
+                            crate::browser::WaitUntil::DomContentLoaded,
+                        )) {
+                            Ok(_) => {
+                                crate::runtime::browser::settle_page(rt, page);
+                                std::thread::sleep(std::time::Duration::from_millis(1200));
+                                let challenge_js = "(() => { const t = (document.title || '').toLowerCase(); \
+                                          const b = (document.body ? document.body.innerText : '').slice(0, 600).toLowerCase(); \
+                                          return t.includes('one moment') || t.includes('just a moment') \
+                                              || b.includes('wordfence') || b.includes('checking your browser'); })()";
+                                let mut waited = 0u64;
+                                while waited < 30_000 {
+                                    let still = rt
+                                        .block_on(page.evaluate_expression(challenge_js))
+                                        .ok()
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    if !still {
+                                        break;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(500));
+                                    waited += 500;
+                                }
+                                let final_url = rt.block_on(page.url()).unwrap_or_default();
+                                Ok(Value::Ok(Box::new(Value::String(final_url))))
+                            }
+                            Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
+                        }
+                    }
+                    ("Page", "wp_is_logged_in") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let js = "(() => !!document.querySelector('#wpadminbar') \
+                                  || (document.body && document.body.classList.contains('logged-in')) \
+                                  || Array.from(document.querySelectorAll('a')).some(a => \
+                                      (a.getAttribute('href') || '').includes('action=logout')))()";
+                        let logged = get_browser_runtime()
+                            .block_on(page.evaluate_expression(js))
+                            .ok()
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        Ok(Value::Ok(Box::new(Value::Bool(logged))))
+                    }
+                    ("Page", "wp_extract_rest_nonce") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let js = r#"(() => {
+                            if (window.wpApiSettings && window.wpApiSettings.nonce) {
+                                return {value: window.wpApiSettings.nonce, source: 'wpApiSettings', action: 'wp_rest'};
+                            }
+                            const el = document.querySelector('input[name^="_wpnonce"], input[name*="nonce"]');
+                            if (el && el.value) {
+                                return {value: el.value, source: 'hidden_input', action: el.name || ''};
+                            }
+                            const m = (document.documentElement.innerHTML || '').match(/"nonce"\s*:\s*"([A-Za-z0-9]{8,16})"/);
+                            if (m) return {value: m[1], source: 'inline_script', action: 'wp_rest'};
+                            return null;
+                        })()"#;
+                        match get_browser_runtime()
+                            .block_on(page.evaluate_expression(js))
+                            .map_err(|e| RuntimeError::Error(format!("wp_extract_rest_nonce: {e}")))?
+                        {
+                            serde_json::Value::Object(map) => Ok(Value::Ok(Box::new(
+                                Value::Struct {
+                                    name: "WpNonce".to_string(),
+                                    fields: vec![
+                                        (
+                                            "value".to_string(),
+                                            Value::String(
+                                                map.get("value")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string(),
+                                            ),
+                                        ),
+                                        (
+                                            "source".to_string(),
+                                            Value::String(
+                                                map.get("source")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string(),
+                                            ),
+                                        ),
+                                        (
+                                            "action".to_string(),
+                                            Value::String(
+                                                map.get("action")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string(),
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ))),
+                            _ => Ok(Value::Ok(Box::new(Value::Nil))),
+                        }
+                    }
+                    ("Page", "wp_extract_all_nonces") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let js = r#"(() => {
+                            const out = [];
+                            if (window.wpApiSettings && window.wpApiSettings.nonce) {
+                                out.push({value: window.wpApiSettings.nonce, source: 'wpApiSettings', action: 'wp_rest'});
+                            }
+                            document.querySelectorAll('input[name*="nonce"]').forEach((el, i) => {
+                                if (el.value) out.push({value: el.value, source: 'input:' + (el.name || i), action: el.name || ''});
+                            });
+                            const html = document.documentElement.innerHTML || '';
+                            const re = /"nonce"\s*:\s*"([A-Za-z0-9]{8,16})"/g;
+                            let m;
+                            while ((m = re.exec(html))) out.push({value: m[1], source: 'inline_script', action: ''});
+                            const seen = new Set();
+                            return out.filter(n => !seen.has(n.value) && seen.add(n.value));
+                        })()"#;
+                        let value = get_browser_runtime()
+                            .block_on(page.evaluate_expression(js))
+                            .map_err(|e| {
+                                RuntimeError::Error(format!("wp_extract_all_nonces: {e}"))
+                            })?;
+                        let mut items = Vec::new();
+                        if let serde_json::Value::Array(entries) = value {
+                            for entry in entries {
+                                if let serde_json::Value::Object(map) = entry {
+                                    let s = |k: &str| {
+                                        Value::String(
+                                            map.get(k)
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string(),
+                                        )
+                                    };
+                                    items.push(Value::Struct {
+                                        name: "WpNonce".to_string(),
+                                        fields: vec![
+                                            ("value".to_string(), s("value")),
+                                            ("source".to_string(), s("source")),
+                                            ("action".to_string(), s("action")),
+                                        ],
+                                    });
+                                }
+                            }
+                        }
+                        Ok(Value::Ok(Box::new(Value::Array(items))))
+                    }
+                    ("Page", "wp_login") => {
+                        let page = bh
+                            .handle
+                            .downcast_ref::<crate::browser::Page>()
+                            .ok_or_else(|| {
+                                RuntimeError::TypeError("invalid page handle".to_string())
+                            })?;
+                        let user = args.first().map(|v| v.as_string()).unwrap_or_default();
+                        let pass = args.get(1).map(|v| v.as_string()).unwrap_or_default();
+                        let rt = get_browser_runtime();
+                        let login_result = |status: &str, detail: String| {
+                            Ok(Value::Ok(Box::new(Value::Struct {
+                                name: "LoginResult".to_string(),
+                                fields: vec![
+                                    ("status".to_string(), Value::String(status.to_string())),
+                                    ("detail".to_string(), Value::String(detail)),
+                                ],
+                            })))
+                        };
+                        let origin = rt
+                            .block_on(page.evaluate_expression("location.origin"))
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        if origin.is_empty() || origin == "null" {
+                            return login_result(
+                                "unknown",
+                                "wp_login: the page has no origin (nothing loaded)".to_string(),
+                            );
+                        }
+                        let login_url = format!("{origin}/wp-login.php");
+                        if let Err(e) = rt.block_on(
+                            page.navigate(&login_url, crate::browser::WaitUntil::DomContentLoaded),
+                        ) {
+                            return login_result("unknown", format!("wp_login: {e}"));
+                        }
+                        crate::runtime::browser::settle_page(rt, page);
+                        let fill_js = format!(
+                            "(() => {{ const u = document.querySelector('#user_login'); \
+                              const p = document.querySelector('#user_pass'); \
+                              if (!u || !p) return false; u.value = {u}; p.value = {p}; \
+                              const b = document.querySelector('#wp-submit'); \
+                              if (b) {{ b.click(); }} else if (document.querySelector('#loginform')) {{ document.querySelector('#loginform').submit(); }} \
+                              else return false; return true; }})()",
+                            u = serde_json::to_string(&user).unwrap_or_else(|_| "\"\"".into()),
+                            p = serde_json::to_string(&pass).unwrap_or_else(|_| "\"\"".into())
+                        );
+                        let filled = rt
+                            .block_on(page.evaluate_expression(&fill_js))
+                            .ok()
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if !filled {
+                            return login_result(
+                                "unknown",
+                                format!("wp_login: no login form at {login_url}"),
+                            );
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                        crate::runtime::browser::settle_page(rt, page);
+                        let logged = rt
+                            .block_on(page.evaluate_expression(
+                                "(() => !!document.querySelector('#wpadminbar') \
+                                 || (document.body && document.body.classList.contains('logged-in')))()",
+                            ))
+                            .ok()
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if logged {
+                            return login_result("success", format!("logged in via {login_url}"));
+                        }
+                        let error_text = rt
+                            .block_on(page.evaluate_expression(
+                                "((document.querySelector('#login_error') || {}).innerText || '').trim()",
+                            ))
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        let page_text = rt
+                            .block_on(page.evaluate_expression(
+                                "(document.body ? document.body.innerText : '').toLowerCase().slice(0, 4000)",
+                            ))
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        if page_text.contains("two-factor")
+                            || page_text.contains("two factor")
+                            || page_text.contains("authenticator")
+                        {
+                            return login_result(
+                                "2fa_required",
+                                format!("credentials accepted, second factor required: {error_text}"),
+                            );
+                        }
+                        if !error_text.is_empty() {
+                            return login_result("failed", error_text);
+                        }
+                        login_result(
+                            "unknown",
+                            "wp_login: neither the admin bar nor an error appeared".to_string(),
+                        )
+                    }
+
                     ("Page", "goto") | ("Page", "navigate") => {
                         let page = bh
                             .handle
