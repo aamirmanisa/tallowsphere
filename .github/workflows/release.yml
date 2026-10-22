@@ -200,7 +200,7 @@ jobs:
         shell: bash
         run: |
           start=$(date +%s)
-          cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow --timings=json
+          cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow --timings
           echo "::notice::bin build $(( $(date +%s) - start ))s"
 
       - name: Where the build spent its time
@@ -208,16 +208,19 @@ jobs:
         run: |
           python3 - <<'PY'
           import glob, json
-          files = sorted(glob.glob('target/cargo-timings/cargo-timing-*.json'))
+          files = sorted(glob.glob('target/cargo-timings/cargo-timing-*.html'))
           if not files:
-              print('no timings file')
+              print('no timings report')
           else:
-              d = json.load(open(files[-1]))['units']
-              top = sorted(d, key=lambda u: -u.get('duration', 0))[:12]
-              total = sum(u.get('duration', 0) for u in d)
-              print(f'units: {len(d)}  total unit time: {total:.1f}s')
+              src = open(files[-1], encoding='utf-8').read()
+              start = src.index('UNIT_DATA = [')
+              end = src.index('\n];', start)
+              units = json.loads(src[start + len('UNIT_DATA = '):end + 2])
+              top = sorted(units, key=lambda u: -(u.get('duration') or 0))[:12]
+              total = sum((u.get('duration') or 0) for u in units)
+              print(f'units: {len(units)}  total unit time: {total:.1f}s')
               for u in top:
-                  print(f"  {u.get('duration', 0):8.1f}s  {u.get('mode','?'):8} {u.get('name','?')}")
+                  print(f"  {(u.get('duration') or 0):8.1f}s  {u.get('mode','?'):10} {u.get('name','?')}")
           PY
 
       - name: Build (runtime archive)
