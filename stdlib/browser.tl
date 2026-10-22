@@ -521,9 +521,8 @@ struct BrowserContext {
 }
 
 /// Create an isolated browser context.
-fn browser_context_create(proxy: String, timezone: String, locale: String) -> BrowserContext {
-    // native: creates CDP BrowserContext with proxy isolation
-}
+// native: creates CDP BrowserContext with proxy isolation
+native fn browser_context_create(proxy: String, timezone: String, locale: String) -> BrowserContext
 
 /// Web crawler with sitemap and link-following strategies.
 struct Crawler {
@@ -537,14 +536,12 @@ struct Crawler {
 }
 
 /// Create a crawler from a sitemap.
-fn crawler_from_sitemap(url: String) -> Crawler {
-    // native: discovers and parses sitemap.xml
-}
+// native: discovers and parses sitemap.xml
+native fn crawler_from_sitemap(url: String) -> Crawler
 
 /// Create a crawler that follows links from a seed URL.
-fn crawler_from_links(url: String, max_depth: i32) -> Crawler {
-    // native: BFS link-following crawler
-}
+// native: BFS link-following crawler
+native fn crawler_from_links(url: String, max_depth: i32) -> Crawler
 
 /// Content-addressed page cache with BLAKE3 hashing.
 struct PageCache {
@@ -557,9 +554,8 @@ struct PageCache {
 }
 
 /// Create a page cache.
-fn page_cache_create(max_age_seconds: i64, max_size_mb: i64) -> PageCache {
-    // native: initializes cache with content-addressed storage
-}
+// native: initializes cache with content-addressed storage
+native fn page_cache_create(max_age_seconds: i64, max_size_mb: i64) -> PageCache
 
 /// Content fingerprint for deduplication and similarity detection.
 struct ContentFingerprint {
@@ -569,14 +565,12 @@ struct ContentFingerprint {
 }
 
 /// Create a fingerprint from text content.
-fn content_fingerprint_from_text(text: String) -> ContentFingerprint {
-    // native: BLAKE3-based SimHash fingerprinting
-}
+// native: BLAKE3-based SimHash fingerprinting
+native fn content_fingerprint_from_text(text: String) -> ContentFingerprint
 
 /// Compare two fingerprints for similarity (0.0 to 1.0).
-fn content_fingerprint_similarity(a: ContentFingerprint, b: ContentFingerprint) -> f64 {
-    // native: Hamming distance on hash bits
-}
+// native: Hamming distance on hash bits
+native fn content_fingerprint_similarity(a: ContentFingerprint, b: ContentFingerprint) -> f64
 
 /// Extracted structured data from a web page.
 struct StructuredData {
@@ -586,64 +580,54 @@ struct StructuredData {
 }
 
 /// Extract structured data (JSON-LD, OpenGraph) from HTML.
-fn structured_data_extract(html: String) -> StructuredData {
-    // native: parses script[type="application/ld+json"] and meta[property^="og:"]
-    //
-    // Which engine: the interpreter reaches this through the `stdlib::browser`
-    // facade. The AOT native backend has NO lowering for this method, so
-    // `tallow run` falls back to the interpreter and `--require-native` refuses
-    // loudly rather than pretending. Results are correct either way; only the
-    // backend differs. (Binding `tallow_structured_data_extract` is the open
-    // P2.T1 item: it needs a native that builds the `%struct.StructuredData`
-    // layout, including the runtime representation of `[]String` and `Map`.)
-}
+// native: parses script[type="application/ld+json"] and meta[property^="og:"]
+//
+// Which engine: the interpreter reaches this through the `stdlib::browser`
+// facade. The AOT native backend has NO lowering for this method, so
+// `tallow run` falls back to the interpreter and `--require-native` refuses
+// loudly rather than pretending. Results are correct either way; only the
+// backend differs. (Binding `tallow_structured_data_extract` is the open
+// P2.T1 item: it needs a native that builds the `%struct.StructuredData`
+// layout, including the runtime representation of `[]String` and `Map`.)
+native fn structured_data_extract(html: String) -> StructuredData
 
 // ── Page v2 methods ─────────────────────────────────────────────
 
 /// Extract all matching elements' text in ONE CDP call (batch mode).
-fn page_extract_all_text(selector: String) -> []String {
-    // native: single Runtime.evaluate returning all texts
-}
+// native: single Runtime.evaluate returning all texts
+native fn page_extract_all_text(selector: String) -> []String
 
 /// Extract all matching elements with attributes in ONE CDP call.
-fn page_extract_all_attrs(selector: String, attrs: []String) -> []Map<String, String> {
-    // native: single Runtime.evaluate returning all attribute maps
-}
+// native: single Runtime.evaluate returning all attribute maps
+native fn page_extract_all_attrs(selector: String, attrs: []String) -> []Map<String, String>
 
 /// Block non-essential resources for maximum speed.
-fn page_block_non_essential() -> Result<()> {
-    // native: Fetch.enable blocking images, fonts, CSS, media
-}
+// native: Fetch.enable blocking images, fonts, CSS, media
+native fn page_block_non_essential() -> Result<()>
 
 /// Wait until DOM is stable (no mutations for quiesce_ms).
-fn page_wait_for_stable(timeout_ms: i64, quiesce_ms: i64) -> Result<()> {
-    // native: MutationObserver-based stability detection
-}
+// native: MutationObserver-based stability detection
+native fn page_wait_for_stable(timeout_ms: i64, quiesce_ms: i64) -> Result<()>
 
 /// Detect pagination pattern on the current page.
-fn page_detect_pagination() -> PaginationInfo? {
-    // native: detects numbered, next_button, load_more, infinite_scroll
-}
+// native: detects numbered, next_button, load_more, infinite_scroll
+native fn page_detect_pagination() -> PaginationInfo?
 
 /// Handle cookie consent banners automatically.
-fn page_handle_cookie_consent(strategy: String) -> bool {
-    // native: clicks accept/reject/dismiss on consent banners
-}
+// native: clicks accept/reject/dismiss on consent banners
+native fn page_handle_cookie_consent(strategy: String) -> bool
 
 /// Extract structured data from current page.
-fn page_structured_data() -> StructuredData {
-    // native: JSON-LD + OpenGraph extraction
-}
+// native: JSON-LD + OpenGraph extraction
+native fn page_structured_data() -> StructuredData
 
 /// Capture DOM snapshot (compact format for full-page extraction).
-fn page_capture_dom_snapshot() -> String {
-    // native: CDP DOMSnapshot.captureSnapshot
-}
+// native: CDP DOMSnapshot.captureSnapshot
+native fn page_capture_dom_snapshot() -> String
 
 /// Get page text with PII automatically redacted.
-fn page_text_redacted() -> String {
-    // native: text extraction with email/phone/SSN/CC/IP redaction
-}
+// native: text extraction with email/phone/SSN/CC/IP redaction
+native fn page_text_redacted() -> String
 
 /// Pagination info detected from a page.
 struct PaginationInfo {
@@ -661,29 +645,24 @@ struct Dialog {
 
 impl Dialog {
     /// Register a handler for alert() dialogs.
-    fn on_alert(handler_name: String) -> DialogHandler {
-        // native: Page.javascriptDialogOpening CDP event
-    }
+    // native: Page.javascriptDialogOpening CDP event
+    native fn on_alert(handler_name: String) -> DialogHandler
 
     /// Register a handler for confirm() dialogs.
-    fn on_confirm(handler_name: String, auto_accept: bool = true) -> DialogHandler {
-        // native: Page.javascriptDialogOpening with confirm type
-    }
+    // native: Page.javascriptDialogOpening with confirm type
+    native fn on_confirm(handler_name: String, auto_accept: bool = true) -> DialogHandler
 
     /// Register a handler for prompt() dialogs.
-    fn on_prompt(handler_name: String, default_value: String = "") -> DialogHandler {
-        // native: Page.javascriptDialogOpening with prompt type
-    }
+    // native: Page.javascriptDialogOpening with prompt type
+    native fn on_prompt(handler_name: String, default_value: String = "") -> DialogHandler
 
     /// Accept a dialog, optionally providing a prompt value.
-    fn accept(value: String = "") -> DialogResult {
-        // native: Page.handleJavaScriptDialog accept=true
-    }
+    // native: Page.handleJavaScriptDialog accept=true
+    native fn accept(value: String = "") -> DialogResult
 
     /// Dismiss (cancel) a dialog.
-    fn dismiss() -> DialogResult {
-        // native: Page.handleJavaScriptDialog accept=false
-    }
+    // native: Page.handleJavaScriptDialog accept=false
+    native fn dismiss() -> DialogResult
 }
 
 struct DialogHandler {
@@ -956,21 +935,18 @@ impl HtmlParser {
     /// Supports tag selectors (h1, p, li), class selectors (.price),
     /// and ID selectors (#title).
     /// Returns an array of matching text strings with HTML tags stripped.
-    fn parse(html: String, selector: String) -> []String {
-        // native: string-based HTML parsing (no browser needed)
-    }
+    // native: string-based HTML parsing (no browser needed)
+    native fn parse(html: String, selector: String) -> []String
 
     /// Extract all links (href attributes) from HTML.
     /// Filters out anchor-only (#) and javascript: links.
-    fn links(html: String) -> []String {
-        // native: extracts all href values
-    }
+    // native: extracts all href values
+    native fn links(html: String) -> []String
 
     /// Extract meta information (title, description, keywords).
     /// Returns a struct with title, description, and keywords fields.
-    fn meta(html: String) -> HtmlMeta {
-        // native: extracts <title> and <meta> tags
-    }
+    // native: extracts <title> and <meta> tags
+    native fn meta(html: String) -> HtmlMeta
 }
 
 /// Meta information extracted from HTML <head>.
@@ -991,27 +967,23 @@ struct PerfConfig {
 impl PerfConfig {
     /// Create a PerfConfig with a named mode.
     /// mode: "fast", "balanced", or "stealth"
-    fn create(mode: String = "balanced") -> PerfConfig {
-        // native: returns config struct for the specified mode
-    }
+    // native: returns config struct for the specified mode
+    native fn create(mode: String = "balanced") -> PerfConfig
 
     /// Fast preset: block ALL non-essential resources, DOMContentLoaded wait.
     /// Best for scraping static content where speed matters most.
-    fn fast() -> PerfConfig {
-        // native: { mode: "fast", resource_blocking: true, default_wait: "domcontentloaded" }
-    }
+    // native:  mode: "fast", resource_blocking: true, default_wait: "domcontentloaded"
+    native fn fast() -> PerfConfig
 
     /// Balanced preset: block images/fonts, NetworkAlmostIdle wait.
     /// Good default for most scraping tasks.
-    fn balanced() -> PerfConfig {
-        // native: { mode: "balanced", resource_blocking: true, default_wait: "networkalmostidle" }
-    }
+    // native:  mode: "balanced", resource_blocking: true, default_wait: "networkalmostidle"
+    native fn balanced() -> PerfConfig
 
     /// Stealth preset: allow ALL resources, NetworkIdle wait, full stealth profile.
     /// Use when the target site has bot detection.
-    fn stealth() -> PerfConfig {
-        // native: { mode: "stealth", resource_blocking: false, default_wait: "networkidle" }
-    }
+    // native:  mode: "stealth", resource_blocking: false, default_wait: "networkidle"
+    native fn stealth() -> PerfConfig
 }
 
 /// Persistent browser daemon for reusing browser instances across runs.
@@ -1023,15 +995,13 @@ struct BrowserDaemon {
 impl BrowserDaemon {
     /// Get the current daemon status.
     /// Returns running state, active instance count, and socket address.
-    fn status() -> BrowserDaemonStatus {
-        // native: checks if daemon process is alive
-    }
+    // native: checks if daemon process is alive
+    native fn status() -> BrowserDaemonStatus
 
     /// Get the daemon configuration.
     /// Returns max instances, tabs per instance, transport, and recycle threshold.
-    fn config() -> BrowserDaemonConfig {
-        // native: reads daemon config
-    }
+    // native: reads daemon config
+    native fn config() -> BrowserDaemonConfig
 }
 
 /// Status of the browser daemon process.
@@ -2239,25 +2209,21 @@ impl BrowserHealthMetrics {
 
 /// Machine-readable manifest of the browser automation surface.
 /// Non-live: reports contract status for Browser.launch, Page.goto, cdp.pipe, etc.
-fn browser_surface_manifest() -> BrowserSurfaceManifest {
-    // native: returns contract metadata for the browser surface
-}
+// native: returns contract metadata for the browser surface
+native fn browser_surface_manifest() -> BrowserSurfaceManifest
 
 /// Status of the CDP pipe transport (--remote-debugging-pipe).
 /// Reports fail-closed: pipe transport is not yet implemented.
-fn browser_pipe_transport_status() -> BrowserPipeTransportStatus {
-    // native: returns pipe transport contract status
-}
+// native: returns pipe transport contract status
+native fn browser_pipe_transport_status() -> BrowserPipeTransportStatus
 
 /// Boundary of the Phase 4 local/non-live browser fallback service.
-fn browser_fallback_boundary() -> BrowserFallbackBoundary {
-    // native: returns fallback boundary contract metadata
-}
+// native: returns fallback boundary contract metadata
+native fn browser_fallback_boundary() -> BrowserFallbackBoundary
 
 /// Status of the Phase 4 browser fallback service (local, non-live planner).
-fn browser_fallback_service_status() -> BrowserFallbackServiceStatus {
-    // native: returns fallback service status metadata
-}
+// native: returns fallback service status metadata
+native fn browser_fallback_service_status() -> BrowserFallbackServiceStatus
 
 /// Browser surface manifest struct.
 struct BrowserSurfaceManifest {

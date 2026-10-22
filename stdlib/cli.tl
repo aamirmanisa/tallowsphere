@@ -50,7 +50,6 @@ impl Context {
 }
 
 impl App {
-    fn run(self) -> Result<()> {
-        // native: parses CLI args and dispatches to handler
-    }
+    // native: parses CLI args and dispatches to handler
+    native fn run(self) -> Result<()>
 }

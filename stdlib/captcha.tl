@@ -9,7 +9,7 @@ struct CaptchaChallenge {
     sitekey: String?,       // CAPTCHA sitekey if available
     action: String?,        // Form action URL
     confidence: Float,      // Detection confidence 0.0-1.0
-    signals: [String],      // Detection signals found
+    signals: []String,      // Detection signals found
 }
 
 struct CaptchaRecommendation {
@@ -21,7 +21,7 @@ struct CaptchaRecommendation {
 struct BlockCheck {
     blocked: Bool,
     status_code: Int,
-    signals: [String],
+    signals: []String,
 }
 
 // Detect CAPTCHA/WAF on page HTML. Optional headers Map for server detection.

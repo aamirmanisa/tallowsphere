@@ -60,9 +60,8 @@ fn assert_not_nil<T>(value: T?) -> T {
 }
 
 /// Assert that a function panics
-fn assert_panics(f: fn()) {
-    // native: catches panic, fails if no panic occurred
-}
+// native: catches panic, fails if no panic occurred
+native fn assert_panics(f: fn())
 
 /// Approximate equality for floats
 fn assert_approx(left: f64, right: f64, epsilon: f64) {

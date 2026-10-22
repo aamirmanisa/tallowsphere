@@ -53,49 +53,41 @@ struct AuditEntry {
 }
 
 /// Write audit entry to the JSONL audit log (TALLOW_LEGAL_DIR/audit_log.jsonl)
-fn log_audit(entry: AuditEntry) -> Result<()> {
-    // native: appends one JSON object per line, returns Ok(())
-}
+// native: appends one JSON object per line, returns Ok(())
+native fn log_audit(entry: AuditEntry) -> Result<()>
 
 /// Read audit log entries back from the JSONL audit log (default
 /// TALLOW_LEGAL_DIR/audit_log.jsonl when path is empty)
-fn read_audit_log(path: String) -> Result<[]AuditEntry> {
-    // native: parses each JSONL line into an AuditEntry struct
-}
+// native: parses each JSONL line into an AuditEntry struct
+native fn read_audit_log(path: String) -> Result<[]AuditEntry>
 
 /// Record explicit consent (GDPR Art.6/7, CCPA) — appends to
 /// TALLOW_LEGAL_DIR/consent_register.jsonl and returns a record id
-fn consent_register(subject: String, purpose: String) -> String {
-    // native: persists {subject, purpose, status: registered, registered_at}
-}
+// native: persists subject, purpose, status: registered, registered_at
+native fn consent_register(subject: String, purpose: String) -> String
 
 /// True iff the consent register holds a current registration for the
 /// subject + purpose pair
-fn consent_check(subject: String, purpose: String) -> Bool {
-    // native: answers from consent_register.jsonl
-}
+// native: answers from consent_register.jsonl
+native fn consent_check(subject: String, purpose: String) -> Bool
 
 /// Log a GDPR right-to-erasure request (Art.17) — appends to
 /// TALLOW_LEGAL_DIR/erasure_requests.jsonl and returns a request id
-fn erasure_request(subject: String) -> String {
-    // native: persists {subject, status: requested, requested_at}
-}
+// native: persists subject, status: requested, requested_at
+native fn erasure_request(subject: String) -> String
 
 /// Log a GDPR subject-access request (Art.15) — same register as erasure
 /// requests, distinct event type; returns a request id
-fn subject_access_request(subject: String) -> String {
-    // native: persists {event: subject_access_request, ...}
-}
+// native: persists event: subject_access_request, ...
+native fn subject_access_request(subject: String) -> String
 
 /// Generate compliance report
-fn generate_report(entries: []AuditEntry) -> String {
-    // native: generates human-readable compliance report
-}
+// native: generates human-readable compliance report
+native fn generate_report(entries: []AuditEntry) -> String
 
 /// Check compliance for jurisdiction
-fn check_compliance(entries: []AuditEntry, jurisdiction: Jurisdiction) -> ComplianceResult {
-    // native: validates entries against jurisdiction rules
-}
+// native: validates entries against jurisdiction rules
+native fn check_compliance(entries: []AuditEntry, jurisdiction: Jurisdiction) -> ComplianceResult
 
 struct ComplianceResult {
     compliant:  bool,
@@ -130,9 +122,8 @@ struct CraCheckItem {
 }
 
 /// Generate CRA compliance report for the current project
-fn cra_audit() -> CraReport {
-    // native: runs CRA compliance checks and returns structured report
-}
+// native: runs CRA compliance checks and returns structured report
+native fn cra_audit() -> CraReport
 
 // ── NIS2 Directive (EU 2022/2555) ──────────────────────────────────
 
@@ -167,9 +158,8 @@ struct Nis2Measure {
 }
 
 /// Generate NIS2 Art.21 compliance report
-fn nis2_audit() -> Nis2Report {
-    // native: collects crypto inventory and checks BSI TR-02102 compliance
-}
+// native: collects crypto inventory and checks BSI TR-02102 compliance
+native fn nis2_audit() -> Nis2Report
 
 // ── DORA (Digital Operational Resilience Act, EU 2022/2554) ────────
 
@@ -200,23 +190,20 @@ struct DoraCitIncident {
 }
 
 /// Create a new ICT incident with auto-generated ID and timestamp
-fn dora_incident_new(description: String) -> DoraCitIncident {
-    // native: creates incident with UUID and ISO-8601 detection_time
-}
+// native: creates incident with UUID and ISO-8601 detection_time
+native fn dora_incident_new(description: String) -> DoraCitIncident
 
 /// Auto-classify incident severity per DORA RTS criteria
 /// CRITICAL: critical_function_impaired AND (duration > 24h OR records > 100K)
 /// HIGH:     critical_function_impaired OR clients > 10% OR records > 5,000
 /// MEDIUM:   clients > 1% OR duration > 2h OR cross_border
 /// LOW:      all other incidents
-fn dora_classify(incident: DoraCitIncident) -> DoraCitIncident {
-    // native: updates severity and classification_time
-}
+// native: updates severity and classification_time
+native fn dora_classify(incident: DoraCitIncident) -> DoraCitIncident
 
 /// Generate DORA-compliant incident report JSON for regulatory notification
-fn dora_report(incident: DoraCitIncident) -> String {
-    // native: serializes incident to JSON per DORA Art.19 format
-}
+// native: serializes incident to JSON per DORA Art.19 format
+native fn dora_report(incident: DoraCitIncident) -> String
 
 // ── EU AI Act (Regulation 2024/1689) ────────────────────────────
 
@@ -256,24 +243,20 @@ struct AiInferenceLog {
 }
 
 /// Create a new inference log for an AI system
-fn ai_inference_log_create(system_id: String) -> AiInferenceLog {
-    // native: creates log with genesis hash chain
-}
+// native: creates log with genesis hash chain
+native fn ai_inference_log_create(system_id: String) -> AiInferenceLog
 
 /// Log an inference event (input hashed for privacy)
-fn ai_inference_log_entry(log: AiInferenceLog, input: String, output: String) -> AiInferenceLog {
-    // native: appends entry with BLAKE3 chain hash
-}
+// native: appends entry with BLAKE3 chain hash
+native fn ai_inference_log_entry(log: AiInferenceLog, input: String, output: String) -> AiInferenceLog
 
 /// Verify log integrity (recompute hash chain)
-fn ai_inference_log_verify(log: AiInferenceLog) -> bool {
-    // native: returns true if hash chain is valid
-}
+// native: returns true if hash chain is valid
+native fn ai_inference_log_verify(log: AiInferenceLog) -> bool
 
 /// Export log as JSON for Art.12 audit
-fn ai_inference_log_export(log: AiInferenceLog) -> String {
-    // native: JSON serialization
-}
+// native: JSON serialization
+native fn ai_inference_log_export(log: AiInferenceLog) -> String
 
 // ── EU AI Act — Art.14 Human Oversight ──────────────────────────
 
@@ -288,9 +271,8 @@ struct HumanApproval {
 }
 
 /// Request human approval for a high-risk decision (Art.14)
-fn human_approval_request(decision: String, subject: String, reason: String) -> HumanApproval {
-    // native: blocks until human approves (auto-approves in interpreter)
-}
+// native: blocks until human approves (auto-approves in interpreter)
+native fn human_approval_request(decision: String, subject: String, reason: String) -> HumanApproval
 
 // ── EU AI Act — Annex IV Model Provenance ───────────────────────
 
@@ -307,26 +289,21 @@ struct ModelProvenance {
 }
 
 /// Create a new model provenance record
-fn model_provenance_create(model_id: String) -> ModelProvenance {
-    // native: creates provenance with empty fields
-}
+// native: creates provenance with empty fields
+native fn model_provenance_create(model_id: String) -> ModelProvenance
 
 /// Set a provenance field (immutable update)
-fn model_provenance_set(prov: ModelProvenance, field: String, value: String) -> ModelProvenance {
-    // native: returns updated provenance
-}
+// native: returns updated provenance
+native fn model_provenance_set(prov: ModelProvenance, field: String, value: String) -> ModelProvenance
 
 /// Attest provenance with BLAKE3 cryptographic hash
-fn model_provenance_attest(prov: ModelProvenance) -> ModelProvenance {
-    // native: computes attestation hash of all fields
-}
+// native: computes attestation hash of all fields
+native fn model_provenance_attest(prov: ModelProvenance) -> ModelProvenance
 
 /// Verify attestation integrity
-fn model_provenance_verify(prov: ModelProvenance) -> bool {
-    // native: recomputes and compares attestation hash
-}
+// native: recomputes and compares attestation hash
+native fn model_provenance_verify(prov: ModelProvenance) -> bool
 
 /// Export provenance as JSON (for Annex IV documentation)
-fn model_provenance_export(prov: ModelProvenance) -> String {
-    // native: JSON serialization of provenance chain
-}
+// native: JSON serialization of provenance chain
+native fn model_provenance_export(prov: ModelProvenance) -> String

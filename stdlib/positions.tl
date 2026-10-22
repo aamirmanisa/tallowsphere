@@ -13,7 +13,7 @@ native fn pnl(book: PositionBook, market_prices: {String: Float}) -> Float
 native fn summary(book: PositionBook) -> PositionSummary
 
 struct PositionBook {
-    positions: [Position],
+    positions: []Position,
     realized_pnl: Float,
     cost_basis: Float,
 }

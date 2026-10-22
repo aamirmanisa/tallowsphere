@@ -33,8 +33,7 @@ struct WarmupResult {
 ///
 /// Returns a WarmupResult containing cookies, storage, and metadata that
 /// can be injected into subsequent scraping sessions.
-fn warmup_session(url: String, level: String) -> WarmupResult {
-    // native: connects to src/browser/warmup.rs execute_warmup engine,
-    //          uses traffic_morph.rs for realistic Weibull timing,
-    //          collects cookies/storage from the browser context
-}
+// native: connects to src/browser/warmup.rs execute_warmup engine,
+//          uses traffic_morph.rs for realistic Weibull timing,
+//          collects cookies/storage from the browser context
+native fn warmup_session(url: String, level: String) -> WarmupResult

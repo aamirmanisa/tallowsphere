@@ -13,20 +13,17 @@ struct URL {
 }
 
 /// Parse URL string
-fn parse(raw: String) -> Result<URL> {
-    // native: parses URL
-}
+// native: parses URL
+native fn parse(raw: String) -> Result<URL>
 
 impl URL {
     /// Reconstruct URL string
-    fn to_string(self) -> String {
-        // native: builds URL from components
-    }
+    // native: builds URL from components
+    native fn to_string(self) -> String
 
     /// Get query parameters as map
-    fn query_params(self) -> Map<String, String> {
-        // native: parses query string
-    }
+    // native: parses query string
+    native fn query_params(self) -> Map<String, String>
 
     /// Get specific query parameter
     fn param(self, name: String) -> String? {
@@ -39,9 +36,8 @@ impl URL {
     }
 
     /// Build new URL with added query parameter
-    fn with_param(self, key: String, value: String) -> URL {
-        // native: adds or replaces query parameter
-    }
+    // native: adds or replaces query parameter
+    native fn with_param(self, key: String, value: String) -> URL
 
     /// Get domain (host without port)
     fn domain(self) -> String {
@@ -54,22 +50,18 @@ impl URL {
     }
 
     /// Join with relative path
-    fn join(self, relative: String) -> Result<URL> {
-        // native: resolves relative URL
-    }
+    // native: resolves relative URL
+    native fn join(self, relative: String) -> Result<URL>
 }
 
 /// URL-encode a string
-fn encode(s: String) -> String {
-    // native: percent-encodes string
-}
+// native: percent-encodes string
+native fn encode(s: String) -> String
 
 /// URL-decode a string
-fn decode(s: String) -> Result<String> {
-    // native: decodes percent-encoded string
-}
+// native: decodes percent-encoded string
+native fn decode(s: String) -> Result<String>
 
 /// Build query string from map
-fn encode_query(params: Map<String, String>) -> String {
-    // native: builds "key=value&key2=value2"
-}
+// native: builds "key=value&key2=value2"
+native fn encode_query(params: Map<String, String>) -> String

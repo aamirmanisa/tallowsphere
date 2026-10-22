@@ -13,19 +13,16 @@ fn compress(data: Bytes) -> Bytes {
 }
 
 /// Compress with specific algorithm and level
-fn compress_with(data: Bytes, algo: Algorithm, level: i32) -> Bytes {
-    // native: compresses data
-}
+// native: compresses data
+native fn compress_with(data: Bytes, algo: Algorithm, level: i32) -> Bytes
 
 /// Decompress bytes (auto-detects algorithm)
-fn decompress(data: Bytes) -> Result<Bytes> {
-    // native: decompresses data
-}
+// native: decompresses data
+native fn decompress(data: Bytes) -> Result<Bytes>
 
 /// Decompress with explicit algorithm
-fn decompress_with(data: Bytes, algo: Algorithm) -> Result<Bytes> {
-    // native: decompresses with specific algorithm
-}
+// native: decompresses with specific algorithm
+native fn decompress_with(data: Bytes, algo: Algorithm) -> Result<Bytes>
 
 /// Gzip helpers
 fn gzip(data: Bytes) -> Bytes { compress_with(data, algo: .Gzip, level: 6) }

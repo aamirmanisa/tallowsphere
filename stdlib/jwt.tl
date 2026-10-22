@@ -14,7 +14,7 @@ struct JWT {
 struct JWTAttackResult {
     attack_type: String,
     forged_token: String?,
-    found_secrets: [String]?,
+    found_secrets: []String?,
     can_forge: Bool?,
     note: String?,
 }
@@ -35,10 +35,10 @@ fn JWT.forge(payload: String, secret: String, algorithm: String) -> String
 fn JWT.attack_none(token: String) -> JWTAttackResult
 
 // Attack: brute force HMAC secrets from a wordlist. Returns found secrets.
-fn JWT.attack_weak_secrets(token: String, wordlist: [String]) -> JWTAttackResult
+fn JWT.attack_weak_secrets(token: String, wordlist: []String) -> JWTAttackResult
 
 // Attack: inject malicious KID values into the JWT header.
-fn JWT.attack_kid_injection(self, payload: String) -> [JWTKidInjection]
+fn JWT.attack_kid_injection(self, payload: String) -> []JWTKidInjection
 
 // Attack: RS256→HS256 algorithm confusion using a public key as HMAC secret.
 fn JWT.attack_alg_confusion(self, public_key_pem: String) -> JWTAttackResult

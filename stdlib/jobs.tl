@@ -76,7 +76,7 @@ struct JobStatus {
 native fn submit(name: String, script: String, schedule_spec: String, opts: Map?) -> String
 
 /// List all jobs in the store as ScheduledJob structs.
-native fn list() -> [ScheduledJob]
+native fn list() -> []ScheduledJob
 
 /// Pause a job by id (it will not fire until resumed). Errors on unknown id.
 native fn pause(id: String) -> Bool

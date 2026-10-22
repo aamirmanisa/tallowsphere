@@ -7,7 +7,7 @@
 struct Session {
     domain: String,
     url: String,
-    cookies: [SessionCookie],
+    cookies: []SessionCookie,
     local_storage: Map<String, String>,
     session_storage: Map<String, String>,
     user_agent: String,
@@ -26,7 +26,7 @@ struct SessionCookie {
 }
 
 // Capture a browser session with cookies and storage state
-fn Session.capture(domain: String, url: String, cookies: [SessionCookie]?,
+fn Session.capture(domain: String, url: String, cookies: []SessionCookie?,
                     local_storage: Map<String, String>?,
                     session_storage: Map<String, String>?) -> Session
 
@@ -37,7 +37,7 @@ fn Session.load(path: String) -> Session
 fn Session.save(self, path: String)
 
 // Get all cookies in the session
-fn Session.cookies(self) -> [SessionCookie]
+fn Session.cookies(self) -> []SessionCookie
 
 // Get all localStorage entries
 fn Session.local_storage(self) -> Map<String, String>

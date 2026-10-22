@@ -76,95 +76,80 @@ struct ManifestInfo {
 // ══════════════════════════════════════════════════════════════════
 
 /// Hash an entire file with BLAKE3 (streaming, 64KB buffer)
-fn Transfer.hash(path: String) -> String {
-    // native: BLAKE3 file hash → hex string
-}
+// native: BLAKE3 file hash → hex string
+native fn Transfer.hash(path: String) -> String
 
 /// Split file into chunks and compute per-chunk BLAKE3 hashes
-fn Transfer.chunk(path: String, chunk_size: i64 = 262144) -> []ChunkInfo {
-    // native: chunk file, return array of ChunkInfo
-}
+// native: chunk file, return array of ChunkInfo
+native fn Transfer.chunk(path: String, chunk_size: i64 = 262144) -> []ChunkInfo
 
 /// Build binary Merkle tree from chunk hashes → root hash
-fn Transfer.tree_hash(chunks: []ChunkInfo) -> String {
-    // native: binary Merkle tree → root hex hash
-}
+// native: binary Merkle tree → root hex hash
+native fn Transfer.tree_hash(chunks: []ChunkInfo) -> String
 
 /// Create a transfer manifest (JSON) for verification
-fn Transfer.manifest(root_hash: String, size: i64, chunks: []ChunkInfo) -> String {
-    // native: JSON manifest string
-}
+// native: JSON manifest string
+native fn Transfer.manifest(root_hash: String, size: i64, chunks: []ChunkInfo) -> String
 
 // ══════════════════════════════════════════════════════════════════
 // FileCopy — OS-optimized file and directory copy
 // ══════════════════════════════════════════════════════════════════
 
 /// Copy a single file (uses OS copy_file_range/sendfile when available)
-fn FileCopy.copy(src: String, dst: String) -> CopyStats {
-    // native: fast single-file copy
-}
+// native: fast single-file copy
+native fn FileCopy.copy(src: String, dst: String) -> CopyStats
 
 /// Copy an entire directory recursively
-fn FileCopy.copy_dir(src: String, dst: String) -> CopyStats {
-    // native: recursive directory copy
-}
+// native: recursive directory copy
+native fn FileCopy.copy_dir(src: String, dst: String) -> CopyStats
 
 // ══════════════════════════════════════════════════════════════════
 // FileVault — AES-256-GCM file encryption with Argon2id key derivation
 // ══════════════════════════════════════════════════════════════════
 
 /// Encrypt a file to .nixv vault format
-fn FileVault.encrypt(input: String, output: String, password: String) -> EncryptResult {
-    // native: Argon2id + AES-256-GCM → NIXV file
-}
+// native: Argon2id + AES-256-GCM → NIXV file
+native fn FileVault.encrypt(input: String, output: String, password: String) -> EncryptResult
 
 /// Decrypt a .nixv vault file
-fn FileVault.decrypt(input: String, output: String, password: String) -> DecryptResult {
-    // native: decrypt NIXV file → plaintext
-}
+// native: decrypt NIXV file → plaintext
+native fn FileVault.decrypt(input: String, output: String, password: String) -> DecryptResult
 
 /// Encrypt a text string, return hex-encoded ciphertext
-fn FileVault.encrypt_text(text: String, password: String) -> String {
-    // native: Argon2id + AES-256-GCM → hex
-}
+// native: Argon2id + AES-256-GCM → hex
+native fn FileVault.encrypt_text(text: String, password: String) -> String
 
 /// Decrypt hex-encoded ciphertext to plaintext string
-fn FileVault.decrypt_text(encrypted: String, password: String) -> String {
-    // native: decrypt hex → plaintext
-}
+// native: decrypt hex → plaintext
+native fn FileVault.decrypt_text(encrypted: String, password: String) -> String
 
 // ══════════════════════════════════════════════════════════════════
 // DeltaSync — Directory scanning and diff computation
 // ══════════════════════════════════════════════════════════════════
 
 /// Scan a directory recursively, BLAKE3-hash each file
-fn DeltaSync.scan(dir_path: String) -> []FileEntry {
-    // native: recursive directory scan with BLAKE3 hashes
-}
+// native: recursive directory scan with BLAKE3 hashes
+native fn DeltaSync.scan(dir_path: String) -> []FileEntry
 
 /// Compare two scans and compute the delta
-fn DeltaSync.diff(old_scan: []FileEntry, new_scan: []FileEntry) -> DeltaResult {
-    // native: hash-based diff → added/removed/modified
-}
+// native: hash-based diff → added/removed/modified
+native fn DeltaSync.diff(old_scan: []FileEntry, new_scan: []FileEntry) -> DeltaResult
 
 // ══════════════════════════════════════════════════════════════════
 // Compress — zstd compression with compressibility detection
 // ══════════════════════════════════════════════════════════════════
 
 /// Compress data with specified algorithm (default: zstd level 3)
-fn Compress.compress(data: String, algo: String = "zstd", level: i64 = 3) -> String {
-    // native: compress → hex string
-}
+// native: compress → hex string
+native fn Compress.compress(data: String, algo: String = "zstd", level: i64 = 3) -> String
 
 /// Decompress hex-encoded compressed data
-fn Compress.decompress(data: String, algo: String = "zstd") -> String {
-    // native: decompress hex → plaintext
-}
+// native: decompress hex → plaintext
+native fn Compress.decompress(data: String, algo: String = "zstd") -> String
 
 /// Detect data compressibility via Shannon entropy
-fn Compress.detect(data: String) -> CompressibilityResult {
-    // native: entropy analysis → recommendation
-}
+// native: entropy analysis → recommendation
+native fn Compress.detect(data: String) -> CompressibilityResult
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 56: Network Transfer Protocol — QUIC-based transfer types
@@ -196,19 +181,16 @@ struct TransferProgress {
 }
 
 /// Create a send session: BLAKE3 hash, chunk data, build Merkle tree
-fn TransferSession.send(data: String, recipient: String, encrypt: bool = true) -> TransferSession {
-    // native: create TransferManifest with BLAKE3 chunks + tree hash
-}
+// native: create TransferManifest with BLAKE3 chunks + tree hash
+native fn TransferSession.send(data: String, recipient: String, encrypt: bool = true) -> TransferSession
 
 /// Create a receive session from a manifest (JSON or TransferSession struct)
-fn TransferSession.receive(manifest: String) -> TransferSession {
-    // native: parse manifest, create receive session
-}
+// native: parse manifest, create receive session
+native fn TransferSession.receive(manifest: String) -> TransferSession
 
 /// Get transfer progress/status for a session
-fn TransferSession.status(session: TransferSession) -> TransferProgress {
-    // native: query session state → progress struct
-}
+// native: query session state → progress struct
+native fn TransferSession.status(session: TransferSession) -> TransferProgress
 
 // ── Transfer Stream (QUIC multi-stream) ──
 
@@ -221,19 +203,16 @@ struct TransferStream {
 }
 
 /// Create a new stream for a session
-fn TransferStream.create(session_id: String, stream_type: String = "reliable") -> TransferStream {
-    // native: "reliable" (ordered) or "unreliable" (datagrams)
-}
+// native: "reliable" (ordered) or "unreliable" (datagrams)
+native fn TransferStream.create(session_id: String, stream_type: String = "reliable") -> TransferStream
 
 /// Write data to a stream (immutable update, returns new stream)
-fn TransferStream.write(stream: TransferStream, data: String) -> TransferStream {
-    // native: increment bytes_sent by data length
-}
+// native: increment bytes_sent by data length
+native fn TransferStream.write(stream: TransferStream, data: String) -> TransferStream
 
 /// Close a stream
-fn TransferStream.close(stream: TransferStream) -> TransferStream {
-    // native: set open = false
-}
+// native: set open = false
+native fn TransferStream.close(stream: TransferStream) -> TransferStream
 
 // ── Erasure Coding (REAL reed-solomon-simd) ──
 
@@ -270,19 +249,16 @@ struct ErasureStatus {
 }
 
 /// Encode data with REAL reed-solomon-simd erasure coding
-fn ErasureCode.encode(data: String, overhead: f64 = 0.5) -> ErasureEncoded {
-    // native: reed-solomon-simd systematic encoding, 10 data shards + ceil(10*overhead) recovery
-}
+// native: reed-solomon-simd systematic encoding, 10 data shards + ceil(10*overhead) recovery
+native fn ErasureCode.encode(data: String, overhead: f64 = 0.5) -> ErasureEncoded
 
 /// Decode from received symbols (need >= k original shards to succeed)
-fn ErasureCode.decode(symbols: []String, k: i64) -> Result<ErasureDecoded> {
-    // native: reed-solomon-simd decode, recovers original data
-}
+// native: reed-solomon-simd decode, recovers original data
+native fn ErasureCode.decode(symbols: []String, k: i64) -> Result<ErasureDecoded>
 
 /// Check erasure coding status (decodable, deficit, recovery percent)
-fn ErasureCode.status(encoded: ErasureEncoded, received: i64) -> ErasureStatus {
-    // native: compute decodability metrics
-}
+// native: compute decodability metrics
+native fn ErasureCode.status(encoded: ErasureEncoded, received: i64) -> ErasureStatus
 
 // ── Multi-Path Discovery ──
 
@@ -302,14 +278,12 @@ struct PathEstimate {
 }
 
 /// Discover local network interfaces
-fn NetworkPath.discover() -> []NetworkPath {
-    // native: enumerate interfaces, return array of NetworkPath
-}
+// native: enumerate interfaces, return array of NetworkPath
+native fn NetworkPath.discover() -> []NetworkPath
 
 /// Estimate aggregate bandwidth across paths
-fn NetworkPath.estimate(paths: []NetworkPath) -> PathEstimate {
-    // native: sum bandwidths, recommend stream count
-}
+// native: sum bandwidths, recommend stream count
+native fn NetworkPath.estimate(paths: []NetworkPath) -> PathEstimate
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 57: Multi-peer Swarm, DHT discovery, Transfer Manifest
@@ -335,14 +309,12 @@ struct AnnounceResult {
 }
 
 /// Create a peer descriptor
-fn Peer.create(address: String, port: i64) -> Peer {
-    // native: BLAKE3(address:port) as peer_id
-}
+// native: BLAKE3(address:port) as peer_id
+native fn Peer.create(address: String, port: i64) -> Peer
 
 /// Announce peer availability for a root hash
-fn Peer.announce(peer: Peer, root_hash: String) -> AnnounceResult {
-    // native: simulated DHT announce
-}
+// native: simulated DHT announce
+native fn Peer.announce(peer: Peer, root_hash: String) -> AnnounceResult
 
 // ── Swarm ──
 
@@ -372,29 +344,24 @@ struct Schedule {
 }
 
 /// Create a new swarm for a given root hash
-fn Swarm.create(root_hash: String) -> Swarm {
-    // native: BLAKE3("swarm:"+root_hash) as swarm_id
-}
+// native: BLAKE3("swarm:"+root_hash) as swarm_id
+native fn Swarm.create(root_hash: String) -> Swarm
 
 /// Add a peer to a swarm (immutable update)
-fn Swarm.add_peer(swarm: Swarm, peer: Peer) -> Swarm {
-    // native: append peer, recalculate bandwidth
-}
+// native: append peer, recalculate bandwidth
+native fn Swarm.add_peer(swarm: Swarm, peer: Peer) -> Swarm
 
 /// Remove a peer from a swarm by peer_id
-fn Swarm.remove_peer(swarm: Swarm, peer_id: String) -> Swarm {
-    // native: filter by peer_id, recalculate bandwidth
-}
+// native: filter by peer_id, recalculate bandwidth
+native fn Swarm.remove_peer(swarm: Swarm, peer_id: String) -> Swarm
 
 /// Get swarm status summary
-fn Swarm.status(swarm: Swarm) -> SwarmStatus {
-    // native: peer count, total bandwidth, active flag
-}
+// native: peer count, total bandwidth, active flag
+native fn Swarm.status(swarm: Swarm) -> SwarmStatus
 
 /// Schedule chunk assignments across peers (round-robin)
-fn Swarm.schedule(swarm: Swarm, chunks_needed: []i64) -> Schedule {
-    // native: round-robin distribution
-}
+// native: round-robin distribution
+native fn Swarm.schedule(swarm: Swarm, chunks_needed: []i64) -> Schedule
 
 // ── DHT (real UDP transport, in-process store; no iterative Kademlia routing) ──
 //
@@ -427,36 +394,30 @@ struct DhtLookup {
 }
 
 /// Create a simulated Kademlia DHT node
-fn Dht.create(node_id: String) -> DhtNode {
-    // native: BLAKE3(node_id) as node_id
-}
+// native: BLAKE3(node_id) as node_id
+native fn Dht.create(node_id: String) -> DhtNode
 
 /// Store a key-value pair in the DHT
-fn Dht.announce(dht: DhtNode, key: String, value: String) -> DhtAnnounce {
-    // native: simulated DHT store
-}
+// native: simulated DHT store
+native fn Dht.announce(dht: DhtNode, key: String, value: String) -> DhtAnnounce
 
 /// Look up a key in the DHT
-fn Dht.lookup(dht: DhtNode, key: String) -> DhtLookup {
-    // native: simulated DHT lookup
-}
+// native: simulated DHT lookup
+native fn Dht.lookup(dht: DhtNode, key: String) -> DhtLookup
 
 // ── Manifest URL / QR ──
 
 /// Encode a manifest JSON to a tallow:// transfer URL
-fn Manifest.to_url(manifest_json: String) -> String {
-    // native: base64url encode -> "tallow://transfer/{base64}"
-}
+// native: base64url encode -> "tallow://transfer/base64"
+native fn Manifest.to_url(manifest_json: String) -> String
 
 /// Decode a tallow:// transfer URL back to manifest JSON
-fn Manifest.from_url(url: String) -> String {
-    // native: extract base64, decode -> JSON
-}
+// native: extract base64, decode -> JSON
+native fn Manifest.from_url(url: String) -> String
 
 /// Generate a text QR code representation for a manifest
-fn Manifest.to_qr(manifest_json: String) -> String {
-    // native: "QR[tallow://transfer/{short_hash}...] ({byte_count} bytes)"
-}
+// native: "QR[tallow://transfer/short_hash...] (byte_count bytes)"
+native fn Manifest.to_qr(manifest_json: String) -> String
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 58: Real Transfer — Progress, Checkpoints, Bandwidth, Dir Enc
@@ -476,14 +437,12 @@ struct ProgressTracker {
 }
 
 /// Create a progress tracker
-fn ProgressTracker.create(total: i64, label: String = "Transferring") -> ProgressTracker {
-    // native: create tracker with timestamps
-}
+// native: create tracker with timestamps
+native fn ProgressTracker.create(total: i64, label: String = "Transferring") -> ProgressTracker
 
 /// Update progress by increment amount
-fn ProgressTracker.update(tracker: ProgressTracker, increment: i64 = 1) -> ProgressTracker {
-    // native: update current, percent, bps, eta
-}
+// native: update current, percent, bps, eta
+native fn ProgressTracker.update(tracker: ProgressTracker, increment: i64 = 1) -> ProgressTracker
 
 // ── Resume / Checkpoint ──
 
@@ -498,19 +457,16 @@ struct Checkpoint {
 }
 
 /// Save transfer state to a checkpoint file (atomic write)
-fn Checkpoint.save(transfer_id: String, state: any) -> Checkpoint {
-    // native: JSON serialize, atomic write (.tmp + rename)
-}
+// native: JSON serialize, atomic write (.tmp + rename)
+native fn Checkpoint.save(transfer_id: String, state: any) -> Checkpoint
 
 /// Load a checkpoint (returns found=false if no checkpoint exists)
-fn Checkpoint.load(transfer_id: String) -> Checkpoint {
-    // native: read .tallow_checkpoint_{id}.json
-}
+// native: read .tallow_checkpoint_id.json
+native fn Checkpoint.load(transfer_id: String) -> Checkpoint
 
 /// Delete a checkpoint file
-fn Checkpoint.delete(transfer_id: String) -> Checkpoint {
-    // native: remove checkpoint file
-}
+// native: remove checkpoint file
+native fn Checkpoint.delete(transfer_id: String) -> Checkpoint
 
 // ── Bandwidth Limiting ──
 
@@ -522,14 +478,12 @@ struct BandwidthLimit {
 }
 
 /// Create a bandwidth limiter
-fn BandwidthLimit.create(limit_mbps: f64) -> BandwidthLimit {
-    // native: calculate bytes_per_sec from Mbps
-}
+// native: calculate bytes_per_sec from Mbps
+native fn BandwidthLimit.create(limit_mbps: f64) -> BandwidthLimit
 
 /// Calculate throttle delay in ms given current transfer stats
-fn BandwidthLimit.throttle(bytes_sent: i64, elapsed_ms: i64, bytes_per_sec: i64) -> i64 {
-    // native: returns sleep_ms needed to stay under limit (0 if under)
-}
+// native: returns sleep_ms needed to stay under limit (0 if under)
+native fn BandwidthLimit.throttle(bytes_sent: i64, elapsed_ms: i64, bytes_per_sec: i64) -> i64
 
 // ── LAN Discovery ──
 
@@ -541,9 +495,8 @@ struct LanPeer {
 }
 
 /// Discover peers on the local network
-fn LanDiscovery.discover() -> []LanPeer {
-    // native: enumerate local interfaces, return peer list
-}
+// native: enumerate local interfaces, return peer list
+native fn LanDiscovery.discover() -> []LanPeer
 
 // ── Copy with Metadata ──
 
@@ -556,9 +509,8 @@ struct CopyResult {
 }
 
 /// Copy file preserving metadata (modification time, permissions)
-fn FileCopy.copy_metadata(src: String, dst: String) -> CopyResult {
-    // native: std::fs::copy + filetime mtime preservation
-}
+// native: std::fs::copy + filetime mtime preservation
+native fn FileCopy.copy_metadata(src: String, dst: String) -> CopyResult
 
 // ── Directory Encryption ──
 
@@ -573,14 +525,12 @@ struct VaultDirResult {
 }
 
 /// Encrypt all files in a directory with AES-256-GCM + Argon2id (per-file keys)
-fn FileVault.encrypt_dir(input: String, output: String, password: String) -> VaultDirResult {
-    // native: walk directory, encrypt each file to .enc format
-}
+// native: walk directory, encrypt each file to .enc format
+native fn FileVault.encrypt_dir(input: String, output: String, password: String) -> VaultDirResult
 
 /// Decrypt all .enc files in a directory
-fn FileVault.decrypt_dir(input: String, output: String, password: String) -> VaultDirResult {
-    // native: walk directory, decrypt each .enc file
-}
+// native: walk directory, decrypt each .enc file
+native fn FileVault.decrypt_dir(input: String, output: String, password: String) -> VaultDirResult
 
 // ── Memory-Mapped I/O ──
 
@@ -591,9 +541,8 @@ struct MmapResult {
 }
 
 /// Memory-map a file for fast reading and return its BLAKE3 hash
-fn Mmap.read(path: String) -> MmapResult {
-    // native: memmap2 read-only mapping + BLAKE3 hash
-}
+// native: memmap2 read-only mapping + BLAKE3 hash
+native fn Mmap.read(path: String) -> MmapResult
 
 // ── LZ4 Compression (fast path for transfer) ──
 
@@ -606,14 +555,12 @@ struct CompressResult {
 }
 
 /// Compress data with LZ4 (fastest compression, ideal for transfer)
-fn Lz4.compress(data: String) -> CompressResult {
-    // native: lz4_flex compress_prepend_size → hex
-}
+// native: lz4_flex compress_prepend_size → hex
+native fn Lz4.compress(data: String) -> CompressResult
 
 /// Decompress LZ4 hex data
-fn Lz4.decompress(data: String) -> String {
-    // native: lz4_flex decompress_size_prepended
-}
+// native: lz4_flex decompress_size_prepended
+native fn Lz4.decompress(data: String) -> String
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 59: QUIC Network Transfer — Real quinn-backed file transfer
@@ -687,39 +634,32 @@ struct QuicStatus {
 // ══════════════════════════════════════════════════════════════════
 
 /// Start a QUIC server on the given address (default 0.0.0.0:6881)
-fn QuicTransfer.listen(addr: String = "0.0.0.0:6881") -> QuicServer {
-    // native: quinn Endpoint::server with self-signed rcgen cert
-}
+// native: quinn Endpoint::server with self-signed rcgen cert
+native fn QuicTransfer.listen(addr: String = "0.0.0.0:6881") -> QuicServer
 
 /// Connect to a QUIC server
-fn QuicTransfer.connect(addr: String, server_name: String = "tallow-transfer") -> QuicConnection {
-    // native: quinn Endpoint::client with insecure cert verification
-}
+// native: quinn Endpoint::client with insecure cert verification
+native fn QuicTransfer.connect(addr: String, server_name: String = "tallow-transfer") -> QuicConnection
 
 /// Send a file over QUIC (chunked, BLAKE3-verified)
-fn QuicTransfer.send_file(path: String, dest: String) -> TransferResult {
-    // native: open uni stream, send header + chunks, BLAKE3 hash
-}
+// native: open uni stream, send header + chunks, BLAKE3 hash
+native fn QuicTransfer.send_file(path: String, dest: String) -> TransferResult
 
 /// Receive a file over QUIC (BLAKE3-verified, atomic write)
-fn QuicTransfer.receive(addr: String = "0.0.0.0:6881", output_dir: String = ".", timeout: i64 = 30) -> ReceiveResult {
-    // native: accept uni stream, read header + data, verify BLAKE3
-}
+// native: accept uni stream, read header + data, verify BLAKE3
+native fn QuicTransfer.receive(addr: String = "0.0.0.0:6881", output_dir: String = ".", timeout: i64 = 30) -> ReceiveResult
 
 /// Send raw bytes over QUIC
-fn QuicTransfer.send_bytes(data: String, dest: String) -> SendResult {
-    // native: open uni stream, framed write
-}
+// native: open uni stream, framed write
+native fn QuicTransfer.send_bytes(data: String, dest: String) -> SendResult
 
 /// Get QUIC subsystem status and capabilities
-fn QuicTransfer.status() -> QuicStatus {
-    // native: library version, TLS version, congestion, MTU
-}
+// native: library version, TLS version, congestion, MTU
+native fn QuicTransfer.status() -> QuicStatus
 
 /// Resume an interrupted file send from a byte offset
-fn QuicTransfer.send_resume(path: String, dest: String, offset: i64 = 0) -> TransferResult {
-    // native: QUIC send with resume header (total_size + offset + hash)
-}
+// native: QUIC send with resume header (total_size + offset + hash)
+native fn QuicTransfer.send_resume(path: String, dest: String, offset: i64 = 0) -> TransferResult
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 60: Code Phrase Pairing, Relay Server, Resume
@@ -738,14 +678,12 @@ struct CodeSession {
 }
 
 /// Generate a random code phrase (format: NNN-word-word-word)
-fn TransferCode.generate() -> TransferCode {
-    // native: random 3-digit number + 3 phonetically distinct words
-}
+// native: random 3-digit number + 3 phonetically distinct words
+native fn TransferCode.generate() -> TransferCode
 
 /// Resolve a code phrase to its deterministic port and session
-fn TransferCode.resolve(code: String) -> CodeSession {
-    // native: BLAKE3(code) -> port (10000-65000) + session key
-}
+// native: BLAKE3(code) -> port (10000-65000) + session key
+native fn TransferCode.resolve(code: String) -> CodeSession
 
 // ── Relay — TCP relay server for NAT traversal ──
 
@@ -774,19 +712,16 @@ struct RelayReceiveResult {
 }
 
 /// Start a TallowTransfer relay server on the given port
-fn Relay.start(port: i64 = 6880) -> RelayServer {
-    // native: bind TCP listener, match sender/receiver by code phrase
-}
+// native: bind TCP listener, match sender/receiver by code phrase
+native fn Relay.start(port: i64 = 6880) -> RelayServer
 
 /// Send a file via relay server (code phrase matched)
-fn Relay.send(file: String, relay_addr: String = "relay.tallow-lang.org:6880", code: String = "") -> RelaySendResult {
-    // native: connect to relay, send TALLOW-SEND header + code + file data
-}
+// native: connect to relay, send TALLOW-SEND header + code + file data
+native fn Relay.send(file: String, relay_addr: String = "relay.tallow-lang.org:6880", code: String = "") -> RelaySendResult
 
 /// Receive a file via relay server (code phrase matched)
-fn Relay.receive(code: String, output_dir: String = ".", relay_addr: String = "relay.tallow-lang.org:6880") -> RelayReceiveResult {
-    // native: connect to relay, send TALLOW-RECV header + code, receive file
-}
+// native: connect to relay, send TALLOW-RECV header + code, receive file
+native fn Relay.receive(code: String, output_dir: String = ".", relay_addr: String = "relay.tallow-lang.org:6880") -> RelayReceiveResult
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 61: Multi-File Send, Folder Send, Compression, Parallel
@@ -879,60 +814,52 @@ struct WatchEntry {
 // ══════════════════════════════════════════════════════════════════
 
 /// Prepare multiple files for transfer (builds manifest with BLAKE3 hashes)
-fn MultiTransfer.prepare(files: []String, dest: String) -> MultiTransferResult {
-    // native: walk files/dirs, build manifest with BLAKE3 hashes
-}
+// native: walk files/dirs, build manifest with BLAKE3 hashes
+native fn MultiTransfer.prepare(files: []String, dest: String) -> MultiTransferResult
 
 /// Archive and send an entire directory (optional zstd compression)
-fn MultiTransfer.send_dir(dir: String, dest: String, compress: bool = true) -> DirTransferResult {
-    // native: archive directory to binary format, compress with zstd, return metadata
-}
+// native: archive directory to binary format, compress with zstd, return metadata
+native fn MultiTransfer.send_dir(dir: String, dest: String, compress: bool = true) -> DirTransferResult
 
 // ══════════════════════════════════════════════════════════════════
 // TransferCompress — Compression during transfer
 // ══════════════════════════════════════════════════════════════════
 
 /// Compress data for transfer (auto-detects algorithm: zstd, lz4, or none)
-fn TransferCompress.compress(data: String, algo: String = "auto") -> CompressedTransfer {
-    // native: Shannon entropy check, zstd for normal, lz4 for large, skip for high-entropy
-}
+// native: Shannon entropy check, zstd for normal, lz4 for large, skip for high-entropy
+native fn TransferCompress.compress(data: String, algo: String = "auto") -> CompressedTransfer
 
 /// Decompress transfer data back to original
-fn TransferCompress.decompress(data_hex: String, algo: String) -> String {
-    // native: zstd/lz4/none decompression from hex-encoded data
-}
+// native: zstd/lz4/none decompression from hex-encoded data
+native fn TransferCompress.decompress(data_hex: String, algo: String) -> String
 
 // ══════════════════════════════════════════════════════════════════
 // ParallelConfig — Parallel stream configuration
 // ══════════════════════════════════════════════════════════════════
 
 /// Create a parallel stream configuration (default: 4 streams, 256KB chunks)
-fn ParallelConfig.create(streams: i64 = 4, chunk_size: i64 = 262144) -> ParallelConfig {
-    // native: configure stream count and chunk size for transfer
-}
+// native: configure stream count and chunk size for transfer
+native fn ParallelConfig.create(streams: i64 = 4, chunk_size: i64 = 262144) -> ParallelConfig
 
 // ══════════════════════════════════════════════════════════════════
 // BandwidthConfig — Bandwidth limiting
 // ══════════════════════════════════════════════════════════════════
 
 /// Apply bandwidth limit to transfer (e.g., "10M" = 10 Mbps, "500K", "1G")
-fn BandwidthConfig.apply(limit: String) -> BandwidthConfig {
-    // native: parse bandwidth limit string, compute bytes/sec
-}
+// native: parse bandwidth limit string, compute bytes/sec
+native fn BandwidthConfig.apply(limit: String) -> BandwidthConfig
 
 // ══════════════════════════════════════════════════════════════════
 // WatchSession — Directory watching and change detection
 // ══════════════════════════════════════════════════════════════════
 
 /// Start watching a directory for changes (polling-based, BLAKE3 hashes)
-fn WatchSession.start(dir: String, interval_ms: i64 = 1000) -> WatchSession {
-    // native: snapshot directory with BLAKE3 hashes of each file
-}
+// native: snapshot directory with BLAKE3 hashes of each file
+native fn WatchSession.start(dir: String, interval_ms: i64 = 1000) -> WatchSession
 
 /// Check for changes since last snapshot
-fn WatchSession.check(session: WatchSession) -> WatchChanges {
-    // native: re-scan directory, compare BLAKE3 hashes, report added/removed/modified
-}
+// native: re-scan directory, compare BLAKE3 hashes, report added/removed/modified
+native fn WatchSession.check(session: WatchSession) -> WatchChanges
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 62: Signed Manifests, Immutable Audit Log, Expiring Transfers,
@@ -964,19 +891,16 @@ struct TransferReceipt {
 }
 
 /// Create a cryptographically signed transfer manifest (BLAKE3 keyed hash)
-fn SignedManifest.create(files_json: String, sender_id: String = "anonymous") -> SignedManifest {
-    // native: BLAKE3 keyed hash signature over manifest JSON
-}
+// native: BLAKE3 keyed hash signature over manifest JSON
+native fn SignedManifest.create(files_json: String, sender_id: String = "anonymous") -> SignedManifest
 
 /// Verify a signed manifest's integrity
-fn SignedManifest.verify(manifest: String, signature: String, sender_id: String) -> ManifestVerification {
-    // native: recompute BLAKE3 keyed hash, compare
-}
+// native: recompute BLAKE3 keyed hash, compare
+native fn SignedManifest.verify(manifest: String, signature: String, sender_id: String) -> ManifestVerification
 
 /// Create a transfer receipt (non-repudiation proof of delivery)
-fn TransferReceipt.create(file_hash: String, receiver_id: String = "receiver") -> TransferReceipt {
-    // native: BLAKE3 hash of (file_hash || receiver_id || timestamp)
-}
+// native: BLAKE3 hash of (file_hash || receiver_id || timestamp)
+native fn TransferReceipt.create(file_hash: String, receiver_id: String = "receiver") -> TransferReceipt
 
 // ── Immutable Audit Log (BLAKE3-chained) ──
 
@@ -1002,24 +926,20 @@ struct AuditSaveResult {
 }
 
 /// Log a transfer action to the immutable audit trail
-fn AuditLog.log(action: String, details: String = "") -> AuditEntry {
-    // native: BLAKE3-chained append to global audit log
-}
+// native: BLAKE3-chained append to global audit log
+native fn AuditLog.log(action: String, details: String = "") -> AuditEntry
 
 /// Verify integrity of the entire audit chain
-fn AuditLog.verify() -> AuditVerification {
-    // native: walk chain, verify each entry's hash
-}
+// native: walk chain, verify each entry's hash
+native fn AuditLog.verify() -> AuditVerification
 
 /// Export the audit log as JSON
-fn AuditLog.export() -> String {
-    // native: serialize all entries to JSON array
-}
+// native: serialize all entries to JSON array
+native fn AuditLog.export() -> String
 
 /// Save audit log to a file
-fn AuditLog.save(path: String = "tallow_audit.log") -> AuditSaveResult {
-    // native: write TSV to file
-}
+// native: write TSV to file
+native fn AuditLog.save(path: String = "tallow_audit.log") -> AuditSaveResult
 
 // ── Expiring Transfers ──
 
@@ -1041,14 +961,12 @@ struct ExpiryCheck {
 }
 
 /// Create an expiring transfer token
-fn ExpiringTransfer.create(transfer_id: String, max_downloads: i64 = 1, expire_hours: i64 = 24) -> ExpiringTransfer {
-    // native: compute expires_at from current time + hours
-}
+// native: compute expires_at from current time + hours
+native fn ExpiringTransfer.create(transfer_id: String, max_downloads: i64 = 1, expire_hours: i64 = 24) -> ExpiringTransfer
 
 /// Check if a transfer has expired (time or download count)
-fn ExpiringTransfer.check(token: ExpiringTransfer) -> ExpiryCheck {
-    // native: compare current time to expires_at, check downloads_remaining
-}
+// native: compare current time to expires_at, check downloads_remaining
+native fn ExpiringTransfer.check(token: ExpiringTransfer) -> ExpiryCheck
 
 // ── Retention Policy ──
 
@@ -1067,14 +985,12 @@ struct RetentionResult {
 }
 
 /// Create a retention policy
-fn RetentionPolicy.create(retain_days: i64 = 30, name: String = "default", auto_delete: bool = true) -> RetentionPolicy {
-    // native: create policy struct
-}
+// native: create policy struct
+native fn RetentionPolicy.create(retain_days: i64 = 30, name: String = "default", auto_delete: bool = true) -> RetentionPolicy
 
 /// Apply retention policy to a directory (delete files older than retain_days)
-fn RetentionPolicy.apply(dir: String, retain_days: i64 = 30, dry_run: bool = false) -> RetentionResult {
-    // native: scan directory, delete/count expired files
-}
+// native: scan directory, delete/count expired files
+native fn RetentionPolicy.apply(dir: String, retain_days: i64 = 30, dry_run: bool = false) -> RetentionResult
 
 // ── File Type Validation (magic bytes) ──
 
@@ -1099,14 +1015,12 @@ struct AllowlistCheck {
 }
 
 /// Validate file type by magic bytes (not extension)
-fn FileValidator.validate(path: String) -> FileValidation {
-    // native: read first bytes, detect type, check for executables/scripts/macros
-}
+// native: read first bytes, detect type, check for executables/scripts/macros
+native fn FileValidator.validate(path: String) -> FileValidation
 
 /// Check if a file's type is in an allowlist
-fn FileValidator.allowlist(path: String, allowed_types: []String = ["pdf","csv","xml","json","txt","png","jpg"]) -> AllowlistCheck {
-    // native: detect type by magic bytes, check against allowlist
-}
+// native: detect type by magic bytes, check against allowlist
+native fn FileValidator.allowlist(path: String, allowed_types: []String = ["pdf","csv","xml","json","txt","png","jpg"]) -> AllowlistCheck
 
 // ── ML-KEM-1024 Crypto Config ──
 
@@ -1122,13 +1036,12 @@ struct CryptoConfig {
 
 /// Get crypto configuration for a security level
 /// Levels: "standard", "high"/"enterprise", "cnsa2"/"classified"/"top_secret", "hybrid"
-fn CryptoConfig.get(level: String = "standard") -> CryptoConfig {
-    // native: return algorithm suite for the given security level
-    // cnsa2/classified/top_secret → ML-KEM-1024, ML-DSA-87, SHA-384
-    // high/enterprise → ML-KEM-768, ML-DSA-65, SHA-256
-    // standard → ML-KEM-768, ML-DSA-44, BLAKE3
-    // hybrid → X25519+ML-KEM-768, Ed25519+ML-DSA-65, BLAKE3, ChaCha20-Poly1305
-}
+// native: return algorithm suite for the given security level
+// cnsa2/classified/top_secret → ML-KEM-1024, ML-DSA-87, SHA-384
+// high/enterprise → ML-KEM-768, ML-DSA-65, SHA-256
+// standard → ML-KEM-768, ML-DSA-44, BLAKE3
+// hybrid → X25519+ML-KEM-768, Ed25519+ML-DSA-65, BLAKE3, ChaCha20-Poly1305
+native fn CryptoConfig.get(level: String = "standard") -> CryptoConfig
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 63: mTLS Certificate Auth, Key Rotation, RBAC, Webhooks,
@@ -1148,9 +1061,8 @@ struct MtlsConfig {
 
 /// Create a mutual TLS configuration for authenticated transfers.
 /// If ca_path is provided and exists, mutual_auth and verify_peer are enabled.
-fn MtlsAuth.config(cert_path: String, key_path: String, ca_path: String = "") -> MtlsConfig {
-    // native: verify cert/key exist, compute BLAKE3 fingerprint
-}
+// native: verify cert/key exist, compute BLAKE3 fingerprint
+native fn MtlsAuth.config(cert_path: String, key_path: String, ca_path: String = "") -> MtlsConfig
 
 // ── Key Rotation ──
 
@@ -1179,19 +1091,16 @@ struct KeyRotationResult {
 }
 
 /// Create a key rotation schedule (default: 90 days, PCI DSS standard).
-fn KeyRotation.schedule(key_id: String, rotation_days: i64 = 90) -> KeyRotation {
-    // native: BLAKE3-based key version, ISO timestamps
-}
+// native: BLAKE3-based key version, ISO timestamps
+native fn KeyRotation.schedule(key_id: String, rotation_days: i64 = 90) -> KeyRotation
 
 /// Check if a key needs rotation based on its schedule.
-fn KeyRotation.check_rotation(schedule: KeyRotation) -> RotationCheck {
-    // native: compare current time vs next_rotation
-}
+// native: compare current time vs next_rotation
+native fn KeyRotation.check_rotation(schedule: KeyRotation) -> RotationCheck
 
 /// Rotate a key: generate new version, archive old.
-fn KeyRotation.rotate(key_id: String, old_version: String = "") -> KeyRotationResult {
-    // native: BLAKE3-based new version id
-}
+// native: BLAKE3-based new version id
+native fn KeyRotation.rotate(key_id: String, old_version: String = "") -> KeyRotationResult
 
 // ── RBAC (Role-Based Access Control) ──
 
@@ -1214,14 +1123,12 @@ struct RbacCheck {
 }
 
 /// Create a user with a role. Valid roles: admin, operator, auditor, transfer_only, readonly.
-fn Rbac.create_user(username: String, role: String = "transfer_only") -> RbacUser {
-    // native: BLAKE3 user_id, role-based permission matrix
-}
+// native: BLAKE3 user_id, role-based permission matrix
+native fn Rbac.create_user(username: String, role: String = "transfer_only") -> RbacUser
 
 /// Check if a user has permission for an action (send, receive, admin, audit, delete).
-fn Rbac.check(user: RbacUser, action: String) -> RbacCheck {
-    // native: lookup permission flag by action
-}
+// native: lookup permission flag by action
+native fn Rbac.check(user: RbacUser, action: String) -> RbacCheck
 
 // ── Webhook Notifications ──
 
@@ -1243,14 +1150,12 @@ struct WebhookResult {
 }
 
 /// Create a webhook configuration for transfer event notifications.
-fn Webhook.config(url: String, events: []String = [], secret: String = "") -> WebhookConfig {
-    // native: default events: transfer_complete, transfer_failed
-}
+// native: default events: transfer_complete, transfer_failed
+native fn Webhook.config(url: String, events: []String = [], secret: String = "") -> WebhookConfig
 
 /// Fire a webhook event (builds JSON payload with optional HMAC-BLAKE3 signature).
-fn Webhook.fire(url: String, event: String, payload: String = "{}", secret: String = "") -> WebhookResult {
-    // native: BLAKE3 keyed hash signature if secret provided
-}
+// native: BLAKE3 keyed hash signature if secret provided
+native fn Webhook.fire(url: String, event: String, payload: String = "
 
 // ── Transfer Scheduling ──
 
@@ -1275,14 +1180,12 @@ struct ScheduleCheck {
 }
 
 /// Create a transfer schedule with a cron expression (5 fields: min hour dom mon dow).
-fn TransferSchedule.create(name: String, cron: String, source: String, destination: String) -> TransferSchedule {
-    // native: validate cron format, generate schedule_id
-}
+// native: validate cron format, generate schedule_id
+native fn TransferSchedule.create(name: String, cron: String, source: String, destination: String) -> TransferSchedule
 
 /// Check if a schedule should run now.
-fn TransferSchedule.check(schedule: TransferSchedule) -> ScheduleCheck {
-    // native: simplified cron matching (all-wildcard = always due)
-}
+// native: simplified cron matching (all-wildcard = always due)
+native fn TransferSchedule.check(schedule: TransferSchedule) -> ScheduleCheck
 
 // ── AV Scanning ──
 
@@ -1304,14 +1207,12 @@ struct YaraScanResult {
 }
 
 /// Scan a file for malware using ClamAV (graceful degradation if not installed).
-fn AvScanner.scan(path: String) -> AvScanResult {
-    // native: shells out to clamscan, returns warning if unavailable
-}
+// native: shells out to clamscan, returns warning if unavailable
+native fn AvScanner.scan(path: String) -> AvScanResult
 
 /// Scan a file with YARA rules (graceful degradation if not installed).
-fn AvScanner.yara(path: String, rules_path: String = "rules.yar") -> YaraScanResult {
-    // native: shells out to yara, returns warning if unavailable
-}
+// native: shells out to yara, returns warning if unavailable
+native fn AvScanner.yara(path: String, rules_path: String = "rules.yar") -> YaraScanResult
 
 // ══════════════════════════════════════════════════════════════════
 // Phase 63: Encrypted Chat System
@@ -1341,24 +1242,20 @@ struct ChatSession {
 }
 
 /// Create a new 1-to-1 encrypted chat session.
-fn Chat.create(username: String, code: String = "") -> ChatSession {
-    // native: creates AES-256-GCM encrypted session with BLAKE3-derived key
-}
+// native: creates AES-256-GCM encrypted session with BLAKE3-derived key
+native fn Chat.create(username: String, code: String = "") -> ChatSession
 
 /// Send an encrypted message within a chat session.
-fn Chat.send(session: ChatSession, message: String) -> ChatSession {
-    // native: encrypts message with per-session AES-256-GCM key
-}
+// native: encrypts message with per-session AES-256-GCM key
+native fn Chat.send(session: ChatSession, message: String) -> ChatSession
 
 /// Decrypt a received chat message.
-fn Chat.decrypt(encrypted: String, session_id: String) -> String {
-    // native: AES-256-GCM decrypt with session-derived key
-}
+// native: AES-256-GCM decrypt with session-derived key
+native fn Chat.decrypt(encrypted: String, session_id: String) -> String
 
 /// Get chat history as formatted strings.
-fn Chat.history(session: ChatSession) -> []String {
-    // native: returns "[timestamp] user: message" formatted lines
-}
+// native: returns "[timestamp] user: message" formatted lines
+native fn Chat.history(session: ChatSession) -> []String
 
 // ── Group Chat Message ──
 
@@ -1385,29 +1282,24 @@ struct GroupChatSession {
 }
 
 /// Create a new group chat.
-fn GroupChat.create(name: String, creator: String, code: String = "") -> GroupChatSession {
-    // native: creates group with AES-256-GCM, creator as first member
-}
+// native: creates group with AES-256-GCM, creator as first member
+native fn GroupChat.create(name: String, creator: String, code: String = "") -> GroupChatSession
 
 /// Add a member to a group chat.
-fn GroupChat.add_member(group: GroupChatSession, member: String) -> GroupChatSession {
-    // native: adds member (no duplicates)
-}
+// native: adds member (no duplicates)
+native fn GroupChat.add_member(group: GroupChatSession, member: String) -> GroupChatSession
 
 /// Remove a member from a group chat.
-fn GroupChat.remove_member(group: GroupChatSession, member: String) -> GroupChatSession {
-    // native: removes member
-}
+// native: removes member
+native fn GroupChat.remove_member(group: GroupChatSession, member: String) -> GroupChatSession
 
 /// Send an encrypted message to a group chat.
-fn GroupChat.send(group: GroupChatSession, sender: String, message: String) -> GroupChatSession {
-    // native: encrypts with group-derived AES-256-GCM key
-}
+// native: encrypts with group-derived AES-256-GCM key
+native fn GroupChat.send(group: GroupChatSession, sender: String, message: String) -> GroupChatSession
 
 /// Get group chat history as formatted strings.
-fn GroupChat.history(group: GroupChatSession) -> []String {
-    // native: returns "[timestamp] user: message" formatted lines
-}
+// native: returns "[timestamp] user: message" formatted lines
+native fn GroupChat.history(group: GroupChatSession) -> []String
 
 // ── Proxy Config ──
 
@@ -1420,16 +1312,14 @@ struct ProxyConfig {
 }
 
 /// Create a proxy configuration.
-fn ProxyConfig.create(url: String) -> ProxyConfig {
-    // native: parses socks5://, socks4://, http:// URLs
-}
+// native: parses socks5://, socks4://, http:// URLs
+native fn ProxyConfig.create(url: String) -> ProxyConfig
 
 // ── QR Code Display ──
 
 /// Generate ASCII art QR-style display for a code phrase.
-fn QrCode.generate(data: String) -> String {
-    // native: generates box-drawing art with BLAKE3-derived visual pattern
-}
+// native: generates box-drawing art with BLAKE3-derived visual pattern
+native fn QrCode.generate(data: String) -> String
 
 // ══════════════════════════════════════════════════════════════════
 // Text Transfer — send text without a file
@@ -1443,9 +1333,8 @@ struct TextTransfer {
 }
 
 /// Send a text string (no file needed), returns BLAKE3-hashed transfer manifest.
-fn TextTransfer.send(text: String) -> TextTransfer {
-    // native: BLAKE3 hash, size, type="text"
-}
+// native: BLAKE3 hash, size, type="text"
+native fn TextTransfer.send(text: String) -> TextTransfer
 
 // ══════════════════════════════════════════════════════════════════
 // STUN — NAT traversal and hole punching
@@ -1467,14 +1356,12 @@ struct HolePunchResult {
 }
 
 /// Discover local and public IP addresses (STUN-like UDP probing).
-fn Stun.discover() -> StunResult {
-    // native: UDP socket bind + connect to 8.8.8.8:80 to find local IP
-}
+// native: UDP socket bind + connect to 8.8.8.8:80 to find local IP
+native fn Stun.discover() -> StunResult
 
 /// Attempt UDP hole punch to a peer (sends TALLOW-PUNCH packet).
-fn Stun.hole_punch(peer_ip: String, peer_port: i64 = 6881, local_port: i64 = 0) -> HolePunchResult {
-    // native: UDP socket bind, send punch packet to peer
-}
+// native: UDP socket bind, send punch packet to peer
+native fn Stun.hole_punch(peer_ip: String, peer_port: i64 = 6881, local_port: i64 = 0) -> HolePunchResult
 
 // ══════════════════════════════════════════════════════════════════
 // TWD Directory Transfer Protocol
@@ -1531,27 +1418,23 @@ struct UnpackResult {
 
 /// Send a directory over QUIC preserving full folder structure (TWD format).
 /// The receiver gets the exact same directory tree with all files, subdirectories, and metadata intact.
-fn DirTransfer.send(dir: String, dest: String, compress: bool = true) -> DirTransferResult {
-    // native: walk dir, build TWD archive, optionally zstd compress, QUIC send
-}
+// native: walk dir, build TWD archive, optionally zstd compress, QUIC send
+native fn DirTransfer.send(dir: String, dest: String, compress: bool = true) -> DirTransferResult
 
 /// Receive a directory over QUIC and restore full folder structure.
 /// Auto-detects TWD format and unpacks preserving the original directory tree.
-fn DirTransfer.receive(listen_addr: String = "0.0.0.0:6881", output_dir: String = ".", timeout: i64 = 60) -> DirReceiveResult {
-    // native: QUIC listen, receive TWD archive, decompress if needed, unpack
-}
+// native: QUIC listen, receive TWD archive, decompress if needed, unpack
+native fn DirTransfer.receive(listen_addr: String = "0.0.0.0:6881", output_dir: String = ".", timeout: i64 = 60) -> DirReceiveResult
 
 /// Pack a directory into a TWD archive file (local, no network).
 /// Useful as a replacement for tar/zip with structure preservation.
-fn DirArchive.pack(dir: String, output: String, compress: bool = true) -> PackResult {
-    // native: walk dir, build TWD archive, optionally zstd compress, write to file
-}
+// native: walk dir, build TWD archive, optionally zstd compress, write to file
+native fn DirArchive.pack(dir: String, output: String, compress: bool = true) -> PackResult
 
 /// Unpack a TWD archive to a directory, restoring the full folder structure.
 /// Auto-detects compressed vs uncompressed archives.
-fn DirArchive.unpack(archive: String, output_dir: String = ".") -> UnpackResult {
-    // native: read file, decompress if needed, parse TWD format, create dirs + files
-}
+// native: read file, decompress if needed, parse TWD format, create dirs + files
+native fn DirArchive.unpack(archive: String, output_dir: String = ".") -> UnpackResult
 
 // ══════════════════════════════════════════════════════════════════
 // HTTP Share by Link — serve files for browser download
@@ -1579,18 +1462,16 @@ struct ShareLink {
 /// @param port       Port to bind (0 = auto-assign)
 /// @param password   Optional password for download protection
 /// @param max_downloads  Maximum number of downloads (0 = unlimited)
-fn ShareLink.create(file: String, port: i64 = 0, password: String? = nil, max_downloads: i64 = 0) -> ShareLink {
-    // native: bind TCP, generate token, spawn HTTP server thread, return ShareLink
-}
+// native: bind TCP, generate token, spawn HTTP server thread, return ShareLink
+native fn ShareLink.create(file: String, port: i64 = 0, password: String? = nil, max_downloads: i64 = 0) -> ShareLink
 
 /// Share a directory via HTTP download link (packs as TWD archive, serves via HTTP).
 /// Receiver downloads a .twd file that can be unpacked with `tallow unpack`.
 ///
 /// @param dir   Path to the directory to share
 /// @param port  Port to bind (0 = auto-assign)
-fn ShareLink.dir(dir: String, port: i64 = 0) -> ShareLink {
-    // native: pack directory to temp TWD archive, then share_by_link
-}
+// native: pack directory to temp TWD archive, then share_by_link
+native fn ShareLink.dir(dir: String, port: i64 = 0) -> ShareLink
 
 // ══════════════════════════════════════════════════════════════════
 // Live Browser Session Sharing — stream screenshots over HTTP
@@ -1610,14 +1491,12 @@ struct LiveShare {
 ///
 /// @param port        Port for the HTTP viewer (default: 9090)
 /// @param refresh_ms  Screenshot refresh interval in milliseconds (default: 1000)
-fn BrowserLive.start(port: i64 = 9090, refresh_ms: i64 = 1000) -> LiveShare {
-    // native: bind TCP, spawn HTTP server thread serving viewer page + /screenshot endpoint
-}
+// native: bind TCP, spawn HTTP server thread serving viewer page + /screenshot endpoint
+native fn BrowserLive.start(port: i64 = 9090, refresh_ms: i64 = 1000) -> LiveShare
 
 /// Update the live screenshot. Call this periodically from browser automation.
 /// The screenshot data should be base64-encoded PNG bytes.
 ///
 /// @param screenshot_base64  Base64-encoded PNG screenshot data
-fn BrowserLive.update(screenshot_base64: String) -> bool {
-    // native: base64 decode, write to temp dir as tallow-live-screenshot.png
-}
+// native: base64 decode, write to temp dir as tallow-live-screenshot.png
+native fn BrowserLive.update(screenshot_base64: String) -> bool

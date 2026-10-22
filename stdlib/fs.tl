@@ -9,91 +9,74 @@
 /// error (both engines), never an empty string or an `Err` value. This used to
 /// be declared `Result<String>` while returning a bare String, which made
 /// `if let Ok(c) = read_file(p)` silently never fire.
-fn read_file(path: String) -> String {
-    // native: reads file at path, returns UTF-8 string
-}
+// native: reads file at path, returns UTF-8 string
+native fn read_file(path: String) -> String
 
 /// Read file as raw bytes, as a Bytes value (not a String). A Bytes value
 /// prints as its base64 encoding on both engines; hash the raw bytes with
 /// provenance.hash_bytes, or call .base64() for the encoded form
-fn read_bytes(path: String) -> Result<Bytes> {
-    // native: reads file at path, returns raw bytes
-}
+// native: reads file at path, returns raw bytes
+native fn read_bytes(path: String) -> Result<Bytes>
 
 /// Write string content to file (creates or overwrites)
-fn write_file(path: String, content: String) -> Result<()> {
-    // native: writes content to file
-}
+// native: writes content to file
+native fn write_file(path: String, content: String) -> Result<()>
 
 /// Write raw bytes to file
-fn write_bytes(path: String, data: Bytes) -> Result<()> {
-    // native: writes bytes to file
-}
+// native: writes bytes to file
+native fn write_bytes(path: String, data: Bytes) -> Result<()>
 
 /// Append string to file
-fn append_file(path: String, content: String) -> Result<()> {
-    // native: appends content to end of file
-}
+// native: appends content to end of file
+native fn append_file(path: String, content: String) -> Result<()>
 
 /// Create a new file (error if exists)
-fn create_file(path: String) -> Result<()> {
-    // native: creates empty file
-}
+// native: creates empty file
+native fn create_file(path: String) -> Result<()>
 
 /// Delete a file
-fn delete_file(path: String) -> Result<()> {
-    // native: removes file at path
-}
+// native: removes file at path
+native fn delete_file(path: String) -> Result<()>
 
 /// Check if path exists
-fn exists(path: String) -> bool {
-    // native: returns true if path exists
-}
+// native: returns true if path exists
+native fn exists(path: String) -> bool
 
 /// Check if path is a file
-fn is_file(path: String) -> bool {
-    // native: returns true if path is a regular file
-}
+// native: returns true if path is a regular file
+native fn is_file(path: String) -> bool
 
 /// Check if path is a directory
-fn is_dir(path: String) -> bool {
-    // native: returns true if path is a directory
-}
+// native: returns true if path is a directory
+native fn is_dir(path: String) -> bool
 
 /// Create directory (and parents)
-fn mkdir(path: String) -> Result<()> {
-    // native: creates directory recursively
-}
+// native: creates directory recursively
+native fn mkdir(path: String) -> Result<()>
 
 /// Remove directory
-fn remove_dir(path: String) -> Result<()> {
-    // native: removes directory (must be empty)
-}
+// native: removes directory (must be empty)
+native fn remove_dir(path: String) -> Result<()>
 
 /// Remove directory and all contents
-fn remove_dir_all(path: String) -> Result<()> {
-    // native: removes directory tree
-}
+// native: removes directory tree
+native fn remove_dir_all(path: String) -> Result<()>
 
 /// List directory contents
-fn list_dir(path: String) -> Result<[]String> {
-    // native: returns file/dir names in directory
-}
+// native: returns file/dir names in directory
+native fn list_dir(path: String) -> Result<[]String>
 
 /// Copy file from src to dst
-fn copy(src: String, dst: String) -> Result<()> {
-    // native: copies file
-}
+// native: copies file
+native fn copy(src: String, dst: String) -> Result<()>
 
 /// Move/rename file
-fn rename(src: String, dst: String) -> Result<()> {
-    // native: moves/renames file
-}
+// native: moves/renames file
+native fn rename(src: String, dst: String) -> Result<()>
 
 /// Get file size in bytes
-fn file_size(path: String) -> Result<u64> {
-    // native: returns file size
-}
+// native: returns file size
+native fn file_size(path: String) -> Result<u64>
 
 /// File metadata
 struct FileInfo {
@@ -106,21 +89,17 @@ struct FileInfo {
 }
 
 /// Get file metadata
-fn stat(path: String) -> Result<FileInfo> {
-    // native: returns file metadata
-}
+// native: returns file metadata
+native fn stat(path: String) -> Result<FileInfo>
 
 /// Read file line by line (lazy iterator)
-fn read_lines(path: String) -> Result<[]String> {
-    // native: reads file, splits by newline
-}
+// native: reads file, splits by newline
+native fn read_lines(path: String) -> Result<[]String>
 
 /// Temporary file that auto-deletes on scope exit
-fn temp_file() -> Result<String> {
-    // native: creates temp file, returns path
-}
+// native: creates temp file, returns path
+native fn temp_file() -> Result<String>
 
 /// Temporary directory that auto-deletes on scope exit
-fn temp_dir() -> Result<String> {
-    // native: creates temp directory, returns path
-}
+// native: creates temp directory, returns path
+native fn temp_dir() -> Result<String>

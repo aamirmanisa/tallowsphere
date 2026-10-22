@@ -30,9 +30,8 @@ struct TurnstileSolution {
 ///      launches a browser with a fresh, un-flagged stealth profile.
 ///
 /// Returns a TurnstileSolution indicating success/failure and the method used.
-fn solve_turnstile(url: String) -> TurnstileSolution {
-    // native: connects to src/browser/captcha.rs captcha detection engine,
-    //          uses 2Captcha solver integration (BRCA-02),
-    //          integrates with warmup.rs cookie farm for pre-warmed cookies,
-    //          auto-triggers when CaptchaDetector detects Turnstile on page load
-}
+// native: connects to src/browser/captcha.rs captcha detection engine,
+//          uses 2Captcha solver integration (BRCA-02),
+//          integrates with warmup.rs cookie farm for pre-warmed cookies,
+//          auto-triggers when CaptchaDetector detects Turnstile on page load
+native fn solve_turnstile(url: String) -> TurnstileSolution

@@ -4,17 +4,17 @@ module tallow.algos
 /// Avellaneda-Stoikov optimal market making
 native fn avellaneda_stoikov(S: Float, sigma: Float, gamma: Float, k: Float, T: Float, q: Float) -> ASQuote
 /// Cointegration-based pairs trading signal
-native fn pairs_trading(spread: [Float], entry_z: Float, exit_z: Float) -> PairSignal
+native fn pairs_trading(spread: []Float, entry_z: Float, exit_z: Float) -> PairSignal
 /// Time-series momentum signals
-native fn momentum(prices: [Float], lookback: Int) -> [Float]
+native fn momentum(prices: []Float, lookback: Int) -> []Float
 /// Cross-sectional momentum weights
-native fn cross_sectional(returns: [[Float]], lookback: Int) -> [Float]
+native fn cross_sectional(returns: [[]Float], lookback: Int) -> []Float
 /// TWAP execution schedule
-native fn twap(quantity: Float, duration_secs: Float, slices: Int) -> [TWAPSlice]
+native fn twap(quantity: Float, duration_secs: Float, slices: Int) -> []TWAPSlice
 /// VWAP volume profile
-native fn vwap_profile(volume_curve: [Float]) -> [Float]
+native fn vwap_profile(volume_curve: []Float) -> []Float
 /// Simple backtest engine
-native fn backtest(prices: [Float], signals: [Float]) -> BacktestResult
+native fn backtest(prices: []Float, signals: []Float) -> BacktestResult
 
 struct ASQuote {
     reservation_price: Float,
@@ -43,5 +43,5 @@ struct BacktestResult {
     max_drawdown: Float,
     volatility: Float,
     trades: Int,
-    equity_curve: [Float],
+    equity_curve: []Float,
 }

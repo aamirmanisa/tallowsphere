@@ -21,19 +21,16 @@ enum AgentStatus {
 
 impl AgentHandle<T> {
     /// Wait for agent to complete
-    fn await(self) -> Result<T> {
-        // native: blocks until agent finishes
-    }
+    // native: blocks until agent finishes
+    native fn await(self) -> Result<T>
 
     /// Wait with custom timeout (cannot exceed @agent_task timeout)
-    fn await(self, timeout: Duration) -> Result<T> {
-        // native: blocks with timeout
-    }
+    // native: blocks with timeout
+    native fn await(self, timeout: Duration) -> Result<T>
 
     /// Cancel the agent
-    fn cancel(self) -> Result<()> {
-        // native: signals cancellation
-    }
+    // native: signals cancellation
+    native fn cancel(self) -> Result<()>
 
     /// Check if completed
     fn is_done(self) -> bool {
@@ -46,35 +43,29 @@ impl AgentHandle<T> {
     }
 
     /// Get status
-    fn status(self) -> AgentStatus {
-        // native: checks current status
-    }
+    // native: checks current status
+    native fn status(self) -> AgentStatus
 }
 
 /// Spawn an agent function (requires can_spawn permission)
-fn spawn<T>(f: fn() -> T) -> AgentHandle<T> {
-    // native: starts agent in sandboxed environment
-}
+// native: starts agent in sandboxed environment
+native fn spawn<T>(f: fn() -> T) -> AgentHandle<T>
 
 /// Spawn a named agent
-fn spawn_agent<T>(name: String, f: fn() -> T) -> AgentHandle<T> {
-    // native: starts named agent
-}
+// native: starts named agent
+native fn spawn_agent<T>(name: String, f: fn() -> T) -> AgentHandle<T>
 
 /// Wait for all agents to complete
-fn await_all<T>(handles: []AgentHandle<T>) -> []Result<T> {
-    // native: waits for all to finish
-}
+// native: waits for all to finish
+native fn await_all<T>(handles: []AgentHandle<T>) -> []Result<T>
 
 /// Wait for first agent to complete
-fn await_any<T>(handles: []AgentHandle<T>) -> (usize, Result<T>) {
-    // native: returns index and result of first to finish
-}
+// native: returns index and result of first to finish
+native fn await_any<T>(handles: []AgentHandle<T>) -> (usize, Result<T>)
 
 /// Run functions in parallel, collect results
-fn parallel_map<T, R>(items: []T, f: fn(T) -> R) -> []R {
-    // native: spawns one agent per item, collects results
-}
+// native: spawns one agent per item, collects results
+native fn parallel_map<T, R>(items: []T, f: fn(T) -> R) -> []R
 
 /// Agent resource usage stats
 struct AgentStats {
@@ -85,9 +76,8 @@ struct AgentStats {
 }
 
 /// Get stats for current agent
-fn current_stats() -> AgentStats {
-    // native: returns resource usage
-}
+// native: returns resource usage
+native fn current_stats() -> AgentStats
 
 // ═══════════════════════════════════════════════════════════════════
 // Phase 40: Incident Response & SOAR types
@@ -111,19 +101,16 @@ struct PlaybookResult {
 }
 
 /// Compile a YAML-like playbook definition
-fn Playbook.compile(yaml: String) -> Playbook {
-    // native: parses name/trigger/steps from line-based YAML
-}
+// native: parses name/trigger/steps from line-based YAML
+native fn Playbook.compile(yaml: String) -> Playbook
 
 /// Execute a compiled playbook with the given context
-fn Playbook.execute(playbook: Playbook, context: String) -> PlaybookResult {
-    // native: runs each step, returns result with actions taken
-}
+// native: runs each step, returns result with actions taken
+native fn Playbook.execute(playbook: Playbook, context: String) -> PlaybookResult
 
 /// Validate a playbook has required fields (name, steps, compiled)
-fn Playbook.validate(playbook: Playbook) -> bool {
-    // native: checks name non-empty, steps non-empty, compiled=true
-}
+// native: checks name non-empty, steps non-empty, compiled=true
+native fn Playbook.validate(playbook: Playbook) -> bool
 
 /// Security alert for triage and escalation
 struct Alert {
@@ -139,19 +126,16 @@ struct Alert {
 }
 
 /// Create a new alert
-fn Alert.create(source: String, severity: String, description: String) -> Alert {
-    // native: generates id, sets status=new
-}
+// native: generates id, sets status=new
+native fn Alert.create(source: String, severity: String, description: String) -> Alert
 
 /// Triage an alert — assigns priority, analyst, recommended actions based on severity
-fn Alert.triage(alert: Alert) -> Alert {
-    // native: critical→P1/soc-lead, high→P2/senior-analyst, medium→P3/analyst, low→P4/junior-analyst
-}
+// native: critical→P1/soc-lead, high→P2/senior-analyst, medium→P3/analyst, low→P4/junior-analyst
+native fn Alert.triage(alert: Alert) -> Alert
 
 /// Escalate an alert — bumps severity one level up, appends reason
-fn Alert.escalate(alert: Alert, reason: String) -> Alert {
-    // native: low→medium, medium→high, high→critical
-}
+// native: low→medium, medium→high, high→critical
+native fn Alert.escalate(alert: Alert, reason: String) -> Alert
 
 /// Indicator of Compromise scanner
 struct IOCScanner {
@@ -173,19 +157,16 @@ struct IOCMatch {
 }
 
 /// Create an empty IOC scanner
-fn IOCScanner.create() -> IOCScanner {
-    // native: returns scanner with empty indicator list
-}
+// native: returns scanner with empty indicator list
+native fn IOCScanner.create() -> IOCScanner
 
 /// Add an indicator to the scanner (immutable update)
-fn IOCScanner.add_indicator(scanner: IOCScanner, ioc_type: String, value: String) -> IOCScanner {
-    // native: validates type in {ip,domain,hash,url,email}, appends indicator
-}
+// native: validates type in ip,domain,hash,url,email, appends indicator
+native fn IOCScanner.add_indicator(scanner: IOCScanner, ioc_type: String, value: String) -> IOCScanner
 
 /// Scan data string for all registered IOCs (string contains matching)
-fn IOCScanner.scan(scanner: IOCScanner, data: String) -> []IOCMatch {
-    // native: returns array of matches where data contains indicator value
-}
+// native: returns array of matches where data contains indicator value
+native fn IOCScanner.scan(scanner: IOCScanner, data: String) -> []IOCMatch
 
 /// Result of a containment action (all actions are simulated)
 struct ContainmentResult {
@@ -198,24 +179,20 @@ struct ContainmentResult {
 }
 
 /// Simulate host isolation
-fn ContainmentAction.isolate_host(hostname: String) -> ContainmentResult {
-    // native: simulated — logs action, returns success
-}
+// native: simulated — logs action, returns success
+native fn ContainmentAction.isolate_host(hostname: String) -> ContainmentResult
 
 /// Simulate IP blocking
-fn ContainmentAction.block_ip(ip: String) -> ContainmentResult {
-    // native: simulated — logs action, returns success
-}
+// native: simulated — logs action, returns success
+native fn ContainmentAction.block_ip(ip: String) -> ContainmentResult
 
 /// Simulate account disabling
-fn ContainmentAction.disable_account(account: String) -> ContainmentResult {
-    // native: simulated — logs action, returns success
-}
+// native: simulated — logs action, returns success
+native fn ContainmentAction.disable_account(account: String) -> ContainmentResult
 
 /// Simulate file quarantine
-fn ContainmentAction.quarantine_file(path: String) -> ContainmentResult {
-    // native: simulated — logs action, returns success
-}
+// native: simulated — logs action, returns success
+native fn ContainmentAction.quarantine_file(path: String) -> ContainmentResult
 
 /// Incident timeline for event reconstruction
 struct IncidentTimeline {
@@ -233,19 +210,16 @@ struct TimelineEvent {
 }
 
 /// Create a new incident timeline
-fn IncidentTimeline.create(incident_id: String) -> IncidentTimeline {
-    // native: creates empty timeline
-}
+// native: creates empty timeline
+native fn IncidentTimeline.create(incident_id: String) -> IncidentTimeline
 
 /// Add an event to the timeline (immutable update)
-fn IncidentTimeline.add_event(timeline: IncidentTimeline, timestamp: String, description: String, source: String) -> IncidentTimeline {
-    // native: appends event, increments count
-}
+// native: appends event, increments count
+native fn IncidentTimeline.add_event(timeline: IncidentTimeline, timestamp: String, description: String, source: String) -> IncidentTimeline
 
 /// Export timeline to JSON string
-fn IncidentTimeline.export(timeline: IncidentTimeline) -> String {
-    // native: serializes to JSON
-}
+// native: serializes to JSON
+native fn IncidentTimeline.export(timeline: IncidentTimeline) -> String
 
 /// Threat hunt result
 struct HuntResult {
@@ -272,11 +246,9 @@ struct CorrelationResult {
 }
 
 /// Execute a threat hunting query against a data source
-fn ThreatHunt.query(data_source: String, query_string: String) -> HuntResult {
-    // native: simulated query — matches based on keywords
-}
+// native: simulated query — matches based on keywords
+native fn ThreatHunt.query(data_source: String, query_string: String) -> HuntResult
 
 /// Correlate results from multiple threat hunts
-fn ThreatHunt.correlate(results: []HuntResult) -> CorrelationResult {
-    // native: aggregates sources, counts, computes correlation score
-}
+// native: aggregates sources, counts, computes correlation score
+native fn ThreatHunt.correlate(results: []HuntResult) -> CorrelationResult

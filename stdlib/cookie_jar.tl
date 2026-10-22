@@ -14,7 +14,7 @@ struct Cookie {
 }
 
 struct CookieJar {
-    cookies: [Cookie],
+    cookies: []Cookie,
 }
 
 // Create an empty cookie jar
@@ -40,4 +40,4 @@ fn CookieJar.to_header(self, domain: String) -> String
 fn CookieJar.save(self, path: String)
 
 // List all cookies as an array
-fn CookieJar.cookies(self) -> [Cookie]
+fn CookieJar.cookies(self) -> []Cookie

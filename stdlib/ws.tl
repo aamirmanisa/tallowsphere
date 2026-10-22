@@ -16,7 +16,7 @@ fn WS.connect(url: String) -> WebSocket
 fn WebSocket.recv(self, timeout_ms: Int?) -> String?
 
 // Receive all available messages up to a limit. Blocks up to 5s.
-fn WebSocket.recv_all(self, limit: Int?) -> [String]
+fn WebSocket.recv_all(self, limit: Int?) -> []String
 
 // Send a text message
 fn WebSocket.send(self, text: String)

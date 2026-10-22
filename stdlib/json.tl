@@ -14,25 +14,21 @@ enum JsonValue {
 }
 
 /// Parse JSON string into typed value
-fn parse<T>(input: String) -> Result<T> {
-    // native: deserializes JSON into type T
-}
+// native: deserializes JSON into type T
+native fn parse<T>(input: String) -> Result<T>
 
 /// Parse JSON string into dynamic JsonValue
-fn parse_value(input: String) -> Result<JsonValue> {
-    // native: parses JSON into JsonValue tree
-}
+// native: parses JSON into JsonValue tree
+native fn parse_value(input: String) -> Result<JsonValue>
 
 /// Serialize value to JSON string
-fn to_json<T>(value: T) -> Result<String> {
-    // native: serializes T to JSON string
-    // COMPILE ERROR if T contains secret types
-}
+// native: serializes T to JSON string
+// COMPILE ERROR if T contains secret types
+native fn to_json<T>(value: T) -> Result<String>
 
 /// Serialize value to pretty-printed JSON
-fn to_json_pretty<T>(value: T) -> Result<String> {
-    // native: serializes with indentation
-}
+// native: serializes with indentation
+native fn to_json_pretty<T>(value: T) -> Result<String>
 
 impl JsonValue {
     /// Get value at key (for objects)

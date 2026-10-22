@@ -14,7 +14,7 @@ struct TLSProfile {
 }
 
 // List all available TLS profiles
-fn TLSProfile.list() -> [TLSProfile]
+fn TLSProfile.list() -> []TLSProfile
 
 // Get a specific profile by name (chrome_131, firefox_132, safari_18, edge_131)
 fn TLSProfile.get(name: String) -> TLSProfile
