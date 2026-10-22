@@ -43,6 +43,7 @@
     "reproducible_wins": ["binary size -20.4%", "peak RSS ~-8%"],
     "reproducible_cost": ["release build ~+11% wall (under a 2-job cap)"],
     "not_supported": ["any runtime/latency improvement"],
-    "decision": "Ship released artifacts with `--profile max` (smaller binary, less RSS). Keep [profile.release] as the dev-iteration profile so ordinary builds are not slowed. Do NOT claim a runtime win — the measurement does not support one."
+    "decision": "Ship released artifacts with `--profile max` (smaller binary, less RSS). Keep [profile.release] as the dev-iteration profile so ordinary builds are not slowed. Do NOT claim a runtime win — the measurement does not support one.",
+    "decision_status": "NOT APPLIED — drift found 2026-10-22. release.yml builds `cargo build --profile release` for all five shipped targets and nothing in .github, scripts, benches or benchmarks invokes `--profile max`. Not applied now because the goal in force is build time: fat LTO with codegen-units=1 removes all codegen parallelism, and the Windows leg is already the wall at ~885 s with 16 units on a 4-core runner. Operator call: ship max for size/RSS, or retire the decision."
   }
 }

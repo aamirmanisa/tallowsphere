@@ -70,10 +70,15 @@ if [ "$EXT" = "zip" ]; then
     # Bash has cygpath but no zip; 7-Zip is installed on the GitHub Windows
     # images, and Compress-Archive is the last resort.
     if command -v zip >/dev/null 2>&1; then
-        (cd "$STAGE" && zip -q -9 "$ARCHIVE" tallow.exe tallow.lib)
+        (cd "$STAGE" && zip -q -6 "$ARCHIVE" tallow.exe tallow.lib)
     elif [ -x "/c/Program Files/7-Zip/7z.exe" ]; then
         WARCHIVE="$(cygpath -w "$ARCHIVE")"
-        (cd "$STAGE" && "/c/Program Files/7-Zip/7z.exe" a -tzip -mx=9 "$WARCHIVE" tallow.exe tallow.lib >/dev/null)
+        # -mx=5, not -mx=9. Measured on this payload shape (46 MB exe + 241 MB
+        # runtime archive, 285 MB total, 4 threads): mx=9 161 s / 89 MB,
+        # mx=5 21 s / 91 MB, mx=1 5 s / 95 MB. Level 9 buys ~2% archive size for
+        # ~8x the time, and on the 573 MB Windows payload that is the difference
+        # between ~40 s and the 190-238 s the release jobs measured.
+        (cd "$STAGE" && "/c/Program Files/7-Zip/7z.exe" a -tzip -mmt=4 -mx=5 "$WARCHIVE" tallow.exe tallow.lib >/dev/null)
     else
         WPATH="$(cygpath -w "$STAGE")\\tallow.exe"
         WLIB="$(cygpath -w "$STAGE")\\tallow.lib"

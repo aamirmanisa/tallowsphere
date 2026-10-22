@@ -112,6 +112,57 @@ jobs:
           toolchain: 1.98.1
           targets: ${{ matrix.target }}
 
+      - name: Compiler cache (sccache)
+        # Every tag rebuilt 543 crates from scratch. The five build jobs took
+        # 12-16 minutes each and almost all of it was dependencies that had not
+        # changed since the previous tag. sccache keys each object on compiler,
+        # flags and source hash, so unchanged crates -- and BoringSSL's C++
+        # translation units -- are hits across tags and across the matrix; only
+        # the tallow crate itself recompiles.
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Enable sccache (local object store)
+        # Measured on the first cached attempt (cold 39704345890, warm 39708330189):
+        # the GitHub-cache backend recorded 716 failed writes out of 992 compiles on
+        # linux-x86_64 and delivered an 11.8% hit rate. The repository cache is
+        # already largely spent on the ten CI jobs' 300-700 MB rust-cache entries,
+        # so per-object writes do not survive. One archive per target is the shape
+        # that fits: a single entry, restored whole, no per-object traffic.
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$GITHUB_WORKSPACE/.sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=2500M" >> "$GITHUB_ENV"
+          echo "SCCACHE_LOG=error" >> "$GITHUB_ENV"
+          echo "SCCACHE_ERROR_LOG=$GITHUB_WORKSPACE/sccache-error.log" >> "$GITHUB_ENV"
+
+      # No Windows target-directory cache. It was added on 2026-10-22 and then
+      # measured twice: the first run never restored it (step 0 s, a miss), and
+      # the second restored 563 MB in 11 s and built the binary in 1148 s --
+      # against 885 s for the same tree without it, with sccache at 93.05 % in
+      # both cases. Unit time went 1665 s -> 2140 s, and the build-script block
+      # it was supposed to skip grew (btls-sys 207 -> 315 s, aws-lc-sys 126 ->
+      # 169 s). Restoring a target dir gives cargo fingerprints with fresh
+      # mtimes, so the scripts it was meant to skip re-run anyway. Removed.
+
+      - name: Restore the compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}/.sccache
+          # The exact key never repeats; restore-keys finds the newest cache for
+          # this triple, which is what makes a tag that only touches src/ hit.
+          key: sccache-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            sccache-${{ matrix.label }}-
+
+      # No registry cache here on purpose. Measured: it cost 103 s on Windows to
+      # restore 0.6 GB of crates the prefetch below fetches in 4-78 s, and the
+      # repository's 10 GB cache budget is what the compiler archives need.
+      - name: Pre-fetch the dependency graph
+        shell: bash
+        run: cargo fetch --locked --target ${{ matrix.target }}
+
       - name: Cross toolchain (aarch64 Linux)
         # This runner is x86_64. Building aarch64 here needs a C and C++ cross
         # compiler: btls-sys compiles C++ (cbs.cc) and cc-rs otherwise invokes the
@@ -139,15 +190,70 @@ jobs:
         shell: bash
         run: sudo apt-get update && sudo apt-get install -y liblzma-dev libbz2-dev
 
-      - name: Build (binary + runtime archive)
+      - name: Keep the scanner off the build tree (Windows)
+        # windows-latest runs Defender with real-time scanning on by default, and
+        # this build writes a 46 MB executable and a 527 MB static archive. The
+        # exclusion is best-effort: a runner that refuses the cmdlet still builds,
+        # it just pays the scan.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction Stop
+          Add-MpPreference -ExclusionPath "$env:CARGO_HOME" -ErrorAction Stop
+          Add-MpPreference -ExclusionProcess "rustc.exe" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "link.exe" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "lib.exe" -ErrorAction SilentlyContinue
+
+      - name: Build (binary)
         shell: bash
         run: |
-          cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow
+          start=$(date +%s)
+          cargo build --profile release --locked --target ${{ matrix.target }} --bin tallow --timings
+          echo "::notice::bin build $(( $(date +%s) - start ))s"
+
+      - name: Where the build spent its time
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          files = sorted(glob.glob('target/cargo-timings/cargo-timing-*.html'))
+          if not files:
+              print('no timings report')
+          else:
+              src = open(files[-1], encoding='utf-8').read()
+              start = src.index('UNIT_DATA = [')
+              end = src.index('\n];', start)
+              units = json.loads(src[start + len('UNIT_DATA = '):end + 2])
+              top = sorted(units, key=lambda u: -(u.get('duration') or 0))[:12]
+              total = sum((u.get('duration') or 0) for u in units)
+              print(f'units: {len(units)}  total unit time: {total:.1f}s')
+              for u in top:
+                  print(f"  {(u.get('duration') or 0):8.1f}s  {u.get('mode','?'):10} {u.get('name','?')}")
+          PY
+
+      - name: Build (runtime archive)
+        shell: bash
+        run: |
           # libtallow.a is the archive the compiler links compiled programs
           # against; it must be shipped beside the binary (see
           # scripts/package_release.sh) or every program that calls a runtime
           # symbol fails to link on a machine without a build tree.
+          start=$(date +%s)
           cargo build --profile release --locked --target ${{ matrix.target }} --lib
+          echo "::notice::lib build $(( $(date +%s) - start ))s"
+
+      - name: Compiler cache statistics
+        # The hit rate is the number that explains a fast or slow build; without
+        # it a regression is indistinguishable from a cold cache.
+        if: always()
+        shell: bash
+        run: |
+          sccache --show-stats || true
+          if [ -s sccache-error.log ]; then
+            echo "sccache error log:"
+            tail -20 sccache-error.log
+          fi
 
       - name: Package archive
         shell: bash
