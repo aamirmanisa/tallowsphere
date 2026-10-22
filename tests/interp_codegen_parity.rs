@@ -38,6 +38,7 @@ fn known_run_fail(name: &str) -> Option<&str> {
         "dealhunter.tl" | "dealhunter_pipeline.tl" => Some("live HTTP fetch — network required"),
         "live_tor_test.tl" => Some("live Tor daemons — network required; handler returns Struct not Ok/Err"),
         "browser_demo.tl" | "browser_full_demo.tl" | "browser_plugins_demo.tl"
+        | "scrape_speed_test.tl"
         | "ippool_demo.tl" | "bail_test.exe" | "fn_array_param.exe" | "full_demo.exe"
         | "hof_test.exe" | "if_let_test.exe" | "interp_test.exe" | "int_match_default.exe"
         | "map_test.exe" | "mega_test.exe" => Some("exe/browser/network — skip"),
