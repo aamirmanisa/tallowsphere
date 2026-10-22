@@ -28,6 +28,47 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
             let val = extract_number("math.tan", &args);
             Some(val.map(|v| Value::Float(v.tan())))
         }
+        // Inverse trig, cube root — declared in stdlib/math.tl since the surface
+        // was first written, but absent from every dispatcher and from the inline
+        // set above, so `math.asin(0.5)` died with "undefined function". Added
+        // 2026-10-22 as part of the surface audit.
+        "asin" => Some(extract_number("math.asin", &args).map(|v| Value::Float(v.asin()))),
+        "acos" => Some(extract_number("math.acos", &args).map(|v| Value::Float(v.acos()))),
+        "atan" => Some(extract_number("math.atan", &args).map(|v| Value::Float(v.atan()))),
+        "atan2" => {
+            let y = extract_number("math.atan2", &args);
+            let x = match args.get(1) {
+                Some(Value::Float(f)) => Ok(*f),
+                Some(Value::Int(n)) => Ok(*n as f64),
+                _ => Err("math.atan2 expects two numbers".to_string()),
+            };
+            Some(match (y, x) {
+                (Ok(y), Ok(x)) => Ok(Value::Float(y.atan2(x))),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            })
+        }
+        "cbrt" => Some(extract_number("math.cbrt", &args).map(|v| Value::Float(v.cbrt()))),
+
+        // Integer helpers. These are pure .tl in stdlib/math.tl for min_i/max_i/
+        // clamp_i, but the file declares them as free functions the runtime must
+        // still resolve, so they are answered here rather than left undefined.
+        "abs_i" => match args.first() {
+            Some(Value::Int(n)) => Some(Ok(Value::Int(n.abs()))),
+            _ => Some(Err("math.abs_i expects an Int".into())),
+        },
+        "min_i" | "max_i" => {
+            let (a, b) = match (args.first(), args.get(1)) {
+                (Some(Value::Int(a)), Some(Value::Int(b))) => (*a, *b),
+                _ => return Some(Err(format!("math.{function} expects two Ints"))),
+            };
+            Some(Ok(Value::Int(if function == "min_i" { a.min(b) } else { a.max(b) })))
+        }
+        "clamp_i" => match (args.first(), args.get(1), args.get(2)) {
+            (Some(Value::Int(x)), Some(Value::Int(lo)), Some(Value::Int(hi))) => {
+                Some(Ok(Value::Int((*x).max(*lo).min(*hi))))
+            }
+            _ => Some(Err("math.clamp_i expects three Ints".into())),
+        },
 
         // Rounding
         "round" => match args.first() {

@@ -28,8 +28,70 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
 }
 
 /// Dispatch a method call on a `tallow.json` object (e.g., JsonValue).
-pub fn dispatch_method(_object: &Value, _method: &str, _args: Vec<Value>) -> Option<StdlibResult> {
-    None
+///
+/// `json.parse_value` returns plain runtime values (`Nil`, `Bool`, `Int`,
+/// `Float`, `String`, `Array`, `Map`), not a tagged `JsonValue` struct, so the
+/// accessors declared in `stdlib/json.tl` have to answer those shapes. Before
+/// this, the whole accessor surface (`get`, `at`, `as_string`, `as_number`,
+/// `as_bool`, `is_null`, `len`) was declared and none of it was reachable:
+/// `json.parse_value("123").as_number()` died with "undefined function".
+/// Struct receivers are deliberately left alone so a user type keeps its own
+/// methods of the same name.
+pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option<StdlibResult> {
+    if matches!(object, Value::Struct { .. }) {
+        return None;
+    }
+    match method {
+        "is_null" if matches!(object, Value::Nil) => Some(Ok(Value::Bool(true))),
+        "is_null" => Some(Ok(Value::Bool(false))),
+        "as_number" => Some(Ok(match object {
+            Value::Int(n) => Value::Float(*n as f64),
+            Value::Float(f) => Value::Float(*f),
+            _ => Value::Nil,
+        })),
+        "as_bool" => Some(Ok(match object {
+            Value::Bool(b) => Value::Bool(*b),
+            _ => Value::Nil,
+        })),
+        "as_string" => Some(Ok(match object {
+            Value::String(s) => Value::String(s.clone()),
+            _ => Value::Nil,
+        })),
+        "get" => {
+            let key = match args.first() {
+                Some(Value::String(k)) => k.clone(),
+                _ => return Some(Err("json.get: expected a String key".into())),
+            };
+            Some(Ok(match object {
+                Value::Map(m) => m
+                    .iter()
+                    .find(|(k, _)| matches!(k, Value::String(s) if *s == key))
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or(Value::Nil),
+                _ => Value::Nil,
+            }))
+        }
+        "at" => {
+            let idx = match args.first() {
+                Some(Value::Int(i)) => *i,
+                _ => return Some(Err("json.at: expected an Int index".into())),
+            };
+            Some(Ok(match object {
+                Value::Array(items) => usize::try_from(idx)
+                    .ok()
+                    .and_then(|i| items.get(i).cloned())
+                    .unwrap_or(Value::Nil),
+                _ => Value::Nil,
+            }))
+        }
+        "len" => Some(Ok(match object {
+            Value::Array(items) => Value::Int(items.len() as i128),
+            Value::Map(m) => Value::Int(m.len() as i128),
+            Value::String(s) => Value::Int(s.chars().count() as i128),
+            _ => Value::Int(0),
+        })),
+        _ => None,
+    }
 }
 
 /// Serialize a Tallow Value to a JSON string.
