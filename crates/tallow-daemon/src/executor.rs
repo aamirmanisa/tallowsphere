@@ -100,6 +100,7 @@ fn landlock_write_jail_supported() -> Result<(), String> {
 /// Must be called after `fork` and before `exec` — Landlock is per-thread and
 /// irreversible. `PartiallyEnforced` is accepted (best available on the
 /// kernel), `NotEnforced` is an error so nothing ever degrades silently.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn install_landlock_write_jail(write_roots: &[std::path::PathBuf]) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
@@ -461,12 +462,21 @@ impl JobExecutor {
             // only issues Landlock syscalls against its own captured paths,
             // and kernel support was preflighted above. A failure aborts the
             // spawn (fail-closed) instead of running the script unconfined.
+            //
+            // `pre_exec` is a unix-only API on tokio's Command. The preflight
+            // above already returns Err on every non-Linux target, so this arm
+            // is unreachable there — but it must not be *instantiated*, or the
+            // whole daemon fails to compile for x86_64-pc-windows-msvc (E0599,
+            // caught by the PR compile plane on 2026-10-22).
+            #[cfg(unix)]
             unsafe {
                 cmd.pre_exec(move || {
                     install_landlock_write_jail(&write_roots)
                         .map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))
                 });
             }
+            #[cfg(not(unix))]
+            let _ = &write_roots;
             tracing::info!(
                 "executor: script job '{script_name}' confined by landlock write-jail \
                  (roots: {logged_roots:?})"
