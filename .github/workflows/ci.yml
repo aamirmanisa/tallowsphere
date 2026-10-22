@@ -140,8 +140,6 @@ jobs:
           # 7 GB of the repository's 10 GB budget and evicting the release
           # compiler archives that actually deliver the speedup.
           shared-key: tallow-ci
-        with:
-          shared-key: tallow-ci
       # The Windows leg is the wall on every run (11.4 min at 2 threads, 10.8 at
       # 4) and it sits on the critical path of a PR that will not merge on a
       # Windows-only test failure that Linux did not also fail. What Windows
