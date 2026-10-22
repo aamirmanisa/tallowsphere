@@ -154,20 +154,6 @@ jobs:
             target-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
             target-${{ matrix.label }}-
 
-      - name: Linker (Windows)
-        # link.exe with ThinLTO is the single largest unit in the Windows build
-        # (321.9 s for the tallow binary alone). lld-link is the LLVM linker and is
-        # present on the windows-latest image; fall back to link.exe if it is not.
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          if command -v lld-link >/dev/null 2>&1; then
-            echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link" >> "$GITHUB_ENV"
-            echo "using lld-link"
-          else
-            echo "lld-link absent; keeping link.exe"
-          fi
-
       - name: Restore the compiler cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
