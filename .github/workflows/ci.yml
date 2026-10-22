@@ -58,6 +58,9 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main, master]
+  # Manual dispatch exists so a merge made through the API — which can land
+  # without a push-triggered run — still has a way to be verified on main.
+  workflow_dispatch:
 
 # Two pushes to the same ref used to queue two full 12-job runs, so the wall
 # time you waited for was twice what the tree needed. A superseded run has no
