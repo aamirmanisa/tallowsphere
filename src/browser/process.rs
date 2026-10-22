@@ -1408,6 +1408,31 @@ fn process_is_alive(pid: u32) -> bool {
     }
 }
 
+/// Resolve an executable name against `PATH` in-process.
+///
+/// Every `BrowserConfig::default()` used to fork up to four `which`
+/// subprocesses here — measured 2026-10-22 at 16.8 ms per call, against
+/// 0.08 us for an empty async runtime, so the cost was four fork+execs and it
+/// dominated every benchmark that builds a config (and slowed real launches).
+/// A PATH scan is a few microseconds and returns the path it verified.
+#[cfg(unix)]
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = dir.join(name);
+        if let Ok(meta) = std::fs::metadata(&candidate) {
+            if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Find the Chrome/Chromium executable path on the current platform.
 ///
 /// Linux: prefers a Tallow-managed install (see `browser::download`) over
@@ -1466,14 +1491,8 @@ pub fn find_chrome_path() -> PathBuf {
             "chromium-browser",
         ];
         for name in &candidates {
-            if Command::new("which")
-                .arg(name)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-            {
-                return PathBuf::from(name);
+            if let Some(found) = find_in_path(name) {
+                return found;
             }
         }
         PathBuf::from("google-chrome")
@@ -1776,6 +1795,16 @@ mod tests {
         let path = find_chrome_path();
         // Should return a non-empty path (even if Chrome isn't installed)
         assert!(!path.to_string_lossy().is_empty());
+    }
+
+    #[test]
+    fn find_in_path_returns_an_absolute_executable() {
+        // `sh` is on PATH on every unix. The old `which`-based lookup returned a
+        // bare name, so this also pins the absolute-path behaviour that removed
+        // the fork+exec from BrowserConfig::default().
+        let found = find_in_path("sh").expect("sh should resolve on PATH");
+        assert!(found.is_absolute(), "expected an absolute path, got {found:?}");
+        assert!(found.exists(), "resolved path should exist: {found:?}");
     }
 
     #[test]
