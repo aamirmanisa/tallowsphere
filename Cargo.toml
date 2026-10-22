@@ -372,7 +372,14 @@ opt-level = 3
 lto = "thin"
 strip = true
 codegen-units = 16    # Parallel compilation — 16 units instead of 1
-incremental = true    # Cache between builds — only recompile changed code
+# incremental = false, not true. Measured 2026-10-22: cargo itself warns that
+# incremental is not recommended for release builds, and every release build in
+# CI starts from a clean target dir, so there is nothing to reuse. What it does
+# cost is real: it inflates the target dir (the Windows target-dir cache saved
+# 0.56 GB for a tree whose rlib is 241 MB) and it puts rustc on a code path the
+# compiler cache is not designed to key on. Interactive work has the documented
+# CARGO_INCREMENTAL=1 cargo check loop instead.
+incremental = false
 panic = "abort"
 
 # Max optimization profile (use with: cargo build --profile max)

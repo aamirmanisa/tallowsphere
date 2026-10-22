@@ -59,6 +59,14 @@ on:
   pull_request:
     branches: [main, master]
 
+# Two pushes to the same ref used to queue two full 12-job runs, so the wall
+# time you waited for was twice what the tree needed. A superseded run has no
+# value once the next commit exists; cancellation on PRs only, so a push to main
+# never kills a run that might still be gating a release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_MIN_STACK: 8388608
@@ -73,6 +81,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - run: cargo check --locked --workspace --all-targets
 
   test-linux:
@@ -90,10 +103,20 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - name: Test
+        # 4 threads, not 2: the suite is 9,147 independent unit tests and the
+        # runner has 4 cores. At 2 threads the executing half alone was ~5
+        # minutes of a 9.5-minute job. Measured on run 39701448323 (2 threads:
+        # 555 s) against the first 4-thread run; revert if a timing-sensitive
+        # test fails.
         run: |
           set -o pipefail
-          cargo test --locked --lib -- --test-threads=2 2>&1 | tee "$RUNNER_TEMP/test.log"
+          cargo test --locked --lib -- --test-threads=4 2>&1 | tee "$RUNNER_TEMP/test.log"
       # Every failing test is labelled pre-existing or caused by RUNNING it at the
       # base revision (scripts/attribute_failure.py, docs/FAILURE-ATTRIBUTION.md).
       # That costs a build of the base tree, on failure only -- the label is proven
@@ -112,7 +135,32 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo test --locked --lib -- --test-threads=2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
+      # The Windows leg is the wall on every run (11.4 min at 2 threads, 10.8 at
+      # 4) and it sits on the critical path of a PR that will not merge on a
+      # Windows-only test failure that Linux did not also fail. What Windows
+      # uniquely catches here is the compile plane -- unix-only code compiled for
+      # a Windows target has broken this tree twice. So: compile every target on
+      # a PR, run the full 9k suite on main and on tags.
+      - name: Compile plane (pull requests)
+        if: github.event_name == 'pull_request'
+        run: cargo check --locked --workspace --all-targets
+      - name: Restore the target directory
+        if: github.event_name != 'pull_request'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: target
+          key: citarget-windows-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            citarget-windows-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            citarget-windows-
+      - name: Test
+        if: github.event_name != 'pull_request'
+        run: cargo test --locked --lib -- --test-threads=4
 
   test-macos:
     name: Test (macOS)
@@ -124,7 +172,12 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo test --locked --lib -- --test-threads=2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
+      - run: cargo test --locked --lib -- --test-threads=4
 
   # Zero-trust conformance: negative boundary probes (browser-zone predicate refusals,
   # non-loopback CDP connect refusals, the CDP relay's 8 MiB frame cap — loopback only, no network).
@@ -138,6 +191,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - run: cargo test --locked --test zero_trust_conformance -- --test-threads=1
 
   # Contract and CLI integration suites.
@@ -176,6 +234,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - name: Install the native link dependencies (clang, liblzma, libbz2)
         # First, before any test runs: the native plane links generated programs
         # through clang and the runtime archive references -llzma and -lbz2.
@@ -276,6 +339,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - name: Static preflight (runner syntax + fixtures)
         run: |
           set -euo pipefail
@@ -322,6 +390,11 @@ jobs:
           toolchain: 1.98.1
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - run: cargo clippy --locked --all-targets -- -W clippy::all
 
   audit:
@@ -360,6 +433,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - name: Generate SBOM
         run: |
           cargo install cargo-cyclonedx --locked
@@ -488,6 +566,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # One shared key: ten per-job caches at ~0.7 GB each were consuming
+          # 7 GB of the repository's 10 GB budget and evicting the release
+          # compiler archives that actually deliver the speedup.
+          shared-key: tallow-ci
       - name: Gate self-test (proves the gate fails on a seeded regression)
         run: python3 scripts/no_regression_gate.py --self-test
       - name: Build debug tallow
