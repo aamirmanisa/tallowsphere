@@ -136,23 +136,14 @@ jobs:
           echo "SCCACHE_LOG=error" >> "$GITHUB_ENV"
           echo "SCCACHE_ERROR_LOG=$GITHUB_WORKSPACE/sccache-error.log" >> "$GITHUB_ENV"
 
-      - name: Restore the Windows target directory
-        # Measured on the instrumented run (39720235342): with 93% sccache hits the
-        # Windows binary build still spent 448 s of unit time re-running build
-        # scripts -- btls-sys 207 s, aws-lc-sys 126 s, zstd-sys 46 s,
-        # libsqlite3-sys 39 s, blst 30 s -- because a fresh target dir has no
-        # fingerprint to reuse. sccache caches compilations, not build-script
-        # executions. Caching this one target dir (the other four legs keep the
-        # cheaper object cache only) is what turns that 448 s into a fingerprint
-        # check.
-        if: runner.os == 'Windows'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: target/${{ matrix.target }}
-          key: target-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
-          restore-keys: |
-            target-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
-            target-${{ matrix.label }}-
+      # No Windows target-directory cache. It was added on 2026-10-22 and then
+      # measured twice: the first run never restored it (step 0 s, a miss), and
+      # the second restored 563 MB in 11 s and built the binary in 1148 s --
+      # against 885 s for the same tree without it, with sccache at 93.05 % in
+      # both cases. Unit time went 1665 s -> 2140 s, and the build-script block
+      # it was supposed to skip grew (btls-sys 207 -> 315 s, aws-lc-sys 126 ->
+      # 169 s). Restoring a target dir gives cargo fingerprints with fresh
+      # mtimes, so the scripts it was meant to skip re-run anyway. Removed.
 
       - name: Restore the compiler cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
