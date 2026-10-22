@@ -261,6 +261,7 @@ jobs:
       - run: >-
           cargo test --locked --no-fail-fast
           --test audit_cli_contract
+          --test language_surface
           --test fingerprint_audit_cli
           --test http_result_model
           --test pkg_cli
