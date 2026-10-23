@@ -121,7 +121,12 @@ quietly read an empty string where the interpreter raises. Verified by a parity
 test that runs the same program through both engines and compares stdout
 (5/5 browser tests, full lib suite 9,159 passed).
 
-Not done: **the remaining helpers, including every array-returning one.** They run in
+Struct-returning helpers now lower too (seven more arms), and the interpreter was
+aligned to the declarations first so both engines return the same shapes —
+`declared-vs-returned-2026-10-23.md` records that fix.
+
+Not done: **the array-returning helpers, and native typing for match-arm
+bindings.** They run in
 the interpreter and the native backend refuses them by name ("no lowering for
 method …"), so a `--require-native` build that calls one fails loudly rather
 than silently diverging. Closing it needs a native current-page registry set by

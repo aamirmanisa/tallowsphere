@@ -1,7 +1,7 @@
 # Module-level browser helpers: declared types vs what the interpreter returns
 
-Status: measured defect, not yet fixed. Decision pending — fixing it changes what
-six published functions return at runtime.
+Status: FIXED 2026-10-23 — Option 1 adopted (operator: "Go"). The interpreter
+now returns the declared structs; see "Resolution" at the end.
 
 ## What was measured
 
@@ -53,3 +53,19 @@ written, measured against the interpreter, and reverted.
    `page.set_content` return an `Int` while `Page.set_content` returns
    `PageContentResult`, and it tells users the helper has less information than
    the CDP call behind it actually produced.
+
+## Resolution (2026-10-23)
+
+Option 1 was taken: the interpreter was aligned to the declarations.
+
+- Six arms in `src/stdlib/browser.rs` now build the declared structs.
+- The shared `WaitResult` builder gained the two fields it had never produced
+  (`status`, `event`) — a second, quieter defect found while fixing the first.
+- Native lowering for the seven helpers was added on top of the current-page
+  receiver. Where the backend cannot infer the struct type of a match-arm
+  binding, it refuses by name and `tallow run` falls back to the interpreter,
+  which is now the correct implementation. That is a missing optimisation, not
+  a wrong answer: `--require-native` fails loudly instead of guessing a layout.
+- Migration surface measured before changing anything: five of the six helpers
+  had zero call sites in the repository; the sixth (`page_set_content`) had two,
+  both tests introduced by this work.

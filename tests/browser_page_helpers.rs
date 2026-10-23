@@ -198,3 +198,71 @@ fn main() {
         "native and interpreter disagree\nnative: {native}\ninterp: {interpreted}"
     );
 }
+
+/// The six struct-returning module-level helpers now return what
+/// `stdlib/browser.tl` declares, instead of echoing a primitive — measured
+/// because the interpreter used to answer `Ok(Float)` for `page_throttle_cpu`
+/// where the declaration says `CpuThrottle`, and `Ok(Bool)` for the waiters
+/// where it says `WaitResult`.
+///
+/// This asserts the INTERPRETER, deliberately: the native backend cannot yet
+/// type a match-arm binding that came from one of these calls, so it refuses
+/// the build by name and `tallow run` falls back here. Asserting the
+/// interpreter is asserting what every program actually gets.
+#[test]
+fn struct_returning_helpers_return_the_declared_fields() {
+    if !chrome_available() {
+        eprintln!("skipping: no Chrome on this machine");
+        return;
+    }
+    let program = r#"
+@cra_class(.default)
+@legal(basis: .public_data, purpose: "declared-struct parity for module-level page helpers", personal_data: false)
+@persona(id: "struct-parity", cover_class: .researcher, compartment: "parity", fingerprint_seed: "struct-parity-1023")
+@burn_plan(persona: "struct-parity", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowParity/1.0 (+https://tallow.invalid/bot)", network: .monitored)
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {
+    let b = Browser.launch(true)
+    let p = b.new_page()
+    let set = browser.page_set_content("<h1>Hi</h1>") match { Ok(v) -> v, Err(e) -> { bail "set: {e}" } }
+    print(set.loaded)
+    print(set.content_length > 10)
+    let ct = browser.page_throttle_cpu(2.0) match { Ok(v) -> v, Err(e) -> { bail "cpu: {e}" } }
+    print(ct.applied)
+    print(ct.rate)
+    let mm = browser.page_emulate_media("screen", "dark", "reduce") match { Ok(v) -> v, Err(e) -> { bail "media: {e}" } }
+    print(mm.color_scheme)
+    print(mm.reduced_motion)
+    let w = browser.page_wait_for_url("*", 500) match { Ok(v) -> v, Err(e) -> { bail "url: {e}" } }
+    print(w.matched)
+    let f = browser.page_wait_for_function("typeof window !== 'undefined'", 2000) match { Ok(v) -> v, Err(e) -> { bail "fn: {e}" } }
+    print(f.result)
+    let tag = browser.page_add_style_tag("h1") match { Ok(v) -> v, Err(e) -> { bail "tag: {e}" } }
+    print(tag.kind)
+    b.close()
+}
+"#;
+    let dir = fixture_dir();
+    let file = dir.join("struct_returning.tl");
+    std::fs::write(&file, program).expect("write program");
+    let out = Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .arg("run")
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run tallow");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(out.status.success(), "failed\n{stdout}\n{stderr}");
+    let got: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('*'))
+        .collect();
+    assert_eq!(
+        got,
+        vec!["true", "true", "true", "2", "dark", "reduce", "true", "true", "style"],
+        "declared fields:\n{stdout}"
+    );
+}
