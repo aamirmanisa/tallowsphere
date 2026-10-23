@@ -1392,6 +1392,12 @@ impl Interpreter {
                 | "config"
                 | "mime"
                 | "html"
+                // The mesh module was never registered here, so `mesh.…` and the
+                // new `Mesh.plan` both failed with "undefined variable: Mesh"
+                // despite being dispatched by src/stdlib/mod.rs. Registration is
+                // what makes a module reachable from Tallow code at all.
+                | "mesh"
+                | "Mesh"
         )
     }
 
@@ -2328,6 +2334,10 @@ impl Interpreter {
                     "EmailIntel" => Ok(Value::String("__module_EmailIntel__".to_string())),
                     "ZkCircuit" => Ok(Value::String("__module_ZkCircuit__".to_string())),
                     "MeshNode" => Ok(Value::String("__module_MeshNode__".to_string())),
+                    // Execution surface: plan/replay (see src/stdlib/mesh_exec.rs).
+                    // Without this sentinel, `Mesh.plan(...)` is an undefined
+                    // variable long before the stdlib router sees it.
+                    "Mesh" => Ok(Value::String("__module_Mesh__".to_string())),
                     "Enclave" => Ok(Value::String("__module_Enclave__".to_string())),
                     "FheKey" => Ok(Value::String("__module_FheKey__".to_string())),
                     "MpcSession" => Ok(Value::String("__module_MpcSession__".to_string())),
