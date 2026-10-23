@@ -76,6 +76,10 @@ impl Pool {
                     }
                     for (task, seed) in job.items {
                         let wave = job.wave;
+                        // Crash isolation for one task. INERT in release:
+                        // shipped profiles set panic="abort", so the process
+                        // aborts before this catch can return. Dev/test only
+                        // (unwind) — docs/PANIC-POLICY.md.
                         let result = catch_unwind(AssertUnwindSafe(|| f.call(&task, seed)));
                         let outcome = match result {
                             Ok(Ok(value)) => Outcome::Done {
