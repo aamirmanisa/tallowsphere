@@ -1251,6 +1251,48 @@ struct InterpreterCore {
 /// `TALLOW_DEBUG_PUMP=1` traces event delivery. Resolved once per process.
 static DEBUG_PUMP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
+/// Executes Tallow functions for `Mesh.run`: one fresh interpreter per task, on
+/// the worker thread that owns it.
+///
+/// `Value` is `!Send`, so constants cross as serialized bytes (the same channel
+/// encoding `pool_map`'s parallel path uses) and are rebuilt inside the worker;
+/// the function, struct and enum tables are `Arc` because their AST types carry
+/// no `Rc`. Nothing but a `String` — the task's result — crosses back.
+struct MeshProgramExec {
+    functions: Arc<HashMap<String, Arc<FnDecl>>>,
+    methods: Arc<HashMap<String, Arc<FnDecl>>>,
+    structs: Arc<HashMap<String, Vec<FieldDecl>>>,
+    enums: Arc<HashMap<String, Vec<EnumVariant>>>,
+    type_qualifiers: Arc<HashMap<String, TypeQualifier>>,
+    program_args: Vec<String>,
+    constants: Arc<Vec<(String, Vec<u8>)>>,
+}
+
+impl crate::mesh::worker::TaskFn for MeshProgramExec {
+    fn call(&self, task: &crate::mesh::Task, _seed: u64) -> Result<String, String> {
+        let mut worker = Interpreter::new();
+        worker.functions = Arc::clone(&self.functions);
+        worker.methods = Arc::clone(&self.methods);
+        worker.structs = Arc::clone(&self.structs);
+        worker.enums = Arc::clone(&self.enums);
+        worker.type_qualifiers = Arc::clone(&self.type_qualifiers);
+        worker.program_args = self.program_args.clone();
+        for (name, bytes) in self.constants.iter() {
+            if let Ok(v) = crate::agent_comm::channel_bytes_to_value(bytes) {
+                worker.constants.insert(name.clone(), v);
+            }
+        }
+        let value = worker
+            .call_fn(&task.func)
+            .map_err(|e| format!("mesh task '{}': {e}", task.id))?;
+        let value = match value {
+            Value::Return(inner) => *inner,
+            other => other,
+        };
+        Ok(value.as_string())
+    }
+}
+
 impl Interpreter {
     pub fn new() -> Self {
         Self {
@@ -1704,6 +1746,95 @@ impl Interpreter {
             env.define(cname.clone(), val.clone());
         }
         self.call_function(name, positional, &mut env)
+    }
+
+    /// `Mesh.run(tasks, workers, journal, seed)` — execute a plan's Tallow functions.
+    ///
+    /// Every task names a function in this program; each runs in its own
+    /// interpreter on a worker thread, and the coordinator supplies determinism
+    /// (content-derived seeds, id-sorted checkpoints), retries by task class and
+    /// the journal. The caller gets counts, not a promise: `failed > 0` means at
+    /// least one task exhausted its attempts, and the journal says which.
+    pub fn mesh_run(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let items = match args.first() {
+            Some(Value::Array(items)) => items.clone(),
+            Some(other) => {
+                return Err(RuntimeError::Error(format!(
+                    "Mesh.run: expected []MeshTask, got {}",
+                    type_name(other)
+                )))
+            }
+            None => return Err(RuntimeError::Error("Mesh.run: expected []MeshTask".into())),
+        };
+        let workers = match args.get(1) {
+            Some(Value::Int(n)) => (*n).clamp(1, 64) as usize,
+            _ => 4,
+        };
+        let journal = match args.get(2) {
+            Some(Value::String(s)) if !s.is_empty() => s.clone(),
+            _ => ".tallow/mesh-run.jsonl".to_string(),
+        };
+        let mesh_seed = match args.get(3) {
+            Some(Value::Int(n)) => *n as u64,
+            _ => 0xA11CE,
+        };
+
+        let mut tasks = Vec::with_capacity(items.len());
+        for item in &items {
+            tasks.push(crate::stdlib::mesh_exec::task_from_value(item).map_err(|e| {
+                RuntimeError::Error(e.replacen("Mesh.plan:", "Mesh.run:", 1))
+            })?);
+        }
+        for task in &tasks {
+            if !self.functions.contains_key(&task.func) {
+                return Err(RuntimeError::Error(format!(
+                    "Mesh.run: task '{}' names '{}', which is not a function in this program",
+                    task.id, task.func
+                )));
+            }
+        }
+
+        if let Some(dir) = std::path::Path::new(&journal).parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let waves = crate::mesh::plan(&tasks).map_err(|e| RuntimeError::Error(format!("Mesh.run: {e}")))?;
+
+        let constants: Vec<(String, Vec<u8>)> = self
+            .constants
+            .iter()
+            .filter_map(|(k, v)| crate::agent_comm::value_to_channel_bytes(v).ok().map(|b| (k.clone(), b)))
+            .collect();
+        let exec = MeshProgramExec {
+            functions: Arc::clone(&self.functions),
+            methods: Arc::clone(&self.methods),
+            structs: Arc::clone(&self.structs),
+            enums: Arc::clone(&self.enums),
+            type_qualifiers: Arc::clone(&self.type_qualifiers),
+            program_args: self.program_args.clone(),
+            constants: Arc::new(constants),
+        };
+
+        let mut coordinator = crate::mesh::coordinator::Coordinator::new(
+            workers,
+            Arc::new(exec),
+            &journal,
+            mesh_seed,
+        )
+        .map_err(|e| RuntimeError::Error(format!("Mesh.run: {e}")))?;
+        let outcome = coordinator
+            .run("mesh.run", &waves)
+            .map_err(|e| RuntimeError::Error(format!("Mesh.run: {e}")))?;
+        coordinator.finish();
+
+        Ok(Value::Struct {
+            name: "MeshRun".to_string(),
+            fields: vec![
+                ("waves".to_string(), Value::Int(outcome.waves as i128)),
+                ("committed".to_string(), Value::Int(outcome.committed as i128)),
+                ("failed".to_string(), Value::Int(outcome.failed as i128)),
+                ("journal".to_string(), Value::String(journal)),
+            ],
+        })
     }
 
     // ── REPL helpers ──────────────────────────────────────────────────────
@@ -4371,6 +4502,11 @@ impl Interpreter {
             // Existing builtins (db.open, KeyPair.generate, IPPool.from_list, etc.)
             // are NOT in the stdlib router -- they return None and fall through
             // to the existing match block below.
+            // `Mesh.run` needs the interpreter itself: it executes this program's
+            // functions, so it cannot go through the stateless stdlib dispatcher.
+            if module == "Mesh" && function == "run" {
+                return self.mesh_run(positional);
+            }
             if let Some(result) = crate::stdlib::dispatch(module, function, positional.clone()) {
                 return result.map_err(|e| RuntimeError::Error(e));
             }
