@@ -20,7 +20,16 @@ REPO = Path(__file__).resolve().parent.parent
 
 # Declared by docs/PANIC-POLICY.md.
 EXPECT_PROFILE_PANIC = {"release": "abort"}   # [profile.max] must inherit release, not restate
-DECLARED_SITES = {"src/main.rs": 2, "src/interp.rs": 5, "src/supply_chain.rs": 2}
+DECLARED_SITES = {
+    "src/main.rs": 2,
+    "src/interp.rs": 5,
+    "src/supply_chain.rs": 2,
+    # A worker catches a panicking TASK so one bad task does not take the pool
+    # down. Inert in release (panic=abort), so this is dev/test crash isolation,
+    # exactly like the interp sites. The catch is still useful: tests run with
+    # unwind and use it to prove the worker survives.
+    "src/mesh/worker.rs": 1,
+}
 # Files that mention catch_unwind but are not shipped code.
 EXCLUDED = {"tests/fuzz_safety.rs"}
 
