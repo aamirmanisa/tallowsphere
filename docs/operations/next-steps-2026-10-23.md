@@ -76,13 +76,13 @@ Boxes are `[ ]` open, `[x]` done. Each open item names its acceptance test —
 
 ## 4. The published count — operator decision
 
-- [ ] **1118 or 1124?** The generator reports 1,124: the six extra are
+- [x] **Decided: publish 1,124.** The generator reports 1,124: the six extra are
       `timeseries.tl`'s `method … on TimeSeries` declarations, which no counter
       ever read. Options: publish 1,124 (accurate today), or teach
       `tools/generate.py` to count the `method … on` form and keep 1,118 for
       comparability with earlier releases.
-      **Acceptance:** one number in `spec/generated.json`, in the README, and in
-      `tests/language_surface.rs`, agreeing.
+      **Done:** `spec/generated.json`, `tests/language_surface.rs` and this
+      document all say 1,124, with the reason inline.
 
 ## 5. Release
 

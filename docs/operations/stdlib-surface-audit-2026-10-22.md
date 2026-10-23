@@ -1,7 +1,7 @@
 # Stdlib surface audit — 2026-10-22
 
 The Tallow-Language spec publishes four counts: 36 keywords, 51 operator tokens,
-176 error codes, 85 stdlib modules / 1,118 functions. This records how each was
+176 error codes, 85 stdlib modules / 1,124 functions. This records how each was
 verified against the engine, what was broken, and what is still known to be
 missing. Every "fixed" line below was proven by running a program.
 
@@ -13,7 +13,7 @@ missing. Every "fixed" line below was proven by running a program.
 | 51 operator/punctuation tokens | each spelling through the lexer, one token + EOF expected | all 51 lex correctly |
 | 176 error codes | every `"E####"` literal in `src/**/*.rs` compared with the catalogue, both directions | exactly equal, 176 |
 | 85 modules | `stdlib/*.tl` file count, plus a dispatcher routing probe per module | 85, all routed |
-| 1,118 functions | declaration count (the generator's metric) | 1,118 |
+| 1,124 functions | declaration count (the generator's metric) | 1,124 — see the note on the six `method … on` declarations below |
 
 The gate is `tests/language_surface.rs` and it runs in the CI contract job, so a
 count that drifts or a code that is published but unemittable fails the build.
@@ -43,7 +43,10 @@ All of these were declared in `stdlib/*.tl` and undefined at runtime.
 
 ## Known remaining gaps — not fixed, stated
 
-1. **17 browser functions were stubs with no implementation — 9 are now live.**
+1. **Browser functions: 0 stubs remain.** The 17 that had no implementation and the
+   24 that refused with "no page bound" are all executable; verified live (BBC,
+   a local fixture, and a local WordPress). See the section below for the
+   remaining *native* gap, which is different from a missing implementation.
    The current-page registry (interp binds the Page it creates) plus CDP-backed
    implementations landed for `page_extract_all_text`, `page_extract_all_attrs`,
    `page_capture_dom_snapshot`, `page_structured_data`, `page_text_redacted`,
