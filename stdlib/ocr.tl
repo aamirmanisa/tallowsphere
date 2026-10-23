@@ -28,7 +28,7 @@ struct OcrTable {
 
 /// Extract text from image bytes using Tesseract OCR.
 /// Returns an OcrResult with full text, confidence, and block-level details.
-fn ocr_extract(image_data: Bytes) -> OcrResult
+native fn ocr_extract(image_data: Bytes) -> OcrResult
 
 /// Parse OCR text output into a structured table using whitespace heuristics.
-fn ocr_parse_table(ocr_text: String) -> OcrTable
+native fn ocr_parse_table(ocr_text: String) -> OcrTable

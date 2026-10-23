@@ -10,19 +10,19 @@ struct SecretStore {
 }
 
 // Open or create a secrets store at the given file path
-fn SecretStore.open(path: String) -> SecretStore
+native fn SecretStore.open(path: String) -> SecretStore
 
 // Store a key-value pair. Automatically saves to disk.
-fn SecretStore.set(self, key: String, value: String) -> SecretStore
+native fn SecretStore.set(self, key: String, value: String) -> SecretStore
 
 // Retrieve a value by key. Returns nil if not found.
-fn SecretStore.get(self, key: String) -> String?
+native fn SecretStore.get(self, key: String) -> String?
 
 // Delete a key. Automatically saves to disk.
-fn SecretStore.delete(self, key: String) -> SecretStore
+native fn SecretStore.delete(self, key: String) -> SecretStore
 
 // List all stored keys (values are hidden)
-fn SecretStore.list(self) -> []String
+native fn SecretStore.list(self) -> []String
 
 // Export all secrets as a Map (keys and values)
-fn SecretStore.export(self) -> Map<String, String>
+native fn SecretStore.export(self) -> Map<String, String>

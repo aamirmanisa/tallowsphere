@@ -23,25 +23,25 @@ struct PKCE {
 }
 
 // Build authorization URL with PKCE challenge
-fn OAuth.authorization_url(auth_endpoint: String, client_id: String, redirect_uri: String,
+native fn OAuth.authorization_url(auth_endpoint: String, client_id: String, redirect_uri: String,
                             scope: String?, state: String?) -> OAuthConfig
 
 // Exchange authorization code for tokens
-fn OAuth.exchange_code(token_endpoint: String, client_id: String, client_secret: String?,
+native fn OAuth.exchange_code(token_endpoint: String, client_id: String, client_secret: String?,
                         redirect_uri: String, code: String, code_verifier: String) -> Token
 
 // Machine-to-machine token (client credentials grant)
-fn OAuth.client_credentials(token_endpoint: String, client_id: String, client_secret: String,
+native fn OAuth.client_credentials(token_endpoint: String, client_id: String, client_secret: String,
                              scope: String?) -> Token
 
 // Refresh an access token
-fn OAuth.refresh_token(token_endpoint: String, client_id: String, refresh_token: String) -> Token
+native fn OAuth.refresh_token(token_endpoint: String, client_id: String, refresh_token: String) -> Token
 
 // OIDC discovery — fetch .well-known/openid-configuration
-fn OAuth.discover(issuer_url: String) -> Map<String, Value>
+native fn OAuth.discover(issuer_url: String) -> Map<String, Value>
 
 // Generate a random PKCE code verifier + challenge pair
-fn OAuth.generate_pkce() -> PKCE
+native fn OAuth.generate_pkce() -> PKCE
 
 // Generate Authorization: Bearer header
-fn Token.to_header(self) -> String
+native fn Token.to_header(self) -> String

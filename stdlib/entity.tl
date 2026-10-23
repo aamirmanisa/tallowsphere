@@ -77,94 +77,94 @@ struct EntityCluster {
 // which carry score 1.0 and empty evidence.
 
 /// Cluster candidate records into entities.
-fn Entity.resolve(candidates: []Map, keys: Map?) -> []EntityCluster
+native fn Entity.resolve(candidates: []Map, keys: Map?) -> []EntityCluster
 
 /// Lowercase alias of Entity.resolve.
-fn entity.resolve(candidates: []Map, keys: Map?) -> []EntityCluster
+native fn entity.resolve(candidates: []Map, keys: Map?) -> []EntityCluster
 
 /// Pairwise verdict (match/no) + reason + per-field similarities.
-fn Entity.pair(a: Map, b: Map, keys: Map?) -> PairScore
+native fn Entity.pair(a: Map, b: Map, keys: Map?) -> PairScore
 
 /// Lowercase alias of Entity.pair.
-fn entity.pair(a: Map, b: Map, keys: Map?) -> PairScore
+native fn entity.pair(a: Map, b: Map, keys: Map?) -> PairScore
 
 // ── Blocking keys ─────────────────────────────────────────────────────
 // Coarse keys for bucketing candidates before pairwise scoring. All are
 // deterministic, offline, and case/punctuation-insensitive.
 
 /// Canonical name key: sorted unique lowercase tokens (permutation-invariant).
-fn Entity.name_key(s: String) -> String
+native fn Entity.name_key(s: String) -> String
 
 /// Lowercase alias.
-fn entity.name_key(s: String) -> String
+native fn entity.name_key(s: String) -> String
 
 /// Clean host ("WWW.Acme-shop-77.example:443/x" -> "acme-shop-77.example").
-fn Entity.domain_key(s: String) -> String
+native fn Entity.domain_key(s: String) -> String
 
 /// Lowercase alias.
-fn entity.domain_key(s: String) -> String
+native fn entity.domain_key(s: String) -> String
 
 /// Canonical street form ("123 Main St #4" -> "123 main street apt 4").
-fn Entity.address_key(s: String) -> String
+native fn Entity.address_key(s: String) -> String
 
 /// Lowercase alias.
-fn entity.address_key(s: String) -> String
+native fn entity.address_key(s: String) -> String
 
 /// Digit-only phone ("(512) 555-0142" == "512-555-0142" == "+1 512 555 0142").
-fn Entity.phone_key(s: String) -> String
+native fn Entity.phone_key(s: String) -> String
 
 /// Lowercase alias.
-fn entity.phone_key(s: String) -> String
+native fn entity.phone_key(s: String) -> String
 
 /// Lowercased email (mailto: stripped, case-insensitive).
-fn Entity.email_key(s: String) -> String
+native fn Entity.email_key(s: String) -> String
 
 /// Lowercase alias.
-fn entity.email_key(s: String) -> String
+native fn entity.email_key(s: String) -> String
 
 /// Soundex(first name token) + ZIP5 compound key for a whole record
 /// (delegates to recordlink.block_key). Over-inclusive by design; pair
 /// scoring restores precision.
-fn Entity.block_key(record: Map) -> String
+native fn Entity.block_key(record: Map) -> String
 
 /// Lowercase alias.
-fn entity.block_key(record: Map) -> String
+native fn entity.block_key(record: Map) -> String
 
 // ── Field similarity (built on recordlink Jaro-Winkler / token-set) ──
 
 /// Name similarity in [0,1]: max(Jaro-Winkler, token-set), normalized.
-fn Entity.name_similarity(a: String, b: String) -> Float
+native fn Entity.name_similarity(a: String, b: String) -> Float
 
 /// Lowercase alias.
-fn entity.name_similarity(a: String, b: String) -> Float
+native fn entity.name_similarity(a: String, b: String) -> Float
 
 /// Address similarity in [0,1] over canonical street forms.
-fn Entity.address_similarity(a: String, b: String) -> Float
+native fn Entity.address_similarity(a: String, b: String) -> Float
 
 /// Lowercase alias.
-fn entity.address_similarity(a: String, b: String) -> Float
+native fn entity.address_similarity(a: String, b: String) -> Float
 
 /// Phone similarity in [0,1] over digit keys (blank-vs-blank = 0.5 neutral).
-fn Entity.phone_similarity(a: String, b: String) -> Float
+native fn Entity.phone_similarity(a: String, b: String) -> Float
 
 /// Lowercase alias.
-fn entity.phone_similarity(a: String, b: String) -> Float
+native fn entity.phone_similarity(a: String, b: String) -> Float
 
 /// Email similarity in [0,1] (equality is the strong signal).
-fn Entity.email_similarity(a: String, b: String) -> Float
+native fn Entity.email_similarity(a: String, b: String) -> Float
 
 /// Lowercase alias.
-fn entity.email_similarity(a: String, b: String) -> Float
+native fn entity.email_similarity(a: String, b: String) -> Float
 
 /// Domain similarity in [0,1] (subdomain relation scores 0.9).
-fn Entity.domain_similarity(a: String, b: String) -> Float
+native fn Entity.domain_similarity(a: String, b: String) -> Float
 
 /// Lowercase alias.
-fn entity.domain_similarity(a: String, b: String) -> Float
+native fn entity.domain_similarity(a: String, b: String) -> Float
 
 /// Dispatch by field kind: name | address | phone | email | domain.
 /// Unknown kinds are a hard error, never a fabricated score.
-fn Entity.similarity(kind: String, a: String, b: String) -> Float
+native fn Entity.similarity(kind: String, a: String, b: String) -> Float
 
 /// Lowercase alias.
-fn entity.similarity(kind: String, a: String, b: String) -> Float
+native fn entity.similarity(kind: String, a: String, b: String) -> Float

@@ -41,36 +41,36 @@ struct RelaySendOutcome {
 }
 
 // Join a legacy 2-peer room (ws://host:port/ws). Hard error on auth reject/timeout.
-fn RelayRoom.join(url: String, code: String, password: String = "") -> RelayRoom
+native fn RelayRoom.join(url: String, code: String, password: String = "") -> RelayRoom
     // native: websocket connect + RoomJoin postcard frame + RoomJoined await
 
 // Join a multi-peer room; relay-assigned peer ids are 0-based (0 <= existing_peers < capacity).
-fn RelayRoom.join_multi(url: String, code: String, capacity: i64 = 0, password: String = "") -> RelayRoom
+native fn RelayRoom.join_multi(url: String, code: String, capacity: i64 = 0, password: String = "") -> RelayRoom
     // native: websocket connect + RoomJoinMulti postcard frame + RoomJoinedMulti await
 
 // Send a payload (utf-8 string; legacy raw / multi broadcast).
-fn RelayRoom.send(self, data: String) -> RelaySendOutcome
+native fn RelayRoom.send(self, data: String) -> RelaySendOutcome
     // native: binary WS frame (multi: Targeted to_peer=255)
 
 // Send exact bytes (legacy raw / multi broadcast).
-fn RelayRoom.send_bytes(self, data: Bytes) -> RelaySendOutcome
+native fn RelayRoom.send_bytes(self, data: Bytes) -> RelaySendOutcome
     // native: binary WS frame (multi: Targeted to_peer=255)
 
 // Send a payload to one peer in a multi room (255 = broadcast).
-fn RelayRoom.send_to(self, peer_id: i64, data: String) -> RelaySendOutcome
+native fn RelayRoom.send_to(self, peer_id: i64, data: String) -> RelaySendOutcome
     // native: Targeted postcard frame
 
 // Receive the next event or payload.
 // kind: payload | peer_arrived | peer_departed | peer_joined | peer_left | timeout | closed | error
-fn RelayRoom.recv(self, timeout_ms: i64 = 10000) -> RelayEvent
+native fn RelayRoom.recv(self, timeout_ms: i64 = 10000) -> RelayEvent
     // native: next binary WS frame, classified
 
 // Close the room session.
-fn RelayRoom.leave(self)
+native fn RelayRoom.leave(self)
     // native: WS close + drop session
 
 // Live status of a room handle (same shape as join's result).
-fn RelayRoom.status(self) -> RelayRoom
+native fn RelayRoom.status(self) -> RelayRoom
     // native: registry lookup
 
 // Room id (hex) for a code phrase, via the same compatibility rule every client
@@ -78,5 +78,5 @@ fn RelayRoom.status(self) -> RelayRoom
 // an 8-symbol passcode is an Argon2id derivation and legacy phrases are BLAKE3.
 // Refuses anything that is not the accepted 8-symbol mint rather than deriving a
 // room no other peer would join.
-fn RelayRoom.room_id(code: String) -> String
+native fn RelayRoom.room_id(code: String) -> String
     // native: resolve_room_id + is_supported_code

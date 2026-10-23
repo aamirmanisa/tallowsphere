@@ -26,13 +26,13 @@ struct Duration {
 
 // Duration constructors (used via literals: 60.seconds, 5.minutes, etc.)
 impl i64 {
-    fn nanoseconds(self) -> Duration  { Duration { nanos: self } }
-    fn microseconds(self) -> Duration { Duration { nanos: self * 1_000 } }
-    fn milliseconds(self) -> Duration { Duration { nanos: self * 1_000_000 } }
-    fn seconds(self) -> Duration      { Duration { nanos: self * 1_000_000_000 } }
-    fn minutes(self) -> Duration      { Duration { nanos: self * 60_000_000_000 } }
-    fn hours(self) -> Duration        { Duration { nanos: self * 3_600_000_000_000 } }
-    fn days(self) -> Duration         { Duration { nanos: self * 86_400_000_000_000 } }
+    native fn nanoseconds(self) -> Duration
+    native fn microseconds(self) -> Duration
+    native fn milliseconds(self) -> Duration
+    native fn seconds(self) -> Duration
+    native fn minutes(self) -> Duration
+    native fn hours(self) -> Duration
+    native fn days(self) -> Duration
 }
 
 impl Timestamp {

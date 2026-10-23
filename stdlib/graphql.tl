@@ -13,10 +13,10 @@ struct GraphqlResult {
 }
 
 /// Detect GraphQL endpoints on a page by inspecting network requests.
-fn graphql_detect(page_url: String) -> []GraphqlEndpoint
+native fn graphql_detect(page_url: String) -> []GraphqlEndpoint
 
 /// Run an introspection query against a GraphQL endpoint.
-fn graphql_introspect(endpoint_url: String) -> GraphqlEndpoint
+native fn graphql_introspect(endpoint_url: String) -> GraphqlEndpoint
 
 /// Execute a GraphQL query (POST to endpoint).
-fn graphql_query(endpoint_url: String, query: String, variables: Map<String, String>) -> GraphqlResult
+native fn graphql_query(endpoint_url: String, query: String, variables: Map<String, String>) -> GraphqlResult

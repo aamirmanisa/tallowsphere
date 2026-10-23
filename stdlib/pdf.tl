@@ -14,7 +14,7 @@ struct PdfDocument {
 }
 
 /// Extract text from all pages of a PDF document.
-fn pdf_extract_text(pdf_data: Bytes) -> PdfDocument
+native fn pdf_extract_text(pdf_data: Bytes) -> PdfDocument
 
 /// Count the number of pages in a PDF document without extracting text.
-fn pdf_count_pages(pdf_data: Bytes) -> i32
+native fn pdf_count_pages(pdf_data: Bytes) -> i32

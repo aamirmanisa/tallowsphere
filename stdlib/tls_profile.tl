@@ -14,13 +14,13 @@ struct TLSProfile {
 }
 
 // List all available TLS profiles
-fn TLSProfile.list() -> []TLSProfile
+native fn TLSProfile.list() -> []TLSProfile
 
 // Get a specific profile by name (chrome_131, firefox_132, safari_18, edge_131)
-fn TLSProfile.get(name: String) -> TLSProfile
+native fn TLSProfile.get(name: String) -> TLSProfile
 
 // Generate curl-impersonate compatible arguments
-fn TLSProfile.to_curl_args(self) -> String
+native fn TLSProfile.to_curl_args(self) -> String
 
 // Generate matching HTTP headers
-fn TLSProfile.to_headers(self) -> Map<String, String>
+native fn TLSProfile.to_headers(self) -> Map<String, String>

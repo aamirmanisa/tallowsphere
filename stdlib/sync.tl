@@ -64,11 +64,11 @@ struct AtomicI64 {
 native fn atomic(value: i64) -> AtomicI64
 
 impl AtomicI64 {
-    fn load(self) -> i64 { /* native */ }
-    fn store(self, value: i64) { /* native */ }
-    fn add(self, delta: i64) -> i64 { /* native: returns previous value */ }
-    fn sub(self, delta: i64) -> i64 { /* native */ }
-    fn compare_swap(self, expected: i64, new: i64) -> bool { /* native */ }
+    native fn load(self) -> i64
+    native fn store(self, value: i64)
+    native fn add(self, delta: i64) -> i64
+    native fn sub(self, delta: i64) -> i64
+    native fn compare_swap(self, expected: i64, new: i64) -> bool
 }
 
 /// WaitGroup for synchronizing goroutine-like tasks
@@ -80,7 +80,7 @@ struct WaitGroup {
 native fn wait_group() -> WaitGroup
 
 impl WaitGroup {
-    fn add(self, count: i64) { /* native */ }
-    fn done(self) { /* native: decrements by 1 */ }
-    fn wait(self) { /* native: blocks until counter is 0 */ }
+    native fn add(self, count: i64)
+    native fn done(self)
+    native fn wait(self)
 }

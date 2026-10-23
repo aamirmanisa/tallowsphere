@@ -2460,7 +2460,12 @@ mod tests {
                 },
             };
             if let Some(name) = rest.split('(').next() {
-                if name.starts_with("page_") {
+                // `page_x(self) -> …` is a Page METHOD, not a free function; its
+                // implementation is the interpreter's Page dispatch, so it must
+                // not be required of this router.
+                let params = rest.split_once('(').map(|(_, p)| p).unwrap_or("");
+                let takes_self = params.trim_start().starts_with("self");
+                if name.starts_with("page_") && !takes_self {
                     declared.push(name);
                 }
             }

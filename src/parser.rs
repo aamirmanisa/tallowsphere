@@ -484,7 +484,17 @@ impl Parser {
         };
 
         self.expect(TokenKind::Fn)?;
-        let name = self.expect_ident()?;
+        let mut name = self.expect_ident()?;
+        // Type-scoped free functions: `fn CAPTCHA.detect(...)`, `fn URL.parse(...)`.
+        // The stdlib manifest declares hundreds of these, and the runtime already
+        // dispatches `Module.function` by exactly this spelling; the parser
+        // rejected the declaration form, which is why 30 modules failed `check`.
+        while self.eat(TokenKind::Dot) {
+            let member = self.expect_ident()?;
+            name.push('.');
+            name.push_str(&member);
+        }
+        let name = name;
 
         // Optional generic type parameters: fn first<T>(...)
         let type_params = if self.eat(TokenKind::Lt) {
@@ -5637,6 +5647,19 @@ mod tests {
         };
         assert!(!f.is_native);
         assert_eq!(f.name, "native");
+    }
+
+    #[test]
+    fn parse_type_scoped_fn_name() {
+        // `fn CAPTCHA.detect(...)` — the stdlib manifest's spelling for a
+        // type-scoped free function; the runtime dispatches `Module.function`
+        // by this exact name.
+        let program = parse("native fn CAPTCHA.detect(html: String) -> CaptchaChallenge");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!("expected a function item");
+        };
+        assert_eq!(f.name, "CAPTCHA.detect");
+        assert!(f.is_native);
     }
 
     #[test]
