@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a GitHub release body from CHANGELOG.md, or fail loudly.
 
-The rule this enforces: every release states WHAT WAS WRONG and WHAT WAS FIXED.
+The rule this enforces: every release states WHAT WAS ADDED and WHAT WAS FIXED.
 A release without both headings does not get a body, which means the workflow
 fails before anything is published — a missing explanation is a release blocker,
 not a formatting preference.
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 CHANGELOG = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
-REQUIRED = ("what was wrong", "what was fixed")
+REQUIRED = ("added", "fixed")
 
 VERIFY_BLOCK = """
 ---
@@ -54,7 +54,7 @@ def main(argv: list[str]) -> int:
     if body is None:
         print(
             f"release_body: no CHANGELOG section for {version}; "
-            f"every release must record what was wrong and what was fixed",
+            f"every release must record what was added and what was fixed",
             file=sys.stderr,
         )
         return 1

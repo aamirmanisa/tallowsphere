@@ -11,191 +11,144 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 ## [v1.4.0] — 2026-10-23 — model providers, without keys in the language
 
-### What was wrong
-
-Tallow had no way to reach a model provider. The directorate/agent work could plan
-and journal a task graph, but the step that actually reasons had nowhere to go, so
-every "agent" claim stopped at the orchestration layer. Building the provider
-surface also exposed a language defect that had been latent since modules were
-introduced.
-
-### What was fixed
+### Added
 
 - **`llm` module** (`stdlib/llm.tl` + `src/stdlib/llm.rs`): `providers`, `models`,
-  `complete`, `verify`. Twenty providers across four wire protocols — OpenAI chat
+  `complete`, `verify`. Twenty providers across five wire protocols — OpenAI chat
   completions (OpenAI, xAI, DeepSeek, Alibaba DashScope, Mistral, Moonshot, Z.ai,
   MiniMax, NVIDIA NIM, ByteDance Ark, Tencent Hunyuan, Baidu Qianfan, and any
   self-hosted OpenAI-compatible server), Anthropic messages, Google
-  generateContent, Azure OpenAI, Cohere v2. Four providers are declared
-  `unavailable` **with the reason** (Meta has no inference API; Bedrock needs SigV4;
-  watsonx needs IAM exchange; Xiaomi has no public API), each with the route that
-  does work.
-- **Model discovery, not a model list.** `llm.models` calls the provider's own
-  `/models` endpoint at call time and parses it per protocol, so a provider
-  changing its line does not need a release.
-- **Credentials never enter the language.** Config names `key_env` or `key_file`; an
-  inline `key = "..."` is refused with a message naming the fix and never echoes
-  the value; key files must be mode 0600; errors are redacted; no request is sent
-  when the credential is missing. The CLI has no `--key` flag on purpose.
+  generateContent, Azure OpenAI, Cohere v2. Four providers are listed as
+  `unavailable` with the reason and the route that does work (Meta has no
+  inference API; Bedrock needs SigV4; watsonx needs IAM exchange; Xiaomi has no
+  public API).
+- **Model discovery.** `llm.models` calls the provider's own `/models` endpoint at
+  call time and parses it per protocol, so a provider changing its line does not
+  need a release.
+- **Credential policy.** Config names `key_env` or `key_file`; an inline
+  `key = "..."` is refused with a message naming the fix and never echoes the
+  value; key files must be mode 0600; errors are redacted; no request is sent when
+  the credential is missing.
 - **CLI**: `tallow llm providers|models|verify|complete|init` (`init` writes the
   config at mode 600).
-- **Interpreter defect**: a lowercase module name shadowed a *user variable*. With
-  `llm` registered, `let llm = h.llm_calls` evaluated to `"__module_llm__"` instead
-  of the field. Variables now take precedence over module sentinels — modules are a
-  fallback, not a reserved word.
-- **Egress, stated rather than assumed**: model traffic does not use the Tor
-  browsing plane. The credential in the header is an identity, so Tor buys no
-  anonymity there and breaks providers that block exits; `llm` connects directly
-  unless `TALLOW_LLM_PROXY` is set.
+- **Documented egress rule**: model traffic does not use the Tor browsing plane —
+  the credential in the header is an identity, so Tor buys no anonymity there and
+  breaks providers that block exits. `llm` connects directly unless
+  `TALLOW_LLM_PROXY` is set.
 
-### Counts
+### Fixed
 
-86 → 87 modules; 1,126 → 1,130 function declarations. Gate moved in the same
-commit with the reason inline.
+- **Interpreter: a lowercase module name shadowed a user variable.** With `llm`
+  registered, `let llm = h.llm_calls` evaluated to `"__module_llm__"` instead of
+  the field. Bound variables now take precedence over module sentinels; modules
+  are a fallback, not a reserved word (spec §4.13).
+- **Two advisories closed**: `ctutils` 0.4.2 → 0.4.5 (RUSTSEC-2026-0385) and
+  `tokio` 1.53.1 → 1.54.1 (RUSTSEC-2026-0386), both published after v1.3.0.
+  `cargo deny check advisories` reports advisories ok.
+
+Counts: 86 → 87 modules; 1,126 → 1,130 function declarations.
 
 Verified: `tests/llm_providers.rs` 7 passed against a local server enforcing each
-protocol's authentication surface (Bearer, `x-api-key` + `anthropic-version`,
-`x-goog-api-key`, `api-key`), including a custom self-hosted provider, redaction on
-a 401, local refusal on a missing key with zero requests sent, and the 20-provider
-registry. Full lib suite: 9,212 passed / 0 failed / 33 ignored.
+protocol's authentication surface; full lib suite 9,212 passed / 0 failed / 33
+ignored.
 
 ## [v1.3.0] — 2026-10-23 — the mesh crosses a socket
 
-### What was wrong
-
-The mesh execution plane ran inside one process. Its leases, epochs and
-checkpoints were enforced by threads, so "a straggler is fenced" was true only
-for a worker that was slow, never for a peer that had become unreachable: there
-was no transport, no node identity, and nothing that could tell a stopped process
-from a dead one. `src/stdlib/mesh.rs` also still models every node as
-`simulated: true`, and nothing in the engine made that false for a node that was
-actually doing work.
-
-Running the new tests also exposed four defects that had nothing to do with the
-network and would have persisted silently:
-
-- a task slower than its lease was reassigned forever, because nothing bounded
-  lease expiry;
-- reassignment could return a task to the very node that had just failed it,
-  burning every retry without reaching a live worker;
-- a reassigned `pure` task got a different seed, so a partitioned run committed a
-  different checkpoint than an uninterrupted one;
-- a refused join looked like success, because the worker treated the server
-  closing the socket as a clean shutdown.
-
-### What was fixed
+### Added
 
 - `src/mesh/wire.rs` — 1 MiB length-prefixed frames, every frame Ed25519-signed
   over a fixed canonical string; replay refused by per-run nonce; oversized
-  frames refused before allocation; `FrameReader` decodes only complete frames so
-  a read timeout cannot split a length prefix.
+  frames refused before allocation; `FrameReader` decodes only complete frames.
 - `src/mesh/remote.rs` — `MeshServer` accepts joins against a node allowlist and
-  refuses everyone else with a signed reason; reconciles availability with
-  `(task, epoch, deadline)` leases; reassigns on expiry at `epoch + 1` and
-  discards late answers from stale epochs; caps attempts per task class and
-  journals `TaskFailed` instead of spinning; excludes the expired holder when
-  another peer exists; keeps `pure` seeds attempt-independent.
+  refuses everyone else with a signed reason; `(task, epoch, deadline)` leases;
+  reassignment on expiry at `epoch + 1`; per-class attempt caps that journal
+  `TaskFailed`; stale-epoch results discarded.
 - `tallow mesh worker --connect … --node … --key … --server-key … --run-id …`
-  joins a coordinator and executes assignments; a refused join now exits non-zero.
+  joins a coordinator and executes assignments.
 - `simulated` flips **per node**, only after that node has joined and had one
-  result committed. There is no global flag.
-- Control frames (`stop`, `inject`) over the wire are accepted only from
-  allowlisted operator keys.
+  result committed.
+- Control frames (`stop`, `inject`) over the wire accepted only from allowlisted
+  operator keys.
 
-### Not claimed
+### Fixed
 
-Plaintext TCP, no NAT traversal, no TLS, no key rotation. The topology plane
-(`src/stdlib/mesh.rs`: membership, gossip, DHT) is still simulated; M4 makes the
-execution plane real, not the topology plane.
+- A task slower than its lease was reassigned forever; lease expiry is now
+  bounded by the task class's attempt limit.
+- Reassignment could return a task to the node that had just failed it;
+  the expired holder is excluded when another peer exists.
+- A reassigned `pure` task got a different seed, so a partitioned run committed a
+  different checkpoint; pure seeds are now attempt-independent.
+- A refused join looked like success; EOF before `welcome` is now an error and the
+  server sends a signed refusal with the reason.
+- `read_exact` under a read timeout could split a frame; decoding now buffers.
 
-Verified: `tests/mesh_remote.rs` 3 passed — two worker processes over TCP, w1
-frozen with SIGSTOP before the plan, six tasks, 300 ms leases: remote checkpoints
-equal a local reference run, at least one reassignment, w1 stays `simulated` and
-w2 becomes real, exactly one commit per task, and thawing w1 adds none.
+Not claimed: plaintext TCP, no NAT traversal, no TLS, no key rotation. The topology
+plane (`src/stdlib/mesh.rs`) is still simulated; this release makes the execution
+plane real.
+
+Verified: `tests/mesh_remote.rs` 3 passed — two worker processes over TCP, one
+frozen with SIGSTOP before the plan, six tasks, 300 ms leases: checkpoints equal a
+local reference run, at least one reassignment, exactly one commit per task, and
+thawing the frozen node adds none.
 
 ## [v1.2.2] — 2026-10-23 — the mesh gets a surface
 
-### What was wrong
+### Added
 
-The engine had a mesh module that Tallow code could not call. `src/stdlib/mesh.rs`
-dispatched `mesh.*`, and `src/stdlib/mod.rs` routed it, but the interpreter's
-module registry never listed it — neither in `is_stdlib_module` nor in the
-module-sentinel match — so `mesh.MeshNode.new(...)` died as
-"undefined variable: mesh". The entire simulated topology plane had never been
-reachable from the language it is part of.
+- `Mesh.plan(tasks, seed)` and `Mesh.replay(journal_path)` published in
+  `stdlib/mesh.tl`, answered by `src/stdlib/mesh_exec.rs`, with the four structs
+  they return. Planning validates task classes, missing dependencies, duplicate
+  ids and dependency cycles (the refusal names the path, e.g. `a -> b -> a`);
+  replay recomputes every checkpoint and reports the first wave that disagrees.
 
-There was also no execution surface at all: the coordinator, journal, leases and
-workers existed as Rust, with no declared way to reach them.
+### Fixed
 
-### What was fixed
+- The `mesh` module was dispatched and routed but never registered in the
+  interpreter's module tables, so `mesh.MeshNode.new(...)` died as "undefined
+  variable: mesh". Both `mesh` and `Mesh` are registered now.
 
-- `Mesh.plan(tasks, seed)` and `Mesh.replay(journal_path)` are published in
-  `stdlib/mesh.tl` and answered by `src/stdlib/mesh_exec.rs`. Planning is
-  deterministic and validates task classes, missing dependencies, duplicate ids
-  and dependency cycles (the refusal names the path, e.g. `a -> b -> a`).
-  Replay recomputes every checkpoint and reports the first wave that disagrees.
-- `mesh` and `Mesh` are registered in both interpreter tables, which is what
-  makes any module callable from Tallow at all.
-- `Mesh.run` is deliberately NOT declared: running a plan needs a worker pool
-  executing Tallow functions, each with its own interpreter, and that executor
-  does not exist. A declaration that cannot execute is the defect 1.2.0 removed.
+Counts: 85 → 86 modules; 1,124 → 1,126 functions.
 
-### Counts
+`Mesh.run` is deliberately not declared: running a plan needs a worker pool
+executing Tallow functions, and that executor does not exist.
 
-stdlib modules 85 → 86; function declarations 1,124 → 1,126. The gate moved in
-the same commit, with the reason inline.
-
-Verified: `stdlib/mesh.tl` checks clean (6 items); the diamond plans to 3 waves
-`[1, 2, 1]`; a cycle is refused with its path; an `io` task without an
-idempotency key is refused — all three through the shipped binary
-(`tests/mesh_plan_tl.rs`, 3 passed).
+Verified: `stdlib/mesh.tl` checks clean; the diamond plans to 3 waves `[1, 2, 1]`;
+a cycle is refused with its path; an `io` task without an idempotency key is
+refused — through the shipped binary (`tests/mesh_plan_tl.rs`, 3 passed).
 
 ## [v1.2.1] — 2026-10-23 — declared is what you get
 
-### What was wrong
+### Added
 
-Six module-level browser helpers returned a primitive where `stdlib/browser.tl`
-declares a struct: `page_throttle_cpu` answered `Ok(Float)` — the rate handed in,
-echoed back; `page_wait_for_url` answered `Ok(Bool)`, discarding the matched URL
-and the elapsed time; `page_wait_for_function` answered `Ok(Bool)`;
-`page_add_script_tag` and `page_add_style_tag` answered `Ok(String)`;
-`page_emulate_media` answered `Ok(Nil)`; `page_set_content` answered a bare
-`Ok(Int)`. The `Page.*` methods for the same operations already built the
-declared structs, so declaration, interpreter and native arms disagreed three
-ways on the same call.
+- The six module-level browser helpers return the structs `stdlib/browser.tl`
+  declares: `page_set_content` → `PageContentResult`, `page_throttle_cpu` →
+  `CpuThrottle`, `page_emulate_media` → `MediaEmulation`, `page_wait_for_url` /
+  `page_wait_for_function` → `WaitResult`, `page_add_script_tag` /
+  `page_add_init_script` → `ScriptTag`, `page_add_style_tag` → `StyleTag`.
+- Native lowering for those seven helpers on the current-page receiver, falling
+  back to the interpreter by name when a match-arm binding's struct type cannot be
+  inferred.
+- Release bodies are generated from this file, and the build fails when a section
+  lacks the required headings.
 
-Second defect, found while fixing the first: the shared `WaitResult` builder had
-been producing 7 of the 9 declared fields since it was written — `status` and
-`event` never existed.
+### Fixed
 
-Third, in the build itself: a killed test run left an orphaned `chrome-headless`
-(ppid 1) holding `/run/nixe-heavy-build.lock`, so `cargo test` sat parked for 15
-minutes with no compiler running. Killing the orphan let the build finish in 20
-seconds.
+- Six helpers returned primitives where the declaration said struct:
+  `page_throttle_cpu` echoed back its argument as a float, `page_wait_for_url`
+  discarded the matched URL and elapsed time, and three others returned `Bool`,
+  `String` or `Nil`. Declaration, interpreter and native arms now agree.
+- The shared `WaitResult` builder produced 7 of the 9 declared fields since it was
+  written; `status` and `event` now exist.
+- A killed test run left an orphaned `chrome-headless` holding
+  `/run/nixe-heavy-build.lock`, parking `cargo test` for 15 minutes. Killing the
+  orphan let the build finish in 20 seconds.
 
-### What was fixed
-
-- `page_set_content` → `PageContentResult { loaded, content_length }`
-- `page_throttle_cpu` → `CpuThrottle { rate, applied }`
-- `page_emulate_media` → `MediaEmulation { media_type, color_scheme, reduced_motion, applied }`
-- `page_wait_for_url` / `page_wait_for_function` → `WaitResult`, with `matched`,
-  `elapsed_ms`, and for the URL waiter the URL it matched
-- `page_add_script_tag` / `page_add_init_script` → `ScriptTag`;
-  `page_add_style_tag` → `StyleTag`
-- `WaitResult` now carries all nine declared fields.
-- Native lowering added for these seven helpers on the current-page receiver. It
-  falls back to the interpreter by name when a match-arm binding's struct type
-  cannot be inferred — a missing optimisation, not a wrong answer.
-- Release bodies are now generated from this file and the build fails if the
-  section lacks "What was wrong" / "What was fixed".
-
-Programs that printed the old primitive now print a struct — which is what the
+Programs that printed the old primitive now print a struct, which is what the
 declaration always said. Migration surface was measured before the change: five
-of the six helpers had zero call sites in the repository; the sixth had two,
-both tests introduced by this work.
+of six helpers had zero call sites; the sixth had two, both tests from this work.
 
-Verification: 6/6 browser tests, including one asserting all nine declared
-fields; full lib suite 9,159 passed / 0 failed / 33 ignored.
+Verified: 6/6 browser tests, including one asserting all nine fields; full lib
+suite 9,159 passed / 0 failed / 33 ignored.
 
 ## [v1.2.0] — 2026-10-23 — the surface stops lying
 
@@ -233,11 +186,11 @@ makes the published surface executable and the manifest valid Tallow.
   the checker learned `Float`/`Int`/`Bool`/`str`.
 - Native lowering for `math.asin/acos/atan/atan2/cbrt` and the integer helpers
   `abs_i/min_i/max_i/clamp_i`.
-
-### Changed
-- The published function count is **1,124**. The six-function difference from
+- The published function count is **1,124**; the six-function difference from
   1,118 is `timeseries.tl`'s `method … on TimeSeries` declarations, which no
-  counter ever read; nothing was added to the surface.
+  counter ever read.
+
+
 
 ## [v1.1.5] — 2026-10-22 — `String.parse()` compiles
 
