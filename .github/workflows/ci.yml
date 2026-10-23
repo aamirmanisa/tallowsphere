@@ -332,6 +332,34 @@ jobs:
           --test script_mode
           -- --test-threads=2
 
+  conformance:
+    name: Language conformance (interpreter + native)
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: tallow-ci
+      - name: Install the native link dependencies
+        # The suite runs every case on BOTH planes; the native plane compiles
+        # through clang and links -llzma / -lbz2. Without these the native half
+        # fails at link time and every case looks like a language regression.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang liblzma-dev libbz2-dev
+      - name: Build the engine under test
+        run: cargo build --locked --bin tallow
+      - name: Run the conformance corpus
+        # Was release-only until 2026-10-23: a language change could pass every
+        # unit test and only be caught at the next tag. The corpus is small
+        # (18 programs) and runs in under a minute once the binary exists.
+        run: python3 conformance/run.py --tallow target/debug/tallow
+
   # Behavioral parity: interpreter vs native codegen, byte-for-byte stdout + exit code.
   # Drives every tests/parity/parity_programs/*.tl through both paths and requires each to land in a
   # named class: MATCH, REFUSED (a fixture marked `parity: expect-refusal` must be refused by BOTH
