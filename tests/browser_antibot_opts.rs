@@ -9,6 +9,14 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Distinguishes the temp programs of concurrently running tests in this binary.
+/// Using only the process id made both tests write and delete the same path, so
+/// one test's cleanup removed the file the other was about to run — the test
+/// failed on CI with "cannot read '/tmp/tallow-opts-<pid>.tl': No such file or
+/// directory" and passed locally whenever the timing differed.
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 const PAGE: &str = "<!doctype html><html><head><title>opts</title></head><body>opts</body></html>";
 
@@ -54,7 +62,11 @@ fn serve() -> u16 {
 }
 
 fn run(flag: &str, source: &str) -> (bool, String, String) {
-    let path = std::env::temp_dir().join(format!("tallow-opts-{}.tl", std::process::id()));
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "tallow-opts-{}-{seq}.tl",
+        std::process::id()
+    ));
     std::fs::write(&path, source).expect("write program");
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
         .arg("run")
