@@ -34,6 +34,7 @@ pub mod lrn_dip;
 pub mod market;
 pub mod math;
 pub mod mesh;
+pub mod llm;
 pub mod mesh_exec;
 // Sitescan module (2026-09-12): comprehensive website + infrastructure scanning
 pub mod sitescan;
@@ -162,6 +163,7 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         "math" => math::dispatch(function, args),
         "mesh" => mesh::dispatch(function, args),
         "Mesh" => mesh_exec::dispatch(function, args),
+        "llm" => llm::dispatch(function, args),
         "MeshNode" => mesh::dispatch(function, args),
         // Sitescan (2026-09-12): comprehensive website + infrastructure scanning
         "sitescan" => sitescan::dispatch(function, args),

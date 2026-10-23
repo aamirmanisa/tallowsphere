@@ -1398,6 +1398,7 @@ impl Interpreter {
                 // what makes a module reachable from Tallow code at all.
                 | "mesh"
                 | "Mesh"
+                | "llm"
         )
     }
 
@@ -2295,6 +2296,13 @@ impl Interpreter {
 
             // ── Identifiers ──
             ExprKind::Ident(name) => {
+                // A bound variable shadows a module name. Without this, adding a
+                // lowercase module (`llm`) silently broke `let llm = h.llm_calls`:
+                // the sentinel match won and the variable read back as
+                // "__module_llm__". Modules are a fallback, not a reserved word.
+                if let Some(v) = env.get(name) {
+                    return Ok(v.clone());
+                }
                 // Check for built-in constructors (capitalized names that can't be user vars)
                 match name.as_str() {
                     "Ok" => Ok(Value::Ok(Box::new(Value::Nil))),
@@ -2338,6 +2346,7 @@ impl Interpreter {
                     // Without this sentinel, `Mesh.plan(...)` is an undefined
                     // variable long before the stdlib router sees it.
                     "Mesh" => Ok(Value::String("__module_Mesh__".to_string())),
+                    "llm" => Ok(Value::String("__module_llm__".to_string())),
                     "Enclave" => Ok(Value::String("__module_Enclave__".to_string())),
                     "FheKey" => Ok(Value::String("__module_FheKey__".to_string())),
                     "MpcSession" => Ok(Value::String("__module_MpcSession__".to_string())),
