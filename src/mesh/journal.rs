@@ -20,6 +20,7 @@ pub enum Event {
     TaskCommitted { wave: usize, task: String, result_hash: String },
     TaskRetried { wave: usize, task: String, attempt: u32, reason: String },
     TaskFailed { wave: usize, task: String, reason: String },
+    InjectApplied { wave: usize, key: String, value: String },
     WaveEnded { wave: usize, checkpoint: String },
     RunStopped { drained: bool },
 }
@@ -41,6 +42,9 @@ impl Event {
             }),
             Event::TaskFailed { wave, task, reason } => json!({
                 "kind": "task_failed", "wave": wave, "task": task, "reason": reason
+            }),
+            Event::InjectApplied { wave, key, value } => json!({
+                "kind": "inject_applied", "wave": wave, "key": key, "value": value
             }),
             Event::WaveEnded { wave, checkpoint } => json!({
                 "kind": "wave_ended", "wave": wave, "checkpoint": checkpoint
