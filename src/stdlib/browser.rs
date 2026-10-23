@@ -316,6 +316,21 @@ fn page_handle_cookie_consent(args: Vec<Value>) -> StdlibResult {
 
 
 
+/// Declared `ScriptTag`. `script_hash`/`injected` are honestly unknown here:
+/// the CDP call returns the element id, not a hash, and the tag is created
+/// synchronously before the call returns.
+fn script_tag(id: String, kind: &str) -> Value {
+    Value::Struct {
+        name: "ScriptTag".to_string(),
+        fields: vec![
+            ("script_hash".to_string(), Value::Nil),
+            ("tag_id".to_string(), Value::String(id)),
+            ("injected".to_string(), Value::Bool(false)),
+            ("kind".to_string(), Value::String(kind.to_string())),
+        ],
+    }
+}
+
 fn wait_result(
     matched: bool,
     elapsed_ms: u64,
@@ -338,6 +353,9 @@ fn wait_result(
                 "method".to_string(),
                 method.map(|m| Value::String(m.to_string())).unwrap_or(Value::Nil),
             ),
+            // Declared since the struct was written; the helper predates them.
+            ("status".to_string(), Value::Nil),
+            ("event".to_string(), Value::Nil),
         ],
     }
 }
@@ -400,7 +418,16 @@ fn page_set_content(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.set_content(&html))
-            .map(|bytes| Value::Ok(Box::new(Value::Int(bytes as i128))))
+            // Declared `PageContentResult`; this returned a bare byte count.
+            .map(|bytes| {
+                Value::Ok(Box::new(Value::Struct {
+                    name: "PageContentResult".to_string(),
+                    fields: vec![
+                        ("loaded".to_string(), Value::Bool(true)),
+                        ("content_length".to_string(), Value::Int(bytes as i128)),
+                    ],
+                }))
+            })
             .map_err(|e| format!("page_set_content: {e}"))
     })
 }
@@ -419,7 +446,7 @@ fn page_add_init_script(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.add_init_script(&script))
-            .map(|id| Value::Ok(Box::new(Value::String(id))))
+            .map(|id| Value::Ok(Box::new(script_tag(id, "init_script"))))
             .map_err(|e| format!("page_add_init_script: {e}"))
     })
 }
@@ -429,7 +456,7 @@ fn page_add_script_tag(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.add_script_tag(&src))
-            .map(|id| Value::Ok(Box::new(Value::String(id))))
+            .map(|id| Value::Ok(Box::new(script_tag(id, "script"))))
             .map_err(|e| format!("page_add_script_tag: {e}"))
     })
 }
@@ -439,7 +466,15 @@ fn page_add_style_tag(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.add_style_tag(&src))
-            .map(|(id, _url)| Value::Ok(Box::new(Value::String(id))))
+            .map(|(id, _url)| {
+                Value::Ok(Box::new(Value::Struct {
+                    name: "StyleTag".to_string(),
+                    fields: vec![
+                        ("tag_id".to_string(), Value::String(id)),
+                        ("kind".to_string(), Value::String("style".to_string())),
+                    ],
+                }))
+            })
             .map_err(|e| format!("page_add_style_tag: {e}"))
     })
 }
@@ -450,7 +485,7 @@ fn page_wait_for_function(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.wait_for_function(&expression, timeout))
-            .map(|(ok, _ms)| Value::Ok(Box::new(Value::Bool(ok))))
+            .map(|(ok, ms)| Value::Ok(Box::new(wait_result(ok, ms, None, None))))
             .map_err(|e| format!("page_wait_for_function: {e}"))
     })
 }
@@ -461,7 +496,10 @@ fn page_wait_for_url(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.wait_for_url(&pattern, timeout))
-            .map(|(ok, _ms, _url)| Value::Ok(Box::new(Value::Bool(ok))))
+            .map(|(ok, ms, url)| {
+                let url = if url.is_empty() { None } else { Some(url) };
+                Value::Ok(Box::new(wait_result(ok, ms, None, url)))
+            })
             .map_err(|e| format!("page_wait_for_url: {e}"))
     })
 }
@@ -483,7 +521,15 @@ fn page_throttle_cpu(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.throttle_cpu(rate))
-            .map(|applied| Value::Ok(Box::new(Value::Float(applied))))
+            .map(|applied| {
+                Value::Ok(Box::new(Value::Struct {
+                    name: "CpuThrottle".to_string(),
+                    fields: vec![
+                        ("rate".to_string(), Value::Float(applied)),
+                        ("applied".to_string(), Value::Bool(true)),
+                    ],
+                }))
+            })
             .map_err(|e| format!("page_throttle_cpu: {e}"))
     })
 }
@@ -495,7 +541,17 @@ fn page_emulate_media(args: Vec<Value>) -> StdlibResult {
     with_bound_page(|page| {
         crate::interp::get_browser_runtime()
             .block_on(page.emulate_media(&media, &scheme, &motion))
-            .map(|_| Value::Ok(Box::new(Value::Nil)))
+            .map(|_| {
+                Value::Ok(Box::new(Value::Struct {
+                    name: "MediaEmulation".to_string(),
+                    fields: vec![
+                        ("media_type".to_string(), Value::String(media.clone())),
+                        ("color_scheme".to_string(), Value::String(scheme.clone())),
+                        ("reduced_motion".to_string(), Value::String(motion.clone())),
+                        ("applied".to_string(), Value::Bool(true)),
+                    ],
+                }))
+            })
             .map_err(|e| format!("page_emulate_media: {e}"))
     })
 }

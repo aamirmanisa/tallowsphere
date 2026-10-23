@@ -21557,6 +21557,13 @@ impl<'a> CodeGen<'a> {
                 | "page_handle_cookie_consent"
                 | "page_structured_data"
                 | "page_set_content"
+                | "page_add_script_tag"
+                | "page_add_style_tag"
+                | "page_add_init_script"
+                | "page_throttle_cpu"
+                | "page_wait_for_url"
+                | "page_wait_for_function"
+                | "page_emulate_media"
         );
         if !simple {
             return Ok(None);
@@ -21640,6 +21647,221 @@ impl<'a> CodeGen<'a> {
                 let result = self.fresh_reg();
                 self.emit_line(&format!("{result} = icmp ne i32 {status}, 0"));
                 Ok(Some(LLValue::new(result, LLType::I1)))
+            }
+            "page_add_script_tag" | "page_add_init_script" => {
+                let is_init = method == "page_add_init_script";
+                let ffi = if is_init {
+                    "tallow_page_add_init_script"
+                } else {
+                    "tallow_page_add_script_tag"
+                };
+                let kind = if is_init { "init_script" } else { "script" };
+                let arg = match args.first() {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce(&v, &LLType::I8Ptr)?
+                    }
+                    None => return Err(format!("browser.{method} requires a string")),
+                };
+                let tag = self.fresh_reg();
+                self.emit_line(&format!("{tag} = call ptr @{ffi}(ptr {page}, ptr {arg})"));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp ne ptr {tag}, null"));
+                let kind_c = self.intern_string(kind);
+                Ok(Some(self.build_result_struct(
+                    "ScriptTag",
+                    &[
+                        ("script_hash", "null".to_string(), LLType::I8Ptr),
+                        ("tag_id", tag, LLType::I8Ptr),
+                        ("injected", "0".to_string(), LLType::I1),
+                        ("kind", kind_c, LLType::I8Ptr),
+                    ],
+                    &ok,
+                )?))
+            }
+            "page_add_style_tag" => {
+                let arg = match args.first() {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce(&v, &LLType::I8Ptr)?
+                    }
+                    None => return Err("browser.page_add_style_tag requires a string".to_string()),
+                };
+                let tag = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{tag} = call ptr @tallow_page_add_style_tag(ptr {page}, ptr {arg})"
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp ne ptr {tag}, null"));
+                let kind_c = self.intern_string("style");
+                Ok(Some(self.build_result_struct(
+                    "StyleTag",
+                    &[
+                        ("tag_id", tag, LLType::I8Ptr),
+                        ("kind", kind_c, LLType::I8Ptr),
+                    ],
+                    &ok,
+                )?))
+            }
+            "page_throttle_cpu" => {
+                let rate = match args.first() {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce(&v, &LLType::F64)?
+                    }
+                    None => return Err("browser.page_throttle_cpu requires a rate".to_string()),
+                };
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_throttle_cpu(ptr {page}, double {rate})"
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                Ok(Some(self.build_result_struct(
+                    "CpuThrottle",
+                    &[
+                        ("rate", rate, LLType::F64),
+                        ("applied", "1".to_string(), LLType::I1),
+                    ],
+                    &ok,
+                )?))
+            }
+            "page_wait_for_url" => {
+                let pattern = match args.first() {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce(&v, &LLType::I8Ptr)?
+                    }
+                    None => return Err("browser.page_wait_for_url requires a pattern".to_string()),
+                };
+                let timeout = match args.get(1) {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce(&v, &LLType::I64)?
+                    }
+                    None => "30000".to_string(),
+                };
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = call ptr @malloc(i64 32)"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_wait_for_url(ptr {page}, ptr {pattern}, i64 {timeout}, ptr {out})"
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                let found = self.fresh_reg();
+                self.emit_line(&format!("{found} = load i32, ptr {out}"));
+                let found_i1 = self.fresh_reg();
+                self.emit_line(&format!("{found_i1} = icmp ne i32 {found}, 0"));
+                let elapsed_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{elapsed_gep} = getelementptr inbounds i8, ptr {out}, i64 8"
+                ));
+                let elapsed = self.fresh_reg();
+                self.emit_line(&format!("{elapsed} = load i64, ptr {elapsed_gep}"));
+                let url_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{url_gep} = getelementptr inbounds i8, ptr {out}, i64 16"
+                ));
+                let url = self.fresh_reg();
+                self.emit_line(&format!("{url} = load ptr, ptr {url_gep}"));
+                Ok(Some(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", found_i1.clone(), LLType::I1),
+                        ("matched", found_i1.clone(), LLType::I1),
+                        ("received", "null".to_string(), LLType::Optional),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", timeout.clone(), LLType::I64),
+                        ("url", url.clone(), LLType::I8Ptr),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", "null".to_string(), LLType::Optional),
+                    ],
+                    &ok,
+                )?))
+            }
+            "page_wait_for_function" => {
+                let js = match args.first() {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce(&v, &LLType::I8Ptr)?
+                    }
+                    None => {
+                        return Err("browser.page_wait_for_function requires a predicate".to_string())
+                    }
+                };
+                let timeout = match args.get(1) {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce(&v, &LLType::I64)?
+                    }
+                    None => "30000".to_string(),
+                };
+                let out = self.fresh_reg();
+                self.emit_line(&format!("{out} = call ptr @malloc(i64 24)"));
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_wait_for_function(ptr {page}, ptr {js}, i64 {timeout}, ptr {out})"
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                let found = self.fresh_reg();
+                self.emit_line(&format!("{found} = load i32, ptr {out}"));
+                let found_i1 = self.fresh_reg();
+                self.emit_line(&format!("{found_i1} = icmp ne i32 {found}, 0"));
+                let elapsed_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{elapsed_gep} = getelementptr inbounds i8, ptr {out}, i64 8"
+                ));
+                let elapsed = self.fresh_reg();
+                self.emit_line(&format!("{elapsed} = load i64, ptr {elapsed_gep}"));
+                Ok(Some(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", found_i1.clone(), LLType::I1),
+                        ("matched", found_i1.clone(), LLType::I1),
+                        ("received", "null".to_string(), LLType::Optional),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", timeout.clone(), LLType::I64),
+                        ("url", "null".to_string(), LLType::Optional),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", "null".to_string(), LLType::Optional),
+                    ],
+                    &ok,
+                )?))
+            }
+            "page_emulate_media" => {
+                let defaults = ["screen", "light", "no-preference"];
+                let mut vals = Vec::new();
+                for (i, default) in defaults.iter().enumerate() {
+                    let value = match args.get(i) {
+                        Some(a) => {
+                            let v = self.emit_expr(&a.value)?;
+                            self.coerce(&v, &LLType::I8Ptr)?
+                        }
+                        None => self.intern_string(default),
+                    };
+                    vals.push(value);
+                }
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_emulate_media(ptr {page}, ptr {}, ptr {}, ptr {})",
+                    vals[0], vals[1], vals[2]
+                ));
+                let ok = self.fresh_reg();
+                self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
+                Ok(Some(self.build_result_struct(
+                    "MediaEmulation",
+                    &[
+                        ("media_type", vals[0].clone(), LLType::I8Ptr),
+                        ("color_scheme", vals[1].clone(), LLType::I8Ptr),
+                        ("reduced_motion", vals[2].clone(), LLType::I8Ptr),
+                        ("applied", "1".to_string(), LLType::I1),
+                    ],
+                    &ok,
+                )?))
             }
             "page_set_content" => {
                 let html = match args.first() {
