@@ -1165,13 +1165,32 @@ pub fn install_browser(full: bool) -> Result<PathBuf, BrowserError> {
 
     let variant = if full { "chrome" } else { "chrome-headless-shell" };
 
-    eprintln!("Fetching latest stable Chrome for Testing version...");
-    let info = fetch_latest_stable_version()?;
-    eprintln!("Latest stable: Chrome {}", info.version);
-
-    // Check if already installed
+    // Prefer the pinned build. "Latest stable" is a moving target: it turned the
+    // CI browser job into an unpinned install the moment Google published a new
+    // channel version, and the runner and this box would then test different
+    // binaries. A pin table exists so the gate has a fixed subject.
     let dir = browser_install_dir()?;
-    let install_dir = dir.join(format!("{variant}-{}", info.version));
+    let (version, url) = match crate::browser::cft_pins::newest_pinned(platform, variant) {
+        Some(pinned) => {
+            let cft = platform.as_cft_str();
+            eprintln!("Using pinned Chrome for Testing {pinned} ({variant}, {cft})");
+            (
+                pinned.to_string(),
+                format!(
+                    "https://storage.googleapis.com/chrome-for-testing-public/{pinned}/{cft}/{variant}-{cft}.zip"
+                ),
+            )
+        }
+        None => {
+            eprintln!("No pin for {variant} on {}; fetching latest stable version...", platform.as_cft_str());
+            let info = fetch_latest_stable_version()?;
+            eprintln!("Latest stable: Chrome {}", info.version);
+            let url = find_download_url(&info, &platform, full)?;
+            (info.version.clone(), url)
+        }
+    };
+
+    let install_dir = dir.join(format!("{variant}-{version}"));
     let exec_rel = if full {
         platform.chrome_full_executable()
     } else {
@@ -1180,15 +1199,12 @@ pub fn install_browser(full: bool) -> Result<PathBuf, BrowserError> {
     let exec_path = install_dir.join(exec_rel);
 
     if exec_path.exists() {
-        eprintln!("Chrome {} already installed at {}", info.version, exec_path.display());
+        eprintln!("Chrome {version} already installed at {}", exec_path.display());
         return Ok(exec_path);
     }
 
-    // Find download URL
-    let url = find_download_url(&info, &platform, full)?;
-
     // Download and extract
-    download_browser(&url, &install_dir, &info.version, platform, variant)?;
+    download_browser(&url, &install_dir, &version, platform, variant)?;
 
     // Verify the executable exists
     if !exec_path.exists() {
@@ -1200,7 +1216,7 @@ pub fn install_browser(full: bool) -> Result<PathBuf, BrowserError> {
 
     eprintln!(
         "Chrome {} installed to {}",
-        info.version,
+        version,
         exec_path.display()
     );
     Ok(exec_path)
