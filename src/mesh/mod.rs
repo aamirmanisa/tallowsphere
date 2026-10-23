@@ -13,7 +13,9 @@ pub mod coordinator;
 pub mod journal;
 pub mod memory;
 pub mod lease;
+pub mod remote;
 pub mod scheduler;
+pub mod wire;
 pub mod worker;
 
 use std::collections::{HashMap, HashSet};

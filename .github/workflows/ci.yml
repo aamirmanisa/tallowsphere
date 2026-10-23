@@ -264,6 +264,7 @@ jobs:
           --test language_surface
           --test browser_page_helpers
           --test mesh_plan_tl
+          --test mesh_remote
           --test mesh_workers
           --test fingerprint_audit_cli
           --test http_result_model
