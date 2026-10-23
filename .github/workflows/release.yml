@@ -391,6 +391,13 @@ jobs:
           echo "verified $n archive(s)"
           [ "$n" -eq 5 ] || { echo "expected 5 archives, found $n"; exit 1; }
 
+      # Every release must say WHAT WAS WRONG and WHAT WAS FIXED. The body is
+      # generated from CHANGELOG.md, and this step fails when the section for
+      # the tag is missing or lacks either heading — so a release with no
+      # explanation never reaches the drafts.
+      - name: Build release body from the changelog
+        run: python3 scripts/release_body.py "${{ github.ref_name }}" > release_body.md
+
       - name: Draft release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -399,14 +406,6 @@ jobs:
           name: "Tallow ${{ github.ref_name }}"
           draft: true
           prerelease: false
-          body: |
-            ## Tallow ${{ github.ref_name }}
-
-            Five targets, each with a `.sha256` sidecar and a Sigstore keyless signature:
-
-            ```
-            cosign verify-blob --signature <archive>.sig <archive>
-            sha256sum -c <archive>.sha256
-            ```
+          body_path: release_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
