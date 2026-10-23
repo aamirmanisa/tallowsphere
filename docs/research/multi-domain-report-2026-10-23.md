@@ -282,8 +282,9 @@ compile-time effects; an annotation merely attached is documentation.
 
 Measured from the repository, not from documentation: **36 keywords, 51 operator tokens,
 176 error codes, 87 stdlib modules, 1,130 function declarations** (`spec/generated.json` at
-`9cd968d`). `tallow check` passes **87/87** modules; the conformance corpus runs **21 cases
-with 0 failures** against the released v1.4.0 binary; the lib suite is **9,212 passed / 0
+`9cd968d`). `tallow check` passes **87/87** modules; the conformance corpus runs **18
+programs with 0 failures** against the released v1.4.0 binary (re-measured 2026-10-23:
+18 programs, 0 failures, 100 s, both planes); the lib suite is **9,212 passed / 0
 failed / 33 ignored**.
 
 **Syntax and semantics.** The keyword set is small — `let var const struct enum impl trait

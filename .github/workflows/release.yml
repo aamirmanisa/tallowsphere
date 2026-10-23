@@ -64,7 +64,41 @@ jobs:
 
       - name: Full lib suite
         shell: bash
-        run: cargo test --lib --locked -- --test-threads=2
+        run: |
+          set -o pipefail
+          cargo test --lib --locked -- --test-threads=2 2>&1 | tee lib.log
+
+      - name: Install the native link dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang liblzma-dev libbz2-dev
+
+      - name: Conformance corpus (both planes)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --locked --bin tallow
+          python3 conformance/run.py --tallow target/debug/tallow 2>&1 | tee conformance.log
+
+      - name: Write this run's measured numbers
+        # The release body's Verified section is generated from these logs, not
+        # from memory: a number in a release page must come from the run that
+        # built it. The script fails if either log lacks a result line.
+        shell: bash
+        run: |
+          python3 scripts/test_summary.py --lib lib.log --conformance conformance.log \
+            --sha "${{ github.sha }}" > summary.md
+          cat summary.md
+
+      - name: Keep the summary for the publish job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-summary
+          path: |
+            summary.md
+            lib.log
+            conformance.log
+          retention-days: 7
 
   # ── Build one archive per shipped target ───────────────────────────────
   build:
@@ -375,6 +409,11 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: test-summary
+          path: test-summary
+
       - name: Verify every archive has a checksum and a signature
         shell: bash
         run: |
@@ -391,12 +430,18 @@ jobs:
           echo "verified $n archive(s)"
           [ "$n" -eq 5 ] || { echo "expected 5 archives, found $n"; exit 1; }
 
-      # Every release must say WHAT WAS WRONG and WHAT WAS FIXED. The body is
-      # generated from CHANGELOG.md, and this step fails when the section for
-      # the tag is missing or lacks either heading — so a release with no
-      # explanation never reaches the drafts.
+      # Every release must state WHAT WAS ADDED and WHAT WAS FIXED, and must
+      # carry the numbers this run measured. The body is generated from
+      # CHANGELOG.md; this step fails when the section for the tag is missing,
+      # lacks either heading, or the Verified summary is absent.
       - name: Build release body from the changelog
-        run: python3 scripts/release_body.py "${{ github.ref_name }}" > release_body.md
+        run: |
+          python3 scripts/release_body.py "${{ github.ref_name }}" \
+            --verified test-summary/summary.md > release_body.md
+          test -s release_body.md
+          grep -q '^## Added' release_body.md
+          grep -q '^## Fixed' release_body.md
+          grep -q '^## Verified' release_body.md
 
       - name: Draft release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -409,3 +454,22 @@ jobs:
           body_path: release_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publishing is the last step, not the first: the draft must exist with
+      # the expected asset count and a body before it becomes public. A release
+      # that uploads ten of fifteen assets stays a draft and fails the job.
+      - name: Verify the draft, then publish it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ "$(wc -c < release_body.md)" -ge 500 ] || { echo "body under 500 bytes"; exit 1; }
+          n=$(gh release view "$TAG" --json assets --jq '.assets | length')
+          echo "draft assets: $n"
+          [ "$n" -ge 15 ] || { echo "expected at least 15 assets, found $n — staying draft"; exit 1; }
+          one=$(ls release-assets/tallow-linux-x86_64-*.tar.gz | head -1)
+          (cd release-assets && sha256sum -c "$(basename "$one").sha256")
+          gh release edit "$TAG" --draft=false
+          echo "published $TAG"

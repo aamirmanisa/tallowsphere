@@ -20,7 +20,7 @@ produces recurrence.
 
 | # | Root cause | Findings it explains | Structural fix |
 | --- | --- | --- | --- |
-| RC-1 | **Gates exist only where a human remembered to run them.** Conformance runs in the release workflow only; the spec repo has no CI; 42 suites are excluded by list; `cargo deny` warns on a stale ignore nobody removed. | Spec drift, unexercised suites, stale advisory ignore | Phase 1: every invariant becomes a CI job that fails the push, not a checklist item |
+| RC-1 | **Gates exist only where a human remembered to run them.** Conformance runs in the release workflow only; the spec repo has no CI; 38 suites are excluded by list; `cargo deny` warns on a stale ignore nobody removed. | Spec drift, unexercised suites, stale advisory ignore | Phase 1: every invariant becomes a CI job that fails the push, not a checklist item |
 | RC-2 | **The native backend is a second implementation with no parity contract.** 25 `page_*` helpers, `Mesh.plan/replay`, `llm.*` fall back to the interpreter. | Behaviour depends on build flag; "native build unavailable" messages | Phase 5: parity tests generated from one corpus, run per function; coverage published as a number |
 | RC-3 | **Declared surface ran ahead of implemented surface.** `mesh` and `Mesh` were dispatched but unreachable; `Mesh.run` was deliberately withheld; topology is an in-process model. | Topology simulation, missing executor, prior `undefined variable: Mesh` | Rule: a declaration is added in the same commit as its executable arm and its gate test; surface count is a *gate*, not a metric |
 | RC-4 | **Design documents were treated as deliverables.** Scope manifest, ombuds, jurisdiction check, egress ledger were specified in architecture §6 and implemented nowhere; four of five desks exist as prose. | Directorate incompleteness, unenforced controls | Phase 4: every control ships with a bypass test that fails when the control is removed; a design section without a test is marked `[design]` |
@@ -46,7 +46,7 @@ job summary.
 cases. Keep the release-workflow copy.
 *Close:* job present and green; removing it makes the required-check list fail.
 
-**A3 [R3] Suite triage.** Bucket the 42 entries: needs-service → container job;
+**A3 [R3] Suite triage.** Bucket the 38 entries: needs-service → container job;
 needs-browser → headless job; obsolete → delete target + entry. Timebox 10 entries.
 *Close:* count in `ci-excluded-suites.txt` drops by ≥10; a script asserts the file has no
 entry without a bucket comment.
@@ -268,7 +268,7 @@ list changes, and anything changing the published function count.
 | K3 | Spec CI requires engine checkout and slows the spec repo | L | M | shallow clone at the pinned SHA; cache the toolchain | sentinel |
 | K4 | Live provider matrix needs keys and may leak them | M | H | operator-run, refuses non-0600, output scanned for key patterns before commit | sentinel |
 | K5 | Parity work reveals deeper backend defects and expands | H | M | timebox per group; `known_divergence` with expiry; publish the number instead of hiding it | architect |
-| K6 | 42 excluded suites hide a real defect | M | H | triage by bucket, not by convenience; the 10 timeboxed first are the highest-traffic paths | sentinel |
+| K6 | 38 excluded suites hide a real defect | M | H | triage by bucket, not by convenience; the 10 timeboxed first are the highest-traffic paths | sentinel |
 | K7 | Journal schema change breaks existing runs | L | H | read-compatible reader; v1 llm records refuse by design, with a named error | forge |
 | K8 | Controls (manifest/ombuds) are built but bypassable | M | H | bypass tests are the acceptance criterion; no control ships without one | sentinel |
 
@@ -298,7 +298,7 @@ docs updated in the same commit, and no unrelated file churn in the diff.
 | Lib suite | 9,212 / 0 / 33 | ≥ 9,400 / 0 / 33 | `cargo test --locked --lib` |
 | Conformance cases | 21, run only at release | 21, run on every push | CI job |
 | Spec drift | undetectable | detected in ≤ 1 push | freshness job |
-| Excluded suites | 42 | ≤ 15, each with owner + expiry | registry file |
+| Excluded suites | 38 | ≤ 15, each with owner + expiry | registry file |
 | Native coverage of declared surface | 6 of 31 new functions | 31 of 31 | `--require-native` sweep |
 | Mesh: functions executable | built-in executors only | Tallow functions at 1–8 workers | `mesh_run_tl` |
 | Topology nodes with `simulated: false` | 0 | every node with a commit | topology test |

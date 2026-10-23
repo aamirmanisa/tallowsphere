@@ -45,10 +45,21 @@ def section(text: str, version: str) -> str | None:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        print("usage: release_body.py <vX.Y.Z> [--check]", file=sys.stderr)
+        print("usage: release_body.py <vX.Y.Z> [--check] [--verified PATH]", file=sys.stderr)
         return 64
     version = argv[1]
     check = "--check" in argv[2:]
+    verified = None
+    if "--verified" in argv[2:]:
+        idx = argv.index("--verified")
+        if idx + 1 >= len(argv):
+            print("release_body: --verified needs a path", file=sys.stderr)
+            return 64
+        verified = Path(argv[idx + 1])
+        if not verified.exists() or not verified.read_text().strip():
+            print(f"release_body: {verified} is missing or empty — a Verified "
+                  f"section must carry this run's measured numbers", file=sys.stderr)
+            return 1
 
     body = section(CHANGELOG.read_text(), version)
     if body is None:
@@ -65,7 +76,7 @@ def main(argv: list[str]) -> int:
         print(
             f"release_body: {version} is missing required heading(s): "
             + ", ".join(missing)
-            + " — the release body must say what was wrong and what was fixed",
+            + " — the body must state what was added and what was fixed",
             file=sys.stderr,
         )
         return 1
@@ -81,6 +92,11 @@ def main(argv: list[str]) -> int:
         print(f"*{title_line.split('—', 1)[1].strip()}*")
         print()
     print(body)
+    if verified is not None:
+        print()
+        print("---")
+        print()
+        print(verified.read_text().strip())
     print(VERIFY_BLOCK)
     return 0
 

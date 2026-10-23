@@ -15,9 +15,9 @@ Status: plan only. No code changed by the audit that produced it.
 | Stdlib | 87 modules, 1,130 declarations, `tallow check` 87/87 clean | check sweep |
 | Invariants | 0 `todo!()`/`unimplemented!()`, 0 empty declarations, 0 unmentioned declarations | `census_surface.py` |
 | Supply chain | advisories/bans/licenses/sources ok | `cargo deny` |
-| Spec | 7 docs + `generated.json`, 21 conformance cases, **no CI** | `ls .github` (empty) |
+| Spec | 7 docs + `generated.json`, 18 conformance programs, **no CI** | `ls .github` (empty) |
 | Cross-repo | conformance 0 failures against released v1.4.0 | `conformance/run.py` |
-| Gaps | topology simulated; `Mesh.run` absent; 25 interpreter-only helpers; spec drift unchecked; 42 excluded suites | audit, below |
+| Gaps | topology simulated; `Mesh.run` absent; 25 interpreter-only helpers; spec drift unchecked; 38 excluded suites | audit, below |
 
 **Two repositories, one interface.** The engine owns all executable code. The spec repo
 owns prose + `generated.json`, both derived from the engine's `stdlib/*.tl` by
@@ -30,7 +30,7 @@ manifest, (b) the conformance corpus, (c) the provenance SHA.
 
 ```
         ┌──────────────────────── Tallow-Language ────────────────────────┐
-        │ spec/ (7 docs) · generated.json · conformance/ (21 cases) · CI   │
+        │ spec/ (7 docs) · generated.json · conformance/ (18 programs) · CI   │
         └───────────────▲─────────────────────────────────┬───────────────┘
         regenerate (SHA)│                                 │ conformance run
         ┌───────────────┴─────────────────────────────────▼───────────────┐
@@ -74,12 +74,12 @@ Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the cor
 every push; keep the release copy as the last gate.
 Gate: CI job present and green on main.
 
-**R3 — 42 integration suites are excluded.**
-Evidence: `ci-excluded-suites.txt` (42 entries; the file states the goal is empty).
+**R3 — 38 integration suites are excluded.**
+Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
 Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a
 container job; (b) needs Chrome → run in the existing browser job with a headless
 Chromium; (c) genuinely obsolete → delete the target and its entry.
-Gate: file shrinks every PR; count published in the release body.
+Gate: registry shrinks every PR; count published in the release body.
 
 **R4 — `cargo deny` prints a stale-ignore warning.**
 Evidence: `deny.toml:52` ignores `RUSTSEC-2026-0167`, which matches no crate.
@@ -243,4 +243,4 @@ Total: **21–28 engineering days** of focused work; the critical path is Phase 
 | Spec CI needs engine source in the spec repo | check out engine by SHA in the workflow; no submodule |
 | `llm` live matrix needs operator keys | operator-run script, results committed without secrets; skip-list when absent |
 | Native lowering diverges from interpreter | parity test per function, same pattern as `4d2cad5` |
-| Phase 1 grows (42 suites) | timebox to 10 suites; remainder stays debt with a published count |
+| Phase 1 grows (38 suites) | timebox to 10 suites; remainder stays debt with a published count |

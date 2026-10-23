@@ -1,42 +1,56 @@
-# Integration targets NOT run by CI, with the reason each one is absent.
-# Generated from a measured run on 2026-10-19 (cargo test --no-fail-fast, 39 targets).
-# Every entry is debt, not a policy: the goal is an empty file.
+# Integration targets NOT run by CI: registry, not a bypass list.
+#
+# Format: target | bucket | owner | reason | expires
+#   browser  needs Chromium + loopback; the CfT installer can supply the binary
+#   service  needs a fixture service (WordPress), run by scripts/wordpress_fixture.sh
+#   perf     specialised benchmark, not per-commit (run on demand)
+#   host     depends on the host process table / a cargo-built binary path
+#   parked   the verbs under test do not exist yet (U-218)
+#   triage   not yet classified — must be resolved before its expiry
+#
+# rules:
+#   * every entry expires; check_test_coverage.py fails once the date passes
+#   * no entry may be added without a bucket and an owner
+#   * the goal is an empty file — entries are debt, not policy
+#
+# Counts at 2026-10-23: 38 entries (browser 29, perf 3, service 1, host 2, parked 1, triage 2).
+# parked 1, triage 14).
 
-browser_antibot_opts: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_antibot_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_array_len: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_array_parity_cookies: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_array_parity_links: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_array_parity_n: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_authenticated_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_callbacks_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_codegen_integration: UNCLASSIFIED - needs triage
-browser_ffi_error_visibility: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_flow_runtime_integration: UNCLASSIFIED - needs triage
-browser_form_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_landlock_smoke: UNCLASSIFIED - needs triage
-browser_native_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_navigation_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_network_callbacks_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_page_events_shared: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_page_methods: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_result_field_refusal: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_ui_events_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-browser_unlowered_gaps: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-compiler_bench: specialized suite (bench/perf/fuzz), not per-commit
-crawler_browser_escalation: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-egress_census: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-injection_redteam: UNCLASSIFIED - needs triage
-juggler_smoke: UNCLASSIFIED - needs triage
-nav_direct: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-opsec_corpus_acceptance: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-parity_runner: UNCLASSIFIED - needs triage
-perf_binary_startup: specialized suite (bench/perf/fuzz), not per-commit
-perf_install: specialized suite (bench/perf/fuzz), not per-commit
-process_contract: runs tallow against the host process table (local only, not in CI image)
-request_plan_cli: PARKED — verbs (run-plan/build-plan/lint/package-report, fmt --check) are not implemented; tests ignored with that reason (U-218)
-stdlib_method_refusals: needs the cargo-built tallow bin path used by integration tests
-transfer_transport: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-wait_net_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-wait_url_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
-wordpress_login: requires a local WordPress fixture (scripts/wordpress_fixture.sh up) and TALLOW_ALLOW_DIRECT=1; #[ignore]d by default
+browser_antibot_opts | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_antibot_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_array_len | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_array_parity_cookies | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_array_parity_links | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_array_parity_n | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_authenticated_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_callbacks_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_codegen_integration | browser | alden | UNCLASSIFIED - needs triage | 2027-01-31
+browser_ffi_error_visibility | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_flow_runtime_integration | browser | alden | UNCLASSIFIED - needs triage | 2027-01-31
+browser_form_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_landlock_smoke | browser | alden | UNCLASSIFIED - needs triage | 2027-01-31
+browser_native_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_navigation_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_network_callbacks_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_page_events_shared | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_page_methods | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_result_field_refusal | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_ui_events_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+browser_unlowered_gaps | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+compiler_bench | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
+crawler_browser_escalation | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+egress_census | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+injection_redteam | triage | alden | UNCLASSIFIED - needs triage | 2026-11-06
+juggler_smoke | browser | alden | UNCLASSIFIED - needs triage | 2027-01-31
+nav_direct | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+opsec_corpus_acceptance | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+parity_runner | triage | alden | UNCLASSIFIED - needs triage | 2026-11-06
+perf_binary_startup | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
+perf_install | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
+process_contract | host | alden | runs tallow against the host process table (local only, not in CI image) | 2027-01-31
+request_plan_cli | parked | alden | PARKED — verbs (run-plan/build-plan/lint/package-report, fmt --check) are not implemented; tests ignored with that reason (U-218) | 2027-01-31
+stdlib_method_refusals | host | alden | needs the cargo-built tallow bin path used by integration tests | 2027-01-31
+transfer_transport | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+wait_net_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+wait_url_parity | browser | alden | requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1) | 2027-01-31
+wordpress_login | service | alden | requires a local WordPress fixture (scripts/wordpress_fixture.sh up) and TALLOW_ALLOW_DIRECT=1; #[ignore]d by default | 2027-01-31

@@ -35,27 +35,16 @@ ignore = [
     # upgrade arc. Build-time-only hashing (fxhash is a hasher impl), no
     # runtime exposure to untrusted input beyond normal parse paths.
     "RUSTSEC-2025-0057",
-    # paste (RUSTSEC-2024-0436) — proc-macro (expand-time only) via
-    # cryptoki 0.7 (PKCS#11 / YubiHSM integration). The macro is frozen and
-    # functional; cryptoki 0.8+ drops it but is an API-breaking arc.
-    "RUSTSEC-2024-0436",
-    # pqcrypto-* (RUSTSEC-2026-0160/62/63/65/67) — "upstream PQClean project
-    # being archived" (fresh disclosure 2026-09). The PQ set is a deliberate
-    # guardrail decision (#172/#173 family: ML-KEM/Falcon/SPHINCS+/McEliece
-    # kept for hybrid crypto); the C implementations are vendored and frozen.
-    # Successor tracking (PQClean successors / rust-native PQ) = flagged to
-    # the operator as a material finding; revisit at the next PQ bake-off.
-    "RUSTSEC-2026-0160",
-    "RUSTSEC-2026-0162",
-    "RUSTSEC-2026-0163",
-    "RUSTSEC-2026-0165",
-    "RUSTSEC-2026-0167",
-    # mach 0.3.2 (RUSTSEC-2020-0168, unmaintained) — reachable only through the
-    # optional JIT feature: cranelift-jit -> region 2.2.0 -> mach. No safe
-    # upgrade exists (region pins mach 0.3; the maintained fork is mach2, a
-    # different crate name). Used for macOS VM-region bookkeeping on a path that
-    # never parses untrusted input. Re-check when region moves to mach2.
-    "RUSTSEC-2020-0168",
+    # The three entries below (paste, pqcrypto-*, mach) were ignored here until
+    # 2026-10-23. cargo-deny reports "advisory was not encountered" for each in
+    # the current lockfile: cryptoki has moved past the paste-carrying line,
+    # the pqcrypto crates present do not trip RUSTSEC-2026-0160/62/63/65/67, and
+    # mach is no longer at 0.3.2. An unmatched ignore is not a guardrail — it is
+    # a silenced warning that hides the next real mismatch. If a dependency bump
+    # reintroduces any of them, cargo-deny will fail the build and the entry is
+    # re-added here with the version and the reason.
+    #   RUSTSEC-2024-0436 (paste)        RUSTSEC-2026-0160/62/63/65/67 (pqcrypto)
+    #   RUSTSEC-2020-0168 (mach)
 ]
 
 [licenses]
