@@ -428,10 +428,13 @@ fn stdlib_counts_and_routing() {
     // a form this counter never saw; they are now an impl block, which the
     // counter reads. The surface did not grow — the old figure under-counted.
     // 1126, not 1124: stdlib/mesh.tl publishes the two functions of the mesh
-    // execution plane that run today — Mesh.plan and Mesh.replay. Mesh.run is
-    // deliberately absent until a worker pool can execute Tallow functions; a
-    // declaration that cannot execute is the defect this gate exists to catch.
-    assert_eq!(fns, 1130, "stdlib function declarations");
+    // execution plane that run today — Mesh.plan and Mesh.replay.
+    // 1131, not 1130: Mesh.run is now published, because the executor exists —
+    // a fresh interpreter per task over Arc tables, driven by the same
+    // coordinator (tests/mesh_run_tl.rs runs a plan of Tallow functions at 1 and
+    // 8 workers and gets the same counts). The gate's rule is unchanged: a name
+    // is declared only in the commit that can execute it.
+    assert_eq!(fns, 1131, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both

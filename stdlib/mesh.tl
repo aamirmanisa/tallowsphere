@@ -4,13 +4,14 @@
 // today and both of which are pure with respect to their inputs:
 //
 //   Mesh.plan(tasks, seed)   topological waves, cycles refused by name
+//   Mesh.run(tasks, workers, journal, seed)  execute those tasks
 //   Mesh.replay(path)        verify a journal against its own checkpoints
 //
-// `Mesh.run` is deliberately absent. Running a plan needs a worker pool
-// executing Tallow functions, each worker with its own interpreter; that
-// executor does not exist yet, and declaring it here would publish a name that
-// cannot execute. Topology (membership, gossip, DHT) lives in `mesh` and is
-// still simulated — see docs/operations/mesh-m4-hold-2026-10-23.md.
+// `Mesh.run` executes functions of the calling program: every task names one,
+// each runs in its own interpreter on a worker thread, and the coordinator
+// supplies content-derived seeds, lease fencing and retries by task class.
+// Topology (membership, gossip, DHT) lives in `mesh` and is still simulated —
+// see docs/operations/mesh-m4-hold-2026-10-23.md.
 
 /// One unit of work in a plan.
 ///
@@ -50,6 +51,26 @@ struct MeshReplay {
     ok:          bool,
     checkpoints: []WaveCheckpoint,
 }
+
+/// The result of executing a plan.
+struct MeshRun {
+    /// Waves executed.
+    waves:      i64,
+    /// Tasks that committed a result.
+    committed:  i64,
+    /// Tasks that exhausted their attempts.
+    failed:     i64,
+    /// The journal the run wrote (and which `Mesh.replay` verifies).
+    journal:    String,
+}
+
+/// Execute a plan.
+///
+/// Every task names a function defined in this program; each task runs in its
+/// own interpreter on a worker thread, with the seed, retry policy and
+/// checkpoint derived from the plan — not from the clock. `failed > 0` means at
+/// least one task exhausted its attempts; the journal names which.
+native fn run(tasks: []MeshTask, workers: i64, journal: String, seed: i64) -> MeshRun
 
 /// Sort tasks into waves.
 ///

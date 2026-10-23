@@ -8,12 +8,9 @@
 //! - `Mesh.replay(path)` — verify a run journal against its own recorded
 //!   checkpoints and report the first wave that disagrees.
 //!
-//! `Mesh.run` is deliberately NOT declared here. Running a plan needs a worker
-//! pool executing Tallow functions from several threads, each with its own
-//! interpreter; that executor does not exist yet (see
-//! `docs/operations/mesh-m4-hold-2026-10-23.md`). Publishing it now would put a
-//! name in the surface that cannot execute — the exact class of defect 1.2.0
-//! was cut to remove.
+//! `Mesh.run` is implemented in `interp.rs`, not here: it executes functions of
+//! the calling program, so it needs the interpreter that owns them. The
+//! dispatcher in this module is stateless by design and could not reach them.
 
 use super::StdlibResult;
 use crate::interp::{type_name, Value};
@@ -39,7 +36,7 @@ fn class_from(name: &str) -> TaskClass {
     }
 }
 
-fn task_from_value(v: &Value) -> Result<Task, String> {
+pub(crate) fn task_from_value(v: &Value) -> Result<Task, String> {
     let Value::Struct { name, fields } = v else {
         return Err(format!("Mesh.plan: expected a MeshTask struct, got {}", type_name(v)));
     };
