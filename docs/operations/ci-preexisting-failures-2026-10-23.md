@@ -61,3 +61,19 @@ and the native plane, not a flaky test. Owner: forge. Expiry: 2026-11-06.
 The 23 browser suites that now run in CI pass against the pinned build, both locally and
 on the runner; the conformance job is green in CI; `Dependency Check` is green after the
 `--all-features` correction. Those are M1 successes, recorded separately.
+
+---
+
+## Status after the M1 fixes — 2026-10-23
+
+Main CI **19/19 jobs green** at `919ca8e` (run 40039973842); Tallow Production CI Gates
+green on the same commit. The three failures above are closed except §3, where the six
+suites remain registered as triage with named assertions and a 2026-11-06 expiry — the
+browser job runs the other 23.
+
+A fourth defect was found by the contract suite once the browser job went green:
+`mesh_workers::a_stalled_worker_does_not_extend_the_wave` measured a 5.0005 s wave on the
+2-core runner. Speculation had fired, but the duplicate was dispatched by round-robin and
+could land in the same worker queue as the task it was meant to replace. Fixed in
+`919ca8e`: the duplicate now targets a worker other than the straggler's slot. Verified
+under `taskset -c 0,1`: 3/3 passes (was 0/3).
