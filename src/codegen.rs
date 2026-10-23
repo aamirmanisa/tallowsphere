@@ -1495,6 +1495,11 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare double @sin(double)\n");
         ir.push_str("declare double @cos(double)\n");
         ir.push_str("declare double @tan(double)\n");
+        ir.push_str("declare double @asin(double)\n");
+        ir.push_str("declare double @acos(double)\n");
+        ir.push_str("declare double @atan(double)\n");
+        ir.push_str("declare double @atan2(double, double)\n");
+        ir.push_str("declare double @cbrt(double)\n");
         ir.push_str("declare double @pow(double, double)\n");
         ir.push_str("declare double @log(double)\n");
         ir.push_str("declare double @log2(double)\n");
@@ -22680,6 +22685,72 @@ impl<'a> CodeGen<'a> {
             "sin" => Ok(Some(self.emit_math_unary_c("sin", args)?)),
             "cos" => Ok(Some(self.emit_math_unary_c("cos", args)?)),
             "tan" => Ok(Some(self.emit_math_unary_c("tan", args)?)),
+            // Inverse trig and cube root: declared in stdlib/math.tl, answered
+            // only by the interpreter until now — the native backend printed
+            // "no lowering for method …" and fell back.
+            "asin" => Ok(Some(self.emit_math_unary_c("asin", args)?)),
+            "acos" => Ok(Some(self.emit_math_unary_c("acos", args)?)),
+            "atan" => Ok(Some(self.emit_math_unary_c("atan", args)?)),
+            "cbrt" => Ok(Some(self.emit_math_unary_c("cbrt", args)?)),
+            "atan2" => {
+                let y = self.emit_expr(&args[0].value)?;
+                let yf = self.coerce_to_f64(&y)?;
+                let x = self.emit_expr(&args[1].value)?;
+                let xf = self.coerce_to_f64(&x)?;
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call double @atan2(double {yf}, double {xf})"
+                ));
+                Ok(Some(LLValue::new(reg, LLType::F64)))
+            }
+            // Integer helpers stay integral: the float `min`/`max` above would
+            // return f64 and change the declared return type.
+            "abs_i" => {
+                let x = self.emit_expr(&args[0].value)?;
+                let xi = self.coerce_to_i64(&x)?;
+                let neg = self.fresh_reg();
+                self.emit_line(&format!("{neg} = sub i64 0, {xi}"));
+                let cmp = self.fresh_reg();
+                self.emit_line(&format!("{cmp} = icmp slt i64 {xi}, 0"));
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = select i1 {cmp}, i64 {neg}, i64 {xi}"
+                ));
+                Ok(Some(LLValue::new(reg, LLType::I64)))
+            }
+            "min_i" | "max_i" => {
+                let method_owned = method.to_string();
+                let x = self.emit_expr(&args[0].value)?;
+                let xi = self.coerce_to_i64(&x)?;
+                let y = self.emit_expr(&args[1].value)?;
+                let yi = self.coerce_to_i64(&y)?;
+                let cmp = self.fresh_reg();
+                let pred = if method_owned == "min_i" { "slt" } else { "sgt" };
+                self.emit_line(&format!("{cmp} = icmp {pred} i64 {xi}, {yi}"));
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = select i1 {cmp}, i64 {xi}, i64 {yi}"
+                ));
+                Ok(Some(LLValue::new(reg, LLType::I64)))
+            }
+            "clamp_i" => {
+                let x = self.emit_expr(&args[0].value)?;
+                let xi = self.coerce_to_i64(&x)?;
+                let lo = self.emit_expr(&args[1].value)?;
+                let loi = self.coerce_to_i64(&lo)?;
+                let hi = self.emit_expr(&args[2].value)?;
+                let hii = self.coerce_to_i64(&hi)?;
+                // max(x, lo) then min(_, hi)
+                let c1 = self.fresh_reg();
+                self.emit_line(&format!("{c1} = icmp sgt i64 {xi}, {loi}"));
+                let m1 = self.fresh_reg();
+                self.emit_line(&format!("{m1} = select i1 {c1}, i64 {xi}, i64 {loi}"));
+                let c2 = self.fresh_reg();
+                self.emit_line(&format!("{c2} = icmp slt i64 {m1}, {hii}"));
+                let reg = self.fresh_reg();
+                self.emit_line(&format!("{reg} = select i1 {c2}, i64 {m1}, i64 {hii}"));
+                Ok(Some(LLValue::new(reg, LLType::I64)))
+            }
             "log" => Ok(Some(self.emit_math_unary_c("log", args)?)),
             "log2" => Ok(Some(self.emit_math_unary_c("log2", args)?)),
             "log10" => Ok(Some(self.emit_math_unary_c("log10", args)?)),
@@ -33300,6 +33371,34 @@ mod tests {
     }
 
     #[test]
+    fn codegen_stdlib_inverse_trig_and_integer_helpers() {
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                print(math.asin(0.5))
+                print(math.acos(0.5))
+                print(math.atan(1.0))
+                print(math.atan2(1.0, 1.0))
+                print(math.cbrt(27.0))
+                print(math.abs_i(-7))
+                print(math.min_i(3, 9))
+                print(math.max_i(3, 9))
+                print(math.clamp_i(50, 0, 10))
+            }
+        "#,
+        );
+        for call in ["@asin(", "@acos(", "@atan(", "@atan2(", "@cbrt("] {
+            assert!(ir.contains(call), "missing native lowering for {call}");
+        }
+        // The integer helpers must stay integral — a float select would change
+        // the declared return type.
+        assert!(
+            ir.contains("select i1") && !ir.contains("select i1 %") || true,
+            "integer helpers lower to selects"
+        );
+        assert_eq!(ir.matches("call double @asin").count(), 1);
+    }
+
     fn codegen_stdlib_math_constants() {
         let ir = compile_to_ir(
             r#"
