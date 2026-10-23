@@ -117,3 +117,41 @@ than silently diverging. Closing it needs a native current-page registry set by
 `tallow_browser_new_page`, one FFI function per helper, and codegen arms with
 parity tests — the same shape as `structured_data_extract`, ×41. That is a
 release of its own, not an edit to bolt on.
+
+### Native lowering: the concrete inventory (surveyed, not built)
+
+`emit_stdlib_module_call` has no `"browser"` arm, so every module-level
+`browser.page_*` call reaches "call to unknown function" and the build fails
+loudly (correct behaviour, but it means the interpreter is the only engine that
+runs them). The FFI below already exists — the gap is a current-page handle and
+the module arms:
+
+| lowering target | existing FFI |
+| --- | --- |
+| `page_content` | `tallow_page_content(ptr) -> ptr` |
+| `page_dom_snapshot` | `tallow_page_dom_snapshot(ptr) -> ptr` |
+| `page_text_redacted` | `tallow_page_text_redacted(ptr) -> ptr` |
+| `page_set_content` | `tallow_page_set_content(ptr, ptr) -> i32` |
+| `page_add_script_tag` | `tallow_page_add_script_tag(ptr, ptr) -> ptr` |
+| `page_add_style_tag` | `tallow_page_add_style_tag(ptr, ptr) -> ptr` |
+| `page_add_init_script` | `tallow_page_add_init_script(ptr, ptr) -> ptr` |
+| `page_throttle_cpu` | `tallow_page_throttle_cpu(ptr, f64) -> i32` |
+| `page_wait_for_url` / `page_wait_for_function` | `tallow_page_wait_for_url` / `_function` |
+| `page_emulate_media` | `tallow_page_emulate_media` |
+| `page_extract_all_text` | `tallow_page_extract_all_text_array(ptr, ptr)` |
+
+What is missing is the receiver. Native code has no current-page handle — the
+interpreter keeps one in a thread-local registry. The work is therefore:
+
+1. `CURRENT_PAGE` thread-local in `src/runtime/browser.rs`, set by
+   `tallow_browser_new_page`, cleared by `tallow_page_close`, exposed as
+   `tallow_current_page()`.
+2. A null-page guard that maps to the interpreter's error rather than an empty
+   string — otherwise the two engines diverge exactly where the old `goto`
+   bug did (success where the interpreter errors).
+3. `"browser" => self.emit_stdlib_browser(method, args)` with the arms above.
+4. Parity tests: same program, `tallow run` vs `tallow run --interpret`, outputs
+   compared; plus a `--require-native` build that must now succeed.
+
+Rough size: the registry and guard are small; the arms are mechanical but each
+needs its own parity case. It is a release of its own, not a patch to 1.2.0.
