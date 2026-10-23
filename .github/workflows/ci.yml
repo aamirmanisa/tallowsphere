@@ -360,6 +360,68 @@ jobs:
         # (18 programs) and runs in under a minute once the binary exists.
         run: python3 conformance/run.py --tallow target/debug/tallow
 
+  browser:
+    name: Browser suites (headless Chrome for Testing)
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: tallow-ci
+      - name: Install the native link dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang liblzma-dev libbz2-dev
+      - name: Build the engine
+        run: cargo build --locked --bin tallow
+      - name: Install Chrome for Testing (pinned SHA-256 per platform)
+        # The installer checks the digest recorded in src/browser/cft_pins.rs, so
+        # the browser under test is the same build locally and in CI. This is why
+        # the 29 browser suites can leave the exclusion registry: the blocker was
+        # a missing binary, not a missing capability.
+        run: ./target/debug/tallow browser install
+      - name: Run the browser suites that pass on the pinned build
+        # 23 of the 29 previously-excluded browser suites run here. They were in
+        # the registry because no browser existed on the runner, not because they
+        # were broken: installed with `tallow browser install`, they pass. The six
+        # that still fail (DOMContentLoaded timeouts, array parity at 0/1/3) stay
+        # in the registry as triage with a named failing assertion.
+        env:
+          TALLOW_ALLOW_DIRECT: "1"
+        run: |
+          # --test-threads=2: each case drives its own headless browser; more
+          # parallelism contends for loopback ports rather than saving time.
+          cargo test --locked --no-fail-fast \
+            --test browser_antibot_opts \
+            --test browser_antibot_parity \
+            --test browser_array_len \
+            --test browser_authenticated_parity \
+            --test browser_callbacks_parity \
+            --test browser_codegen_integration \
+            --test browser_ffi_error_visibility \
+            --test browser_form_parity \
+            --test browser_landlock_smoke \
+            --test browser_native_parity \
+            --test browser_navigation_parity \
+            --test browser_network_callbacks_parity \
+            --test browser_page_events_shared \
+            --test browser_page_methods \
+            --test browser_result_field_refusal \
+            --test browser_ui_events_parity \
+            --test browser_unlowered_gaps \
+            --test crawler_browser_escalation \
+            --test juggler_smoke \
+            --test nav_direct \
+            --test opsec_corpus_acceptance \
+            --test wait_net_parity \
+            --test wait_url_parity \
+            -- --test-threads=2
+
   # Behavioral parity: interpreter vs native codegen, byte-for-byte stdout + exit code.
   # Drives every tests/parity/parity_programs/*.tl through both paths and requires each to land in a
   # named class: MATCH, REFUSED (a fixture marked `parity: expect-refusal` must be refused by BOTH
