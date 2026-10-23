@@ -39,3 +39,4 @@ stdlib_method_refusals: needs the cargo-built tallow bin path used by integratio
 transfer_transport: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 wait_net_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
 wait_url_parity: requires Chromium + loopback (runs locally with TALLOW_ALLOW_DIRECT=1)
+wordpress_login: requires a local WordPress fixture (scripts/wordpress_fixture.sh up) and TALLOW_ALLOW_DIRECT=1; #[ignore]d by default
