@@ -382,8 +382,15 @@ jobs:
       - name: Install Chrome for Testing (pinned SHA-256 per platform)
         # The installer checks the digest recorded in src/browser/cft_pins.rs, so
         # the browser under test is the same build locally and in CI. This is why
-        # the 29 browser suites can leave the exclusion registry: the blocker was
-        # a missing binary, not a missing capability.
+        # the browser suites can leave the exclusion registry: the blocker was a
+        # missing binary, not a missing capability.
+        #
+        # TALLOW_ALLOW_DIRECT is required: tallow's egress policy denies direct
+        # connections unless the caller opts in, and this runner has no Tor
+        # plane. Without it the installer fails with "io: Connection refused"
+        # after printing "Fetching latest stable Chrome for Testing version..."
+        env:
+          TALLOW_ALLOW_DIRECT: "1"
         run: ./target/debug/tallow browser install
       - name: Run the browser suites that pass on the pinned build
         # 23 of the 29 previously-excluded browser suites run here. They were in
