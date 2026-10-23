@@ -55,15 +55,50 @@ pub struct CftPin {
 /// docs); with an empty table every install requires the audited override —
 /// fail-closed, never fail-open.
 pub const CFT_PINS: &[CftPin] = &[
-    // Populate via the re-pin procedure in the module docs. Example shape:
+    // 156.0.8078.47 — the first populated pin set (2026-10-23).
     //
-    // CftPin {
-    //     version: "151.0.7922.173",
-    //     platform: "linux-arm64",
-    //     variant: "chrome-headless-shell",
-    //     sha256: "<64 lowercase hex chars>",
-    // },
+    // Provenance, stated exactly: Google publishes no `.sha256` sidecar for these
+    // artifacts (the `<variant>-<platform>.zip.sha256` path returns NoSuchKey), so
+    // the digests below were computed from the zip downloaded over TLS from
+    // storage.googleapis.com on 2026-10-23 and recorded here. That is
+    // trust-on-first-use against Google's bucket, not an independent attestation:
+    // it makes future installs reproducible and any silent CDN change visible, and
+    // it does not claim more than that.
+    CftPin {
+        version: "156.0.8078.47",
+        platform: "linux64",
+        variant: "chrome-headless-shell",
+        sha256: "0d5acc62c3e213f8c87d3c298d66ffcf9a236d12ea4b9f85318bf85dbc279daa",
+    },
+    CftPin {
+        version: "156.0.8078.47",
+        platform: "linux-arm64",
+        variant: "chrome-headless-shell",
+        sha256: "955059fa7020d7be85eb503e21339fd4d718f51f5996d3b60633fbf908bda132",
+    },
 ];
+
+/// The newest pinned version for `(platform, variant)`, if any.
+///
+/// The installer prefers a pinned build over "latest stable": a browser that
+/// changes under the test suite turns a reproducible gate into a moving target,
+/// and the CI runner and this box must exercise the same binary.
+pub fn newest_pinned(platform: BrowserPlatform, variant: &str) -> Option<&'static str> {
+    let platform = platform.as_cft_str();
+    CFT_PINS
+        .iter()
+        .filter(|p| p.platform == platform && p.variant == variant)
+        .max_by_key(|p| {
+            let mut it = p.version.split('.').map(|n| n.parse::<u64>().unwrap_or(0));
+            (
+                it.next().unwrap_or(0),
+                it.next().unwrap_or(0),
+                it.next().unwrap_or(0),
+                it.next().unwrap_or(0),
+            )
+        })
+        .map(|p| p.version)
+}
 
 /// Look up the pinned SHA-256 for one artifact inside `pins`.
 ///
