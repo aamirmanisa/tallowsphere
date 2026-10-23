@@ -2,7 +2,7 @@
 module tallow.curves
 
 /// Bootstrap zero curve from par instruments
-native fn bootstrap(instruments: [{tenor: Float, rate: Float}]) -> []CurvePoint
+native fn bootstrap(instruments: []{{tenor: Float, rate: Float}}) -> []CurvePoint
 /// Nelson-Siegel parametric curve
 native fn nelson_siegel(tenors: []Float, b0: Float, b1: Float, b2: Float, tau: Float) -> []CurvePoint
 /// Svensson extended curve

@@ -65,7 +65,7 @@ native fn assert_panics(f: fn())
 
 /// Approximate equality for floats
 fn assert_approx(left: f64, right: f64, epsilon: f64) {
-    let diff = left - right
+    var diff = left - right
     if diff < 0.0 { diff = 0.0 - diff }
     if diff > epsilon {
         panic("assertion failed: {left} !~= {right} (epsilon: {epsilon})")
