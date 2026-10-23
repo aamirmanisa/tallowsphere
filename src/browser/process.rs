@@ -1433,6 +1433,30 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Windows counterpart: an executable is a file with a known extension, not a
+/// file with the executable bit. Without this the call site failed to compile on
+/// Windows (E0425) while passing on every Unix job.
+#[cfg(windows)]
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let direct = dir.join(name);
+        if direct.is_file() {
+            return Some(direct);
+        }
+        for ext in ["exe", "cmd", "bat", "com"] {
+            let candidate = dir.join(format!("{name}.{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Find the Chrome/Chromium executable path on the current platform.
 ///
 /// Linux: prefers a Tallow-managed install (see `browser::download`) over

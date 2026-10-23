@@ -421,7 +421,10 @@ fn stdlib_counts_and_routing() {
     }
     modules.sort();
     assert_eq!(modules.len(), 85, "stdlib module files: {modules:?}");
-    assert_eq!(fns, 1118, "stdlib function declarations");
+    // 1124, not 1118: timeseries.tl declared six `method … on TimeSeries` lines,
+    // a form this counter never saw; they are now an impl block, which the
+    // counter reads. The surface did not grow — the old figure under-counted.
+    assert_eq!(fns, 1124, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both
