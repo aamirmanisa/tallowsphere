@@ -9,6 +9,43 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.2.2] — 2026-10-23 — the mesh gets a surface
+
+### What was wrong
+
+The engine had a mesh module that Tallow code could not call. `src/stdlib/mesh.rs`
+dispatched `mesh.*`, and `src/stdlib/mod.rs` routed it, but the interpreter's
+module registry never listed it — neither in `is_stdlib_module` nor in the
+module-sentinel match — so `mesh.MeshNode.new(...)` died as
+"undefined variable: mesh". The entire simulated topology plane had never been
+reachable from the language it is part of.
+
+There was also no execution surface at all: the coordinator, journal, leases and
+workers existed as Rust, with no declared way to reach them.
+
+### What was fixed
+
+- `Mesh.plan(tasks, seed)` and `Mesh.replay(journal_path)` are published in
+  `stdlib/mesh.tl` and answered by `src/stdlib/mesh_exec.rs`. Planning is
+  deterministic and validates task classes, missing dependencies, duplicate ids
+  and dependency cycles (the refusal names the path, e.g. `a -> b -> a`).
+  Replay recomputes every checkpoint and reports the first wave that disagrees.
+- `mesh` and `Mesh` are registered in both interpreter tables, which is what
+  makes any module callable from Tallow at all.
+- `Mesh.run` is deliberately NOT declared: running a plan needs a worker pool
+  executing Tallow functions, each with its own interpreter, and that executor
+  does not exist. A declaration that cannot execute is the defect 1.2.0 removed.
+
+### Counts
+
+stdlib modules 85 → 86; function declarations 1,124 → 1,126. The gate moved in
+the same commit, with the reason inline.
+
+Verified: `stdlib/mesh.tl` checks clean (6 items); the diamond plans to 3 waves
+`[1, 2, 1]`; a cycle is refused with its path; an `io` task without an
+idempotency key is refused — all three through the shipped binary
+(`tests/mesh_plan_tl.rs`, 3 passed).
+
 ## [v1.2.1] — 2026-10-23 — declared is what you get
 
 ### What was wrong
