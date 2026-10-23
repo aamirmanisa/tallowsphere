@@ -4,6 +4,48 @@ All notable changes to Tallow are recorded here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.2.0] — 2026-10-23 — the surface stops lying
+
+The counts were right and parts of the surface behind them were not. This release
+makes the published surface executable and the manifest valid Tallow.
+
+### Added
+- **41 browser declarations now execute.** `page_extract_all_text/attrs`,
+  `page_capture_dom_snapshot`, `page_structured_data`, `page_text_redacted`,
+  `page_block_non_essential`, `page_wait_for_stable`, `page_detect_pagination`,
+  `page_handle_cookie_consent`, ten delegations (`set_content`, `content`,
+  `add_init_script`, `add_script_tag`, `add_style_tag`, `wait_for_function`,
+  `wait_for_url`, `wait_for_timeout`, `throttle_cpu`, `emulate_media`), three
+  event waiters, eight callback registrations, the WordPress/Wordfence set, and
+  `browser_context_create`. A current-page registry in the interpreter is what
+  lets a module-level helper reach a live tab.
+- **Agent handles answer `status()`, `is_done()` and `cancel()`**, with
+  cooperative cancellation at function-call boundaries and `spawn_await`
+  reporting cancellation instead of `Ok(nil)`.
+- **Grammar**: record types `{a: T}` / `{T, U}`, `fn()` without a return,
+  contextual keywords in name positions, generic type aliases, and type-scoped
+  function names `fn Type.member(...)`.
+- WordPress fixture (`scripts/wordpress_fixture.sh`) and live-page tests that
+  skip when Chrome is absent.
+
+### Fixed
+- `page.goto` reported success while the tab sat on Chromium's error page; it
+  now returns a navigation failure.
+- A `Page` outliving its `Browser` handle left a reaped browser and a hanging
+  `Runtime.evaluate`; the interpreter retains the browser for the program's life.
+- `Page.evaluate` returned every result as a string, double-quoting JS strings.
+- `json.get` ignored its default argument, breaking `map.get(k, 0)`.
+- `tallow check`: 85 of 85 stdlib modules now pass (was 20). 355 declarations
+  moved to the spec's `native fn` form, 100 array types corrected to `[]T`, and
+  the checker learned `Float`/`Int`/`Bool`/`str`.
+- Native lowering for `math.asin/acos/atan/atan2/cbrt` and the integer helpers
+  `abs_i/min_i/max_i/clamp_i`.
+
+### Changed
+- The published function count is **1,124**. The six-function difference from
+  1,118 is `timeseries.tl`'s `method … on TimeSeries` declarations, which no
+  counter ever read; nothing was added to the surface.
+
 ## [v1.1.5] — 2026-10-22 — `String.parse()` compiles
 
 One gap, and it was the kind that only shows up when you re-measure your own
