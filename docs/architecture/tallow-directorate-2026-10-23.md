@@ -220,7 +220,41 @@ journal shows the handoffs.
 - **No "autonomous" claim.** Autonomy is bounded by leases, attempt caps, and the
   operator's approval gate for egress and release.
 
-## 6. Acceptance
+## 6. What the research changed
+
+`docs/research/directorate-research-2026-10-23.md` records the sourced findings
+behind eleven domains. Eight controls came out of it and are now part of the
+architecture, not advice:
+
+1. **Provenance gate.** A claim is renderable only with URL, retrieval timestamp,
+   content hash, and a two-axis grade (source reliability A–F, information
+   credibility 1–6). One "confidence" score is a review failure. (ICD 206; Admiralty;
+   Berkeley Protocol.)
+2. **Signed scope manifest per run**, naming tools, data classes, targets and third
+   parties; revoking it invalidates derived tokens and queued tasks. (50 U.S.C.
+   §3093 pattern; NIST AC-5/AC-6.)
+3. **Audit path over compartmentation.** Handoffs are journalled and an ombuds
+   channel reports outside the analytic chain. Deniability is the property this
+   system must not have. (ODNI Analytic Ombuds; CIA glossary; Montreux.)
+4. **Content is data.** Collected text can never originate a tool call; a tool call
+   requires a policy grant the content cannot supply. (Greshake et al.; EchoLeak.)
+5. **Autonomy by verb, not by desk.** Read automatic, write confirmed,
+   destructive/publishing two-key, with halt, budget ceiling and expiry. (DoD
+   3000.09; the 2025 agent-deletes-production incident.)
+6. **Jurisdiction check at task creation**, not at delivery. (EU AI Act
+   prohibitions; China DSL; India DPDP Rules.)
+7. **Egress ledger with stop conditions**: per-target budget, stop on 403/429,
+   recorded justification per request. (Berkeley Protocol; ToS and DoS safety.)
+8. **Repository facts over recall.** Language claims cite `spec/generated.json`
+   (36 keywords / 86 modules / 1,126 functions at engine `fb5bab5`), never memory.
+
+Two findings changed desk-level scope: ORACLE's first deliverable is a crypto
+bill of materials with data lifetimes (harvest-now-decrypt-later is a retention
+problem, not an algorithm problem), and GHOST's anti-piracy posture treats DRM as
+deterrence plus evidence — signed entitlements, SLSA provenance, collusion-bounded
+watermarking, takedown evidence — never as a security boundary.
+
+## 7. Acceptance
 
 An agent is "operational" when a run of its task graph produces a journal whose
 checkpoints recompute, whose evidence cites sources that exist, and whose refusals
