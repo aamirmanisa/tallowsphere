@@ -9,6 +9,60 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.3.0] — 2026-10-23 — the mesh crosses a socket
+
+### What was wrong
+
+The mesh execution plane ran inside one process. Its leases, epochs and
+checkpoints were enforced by threads, so "a straggler is fenced" was true only
+for a worker that was slow, never for a peer that had become unreachable: there
+was no transport, no node identity, and nothing that could tell a stopped process
+from a dead one. `src/stdlib/mesh.rs` also still models every node as
+`simulated: true`, and nothing in the engine made that false for a node that was
+actually doing work.
+
+Running the new tests also exposed four defects that had nothing to do with the
+network and would have persisted silently:
+
+- a task slower than its lease was reassigned forever, because nothing bounded
+  lease expiry;
+- reassignment could return a task to the very node that had just failed it,
+  burning every retry without reaching a live worker;
+- a reassigned `pure` task got a different seed, so a partitioned run committed a
+  different checkpoint than an uninterrupted one;
+- a refused join looked like success, because the worker treated the server
+  closing the socket as a clean shutdown.
+
+### What was fixed
+
+- `src/mesh/wire.rs` — 1 MiB length-prefixed frames, every frame Ed25519-signed
+  over a fixed canonical string; replay refused by per-run nonce; oversized
+  frames refused before allocation; `FrameReader` decodes only complete frames so
+  a read timeout cannot split a length prefix.
+- `src/mesh/remote.rs` — `MeshServer` accepts joins against a node allowlist and
+  refuses everyone else with a signed reason; reconciles availability with
+  `(task, epoch, deadline)` leases; reassigns on expiry at `epoch + 1` and
+  discards late answers from stale epochs; caps attempts per task class and
+  journals `TaskFailed` instead of spinning; excludes the expired holder when
+  another peer exists; keeps `pure` seeds attempt-independent.
+- `tallow mesh worker --connect … --node … --key … --server-key … --run-id …`
+  joins a coordinator and executes assignments; a refused join now exits non-zero.
+- `simulated` flips **per node**, only after that node has joined and had one
+  result committed. There is no global flag.
+- Control frames (`stop`, `inject`) over the wire are accepted only from
+  allowlisted operator keys.
+
+### Not claimed
+
+Plaintext TCP, no NAT traversal, no TLS, no key rotation. The topology plane
+(`src/stdlib/mesh.rs`: membership, gossip, DHT) is still simulated; M4 makes the
+execution plane real, not the topology plane.
+
+Verified: `tests/mesh_remote.rs` 3 passed — two worker processes over TCP, w1
+frozen with SIGSTOP before the plan, six tasks, 300 ms leases: remote checkpoints
+equal a local reference run, at least one reassignment, w1 stays `simulated` and
+w2 becomes real, exactly one commit per task, and thawing w1 adds none.
+
 ## [v1.2.2] — 2026-10-23 — the mesh gets a surface
 
 ### What was wrong

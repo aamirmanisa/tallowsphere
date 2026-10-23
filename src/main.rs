@@ -128,6 +128,12 @@ enum Command {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Mesh execution plane: `worker --connect <addr> --node <name> --key <hex32>
+    /// --server-key <hex32> --run-id <id>` joins a coordinator and runs tasks.
+    Mesh {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Phone OSINT subcommands (PhoneNumber.* stdlib dispatches)
     Phone {
         /// Everything after `phone`, e.g. `lookup 5128501815`
@@ -2706,6 +2712,10 @@ fn real_main() -> anyhow::Result<()> {
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "tallow", &mut std::io::stdout());
+            return Ok(());
+        }
+        Command::Mesh { args } => {
+            run_mesh_worker(&args).map_err(anyhow::Error::msg)?;
             return Ok(());
         }
         Command::Phone { args } => {
@@ -21238,4 +21248,49 @@ fn main() {
             "throughput_threads should have an env binding"
         );
     }
+}
+
+/// `tallow mesh worker` — join a coordinator and execute assigned tasks.
+fn run_mesh_worker(args: &[String]) -> Result<(), String> {
+    if args.first().map(|s| s.as_str()) != Some("worker") {
+        return Err(
+            "usage: tallow mesh worker --connect <addr> --node <name> --key <hex32> \
+             --server-key <hex32> --run-id <id>"
+                .to_string(),
+        );
+    }
+    let (mut connect, mut node, mut key, mut server_key, mut run_id) =
+        (None, None, None, None, None);
+    let mut i = 1;
+    while i + 1 < args.len() {
+        let value = Some(args[i + 1].clone());
+        match args[i].as_str() {
+            "--connect" => connect = value,
+            "--node" => node = value,
+            "--key" => key = value,
+            "--server-key" => server_key = value,
+            "--run-id" => run_id = value,
+            other => return Err(format!("unknown mesh worker flag: {other}")),
+        }
+        i += 2;
+    }
+    let connect = connect.ok_or("mesh worker: --connect is required")?;
+    let node = node.ok_or("mesh worker: --node is required")?;
+    let key = tallow::mesh::wire::unhex(&key.ok_or("mesh worker: --key is required")?)?;
+    let server_key =
+        tallow::mesh::wire::unhex(&server_key.ok_or("mesh worker: --server-key is required")?)?;
+    let run_id = run_id.ok_or("mesh worker: --run-id is required")?;
+
+    let seed: [u8; 32] = key
+        .as_slice()
+        .try_into()
+        .map_err(|_| "mesh worker: --key must be 32 bytes of hex".to_string())?;
+    let vk_bytes: [u8; 32] = server_key
+        .as_slice()
+        .try_into()
+        .map_err(|_| "mesh worker: --server-key must be 32 bytes of hex".to_string())?;
+    let server_vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes)
+        .map_err(|e| format!("mesh worker: --server-key: {e}"))?;
+
+    tallow::mesh::remote::run_worker(&connect, &node, seed, server_vk, &run_id)
 }
