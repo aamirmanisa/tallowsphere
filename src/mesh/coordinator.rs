@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use super::journal::{checkpoint_hash, Event, Journal};
 use super::lease::LeaseTable;
+use super::control::RunControl;
+use super::scheduler::{is_straggler, SpeculationPolicy};
 use super::worker::{Job, Outcome, Pool, TaskFn};
 use super::{task_seed, TaskClass, Wave};
 
@@ -41,9 +43,11 @@ pub struct RunOutcome {
     pub committed: usize,
     pub failed: usize,
     pub retried: usize,
+    pub speculated: usize,
     pub checkpoints: Vec<String>,
     pub stopped: bool,
     pub drained: bool,
+    pub injections: Vec<(usize, String, String)>,
 }
 
 pub struct Coordinator {
@@ -55,6 +59,8 @@ pub struct Coordinator {
     retry: RetryPolicy,
     stop_flag: Arc<AtomicBool>,
     drain_ms: u64,
+    speculation: SpeculationPolicy,
+    control: Arc<RunControl>,
 }
 
 impl Coordinator {
@@ -75,6 +81,8 @@ impl Coordinator {
             retry: RetryPolicy::default(),
             stop_flag: Arc::new(AtomicBool::new(false)),
             drain_ms: 5_000,
+            speculation: SpeculationPolicy::default(),
+            control: Arc::new(RunControl::new()),
         })
     }
 
@@ -85,6 +93,16 @@ impl Coordinator {
 
     pub fn with_drain_ms(mut self, ms: u64) -> Self {
         self.drain_ms = ms;
+        self
+    }
+
+    pub fn with_control(mut self, control: Arc<RunControl>) -> Self {
+        self.control = control;
+        self
+    }
+
+    pub fn with_speculation(mut self, policy: SpeculationPolicy) -> Self {
+        self.speculation = policy;
         self
     }
 
@@ -113,12 +131,37 @@ impl Coordinator {
                 out.stopped = true;
                 break;
             }
+            // Honour pause between waves: in-flight work finishes, no new wave
+            // starts until resumed.
+            while self.control.is_paused()
+                && !self.control.is_stopped()
+                && !self.stop_flag.load(Ordering::Relaxed)
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if self.control.is_stopped() {
+                out.stopped = true;
+                self.stop_flag.store(true, Ordering::Relaxed);
+                break;
+            }
+
             self.journal
                 .append(&Event::WaveStarted {
                     wave: wave.index,
                     seed: wave.seed(self.mesh_seed),
                 })
                 .map_err(|e| format!("mesh: journal: {e}"))?;
+
+            for (k, v) in self.control.injections_for(wave.index) {
+                self.journal
+                    .append(&Event::InjectApplied {
+                        wave: wave.index,
+                        key: k.clone(),
+                        value: v.clone(),
+                    })
+                    .ok();
+                out.injections.push((wave.index, k, v));
+            }
 
             // tasks still to settle: id -> (task, attempt)
             let mut pending: HashMap<String, (super::Task, u32)> = wave
@@ -130,6 +173,12 @@ impl Coordinator {
             let mut in_flight: HashSet<String> = HashSet::new();
             let mut lease_of: HashMap<String, (usize, u64)> = HashMap::new();
             let mut wave_failed: usize = 0;
+            let mut started_at: HashMap<String, Instant> = HashMap::new();
+            let mut completed_ms: Vec<u64> = Vec::new();
+            let mut duplicated: HashSet<String> = HashSet::new();
+            let mut speculated: usize = 0;
+            let mut drain_started: Option<Instant> = None;
+            let budget = self.speculation.budget_for(wave.tasks.len());
 
             while !pending.is_empty() || !in_flight.is_empty() {
                 // dispatch everything not in flight
@@ -140,43 +189,104 @@ impl Coordinator {
                     .collect();
 
                 if !ready.is_empty() {
-                    // one worker slot per batch; the pool round-robins internally
-                    let mut items = Vec::with_capacity(ready.len());
-                    for (id, task, attempt) in &ready {
-                        let now = started.elapsed().as_millis() as u64;
-                        let ttl = (self.retry.cap_ms * 4).max(1_000);
-                        let lease = self.leases.grant(id, slot, ttl, now);
-                        lease_of.insert(id.clone(), (slot, lease.epoch));
-                        let seed = task_seed(self.mesh_seed, wave.index, id, *attempt);
-                        items.push((task.clone(), seed));
-                        in_flight.insert(id.clone());
+                    // Shard the wave across the pool. One job carrying the whole
+                    // wave would run every task on one worker — measured: a
+                    // 10-task wave with one 3 s task took 3.0 s because the
+                    // stalled task blocked the only worker that had the batch.
+                    let workers = self.pool.workers().max(1);
+                    let chunk = ready.len().div_ceil(workers);
+                    for group in ready.chunks(chunk) {
+                        let slot_id = slot % workers;
+                        slot = slot.wrapping_add(1);
+                        let mut items = Vec::with_capacity(group.len());
+                        for (id, task, attempt) in group {
+                            let now = started.elapsed().as_millis() as u64;
+                            let ttl = (self.retry.cap_ms * 4).max(1_000);
+                            let lease = self.leases.grant(id, slot_id, ttl, now);
+                            lease_of.insert(id.clone(), (slot_id, lease.epoch));
+                            let seed = task_seed(self.mesh_seed, wave.index, id, *attempt);
+                            items.push((task.clone(), seed));
+                            in_flight.insert(id.clone());
+                            started_at.entry(id.clone()).or_insert_with(Instant::now);
+                        }
+                        self.pool.dispatch(slot_id, Job { wave: wave.index, items })?;
                     }
-                    self.pool.dispatch(
-                        slot,
-                        Job {
-                            wave: wave.index,
-                            items,
-                        },
-                    )?;
-                    slot = slot.wrapping_add(1);
                 }
 
-                // collect one outcome
-                let timeout = Duration::from_millis(self.drain_ms.max(1));
-                let outcome = match self.rx.recv_timeout(timeout) {
-                    Ok(o) => o,
-                    Err(_) => {
-                        // bounded drain exhausted
+                // Straggler check: duplicate a slow task under a NEW epoch so
+                // its eventual result is fenced out. Bounded per wave.
+                if self.speculation.enabled
+                    && speculated < budget
+                    && completed_ms.len() >= 3
+                    && !in_flight.is_empty()
+                {
+                    // Pick the SLOWEST eligible task, not an arbitrary one:
+                    // HashSet iteration order is unrelated to elapsed time, so
+                    // `find` could spend the whole budget duplicating fast
+                    // tasks while the real straggler never got a duplicate
+                    // (measured: a 5 s stall survived because of it).
+                    let candidate = in_flight
+                        .iter()
+                        .filter(|id| !duplicated.contains(*id))
+                        .filter_map(|id| {
+                            let t0 = started_at.get(id)?;
+                            let elapsed = t0.elapsed();
+                            if is_straggler(elapsed, &completed_ms, self.speculation.threshold_multiplier) {
+                                Some((elapsed, (*id).clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .max_by_key(|(elapsed, _)| *elapsed)
+                        .map(|(_, id)| id);
+                    if let Some(id) = candidate {
+                        if let Some((task, attempt)) = pending.get(&id).cloned() {
+                            let now = started.elapsed().as_millis() as u64;
+                            let ttl = (self.retry.cap_ms * 4).max(1_000);
+                            let lease = self.leases.grant(&id, slot, ttl, now);
+                            lease_of.insert(id.clone(), (slot, lease.epoch));
+                            slot = slot.wrapping_add(1);
+                            let seed = task_seed(self.mesh_seed, wave.index, &id, attempt + 1);
+                            self.pool.dispatch(
+                                slot,
+                                Job { wave: wave.index, items: vec![(task, seed)] },
+                            )?;
+                            duplicated.insert(id);
+                            speculated += 1;
+                        }
+                    }
+                }
+
+                // Poll briefly rather than blocking: the straggler check needs
+                // to run while a task is still in flight. A blocking recv here
+                // made speculation unreachable — the loop slept exactly as long
+                // as the stall it was supposed to detect (measured: 5.0 s).
+                if self.stop_flag.load(Ordering::Relaxed) && in_flight.is_empty() {
+                    break;
+                }
+                if let Some(t0) = drain_started {
+                    if t0.elapsed() >= Duration::from_millis(self.drain_ms.max(1)) {
                         out.stopped = true;
                         out.drained = false;
-                        self.journal
-                            .append(&Event::RunStopped { drained: false })
-                            .ok();
+                        self.journal.append(&Event::RunStopped { drained: false }).ok();
                         out.waves = wave.index + 1;
                         out.committed = committed.len();
                         out.failed = wave_failed;
-                        out.checkpoints = Vec::new();
                         return Ok(out);
+                    }
+                }
+                let outcome = match self.rx.recv_timeout(Duration::from_millis(5)) {
+                    Ok(o) => o,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        if self.stop_flag.load(Ordering::Relaxed) && drain_started.is_none() {
+                            drain_started = Some(Instant::now());
+                        }
+                        // fall through to the speculation check on the next
+                        // iteration; nothing to process this pass
+                        continue;
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err("mesh: worker channel closed mid-wave".to_string());
                     }
                 };
                 let id = outcome.task().to_string();
@@ -207,6 +317,9 @@ impl Coordinator {
                                 result_hash: hash.clone(),
                             })
                             .map_err(|e| format!("mesh: journal: {e}"))?;
+                        if let Some(t0) = started_at.remove(&id) {
+                            completed_ms.push(t0.elapsed().as_millis() as u64);
+                        }
                         committed.push((id.clone(), hash));
                         pending.remove(&id);
                         lease_of.remove(&id);
@@ -260,6 +373,7 @@ impl Coordinator {
                 .map_err(|e| format!("mesh: journal: {e}"))?;
             out.checkpoints.push(cp);
             out.waves += 1;
+            out.speculated += speculated;
 
             if self.stop_flag.load(Ordering::Relaxed) {
                 out.stopped = true;

@@ -8,8 +8,13 @@
 //! wave index and the task id, so the same plan on a different worker produces
 //! the same result hash. Nothing here reads the clock to decide a value.
 
+pub mod control;
+pub mod coordinator;
 pub mod journal;
+pub mod memory;
 pub mod lease;
+pub mod scheduler;
+pub mod worker;
 
 use std::collections::{HashMap, HashSet};
 
