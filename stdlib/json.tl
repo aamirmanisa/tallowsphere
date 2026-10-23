@@ -9,8 +9,8 @@ enum JsonValue {
     Bool(value: bool),
     Number(value: f64),
     Str(value: String),
-    Array(items: []JsonValue),
-    Object(fields: Map<String, JsonValue>),
+    Array(items: []Box<JsonValue>),
+    Object(fields: Map<String, Box<JsonValue>>),
 }
 
 /// Parse JSON string into typed value
