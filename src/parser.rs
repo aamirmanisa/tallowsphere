@@ -5746,6 +5746,64 @@ mod tests {
     }
 
     #[test]
+    fn parse_row_type_in_signature() {
+        let program = parse("native fn shape() -> {cik: String, title: String}");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!("expected a function item");
+        };
+        let Some(ret) = f.return_type.as_ref() else {
+            panic!("expected a return type");
+        };
+        // Row types erase to a tuple of their field types; the checker has no
+        // anonymous-record variant.
+        assert!(matches!(ret.kind, TypeExprKind::Tuple(ref ts) if ts.len() == 2));
+    }
+
+    #[test]
+    fn parse_fn_type_without_return() {
+        let program = parse("native fn register(f: fn()) -> Bool");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!("expected a function item");
+        };
+        assert_eq!(f.params.len(), 1);
+        assert!(matches!(
+            f.params[0].ty.kind,
+            TypeExprKind::Function { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_keyword_as_field_name() {
+        // `type` is a keyword, but it is also an ordinary field name.
+        let program = parse("struct T { type: String, return: Float }");
+        let Item::Struct(ref st) = program.items[0] else {
+            panic!("expected a struct item");
+        };
+        let names: Vec<&str> = st.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["type", "return"]);
+    }
+
+    #[test]
+    fn keyword_still_starts_a_construct_in_expression_position() {
+        // The contextual escape applies to name positions only: `return 1` must
+        // stay a return statement, not an identifier reference.
+        let program = parse("fn f() -> Int { return 1 }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!("expected a function item");
+        };
+        assert!(!f.body.stmts.is_empty());
+    }
+
+    #[test]
+    fn parse_generic_type_alias() {
+        let program = parse("type MetaPrivate<T> = private T");
+        let Item::TypeAlias(ref alias) = program.items[0] else {
+            panic!("expected a type alias item");
+        };
+        assert_eq!(alias.name, "MetaPrivate");
+    }
+
+    #[test]
     fn parse_type_scoped_fn_name() {
         // `fn CAPTCHA.detect(...)` — the stdlib manifest's spelling for a
         // type-scoped free function; the runtime dispatches `Module.function`
