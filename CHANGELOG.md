@@ -6,33 +6,50 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 ## [v1.2.1] — 2026-10-23 — declared is what you get
 
-Six module-level browser helpers returned a primitive where the spec declared a
-struct. `page_throttle_cpu` answered `Ok(Float)` — the rate handed in, echoed
-back; `page_wait_for_url` answered `Ok(Bool)`, discarding the matched URL and
-the elapsed time; `page_add_script_tag` answered `Ok(String)`. `Page.*` methods
-for the same operations already built the declared structs, so declaration,
-interpreter and native arms disagreed three ways.
+### What was wrong
 
-### Changed (behaviour)
+Six module-level browser helpers returned a primitive where `stdlib/browser.tl`
+declares a struct: `page_throttle_cpu` answered `Ok(Float)` — the rate handed in,
+echoed back; `page_wait_for_url` answered `Ok(Bool)`, discarding the matched URL
+and the elapsed time; `page_wait_for_function` answered `Ok(Bool)`;
+`page_add_script_tag` and `page_add_style_tag` answered `Ok(String)`;
+`page_emulate_media` answered `Ok(Nil)`; `page_set_content` answered a bare
+`Ok(Int)`. The `Page.*` methods for the same operations already built the
+declared structs, so declaration, interpreter and native arms disagreed three
+ways on the same call.
+
+Second defect, found while fixing the first: the shared `WaitResult` builder had
+been producing 7 of the 9 declared fields since it was written — `status` and
+`event` never existed.
+
+Third, in the build itself: a killed test run left an orphaned `chrome-headless`
+(ppid 1) holding `/run/nixe-heavy-build.lock`, so `cargo test` sat parked for 15
+minutes with no compiler running. Killing the orphan let the build finish in 20
+seconds.
+
+### What was fixed
+
 - `page_set_content` → `PageContentResult { loaded, content_length }`
 - `page_throttle_cpu` → `CpuThrottle { rate, applied }`
 - `page_emulate_media` → `MediaEmulation { media_type, color_scheme, reduced_motion, applied }`
-- `page_wait_for_url` / `page_wait_for_function` → `WaitResult` (with `matched`,
-  `elapsed_ms`, and for the URL waiter the matched URL)
-- `page_add_script_tag` / `page_add_init_script` → `ScriptTag`,
+- `page_wait_for_url` / `page_wait_for_function` → `WaitResult`, with `matched`,
+  `elapsed_ms`, and for the URL waiter the URL it matched
+- `page_add_script_tag` / `page_add_init_script` → `ScriptTag`;
   `page_add_style_tag` → `StyleTag`
+- `WaitResult` now carries all nine declared fields.
+- Native lowering added for these seven helpers on the current-page receiver. It
+  falls back to the interpreter by name when a match-arm binding's struct type
+  cannot be inferred — a missing optimisation, not a wrong answer.
+- Release bodies are now generated from this file and the build fails if the
+  section lacks "What was wrong" / "What was fixed".
 
 Programs that printed the old primitive now print a struct — which is what the
-declaration always said. No call sites in this repository depended on the old
-shapes; the only two were the tests added with this change.
+declaration always said. Migration surface was measured before the change: five
+of the six helpers had zero call sites in the repository; the sixth had two,
+both tests introduced by this work.
 
-### Fixed
-- The shared `WaitResult` builder had been producing 7 of the 9 declared fields
-  since it was written; `status` and `event` now exist (nil where the waiter
-  does not observe them).
-- Native lowering added for these helpers (current-page receiver), which falls
-  back to the interpreter by name when the binding's struct type cannot be
-  inferred — correctly, rather than guessing a layout.
+Verification: 6/6 browser tests, including one asserting all nine declared
+fields; full lib suite 9,159 passed / 0 failed / 33 ignored.
 
 ## [v1.2.0] — 2026-10-23 — the surface stops lying
 
