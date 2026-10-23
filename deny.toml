@@ -37,14 +37,27 @@ ignore = [
     "RUSTSEC-2025-0057",
     # The three entries below (paste, pqcrypto-*, mach) were ignored here until
     # 2026-10-23. cargo-deny reports "advisory was not encountered" for each in
-    # the current lockfile: cryptoki has moved past the paste-carrying line,
-    # the pqcrypto crates present do not trip RUSTSEC-2026-0160/62/63/65/67, and
-    # mach is no longer at 0.3.2. An unmatched ignore is not a guardrail — it is
-    # a silenced warning that hides the next real mismatch. If a dependency bump
-    # reintroduces any of them, cargo-deny will fail the build and the entry is
-    # re-added here with the version and the reason.
-    #   RUSTSEC-2024-0436 (paste)        RUSTSEC-2026-0160/62/63/65/67 (pqcrypto)
-    #   RUSTSEC-2020-0168 (mach)
+    # the DEFAULT feature graph: cryptoki has moved past the paste-carrying line,
+    # and the pqcrypto crates and mach are optional. They are NOT unmatched in
+    # the graph CI actually checks — `cargo deny --all-features check` — where
+    # pqcrypto-traits/sphincsplus/falcon/frodo/classicmceliece and mach are
+    # present and each advisory fires. Removing them turned the Dependency Check
+    # job red (run 40023365509), which is how the distinction was found.
+    #
+    # Resolved: paste (RUSTSEC-2024-0436) is genuinely gone — no crate in either
+    # graph matches it — so its entry was deleted rather than left to warn.
+    # The pqcrypto and mach entries stay because the all-features graph needs
+    # them, and the PQ set is a deliberate guardrail decision (#172/#173).
+    # A plain `cargo deny check` will warn about them; the gate is the
+    # --all-features run, which is the superset.
+    "RUSTSEC-2026-0160",
+    "RUSTSEC-2026-0162",
+    "RUSTSEC-2026-0163",
+    "RUSTSEC-2026-0165",
+    "RUSTSEC-2026-0167",
+    # mach 0.3.2 ... reachable only through the optional JIT feature:
+    # cranelift-jit -> region -> mach. No safe upgrade (region pins mach 0.3).
+    "RUSTSEC-2020-0168",
 ]
 
 [licenses]
