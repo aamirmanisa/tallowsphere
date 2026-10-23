@@ -19461,7 +19461,12 @@ impl Interpreter {
                         let expression = args.first().map(|v| v.as_string()).unwrap_or_default();
                         match rt.block_on(page.evaluate_expression(&expression)) {
                             Ok(result) => {
-                                Ok(Value::Ok(Box::new(Value::String(result.to_string()))))
+                                // `to_string()` on a JSON string re-quotes it, so
+                                // evaluate("typeof x") printed ""function"" —
+                                // convert by shape instead.
+                                Ok(Value::Ok(Box::new(
+                                    crate::stdlib::json::json_to_value(&result),
+                                )))
                             }
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }

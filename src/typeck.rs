@@ -797,6 +797,14 @@ impl<'a> TypeChecker<'a> {
             "usize" => Type::Int(IntSize::Usize),
             "f32" => Type::Float(FloatSize::F32),
             "f64" => Type::Float(FloatSize::F64),
+            // Canonical spellings from spec/01-lexical.md: literals are Int
+            // (i128 internally), Float (f64) and Bool, and the manifest uses
+            // those names in signatures. They resolved to nothing, so every
+            // stdlib module that wrote `Float` earned a W0100.
+            "Float" => Type::Float(FloatSize::F64),
+            "Int" => Type::Int(IntSize::I128),
+            "Bool" => Type::Bool,
+            "str" => Type::String,
             "String" => Type::String,
             "Bytes" => Type::Bytes,
             "char" => Type::Char,
@@ -919,6 +927,10 @@ impl<'a> TypeChecker<'a> {
                     // `fn on_console(ev: PageEvent)` warned on every program.
                     "PageEvent" | "EventListener" | "ExposedFunction" |
                     "ExposedBinding" | "ScriptTag" | "StyleTag" |
+                    // Documented spellings with no structural equivalent in the
+                    // checker: `any` (dynamic), `Self` (the impl target), `List`
+                    // and bare `Map` (generic without arguments).
+                    "any" | "Self" | "List" | "Map" |
                     "MediaEmulation" | "NetworkThrottle" | "WaitResult" |
                     "NavigationResult"
                 )
