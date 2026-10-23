@@ -100,3 +100,20 @@ Boxes are `[ ]` open, `[x]` done. Each open item names its acceptance test —
 - [ ] Add an ADR for the contextual-keyword decision (why `type` is a field name
       in one position and a declaration in another) — the spec states the rule,
       the ADR should state why it was chosen over renaming published fields.
+
+## Status at close — 2026-10-23
+
+Done and verified: browser declarations (41, live-proven), agent handle
+cancellation, grammar (record types, `fn()`, contextual keywords, generic
+aliases, type-scoped names), stdlib manifest 85/85, `Page.evaluate` typing,
+checker type names, live-page tests in CI, WordPress fixture + ignored test,
+math native lowering, count published as 1,124, ADR 0001, audit doc, and the
+1.2.0 release (five platforms, checksums verified, published).
+
+Not done: **native lowering for the 41 `browser.page_*` functions.** They run in
+the interpreter and the native backend refuses them by name ("no lowering for
+method …"), so a `--require-native` build that calls one fails loudly rather
+than silently diverging. Closing it needs a native current-page registry set by
+`tallow_browser_new_page`, one FFI function per helper, and codegen arms with
+parity tests — the same shape as `structured_data_extract`, ×41. That is a
+release of its own, not an edit to bolt on.
