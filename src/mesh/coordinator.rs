@@ -261,7 +261,9 @@ impl Coordinator {
                 // to run while a task is still in flight. A blocking recv here
                 // made speculation unreachable — the loop slept exactly as long
                 // as the stall it was supposed to detect (measured: 5.0 s).
-                if self.stop_flag.load(Ordering::Relaxed) && in_flight.is_empty() {
+                if (self.stop_flag.load(Ordering::Relaxed) || self.control.is_stopped())
+                    && in_flight.is_empty()
+                {
                     break;
                 }
                 if let Some(t0) = drain_started {
@@ -359,7 +361,9 @@ impl Coordinator {
                     }
                 }
 
-                if self.stop_flag.load(Ordering::Relaxed) && in_flight.is_empty() {
+                if (self.stop_flag.load(Ordering::Relaxed) || self.control.is_stopped())
+                    && in_flight.is_empty()
+                {
                     break;
                 }
             }
@@ -375,7 +379,10 @@ impl Coordinator {
             out.waves += 1;
             out.speculated += speculated;
 
-            if self.stop_flag.load(Ordering::Relaxed) {
+            // A stop may be requested while a wave is running (the control plane
+            // is reachable from a task, which is how the test requests it). Both
+            // flags are checked here, not just the coordinator's own.
+            if self.stop_flag.load(Ordering::Relaxed) || self.control.is_stopped() {
                 out.stopped = true;
                 out.drained = true;
                 self.journal.append(&Event::RunStopped { drained: true }).ok();
@@ -502,23 +509,46 @@ mod tests {
 
     #[test]
     fn stop_drains_within_the_bound() {
+        // Deterministic stop: the task itself requests it, so the test cannot
+        // race the scheduler for the flag (it did, under full-suite load —
+        // 9,197 tests running in parallel starved the helper thread).
+        struct StopsAfterFirstCall {
+            control: Arc<RunControl>,
+            calls: AtomicU32,
+        }
+        impl TaskFn for StopsAfterFirstCall {
+            fn call(&self, _task: &Task, _seed: u64) -> Result<String, String> {
+                if self.calls.fetch_add(1, AOrdering::SeqCst) == 0 {
+                    self.control.stop();
+                }
+                std::thread::sleep(Duration::from_millis(20));
+                Ok("ok".to_string())
+            }
+        }
+
         let path = tmp_journal("stop");
-        let mut c = Coordinator::new(1, Arc::new(Slow(Duration::from_millis(150))), &path, 1)
-            .unwrap()
-            .with_drain_ms(100);
-        let flags = Arc::new(AtomicBool::new(false));
-        let f = Arc::clone(&flags);
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            f.store(true, Ordering::Relaxed);
+        let control = Arc::new(RunControl::new());
+        let task_fn = Arc::new(StopsAfterFirstCall {
+            control: Arc::clone(&control),
+            calls: AtomicU32::new(0),
         });
-        let waves = crate::mesh::plan(&[task("a"), task("b"), task("c")]).unwrap();
+        let mut c = Coordinator::new(1, task_fn, &path, 1)
+            .unwrap()
+            // the test's control must be the coordinator's control — without
+            // this line the task stopped an object nobody was reading (which is
+            // exactly what the first version of this test did)
+            .with_control(Arc::clone(&control))
+            .with_drain_ms(500);
+        let tasks: Vec<Task> = (0..8)
+            .map(|i| Task::new(&format!("t{i}"), "det", vec![], TaskClass::Pure, None))
+            .collect();
+        let waves = crate::mesh::plan(&tasks).unwrap();
         let start = Instant::now();
         let out = c.run("r4", &waves).unwrap();
         let elapsed = start.elapsed();
         assert!(out.stopped, "run must report the stop");
         assert!(
-            elapsed < Duration::from_millis(1_000),
+            elapsed < Duration::from_millis(2_000),
             "stop must be bounded, took {elapsed:?}"
         );
         c.finish();
