@@ -243,12 +243,32 @@ impl Coordinator {
                         if let Some((task, attempt)) = pending.get(&id).cloned() {
                             let now = started.elapsed().as_millis() as u64;
                             let ttl = (self.retry.cap_ms * 4).max(1_000);
-                            let lease = self.leases.grant(&id, slot, ttl, now);
-                            lease_of.insert(id.clone(), (slot, lease.epoch));
+                            // Dispatch the duplicate to a DIFFERENT worker than the
+                            // one currently holding the straggler. Round-robin
+                            // (`slot`, incremented after every dispatch) can land
+                            // the duplicate in the same queue, behind the very
+                            // stall it is meant to escape: measured on a 2-core
+                            // runner, the wave took 5.0005 s — exactly the stall
+                            // duration — because the duplicate waited behind it.
+                            let stuck_slot = lease_of.get(&id).map(|(s, _)| *s);
+                            let workers = self.pool.workers().max(1);
+                            let target = (0..workers)
+                                .find(|s| Some(*s) != stuck_slot)
+                                .unwrap_or(slot % workers);
+                            let lease = self.leases.grant(&id, target, ttl, now);
+                            if std::env::var("TALLOW_DEBUG_MESH").is_ok() {
+                                eprintln!(
+                                    "[mesh] speculate id={id} target={target} (stuck on {:?}) attempt={} at t+{}ms",
+                                    stuck_slot,
+                                    attempt + 1,
+                                    started.elapsed().as_millis()
+                                );
+                            }
+                            lease_of.insert(id.clone(), (target, lease.epoch));
                             slot = slot.wrapping_add(1);
                             let seed = task_seed(self.mesh_seed, wave.index, &id, attempt + 1);
                             self.pool.dispatch(
-                                slot,
+                                target,
                                 Job { wave: wave.index, items: vec![(task, seed)] },
                             )?;
                             duplicated.insert(id);
