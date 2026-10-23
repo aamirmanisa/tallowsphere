@@ -420,11 +420,18 @@ fn stdlib_counts_and_routing() {
         }
     }
     modules.sort();
-    assert_eq!(modules.len(), 85, "stdlib module files: {modules:?}");
+    // 86, not 85: stdlib/mesh.tl is new (the execution plane's published
+    // surface). It is not a rename of src/stdlib/mesh.rs — that module documents
+    // the simulated topology plane and has no manifest of its own.
+    assert_eq!(modules.len(), 86, "stdlib module files: {modules:?}");
     // 1124, not 1118: timeseries.tl declared six `method … on TimeSeries` lines,
     // a form this counter never saw; they are now an impl block, which the
     // counter reads. The surface did not grow — the old figure under-counted.
-    assert_eq!(fns, 1124, "stdlib function declarations");
+    // 1126, not 1124: stdlib/mesh.tl publishes the two functions of the mesh
+    // execution plane that run today — Mesh.plan and Mesh.replay. Mesh.run is
+    // deliberately absent until a worker pool can execute Tallow functions; a
+    // declaration that cannot execute is the defect this gate exists to catch.
+    assert_eq!(fns, 1126, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both

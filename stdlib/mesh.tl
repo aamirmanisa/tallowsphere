@@ -1,0 +1,64 @@
+// tallow.mesh — deterministic task planning and journal replay
+//
+// The execution plane's published surface. Two functions, both of which run
+// today and both of which are pure with respect to their inputs:
+//
+//   Mesh.plan(tasks, seed)   topological waves, cycles refused by name
+//   Mesh.replay(path)        verify a journal against its own checkpoints
+//
+// `Mesh.run` is deliberately absent. Running a plan needs a worker pool
+// executing Tallow functions, each worker with its own interpreter; that
+// executor does not exist yet, and declaring it here would publish a name that
+// cannot execute. Topology (membership, gossip, DHT) lives in `mesh` and is
+// still simulated — see docs/operations/mesh-m4-hold-2026-10-23.md.
+
+/// One unit of work in a plan.
+///
+/// `class` decides what a retry means: `pure` may be retried and replayed,
+/// `io` requires `idempotency_key` (refused without one), `llm` is never
+/// retried silently because a retry would produce a different answer.
+struct MeshTask {
+    id:              String,
+    func:            String,
+    deps:            []String,
+    class:           String,
+    idempotency_key: String?,
+}
+
+/// The wave layout of a plan.
+struct MeshPlan {
+    /// Number of waves; a wave contains only tasks whose dependencies are met.
+    waves:      i64,
+    /// Number of tasks in the plan.
+    tasks:      i64,
+    /// The seed the plan was derived from.
+    seed:       i64,
+    /// Task count per wave, in wave order.
+    wave_sizes: []i64,
+}
+
+/// One verified checkpoint from a replayed journal.
+struct WaveCheckpoint {
+    wave:       i64,
+    tasks:      i64,
+    checkpoint: String,
+}
+
+/// The result of replaying a journal.
+struct MeshReplay {
+    waves:       i64,
+    ok:          bool,
+    checkpoints: []WaveCheckpoint,
+}
+
+/// Sort tasks into waves.
+///
+/// Validates every task (rejecting an `io` task without an idempotency key),
+/// rejects a missing dependency or a duplicate id, and refuses a dependency
+/// cycle with the path that forms it, e.g. `a -> b -> a`.
+native fn plan(tasks: []MeshTask, mesh_seed: i64) -> MeshPlan
+
+/// Recompute every checkpoint in a journal and compare it with what was
+/// recorded. Returns the first wave that disagrees — a replay that "mostly"
+/// matches is a failed replay, not a partial success.
+native fn replay(journal_path: String) -> MeshReplay
