@@ -165,6 +165,7 @@ pub mod sluice;
 pub mod smt_export;
 pub mod source_registry;
 pub mod spawn_isolation;
+pub mod mesh;
 pub mod stdlib;
 pub mod stealth_pass;
 pub mod strategy_select;
