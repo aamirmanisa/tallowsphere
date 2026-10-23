@@ -17,29 +17,27 @@ Fix: regenerate with `python3 scripts/sbom-gen.py --write artifacts/sbom/` (see 
 script's `--check` mode), review the diff for dependency changes, commit both together.
 Owner: alden. Expiry: 2026-10-30.
 
-## 2. Production CI Gates — red since at least `22c7b40`
+## 2. Production CI Gates — red since at least `22c7b40` — **FIXED 2026-10-23**
 
 Evidence: workflow `386117969` has failed on every run in the day's history —
 `22c7b40`, `517fe82`, `9ef844f`, `55fa650`, `2d2a0cf`, `9cd968d`, `5067cb0`. Always the
 same step: `[FAIL] cargo-test-browser-flow-runtime: command failed (exit 101)`.
 
-The underlying suite, `tests/browser_flow_runtime_integration.rs`, fails on this host as
-well:
-- `cdp_navigate_without_response_uses_event_fallback` — "navigate should succeed even
-  without Page.navigate response: Timeout { operation: \"navigate\", detail: \"waiting for
-  DOMContentLoaded\" }"
-- `cdp_new_page_navigate_title_flow_tracks_goto_path` and
-  `cdp_wrapped_target_message_flow_handles_nested_responses` fail alongside it;
-  `live_browser_launch_new_page_goto_title_data_url` passes, so the launch path works and
-  the CDP event path does not.
+Root cause, found by instrumenting the navigate loop: the three failures were the mock
+server, not the engine. Since 2026-10-22 `Page::navigate` verifies completion against the
+document — it reads `performance.timeOrigin` before navigating and again when the
+lifecycle event lands, and accepts the event only when the value changed (a real browser
+had reported success on `chrome-error://` without it). The mock answered every
+`Runtime.evaluate` with `""`, so the probe parsed to `None`, `new_document` stayed false,
+and the loop waited out its budget with the events correctly received. Instrumented
+output showed `Page.frameStartedNavigating`, `Network.responseReceived` and
+`Page.lifecycleEvent {name: DOMContentLoaded, frameId: frame-fallback}` all arriving and
+matching.
 
-This is not an environment artefact: it fails identically on GitHub's runner and here.
-Either the navigation waits on `DOMContentLoaded` that the fixture page never emits, or
-the event-fallback path is broken. Both are testable in one sitting.
-
-Fix: reproduce with `RUST_BACKTRACE=1 cargo test --test browser_flow_runtime_integration
--- --nocapture`, decide whether the defect is in the test's fixture or in
-`src/browser/cdp.rs`'s navigate wait. Owner: forge. Expiry: 2026-10-30.
+Fix: the mock tracks the last navigated URL, returns a number for `performance.timeOrigin`
+(1000.0 before, 2000.0 in the probe) and a JSON string with `u/s/o/e` for the
+`JSON.stringify(...)` probes. No engine change. Result: `5 passed; 0 failed` locally
+(previously 2/5).
 
 ## 3. Six browser suites that do not pass on the pinned CfT build
 

@@ -69,6 +69,12 @@ async fn start_mock_cdp_server(
         let (stream, _) = listener.accept().await.expect("accept mock cdp connection");
         let mut ws = accept_async(stream).await.expect("upgrade websocket");
         let mut navigate_url_tx = Some(navigate_url_tx);
+        // The URL the mock was last told to navigate to. The client's completion
+        // guard asks the *document* where it is (`location.href`) and whether it
+        // is a new document (`performance.timeOrigin`); a mock that answers ""
+        // makes every navigation time out with "waiting for DOMContentLoaded"
+        // even though the lifecycle event arrived.
+        let mut last_nav_url = String::from("https://example.test/mock");
 
         while let Some(msg_result) = ws.next().await {
             let msg = match msg_result {
@@ -129,8 +135,9 @@ async fn start_mock_cdp_server(
                         .unwrap_or_default()
                         .to_string();
                     if let Some(tx) = navigate_url_tx.take() {
-                        let _ = tx.send(navigate_url);
+                        let _ = tx.send(navigate_url.clone());
                     }
+                    last_nav_url = navigate_url.clone();
 
                     let session_id = command
                         .get("sessionId")
@@ -212,16 +219,36 @@ async fn start_mock_cdp_server(
 
                     let value = match expression {
                         "document.title" => "Mocked Title",
-                        "window.location.href" => "https://example.test/mock",
+                        "window.location.href" => last_nav_url.as_str(),
                         _ => "",
+                    };
+
+                    // The engine verifies completion against the document, not
+                    // only against the lifecycle event: it reads
+                    // `performance.timeOrigin` before navigating and again when
+                    // the event lands, so a stale event from the document being
+                    // left cannot be mistaken for the new one. A mock that
+                    // answers "" to those probes can never satisfy the guard.
+                    let (value_type, value_json) = if expression.starts_with("JSON.stringify(") {
+                        (
+                            "string",
+                            json!(format!(
+                                "{{\"u\":\"{}\",\"s\":\"complete\",\"o\":2000.0,\"e\":false}}",
+                                last_nav_url
+                            )),
+                        )
+                    } else if expression.contains("performance.timeOrigin") {
+                        ("number", json!(1000.0))
+                    } else {
+                        ("string", json!(value))
                     };
 
                     let response = json!({
                         "id": id,
                         "result": {
                             "result": {
-                                "type": "string",
-                                "value": value
+                                "type": value_type,
+                                "value": value_json
                             }
                         }
                     });
