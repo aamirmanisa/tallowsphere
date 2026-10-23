@@ -1,0 +1,102 @@
+# Next steps — Tallow, after the 2026-10-22/23 surface pass
+
+State at the time of writing: `tallowsphere` main `690c2dd`, `tallow-language`
+main `d198a49`. Full lib suite 9,154 passed / 0 failed / 33 ignored. All 85
+stdlib modules pass `tallow check`. 41 of 41 browser declarations execute.
+
+Boxes are `[ ]` open, `[x]` done. Each open item names its acceptance test —
+"it works" is not acceptance.
+
+## 0. Finish the CI run that is in flight
+
+- [ ] `CI` on `690c2dd` is green (it was red on `e77b325`: Windows `find_in_path`
+      E0425, and the counts gate at 1118). Both are fixed in `690c2dd`.
+      **Acceptance:** every job on that SHA reports success, including
+      `Test (Windows)` and `Contract and CLI suites (integration)`.
+- [ ] `Tallow Production CI Gates` on the same SHA is green.
+- [ ] Confirm no orphaned pending runs from the queue backlog.
+
+## 1. Function behaviour that is still interpreter-only
+
+- [ ] **Native lowering for the new math functions.** `math.asin/acos/atan/
+      atan2/cbrt/abs_i/min_i/max_i/clamp_i` execute in the interpreter; the
+      native backend prints "no lowering for method … failing loudly so the
+      interpreter runs it" and falls back. Correct, not native.
+      **Acceptance:** `interp_codegen_parity` covers each; no fallback notice on
+      a native build.
+- [ ] **Native lowering for the browser `page_*` surface.** All 41 run in the
+      interpreter through the current-page registry. The codegen `("Page", …)`
+      table knows only the older method set.
+      **Acceptance:** a native build of a page_* program does not print the
+      fallback notice; parity test alongside `browser_codegen_integration`.
+- [ ] **Agent cancellation granularity.** Cancel is observed at the next
+      function call in the child; a task that calls nothing cannot be
+      interrupted. Decide whether that is the contract (document it) or whether
+      the evaluator loop needs its own check.
+      **Acceptance:** either a documented limitation plus a test that proves the
+      boundary, or a scheduler-level check with a test that cancels a tight loop
+      with no calls.
+
+## 2. Test coverage for what was just built
+
+- [ ] **Browser functions have no automated tests.** They were verified with
+      runnable `.tl` probes against BBC, a local fixture, and a live WordPress;
+      none of that is in `cargo test`. A regression today would ship silently.
+      **Acceptance:** `tests/browser_page_helpers.rs` that skips (not fails) when
+      no Chrome is present, covering: extract_all_text/attrs, dom snapshot,
+      structured data, text_redacted, block_non_essential, wait_for_stable,
+      detect_pagination, cookie consent, the 10 delegations, the 3 waiters,
+      the 8 callback registrations, and context creation.
+- [ ] **WordPress flows need a fixture, not a third-party site.** `wp_login` was
+      proven against a local `wordpress:6` + `mariadb:11`, reachable only with
+      `TALLOW_ALLOW_DIRECT=1`.
+      **Acceptance:** a scripted fixture (compose file + `wp core install`) and
+      an `#[ignore]`-by-default test that runs when the opt-in is set.
+- [ ] **Parser regression tests** for the four additions — record types,
+      `fn()` with no return, contextual keywords, generic aliases — including a
+      negative: a keyword must still be a keyword inside an expression.
+      **Acceptance:** unit tests in `src/parser.rs` for each, positive and
+      negative.
+
+## 3. Correctness debt found but not fixed
+
+- [ ] **`Page.evaluate` double-encodes string results.** `p.evaluate("typeof
+      window.tallowAdd")` prints `Ok(""function"")` — the JSON string is quoted
+      twice on the way back.
+      **Acceptance:** returns `"function"`; a test pins it.
+- [ ] **Warnings left in the corpus.** `tallow check` passes all 85 with
+      warnings: `type 'any' is not defined` (transfer.tl), `type 'Self' is not
+      defined` (browser.tl and others), `Float` in algos. Either the checker
+      learns these types or the manifest stops using them.
+      **Acceptance:** `check` clean of W0100 across `stdlib/`, or each remaining
+      warning justified in a comment with a reason.
+- [ ] **`--require-native` refuses programs the interpreter accepts.** Every new
+      interpreter-only function widens that gap; decide which side is correct
+      per function and record it.
+
+## 4. The published count — operator decision
+
+- [ ] **1118 or 1124?** The generator reports 1,124: the six extra are
+      `timeseries.tl`'s `method … on TimeSeries` declarations, which no counter
+      ever read. Options: publish 1,124 (accurate today), or teach
+      `tools/generate.py` to count the `method … on` form and keep 1,118 for
+      comparability with earlier releases.
+      **Acceptance:** one number in `spec/generated.json`, in the README, and in
+      `tests/language_surface.rs`, agreeing.
+
+## 5. Release
+
+- [ ] Bump to 1.1.5 (or 1.2.0 given the grammar additions), changelog covering
+      the browser surface, agent handles, grammar, and the corpus repair.
+- [ ] Tag and run the release workflow; verify all five platform assets are
+      published and that `sha256sum -c` passes on the public URLs.
+- [ ] Re-run `tools/generate.py` in `tallow-language` against the released SHA
+      so the provenance header names the tag, not a mid-pass commit.
+
+## 6. Documentation
+
+- [ ] `docs/operations/stdlib-surface-audit-2026-10-22.md` still says 18
+      unimplemented; update to 0 and point at the grammar section.
+- [ ] Add an ADR for the contextual-keyword decision (why `type` is a field name
+      in one position and a declaration in another) — the spec states the rule,
+      the ADR should state why it was chosen over renaming published fields.
