@@ -201,6 +201,47 @@ pub extern "C" fn tallow_browser_close(handle: *mut c_void) {
     }
 }
 
+thread_local! {
+    /// The page a module-level `browser.page_*` call acts on in COMPILED code.
+    ///
+    /// The interpreter keeps the same thing in `src/stdlib/browser.rs`
+    /// (CURRENT_PAGE there). Native code needs its own, because
+    /// `browser.page_content()` has no receiver argument and the codegen arms
+    /// would otherwise have nothing to pass to the page FFI. Set when a page is
+    /// created, cleared when it is closed — a stale pointer here would be a
+    /// use-after-free rather than a wrong answer.
+    static CURRENT_PAGE: std::cell::Cell<*mut std::ffi::c_void> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// The current page for module-level browser helpers, or null if none exists.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_current_page() -> *mut std::ffi::c_void {
+    CURRENT_PAGE.with(|c| c.get())
+}
+
+/// Abort when a module-level `browser.page_*` call has no page to act on.
+///
+/// The interpreter raises `no page bound in function dispatch` here (catchable).
+/// Native code has no exception mechanism, so it prints the same sentence and
+/// aborts: both engines fail, neither returns a value. Emitting an empty string
+/// instead would be the silently-wrong class this backend refuses elsewhere.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_missing_page_abort() {
+    eprintln!(
+        "runtime error: no page bound — browser.page_* needs a page created by \
+Browser.launch(...).new_page() first"
+    );
+    std::process::abort();
+}
+
+/// True when `page` is the handle module-level helpers currently act on.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_page_is_current(page: *mut std::ffi::c_void) -> i32 {
+    let cur = CURRENT_PAGE.with(|c| c.get());
+    if !cur.is_null() && cur == page { 1 } else { 0 }
+}
+
 /// Create a new page (tab) in the browser. Returns an opaque page handle.
 /// Returns null on error. Free with `tallow_page_free`, NOT `tallow_browser_close`
 /// (which only frees Browser handles — calling it on a Page would corrupt memory).
@@ -238,7 +279,11 @@ pub extern "C" fn tallow_browser_new_page(handle: *mut c_void) -> *mut c_void {
                 }
             }
             let page_handle = Box::new(page);
-            Box::into_raw(page_handle) as *mut c_void
+            let handle = Box::into_raw(page_handle) as *mut c_void;
+            // Newest page becomes the module-level receiver, matching the
+            // interpreter (which binds each page it creates).
+            CURRENT_PAGE.with(|c| c.set(handle));
+            handle
         }
         Err(e) => {
             set_last_error(format!("new_page: {e}"));
@@ -882,7 +927,16 @@ pub extern "C" fn tallow_page_close(page: *mut c_void) -> i32 {
     let page_ref = unsafe { &*(page as *const Page) };
     let rt = get_runtime();
     match rt.block_on(page_ref.close()) {
-        Ok(()) => 0,
+        Ok(()) => {
+            // Drop the module-level receiver if it pointed here: leaving a
+            // dangling pointer would turn a bug into a segfault.
+            CURRENT_PAGE.with(|c| {
+                if c.get() == page {
+                    c.set(std::ptr::null_mut());
+                }
+            });
+            0
+        }
         Err(e) => {
             set_last_error(format!("close: {e}"));
             -1

@@ -136,3 +136,65 @@ fn evaluate_preserves_javascript_types() {
     assert!(out.contains("42"), "number result: {out}");
     assert!(!out.contains("\"\"string\"\""), "double-quoted string: {out}");
 }
+
+/// The module-level `browser.page_*` helpers act on the current page in both
+/// engines: the interpreter through its thread-local registry, compiled code
+/// through `tallow_current_page()`. Same program, both engines, same bytes out.
+#[test]
+fn module_level_helpers_agree_across_engines() {
+    if !chrome_available() {
+        eprintln!("skipping: no Chrome on this machine");
+        return;
+    }
+    let program = r#"
+@cra_class(.default)
+@legal(basis: .public_data, purpose: "module-level page helper parity", personal_data: false)
+@persona(id: "page-parity", cover_class: .researcher, compartment: "parity", fingerprint_seed: "page-parity-1023")
+@burn_plan(persona: "page-parity", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowParity/1.0 (+https://tallow.invalid/bot)", network: .monitored)
+@stealth(profile: .chrome_windows, evasions: .all)
+fn main() {
+    let b = Browser.launch(true)
+    let p = b.new_page()
+    browser.page_set_content("<h1>Hi</h1><p class='x'>A</p>")
+    print(browser.page_content().len > 20)
+    print(browser.page_capture_dom_snapshot().len > 20)
+    print(browser.page_text_redacted().len > 10)
+    print(browser.page_handle_cookie_consent("reject"))
+    b.close()
+}
+"#;
+    let dir = fixture_dir();
+    let file = dir.join("module_level_parity.tl");
+    std::fs::write(&file, program).expect("write program");
+
+    let run = |extra: &[&str]| -> String {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_tallow"));
+        cmd.arg("run");
+        for a in extra {
+            cmd.arg(a);
+        }
+        cmd.arg(&file);
+        let out = cmd.output().expect("run tallow");
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        assert!(out.status.success(), "run failed\n{stdout}\n{stderr}");
+        stdout
+    };
+
+    let native = run(&[]);
+    let interpreted = run(&["--interpret"]);
+    // The interpreter prefixes a banner line; compare the printed values only.
+    let values = |s: &str| -> Vec<String> {
+        s.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('*'))
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(
+        values(&native),
+        values(&interpreted),
+        "native and interpreter disagree\nnative: {native}\ninterp: {interpreted}"
+    );
+}
