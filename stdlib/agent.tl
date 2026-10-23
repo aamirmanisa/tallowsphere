@@ -33,14 +33,7 @@ impl AgentHandle<T> {
     native fn cancel(self) -> Result<()>
 
     /// Check if completed
-    fn is_done(self) -> bool {
-        match self.status {
-            Completed -> true
-            Failed(_) -> true
-            TimedOut  -> true
-            _         -> false
-        }
-    }
+    native fn is_done(self) -> bool
 
     /// Get status
     // native: checks current status

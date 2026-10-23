@@ -2,7 +2,7 @@
 module tallow.ohlcv
 
 /// Convert ticks to OHLCV bars at periodic intervals
-native fn from_ticks(ticks: [{timestamp: Int, price: Float, volume: Float}], period_secs: Int) -> []Bar
+native fn from_ticks(ticks: []{{timestamp: Int, price: Float, volume: Float}}, period_secs: Int) -> []Bar
 /// Resample bars to a new timeframe
 native fn resample(bars: []Bar, period_secs: Int) -> []Bar
 /// Extract a single field (open, high, low, close, volume) as flat array

@@ -861,6 +861,18 @@ impl Parser {
         let start = self.span();
         self.expect(TokenKind::Type)?;
         let name = self.expect_ident()?;
+        // Generic alias: `type MetaPrivate<T> = private T`. The parameters are
+        // accepted and not substituted — the alias erases to its target type,
+        // which is what the stdlib manifest uses it for.
+        if self.eat(TokenKind::Lt) {
+            while !self.check(TokenKind::Gt) && !self.at_eof() {
+                self.expect_ident()?;
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::Gt)?;
+        }
         self.expect(TokenKind::Eq)?;
 
         // Check for privacy qualifier: `type Email = private String`
@@ -2823,6 +2835,49 @@ impl Parser {
             return Ok(ty);
         }
 
+        // Record / row type: {a: T, b: U}  and tuple-style {T, U}
+        if self.check(TokenKind::LBrace) {
+            self.advance();
+            let mut named: Vec<(String, TypeExpr)> = Vec::new();
+            let mut types: Vec<TypeExpr> = Vec::new();
+            let mut all_named = true;
+            while !self.check(TokenKind::RBrace) && !self.at_eof() {
+                if matches!(self.peek_kind(), TokenKind::Ident(_)) && self.peek_next_is_colon()
+                {
+                    let field = self.expect_ident()?;
+                    self.expect(TokenKind::Colon)?;
+                    named.push((field, self.parse_type()?));
+                } else {
+                    all_named = false;
+                    types.push(self.parse_type()?);
+                }
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBrace)?;
+            let span = Span::new(start.start, self.prev_span().end);
+            // A record type keeps its shape as a tuple of field types: the type
+            // layer has no anonymous-record variant, and adding one would ripple
+            // through every exhaustive match on TypeExprKind for a construct the
+            // manifest only uses in documentation positions. Field names are
+            // therefore not preserved by the checker (they are in the source).
+            let _ = all_named;
+            let mut ty = if !named.is_empty() && types.is_empty() {
+                TypeExpr::new(
+                    TypeExprKind::Tuple(named.into_iter().map(|(_, t)| t).collect()),
+                    span,
+                )
+            } else {
+                TypeExpr::new(TypeExprKind::Tuple(types), span)
+            };
+            if self.eat(TokenKind::Question) {
+                let span = Span::new(ty.span.start, self.prev_span().end);
+                ty = TypeExpr::new(TypeExprKind::Optional(Box::new(ty)), span);
+            }
+            return Ok(ty);
+        }
+
         // Tuple type: (T, U)
         if self.check(TokenKind::LParen) {
             self.advance();
@@ -2855,8 +2910,16 @@ impl Parser {
                 }
             }
             self.expect(TokenKind::RParen)?;
-            self.expect(TokenKind::Arrow)?;
-            let return_type = self.parse_type()?;
+            // `fn()` — a parameter type with no return annotation means it
+            // returns nothing; requiring `->` rejected the documented form.
+            let return_type = if self.eat(TokenKind::Arrow) {
+                self.parse_type()?
+            } else {
+                TypeExpr::new(
+                    TypeExprKind::Named("unit".to_string()),
+                    Span::new(self.prev_span().start, self.prev_span().end),
+                )
+            };
             let span = Span::new(start.start, return_type.span.end);
             return Ok(TypeExpr::new(
                 TypeExprKind::Function {
@@ -2941,6 +3004,12 @@ impl Parser {
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
+
+    /// True when the token after the current one is `:` — the lookahead the
+    /// record-type parser uses to tell `{a: T}` from `{T, U}`.
+    fn peek_next_is_colon(&self) -> bool {
+        matches!(self.peek_kind_ahead(1), Some(TokenKind::Colon))
+    }
 
     fn peek_kind(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
@@ -3041,6 +3110,14 @@ impl Parser {
         } else if let TokenKind::Private = self.peek_kind() {
             self.advance();
             Ok("private".to_string())
+        } else if let Some(word) = keyword_as_identifier(self.peek_kind()) {
+            // Contextual keywords: `type`, `return`, `await` and friends are
+            // reserved words but also ordinary field / method / parameter names
+            // in real API shapes (`type: String`, `fn await(self)`). In a NAME
+            // position they are identifiers; the keyword reading is only chosen
+            // where the grammar expects a construct.
+            self.advance();
+            Ok(word.to_string())
         } else {
             Err(self.error(format!("expected identifier, found '{}'", self.peek_kind())))
         }
@@ -3049,6 +3126,25 @@ impl Parser {
     fn error(&self, msg: impl Into<String>) -> ParseError {
         ParseError::new(msg, self.span())
     }
+}
+
+/// Treat a reserved word as an identifier when it appears in a NAME position.
+///
+/// `type`, `return`, `await` and the rest are keywords, but real API shapes use
+/// them as field, method and parameter names (`type: String`, `fn await(self)`).
+/// The grammar only needs the keyword reading where it expects a construct, so a
+/// name position takes the textual form instead of failing.
+fn keyword_as_identifier(kind: &TokenKind) -> Option<String> {
+    let text = kind.to_string();
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(text)
 }
 
 // ── Binding Power Table (Pratt) ──────────────────────────────────────────────
