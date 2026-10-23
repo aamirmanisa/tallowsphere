@@ -134,6 +134,11 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// LLM providers: `providers`, `models <p>`, `verify <p>`, `complete <p> <model> <prompt>`, `init`.
+    Llm {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Phone OSINT subcommands (PhoneNumber.* stdlib dispatches)
     Phone {
         /// Everything after `phone`, e.g. `lookup 5128501815`
@@ -2712,6 +2717,10 @@ fn real_main() -> anyhow::Result<()> {
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "tallow", &mut std::io::stdout());
+            return Ok(());
+        }
+        Command::Llm { args } => {
+            run_llm_cmd(&args).map_err(anyhow::Error::msg)?;
             return Ok(());
         }
         Command::Mesh { args } => {
@@ -21293,4 +21302,93 @@ fn run_mesh_worker(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("mesh worker: --server-key: {e}"))?;
 
     tallow::mesh::remote::run_worker(&connect, &node, seed, server_vk, &run_id)
+}
+
+/// `tallow llm …` — inspect the provider registry, discover models, verify a key,
+/// or run one completion. The key is read from the environment/key file named in
+/// the config; this command never accepts a key on the command line, because the
+/// shell history and the process table are both observable.
+fn run_llm_cmd(args: &[String]) -> Result<(), String> {
+    use tallow::stdlib::llm;
+    let cmd = args.first().map(|s| s.as_str()).unwrap_or("providers");
+    match cmd {
+        "providers" | "list" => {
+            for spec in llm::REGISTRY {
+                let status = if spec.unavailable.is_empty() { "ok" } else { "unavailable" };
+                println!("{:<10} {:<28} {:<14} {}", spec.id, spec.label, spec.protocol.as_str(), status);
+                if !spec.unavailable.is_empty() {
+                    println!("           {}", spec.unavailable);
+                }
+            }
+            let cfg = llm::load_config()?;
+            for (id, c) in cfg {
+                if !llm::REGISTRY.iter().any(|s| s.id == id) {
+                    println!("{:<10} {:<28} {:<14} custom", id, "(config)", c.protocol.map(|p| p.as_str()).unwrap_or("?"));
+                }
+            }
+            Ok(())
+        }
+        "models" => {
+            let id = args.get(1).ok_or("usage: tallow llm models <provider>")?;
+            let r = llm::resolve(id)?;
+            for m in llm::list_models(&r)? {
+                println!("{}{}", m.id, if m.owned_by.is_empty() { String::new() } else { format!("  ({})", m.owned_by) });
+            }
+            Ok(())
+        }
+        "verify" => {
+            let id = args.get(1).ok_or("usage: tallow llm verify <provider>")?;
+            let started = std::time::Instant::now();
+            let r = llm::resolve(id)?;
+            match llm::list_models(&r) {
+                Ok(models) => {
+                    println!("ok: {} ({}) — {} models in {} ms", r.id, r.protocol.as_str(), models.len(), started.elapsed().as_millis());
+                    Ok(())
+                }
+                Err(e) => Err(format!("verify failed: {e}")),
+            }
+        }
+        "complete" => {
+            let id = args.get(1).ok_or("usage: tallow llm complete <provider> <model> <prompt>")?;
+            let model = args.get(2).ok_or("usage: tallow llm complete <provider> <model> <prompt>")?;
+            let prompt = args[3..].join(" ");
+            if prompt.trim().is_empty() {
+                return Err("usage: tallow llm complete <provider> <model> <prompt>".to_string());
+            }
+            let r = llm::resolve(id)?;
+            let c = llm::complete(&r, model, &prompt, 1024)?;
+            println!("{}", c.text);
+            eprintln!("[{} tokens in / {} out]", c.tokens_in, c.tokens_out);
+            Ok(())
+        }
+        "init" => {
+            let path = llm::config_path();
+            if path.exists() {
+                return Err(format!("{} already exists", path.display()));
+            }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            let body = "# Tallow LLM providers. Keys are never stored here.\n\
+# Point a provider at an environment variable, or at a file only you can read.\n\
+\n\
+[providers.deepseek]\n\
+key_env = \"DEEPSEEK_API_KEY\"\n\
+\n\
+[providers.selfhosted]\n\
+protocol = \"openai\"\n\
+base_url = \"http://127.0.0.1:8080/v1\"\n\
+key_env = \"LOCAL_LLM_KEY\"\n";
+            std::fs::write(&path, body).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| e.to_string())?;
+            }
+            println!("wrote {} (mode 600)", path.display());
+            Ok(())
+        }
+        other => Err(format!("unknown llm command `{other}`")),
+    }
 }

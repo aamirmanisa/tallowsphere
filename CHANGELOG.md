@@ -9,6 +9,56 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.4.0] — 2026-10-23 — model providers, without keys in the language
+
+### What was wrong
+
+Tallow had no way to reach a model provider. The directorate/agent work could plan
+and journal a task graph, but the step that actually reasons had nowhere to go, so
+every "agent" claim stopped at the orchestration layer. Building the provider
+surface also exposed a language defect that had been latent since modules were
+introduced.
+
+### What was fixed
+
+- **`llm` module** (`stdlib/llm.tl` + `src/stdlib/llm.rs`): `providers`, `models`,
+  `complete`, `verify`. Twenty providers across four wire protocols — OpenAI chat
+  completions (OpenAI, xAI, DeepSeek, Alibaba DashScope, Mistral, Moonshot, Z.ai,
+  MiniMax, NVIDIA NIM, ByteDance Ark, Tencent Hunyuan, Baidu Qianfan, and any
+  self-hosted OpenAI-compatible server), Anthropic messages, Google
+  generateContent, Azure OpenAI, Cohere v2. Four providers are declared
+  `unavailable` **with the reason** (Meta has no inference API; Bedrock needs SigV4;
+  watsonx needs IAM exchange; Xiaomi has no public API), each with the route that
+  does work.
+- **Model discovery, not a model list.** `llm.models` calls the provider's own
+  `/models` endpoint at call time and parses it per protocol, so a provider
+  changing its line does not need a release.
+- **Credentials never enter the language.** Config names `key_env` or `key_file`; an
+  inline `key = "..."` is refused with a message naming the fix and never echoes
+  the value; key files must be mode 0600; errors are redacted; no request is sent
+  when the credential is missing. The CLI has no `--key` flag on purpose.
+- **CLI**: `tallow llm providers|models|verify|complete|init` (`init` writes the
+  config at mode 600).
+- **Interpreter defect**: a lowercase module name shadowed a *user variable*. With
+  `llm` registered, `let llm = h.llm_calls` evaluated to `"__module_llm__"` instead
+  of the field. Variables now take precedence over module sentinels — modules are a
+  fallback, not a reserved word.
+- **Egress, stated rather than assumed**: model traffic does not use the Tor
+  browsing plane. The credential in the header is an identity, so Tor buys no
+  anonymity there and breaks providers that block exits; `llm` connects directly
+  unless `TALLOW_LLM_PROXY` is set.
+
+### Counts
+
+86 → 87 modules; 1,126 → 1,130 function declarations. Gate moved in the same
+commit with the reason inline.
+
+Verified: `tests/llm_providers.rs` 7 passed against a local server enforcing each
+protocol's authentication surface (Bearer, `x-api-key` + `anthropic-version`,
+`x-goog-api-key`, `api-key`), including a custom self-hosted provider, redaction on
+a 401, local refusal on a missing key with zero requests sent, and the 20-provider
+registry. Full lib suite: 9,212 passed / 0 failed / 33 ignored.
+
 ## [v1.3.0] — 2026-10-23 — the mesh crosses a socket
 
 ### What was wrong
