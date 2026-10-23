@@ -1155,7 +1155,9 @@ native fn Webhook.config(url: String, events: []String = [], secret: String = ""
 
 /// Fire a webhook event (builds JSON payload with optional HMAC-BLAKE3 signature).
 // native: BLAKE3 keyed hash signature if secret provided
-native fn Webhook.fire(url: String, event: String, payload: String = "
+/// Fire a webhook. `payload` defaults to the empty object the runtime builds
+/// from `event` when no explicit body is supplied.
+native fn Webhook.fire(url: String, event: String, payload: String = "", secret: String = "") -> WebhookResult
 
 // ── Transfer Scheduling ──
 
