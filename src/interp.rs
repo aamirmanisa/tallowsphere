@@ -1205,6 +1205,13 @@ pub struct Interpreter {
     spawn_cancel: std::collections::HashMap<usize, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// This interpreter's own cancellation flag (Some only inside a task).
     cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Browser handles that must outlive the variable that created them. A Page
+    /// keeps its CDP client but not the `BrowserProcess`, whose Drop kills
+    /// Chrome — so returning a Page from a helper function used to leave a page
+    /// whose browser had been reaped, and the next Runtime.evaluate hung until
+    /// timeout. Holding the handle here makes "a live Page implies a live
+    /// browser" true for the life of the program.
+    live_browsers: Vec<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
     /// Cooperative task scheduler (F1). `Some` = coop mode: `spawn` /
     /// `spawn_agent_async` enqueue interpreter-side tasks instead of starting
     /// eager OS threads, and `await` / `spawn_await` on a task handle drive the
@@ -1279,6 +1286,7 @@ impl Interpreter {
             spawn_done: std::collections::HashMap::new(),
             spawn_cancel: std::collections::HashMap::new(),
             cancel_flag: None,
+            live_browsers: Vec::new(),
             sched: if std::env::var("TALLOW_SCHED").map(|v| v == "coop").unwrap_or(false) {
                 Some(crate::task_sched::Scheduler::new())
             } else {
@@ -17537,6 +17545,8 @@ impl Interpreter {
                 match (bh.kind.as_str(), method) {
                     // ── Browser methods ──
                     ("Browser", "new_page") => {
+                        // A Page must keep its browser alive (see live_browsers).
+                        self.live_browsers.push(bh.handle.clone());
                         let browser = bh.handle.downcast_ref::<(
                             crate::browser::BrowserProcess,
                             crate::browser::CdpClient,
