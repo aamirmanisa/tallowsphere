@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Tallow are recorded here.
+
+Every version section MUST contain `### What was wrong` and `### What was fixed`.
+`scripts/release_body.py` builds the GitHub release body from these sections and
+the release workflow fails when either heading is missing — a release that does
+not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
