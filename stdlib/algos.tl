@@ -8,7 +8,7 @@ native fn pairs_trading(spread: []Float, entry_z: Float, exit_z: Float) -> PairS
 /// Time-series momentum signals
 native fn momentum(prices: []Float, lookback: Int) -> []Float
 /// Cross-sectional momentum weights
-native fn cross_sectional(returns: [[]Float], lookback: Int) -> []Float
+native fn cross_sectional(returns: [][]Float, lookback: Int) -> []Float
 /// TWAP execution schedule
 native fn twap(quantity: Float, duration_secs: Float, slices: Int) -> []TWAPSlice
 /// VWAP volume profile

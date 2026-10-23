@@ -24,25 +24,25 @@ struct Email {
 }
 
 // Connect to an IMAP server
-fn Inbox.connect_imap(server: String, port: Int, use_tls: Bool?) -> Inbox
+native fn Inbox.connect_imap(server: String, port: Int, use_tls: Bool?) -> Inbox
 
 // Authenticate with IMAP credentials
-fn Inbox.login(self, user: String, password: String) -> String
+native fn Inbox.login(self, user: String, password: String) -> String
 
 // Search inbox for recent emails matching a subject filter
-fn Inbox.search(self, subject_filter: String?, since_seconds: Int?) -> []Email
+native fn Inbox.search(self, subject_filter: String?, since_seconds: Int?) -> []Email
 
 // Fetch the full body text of an email by UID
-fn Inbox.fetch_body(self, uid: String) -> String
+native fn Inbox.fetch_body(self, uid: String) -> String
 
 // Extract OTP/verification codes from email body text
-fn Inbox.extract_otp(self, body: String, pattern: String?) -> []String
+native fn Inbox.extract_otp(self, body: String, pattern: String?) -> []String
 
 // Connect to Guerrilla Mail disposable email service (no credentials needed)
-fn Inbox.connect_guerrilla() -> GuerrillaInbox
+native fn Inbox.connect_guerrilla() -> GuerrillaInbox
 
 // Get the current temporary email address
-fn GuerrillaInbox.get_email(self) -> GuerrillaInbox
+native fn GuerrillaInbox.get_email(self) -> GuerrillaInbox
 
 // Poll for a new email, waiting up to timeout_secs. Returns Email when one arrives.
-fn GuerrillaInbox.wait_for_email(self, timeout_secs: Int?) -> Email?
+native fn GuerrillaInbox.wait_for_email(self, timeout_secs: Int?) -> Email?

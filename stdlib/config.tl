@@ -17,11 +17,9 @@ native fn parse_json<T>(input: String) -> Result<T>
 native fn load<T>(path: String) -> Result<T>
 
 /// Serialize to TOML string
-fn to_toml<T>(value: T) -> Result<String> {
-    // native
-}
+// native
+native fn to_toml<T>(value: T) -> Result<String>
 
 /// Serialize to YAML string
-fn to_yaml<T>(value: T) -> Result<String> {
-    // native
-}
+// native
+native fn to_yaml<T>(value: T) -> Result<String>

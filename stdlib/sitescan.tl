@@ -66,20 +66,20 @@
 // Full scan. depth: 1..5 Int (see ladder above; stage names accepted at
 // runtime). opts: JSON string (see above) or Nil for defaults. Returns the
 // scan envelope as a JSON String. Stage caps are enforced (see depth_info()).
-fn scan(target: String, depth: Int?, opts: String?) -> String
+native fn scan(target: String, depth: Int?, opts: String?) -> String
 
 // Render a scan envelope (scan() output) into a Markdown findings report:
 // scope, depth & limits block first, then one section per stage, then the
 // errors & notes section.
-fn report(scan_json: String) -> String
+native fn report(scan_json: String) -> String
 
 // The depth ladder + per-stage caps as JSON:
 // {levels: [{level, label, includes, caps}]}.
-fn depth_info() -> String
+native fn depth_info() -> String
 
 // Egress posture: {proxy_configured, proxy, pacing_rps, user_agent} — proves
 // the fail-closed contract before scanning.
-fn probe_egress() -> String
+native fn probe_egress() -> String
 
 // Module version string.
-fn version() -> String
+native fn version() -> String

@@ -22,7 +22,7 @@ struct EscalationResult {
 
 // Progressive fetch: start at start_level, escalate to max_level on failure.
 // Returns content from the first level that succeeds.
-fn Escalation.fetch(url: String, max_level: String?, start_level: String?, timeout_ms: Int?) -> EscalationResult
+native fn Escalation.fetch(url: String, max_level: String?, start_level: String?, timeout_ms: Int?) -> EscalationResult
 
 // Fetch + extraction. Built-in extractors: "title", "links", "text", "status".
-fn Escalation.scrape(url: String, extractor: String, max_level: String?) -> EscalationResult
+native fn Escalation.scrape(url: String, extractor: String, max_level: String?) -> EscalationResult

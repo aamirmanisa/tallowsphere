@@ -20,19 +20,16 @@ impl Browser {
     /// Launch a new browser process.
     /// headless: true for headless mode (default), false for visible window.
     /// Returns Err if Chrome is not installed or cannot be started.
-    fn launch(headless: bool = true) -> Result<Browser> {
-        // Runtime: spawns Chrome process, connects via CDP WebSocket
-    }
+    // Runtime: spawns Chrome process, connects via CDP WebSocket
+    native fn launch(headless: bool = true) -> Result<Browser>
 
     /// Create a new page (tab) in this browser.
-    fn new_page(self) -> Result<Page> {
-        // Runtime: creates new CDP target
-    }
+    // Runtime: creates new CDP target
+    native fn new_page(self) -> Result<Page>
 
     /// Close the browser and terminate the process.
-    fn close(self) {
-        // Runtime: sends Browser.close via CDP, kills process
-    }
+    // Runtime: sends Browser.close via CDP, kills process
+    native fn close(self)
 }
 
 /// Page handle. Represents a browser tab with navigation and DOM access.
@@ -48,21 +45,18 @@ impl Page {
     /// not. It sends Runtime.enable, which anti-bot systems can detect, so it is
     /// not automatic. `on_console`, `on_error`, `expose_function` and
     /// `expose_binding` call it themselves.
-    fn capture_console(self) -> Result<bool> {
-        // Runtime: Runtime.enable, idempotent per session
-    }
+    // Runtime: Runtime.enable, idempotent per session
+    native fn capture_console(self) -> Result<bool>
 
     /// Close this tab. Pending `on_*` events are delivered before the close.
-    fn close(self) {
-        // Runtime: Target.closeTarget after delivering pending handlers
-    }
+    // Runtime: Target.closeTarget after delivering pending handlers
+    native fn close(self)
 
     /// Navigate to a URL and wait for page load.
     /// This is the correct way to access JS-rendered pages.
     /// For HTTP-only requests (no JS), use fetch() instead.
-    fn goto(self, url: String) -> Result<NavigationResult> {
-        // Runtime: Page.navigate + Page.loadEventFired via CDP
-    }
+    // Runtime: Page.navigate + Page.loadEventFired via CDP
+    native fn goto(self, url: String) -> Result<NavigationResult>
 
     /// Navigate to a URL (alias for goto).
     fn navigate(self, url: String) -> Result<NavigationResult> {
@@ -89,169 +83,139 @@ impl Page {
     /// lowering. The orchestrator itself exists in Rust
     /// (src/browser/antibot.rs, invoked from src/stdlib/browser.rs) — what is
     /// missing is the per-plane dispatch. See docs/browser-native-gaps.md.
-    fn goto_antibot(self, url: String, egress: Map?) -> Result<NavigationResult> {
-        // Runtime: AntiBotOrchestrator.execute_request + relaunch-on-proxy
-    }
+    // Runtime: AntiBotOrchestrator.execute_request + relaunch-on-proxy
+    native fn goto_antibot(self, url: String, egress: Map?) -> Result<NavigationResult>
 
     /// Get the current page title.
-    fn title(self) -> Result<String> {
-        // Runtime: evaluates document.title via CDP
-    }
+    // Runtime: evaluates document.title via CDP
+    native fn title(self) -> Result<String>
 
     /// Get the current page URL.
-    fn url(self) -> Result<String> {
-        // Runtime: evaluates window.location.href via CDP
-    }
+    // Runtime: evaluates window.location.href via CDP
+    native fn url(self) -> Result<String>
 
     /// Full HTML of the current document, serialized from the live DOM
     /// (post-JS), not the bytes the server sent.
-    fn content(self) -> Result<String> {
-        // Runtime: document.documentElement.outerHTML via CDP
-    }
+    // Runtime: document.documentElement.outerHTML via CDP
+    native fn content(self) -> Result<String>
 
     /// Replace the document with `html`. The current DOM is discarded; the
     /// page handle stays bound, so later navigation still works.
-    fn set_content(self, html: String) -> Result<PageContentResult> {
-        // Runtime: document.open/write/close via CDP
-    }
+    // Runtime: document.open/write/close via CDP
+    native fn set_content(self, html: String) -> Result<PageContentResult>
 
     /// Sleep for `ms`. Explicit wait; `elapsed_ms` reports what actually
     /// elapsed rather than echoing the request.
-    fn wait_for_timeout(self, ms: i64) -> Result<WaitResult> {
-        // Runtime: tokio sleep, no CDP round trip
-    }
+    // Runtime: tokio sleep, no CDP round trip
+    native fn wait_for_timeout(self, ms: i64) -> Result<WaitResult>
 
     /// Poll a JS expression until it is truthy or `timeout_ms` elapses
     /// (default 30000). A timeout is `result: false`, not an error.
-    fn wait_for_function(self, js_expression: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
-        // Runtime: Runtime.evaluate poll at 50 ms
-    }
+    // Runtime: Runtime.evaluate poll at 50 ms
+    native fn wait_for_function(self, js_expression: String, timeout_ms: i64 = 30000) -> Result<WaitResult>
 
     /// Wait until `location.href` matches `pattern` (`*` wildcards).
-    fn wait_for_url(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
-        // Runtime: polls window.location.href at 50 ms
-    }
+    // Runtime: polls window.location.href at 50 ms
+    native fn wait_for_url(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult>
 
     /// Wait for a CDP event — full method (`Page.loadEventFired`) or bare
     /// name (`loadEventFired`). Subscribe before the triggering action:
     /// events are not replayed.
-    fn wait_for_event(self, event_name: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
-        // Runtime: CDP event subscription with a deadline
-    }
+    // Runtime: CDP event subscription with a deadline
+    native fn wait_for_event(self, event_name: String, timeout_ms: i64 = 30000) -> Result<WaitResult>
 
     /// Wait for an outgoing request whose URL matches `pattern`.
-    fn wait_for_request(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
-        // Runtime: Network.requestWillBeSent filtered by URL
-    }
+    // Runtime: Network.requestWillBeSent filtered by URL
+    native fn wait_for_request(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult>
 
     /// Wait for a response whose URL matches `pattern`.
-    fn wait_for_response(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult> {
-        // Runtime: Network.responseReceived filtered by URL
-    }
+    // Runtime: Network.responseReceived filtered by URL
+    native fn wait_for_response(self, url_pattern: String, timeout_ms: i64 = 30000) -> Result<WaitResult>
 
     /// Run `script` before every document in this page loads.
-    fn add_init_script(self, script: String) -> Result<ScriptTag> {
-        // Runtime: Page.addScriptToEvaluateOnNewDocument
-    }
+    // Runtime: Page.addScriptToEvaluateOnNewDocument
+    native fn add_init_script(self, script: String) -> Result<ScriptTag>
 
     /// Append a <script> to the current document. A value with a scheme is
     /// treated as a URL, anything else as inline source.
-    fn add_script_tag(self, url_or_content: String) -> Result<ScriptTag> {
-        // Runtime: document.createElement('script') via CDP
-    }
+    // Runtime: document.createElement('script') via CDP
+    native fn add_script_tag(self, url_or_content: String) -> Result<ScriptTag>
 
     /// Append a <style> to the current document; same URL/contents rule.
-    fn add_style_tag(self, url_or_content: String) -> Result<StyleTag> {
-        // Runtime: document.createElement('style') via CDP
-    }
+    // Runtime: document.createElement('style') via CDP
+    native fn add_style_tag(self, url_or_content: String) -> Result<StyleTag>
 
     /// Emulate media type, colour scheme and reduced-motion preference.
-    fn emulate_media(self, media_type: String = "screen", color_scheme: String = "light", reduced_motion: String = "no-preference") -> Result<MediaEmulation> {
-        // Runtime: Emulation.setEmulatedMedia
-    }
+    // Runtime: Emulation.setEmulatedMedia
+    native fn emulate_media(self, media_type: String = "screen", color_scheme: String = "light", reduced_motion: String = "no-preference") -> Result<MediaEmulation>
 
     /// Emulate a vision deficiency (none, blurredVision, deuteranopia, …).
-    fn emulate_vision(self, deficiency: String) -> Result<VisionEmulation> {
-        // Runtime: Emulation.setEmulatedVisionDeficiency
-    }
+    // Runtime: Emulation.setEmulatedVisionDeficiency
+    native fn emulate_vision(self, deficiency: String) -> Result<VisionEmulation>
 
     /// Apply a network preset: slow-3g, fast-3g, 4g or none. An unknown
     /// preset is an error, never a silent no-op.
-    fn throttle_network(self, preset: String) -> Result<NetworkThrottle> {
-        // Runtime: Network.emulateNetworkConditions
-    }
+    // Runtime: Network.emulateNetworkConditions
+    native fn throttle_network(self, preset: String) -> Result<NetworkThrottle>
 
     /// Register a `.tl` handler for page events. Delivery is deferred: the
     /// handler runs at the start of the next Page method call, with a
     /// `PageEvent` argument.
-    fn on_console(self, handler_name: String) -> Result<EventListener> {
-        // Runtime: buffered consoleAPICalled, delivered on the next Page call
-    }
+    // Runtime: buffered consoleAPICalled, delivered on the next Page call
+    native fn on_console(self, handler_name: String) -> Result<EventListener>
 
     /// Uncaught page errors (window.onerror / unhandled rejections).
-    fn on_error(self, handler_name: String) -> Result<EventListener> {
-        // Runtime: buffered exceptionThrown
-    }
+    // Runtime: buffered exceptionThrown
+    native fn on_error(self, handler_name: String) -> Result<EventListener>
 
     /// Outgoing network requests.
-    fn on_request(self, handler_name: String) -> Result<EventListener> {
-        // Runtime: buffered requestWillBeSent
-    }
+    // Runtime: buffered requestWillBeSent
+    native fn on_request(self, handler_name: String) -> Result<EventListener>
 
     /// Network responses.
-    fn on_response(self, handler_name: String) -> Result<EventListener> {
-        // Runtime: buffered responseReceived
-    }
+    // Runtime: buffered responseReceived
+    native fn on_response(self, handler_name: String) -> Result<EventListener>
 
     /// File chooser dialogs.
-    fn on_filechooser(self, handler_name: String) -> Result<EventListener> {
-        // Runtime: buffered fileChooserOpened
-    }
+    // Runtime: buffered fileChooserOpened
+    native fn on_filechooser(self, handler_name: String) -> Result<EventListener>
 
     /// Download events.
-    fn on_download(self, handler_name: String) -> Result<EventListener> {
-        // Runtime: buffered downloadWillBegin
-    }
+    // Runtime: buffered downloadWillBegin
+    native fn on_download(self, handler_name: String) -> Result<EventListener>
 
     /// Expose a JS function `name` that calls the `.tl` handler with the
     /// binding payload. Calls are buffered and delivered on the next Page call.
-    fn expose_function(self, name: String, handler_name: String) -> Result<ExposedFunction> {
-        // Runtime: Runtime.addBinding + buffered bindingCalled
-    }
+    // Runtime: Runtime.addBinding + buffered bindingCalled
+    native fn expose_function(self, name: String, handler_name: String) -> Result<ExposedFunction>
 
     /// Like `expose_function`, for bindings that also receive caller context.
-    fn expose_binding(self, name: String, handler_name: String) -> Result<ExposedBinding> {
-        // Runtime: Runtime.addBinding + buffered bindingCalled
-    }
+    // Runtime: Runtime.addBinding + buffered bindingCalled
+    native fn expose_binding(self, name: String, handler_name: String) -> Result<ExposedBinding>
 
     /// Drain buffered page events, oldest first. `kind` empty means every
     /// category; `limit` 0 means all currently buffered. Taking removes them.
-    fn drain_events(self, kind: String = "", limit: i64 = 0) -> []PageEvent {
-        // Runtime: bounded per-page buffer filled by the CDP event pump
-    }
+    // Runtime: bounded per-page buffer filled by the CDP event pump
+    native fn drain_events(self, kind: String = "", limit: i64 = 0) -> []PageEvent
 
     /// Slow the CPU by `rate` (1.0 native, 4.0 = 4x slower).
-    fn throttle_cpu(self, rate: f64) -> Result<CpuThrottle> {
-        // Runtime: Emulation.setCPUThrottlingRate
-    }
+    // Runtime: Emulation.setCPUThrottlingRate
+    native fn throttle_cpu(self, rate: f64) -> Result<CpuThrottle>
 
     /// Find the first element matching a CSS selector.
     /// Returns Err if no element matches.
-    fn query_selector(self, selector: String) -> Result<Element> {
-        // Runtime: document.querySelector via CDP
-    }
+    // Runtime: document.querySelector via CDP
+    native fn query_selector(self, selector: String) -> Result<Element>
 
     /// Find all elements matching a CSS selector.
     /// Returns empty array if no elements match.
-    fn query_selector_all(self, selector: String) -> Result<[]Element> {
-        // Runtime: document.querySelectorAll via CDP
-    }
+    // Runtime: document.querySelectorAll via CDP
+    native fn query_selector_all(self, selector: String) -> Result<[]Element>
 
     /// Wait for an element matching the selector to appear in the DOM.
     /// Returns Err on timeout.
-    fn wait_for_selector(self, selector: String) -> Result<Element> {
-        // Runtime: polls querySelector until found or timeout
-    }
+    // Runtime: polls querySelector until found or timeout
+    native fn wait_for_selector(self, selector: String) -> Result<Element>
 
     // ── ROADMAP #7: Real CDP form automation ──
     // These methods are REAL interpreter arms ("Page","fill"/"click"/"select")
@@ -261,21 +225,18 @@ impl Page {
     /// Fill a form field by CSS selector: focus, clear, then type the value
     /// character-by-character (real CDP Input.dispatchKeyEvent).
     /// clear_first defaults to true; delay_ms paces the keystrokes.
-    fn fill(self, selector: String, value: String, clear_first: Bool = true, delay_ms: i32 = 0) -> Result<()> {
-        // Runtime: query_selector → focus/clear/type_text via CDP Input domain
-    }
+    // Runtime: query_selector → focus/clear/type_text via CDP Input domain
+    native fn fill(self, selector: String, value: String, clear_first: Bool = true, delay_ms: i32 = 0) -> Result<()>
 
     /// Click the element matching a CSS selector (auto-waits actionability,
     /// scrolls into view, dispatches Input.dispatchMouseEvent).
-    fn click(self, selector: String) -> Result<()> {
-        // Runtime: query_selector → ElementHandle.click via CDP Input domain
-    }
+    // Runtime: query_selector → ElementHandle.click via CDP Input domain
+    native fn click(self, selector: String) -> Result<()>
 
     /// Select an <option> inside the <select> matching a CSS selector.
     /// by: "value" (default) | "label" | "index"; option is the match target.
-    fn select(self, selector: String, option: String, by: String = "value") -> Result<()> {
-        // Runtime: query_selector → ElementHandle.select_option via CDP
-    }
+    // Runtime: query_selector → ElementHandle.select_option via CDP
+    native fn select(self, selector: String, option: String, by: String = "value") -> Result<()>
 
     /// Detect → solve → retry orchestration over the page's CURRENT egress
     /// (ROADMAP #9). Sequences captcha.detect, the external-solver solve leg
@@ -283,70 +244,59 @@ impl Page {
     /// re-navigation, returning an AntibotResolveReport whose per-engine
     /// steps carry honest {engine, available, ran, note} capability flags.
     /// Optional opts map: {solver_key: String, solver_service: String}.
-    fn resolve_antibot(self, url: String, opts: Map?) -> Result<AntibotResolveReport> {
-        // Runtime: AntiBotOrchestrator.resolve (src/browser/antibot.rs) +
-        // interp ("Page","resolve_antibot") arm
-    }
+    // Runtime: AntiBotOrchestrator.resolve (src/browser/antibot.rs) +
+    // interp ("Page","resolve_antibot") arm
+    native fn resolve_antibot(self, url: String, opts: Map?) -> Result<AntibotResolveReport>
 
     /// Reload the current page.
-    fn reload(self) -> Result<()> {
-        // Runtime: Page.reload via CDP
-    }
+    // Runtime: Page.reload via CDP
+    native fn reload(self) -> Result<()>
 
     /// Navigate back in history.
-    fn go_back(self) -> Result<()> {
-        // Runtime: Page.navigateToHistoryEntry via CDP
-    }
+    // Runtime: Page.navigateToHistoryEntry via CDP
+    native fn go_back(self) -> Result<()>
 
     /// Navigate forward in history.
-    fn go_forward(self) -> Result<()> {
-        // Runtime: Page.navigateToHistoryEntry via CDP
-    }
+    // Runtime: Page.navigateToHistoryEntry via CDP
+    native fn go_forward(self) -> Result<()>
 
     /// Scroll by pixel amounts.
-    fn scroll_by(self, delta_x: f64, delta_y: f64) -> Result<()> {
-        // Runtime: Input.dispatchMouseEvent with type=mouseWheel via CDP
-    }
+    // Runtime: Input.dispatchMouseEvent with type=mouseWheel via CDP
+    native fn scroll_by(self, delta_x: f64, delta_y: f64) -> Result<()>
 
     /// Scroll to the bottom of the page.
-    fn scroll_to_bottom(self) -> Result<()> {
-        // Runtime: evaluates window.scrollTo(0, document.body.scrollHeight) via CDP
-    }
+    // Runtime: evaluates window.scrollTo(0, document.body.scrollHeight) via CDP
+    native fn scroll_to_bottom(self) -> Result<()>
 
     // ── Cookie Session Bridge ──
 
     /// Extract all browser cookies via CDP Network.getCookies.
     /// Returns an array of CdpCookie structs.
-    fn get_cookies(self) -> Result<[]CdpCookie> {
-        // Runtime: CDP Network.getCookies → Vec<CdpCookie>
-    }
+    // Runtime: CDP Network.getCookies → Vec<CdpCookie>
+    native fn get_cookies(self) -> Result<[]CdpCookie>
 
     /// Generate a Cookie header string for the given URL from the browser's cookie jar.
     /// Filters cookies by domain match, returns "name=value; name2=value2".
-    fn cookie_string(self, url: String) -> Result<String> {
-        // Runtime: get_cookies() → domain filter → join
-    }
+    // Runtime: get_cookies() → domain filter → join
+    native fn cookie_string(self, url: String) -> Result<String>
 
     /// Set cookies in the browser from a Cookie header string.
     /// domain: the domain to set cookies for (e.g. "ghraonline.com")
     /// path: the cookie path (default "/")
-    fn set_cookies_from_header(self, header: String, domain: String, path: String = "/") -> Result<()> {
-        // Runtime: parse header → CdpCookie → Network.setCookie
-    }
+    // Runtime: parse header → CdpCookie → Network.setCookie
+    native fn set_cookies_from_header(self, header: String, domain: String, path: String = "/") -> Result<()>
 
     /// Make an authenticated HTTP GET request using browser cookies.
     /// Extracts cookies from the browser and sends via ureq through the runtime egress contract (proxy-aware; Tor by default) with a Cookie header.
     /// Returns {status: Int, body: String}.
-    fn authenticated_get(self, url: String) -> Result<AuthenticatedResponse> {
-        // Runtime: cookie_string() → ureq GET with Cookie header
-    }
+    // Runtime: cookie_string() → ureq GET with Cookie header
+    native fn authenticated_get(self, url: String) -> Result<AuthenticatedResponse>
 
     /// Make an authenticated HTTP request with browser cookies.
     /// method: "GET", "POST", etc. body: request body string.
     /// Returns {status: Int, body: String}.
-    fn authenticated_request(self, url: String, method: String = "GET", body: String = "") -> Result<AuthenticatedResponse> {
-        // Runtime: cookie_string() → ureq with Cookie header
-    }
+    // Runtime: cookie_string() → ureq with Cookie header
+    native fn authenticated_request(self, url: String, method: String = "GET", body: String = "") -> Result<AuthenticatedResponse>
 }
 
 /// A CDP cookie as returned by Page.get_cookies().
@@ -370,49 +320,42 @@ struct AuthenticatedResponse {
 // ── Wordfence Bypass ──
 
 /// Check if the current page is a Wordfence JS challenge page ("One moment, please...").
-fn page_is_wordfence_challenge(self) -> Result<Bool> {
-    // Runtime: checks document.title for "One moment, please..."
-}
+// Runtime: checks document.title for "One moment, please..."
+native fn page_is_wordfence_challenge(self) -> Result<Bool>
 
 /// Bypass the Wordfence JS challenge on the current page.
 /// Executes the challenge JS and waits for auto-redirect.
 /// Returns the final URL after bypass.
-fn page_bypass_wordfence(self) -> Result<String> {
-    // Runtime: executes WF JS challenge, waits for redirect
-}
+// Runtime: executes WF JS challenge, waits for redirect
+native fn page_bypass_wordfence(self) -> Result<String>
 
 /// Navigate to a URL automatically bypassing Wordfence if encountered.
 /// Combines page.goto() + wordfence detection + auto-bypass.
-fn page_navigate_bypass_wordfence(self, url: String) -> Result<String> {
-    // Runtime: navigate → detect WF → bypass → return final URL
-}
+// Runtime: navigate → detect WF → bypass → return final URL
+native fn page_navigate_bypass_wordfence(self, url: String) -> Result<String>
 
 // ── WordPress Auth Automation ──
 
 /// Extract the WordPress REST API nonce (wp_rest) from the current page.
 /// Returns nil if not found (not logged in, or not an admin page).
-fn page_wp_extract_rest_nonce(self) -> Result<WpNonce?> {
-    // Runtime: evaluates wpApiSettings.nonce, hidden _wpnonce fields
-}
+// Runtime: evaluates wpApiSettings.nonce, hidden _wpnonce fields
+native fn page_wp_extract_rest_nonce(self) -> Result<WpNonce?>
 
 /// Check if the browser is currently logged into WordPress.
 /// Detects admin bar, logged-in body class, or logout links.
-fn page_wp_is_logged_in(self) -> Result<Bool> {
-    // Runtime: checks for #wpadminbar, .logged-in, logout links
-}
+// Runtime: checks for #wpadminbar, .logged-in, logout links
+native fn page_wp_is_logged_in(self) -> Result<Bool>
 
 /// Attempt WordPress login via wp-login.php form.
 /// Navigates to login page, fills form, submits, detects outcome.
 /// Returns LoginResult with status: "success", "2fa_required", "failed", or "unknown".
-fn page_wp_login(self, username: String, password: String) -> Result<LoginResult> {
-    // Runtime: full wp-login.php flow → detect 2FA/success/failure
-}
+// Runtime: full wp-login.php flow → detect 2FA/success/failure
+native fn page_wp_login(self, username: String, password: String) -> Result<LoginResult>
 
 /// Extract ALL WordPress nonces from the current page.
 /// Returns array of WpNonce structs (REST, admin, etc.).
-fn page_wp_extract_all_nonces(self) -> Result<[]WpNonce> {
-    // Runtime: evaluates all nonce sources on page
-}
+// Runtime: evaluates all nonce sources on page
+native fn page_wp_extract_all_nonces(self) -> Result<[]WpNonce>
 
 /// A WordPress nonce extracted from a page.
 struct WpNonce {
@@ -472,40 +415,33 @@ struct Element {
 
 impl Element {
     /// Get the text content of this element (innerText).
-    fn text(self) -> Result<String> {
-        // Runtime: callFunctionOn element.innerText via CDP
-    }
+    // Runtime: callFunctionOn element.innerText via CDP
+    native fn text(self) -> Result<String>
 
     /// Get the inner HTML of this element.
-    fn inner_html(self) -> Result<String> {
-        // Runtime: callFunctionOn element.innerHTML via CDP
-    }
+    // Runtime: callFunctionOn element.innerHTML via CDP
+    native fn inner_html(self) -> Result<String>
 
     /// Get an attribute value by name. Returns nil if the attribute does not exist.
-    fn attribute(self, name: String) -> String? {
-        // Runtime: callFunctionOn element.getAttribute(name) via CDP
-    }
+    // Runtime: callFunctionOn element.getAttribute(name) via CDP
+    native fn attribute(self, name: String) -> String?
 
     /// Click this element. Scrolls into view if needed.
-    fn click(self) -> Result<()> {
-        // Runtime: scrollIntoView + getBoxModel + Input.dispatchMouseEvent via CDP
-    }
+    // Runtime: scrollIntoView + getBoxModel + Input.dispatchMouseEvent via CDP
+    native fn click(self) -> Result<()>
 
     /// Type text into this element with optional inter-keystroke delay.
     /// Focuses the element first, then dispatches keyDown/char/keyUp events.
-    fn type_text(self, text: String, delay_ms: i32 = 0) -> Result<()> {
-        // Runtime: focus + Input.dispatchKeyEvent per character via CDP
-    }
+    // Runtime: focus + Input.dispatchKeyEvent per character via CDP
+    native fn type_text(self, text: String, delay_ms: i32 = 0) -> Result<()>
 
     /// Hover over this element. Scrolls into view if needed.
-    fn hover(self) -> Result<()> {
-        // Runtime: scrollIntoView + getBoxModel + Input.dispatchMouseEvent(mouseMoved) via CDP
-    }
+    // Runtime: scrollIntoView + getBoxModel + Input.dispatchMouseEvent(mouseMoved) via CDP
+    native fn hover(self) -> Result<()>
 
     /// Check if this element is currently visible in the viewport.
-    fn visible(self) -> bool {
-        // Runtime: checks element bounding box and visibility via CDP
-    }
+    // Runtime: checks element bounding box and visibility via CDP
+    native fn visible(self) -> bool
 }
 
 // ── Browser v2 — Performance & Privacy Upgrade ──────────────────
@@ -686,22 +622,22 @@ struct Keyboard {
 
 impl Keyboard {
     /// Press a key (keydown + keyup).
-    fn press(key: String) -> KeyboardEvent { }
+    native fn press(key: String) -> KeyboardEvent
 
     /// Type text character by character with optional delay.
-    fn type_text(text: String, delay_ms: i64 = 0) -> KeyboardEvent { }
+    native fn type_text(text: String, delay_ms: i64 = 0) -> KeyboardEvent
 
     /// Hold a key down.
-    fn down(key: String) -> KeyboardEvent { }
+    native fn down(key: String) -> KeyboardEvent
 
     /// Release a key.
-    fn up(key: String) -> KeyboardEvent { }
+    native fn up(key: String) -> KeyboardEvent
 
     /// Execute a keyboard shortcut (modifier + key).
-    fn shortcut(modifier: String, key: String) -> KeyboardEvent { }
+    native fn shortcut(modifier: String, key: String) -> KeyboardEvent
 
     /// Insert text without key events (like clipboard paste).
-    fn insert_text(text: String) -> KeyboardEvent { }
+    native fn insert_text(text: String) -> KeyboardEvent
 }
 
 struct KeyboardEvent {
@@ -724,25 +660,25 @@ struct Mouse {
 
 impl Mouse {
     /// Click at coordinates.
-    fn click(x: i64, y: i64) -> MouseEvent { }
+    native fn click(x: i64, y: i64) -> MouseEvent
 
     /// Double-click at coordinates.
-    fn dblclick(x: i64, y: i64) -> MouseEvent { }
+    native fn dblclick(x: i64, y: i64) -> MouseEvent
 
     /// Move mouse to coordinates with optional intermediate steps.
-    fn move(x: i64, y: i64, steps: i64 = 1) -> MouseEvent { }
+    native fn move(x: i64, y: i64, steps: i64 = 1) -> MouseEvent
 
     /// Press mouse button down.
-    fn down(button: String = "left") -> MouseEvent { }
+    native fn down(button: String = "left") -> MouseEvent
 
     /// Release mouse button.
-    fn up(button: String = "left") -> MouseEvent { }
+    native fn up(button: String = "left") -> MouseEvent
 
     /// Scroll wheel.
-    fn wheel(delta_x: i64, delta_y: i64) -> MouseEvent { }
+    native fn wheel(delta_x: i64, delta_y: i64) -> MouseEvent
 
     /// Drag from one point to another.
-    fn drag(from_x: i64, from_y: i64, to_x: i64, to_y: i64) -> MouseEvent { }
+    native fn drag(from_x: i64, from_y: i64, to_x: i64, to_y: i64) -> MouseEvent
 }
 
 struct MouseEvent {
@@ -764,19 +700,19 @@ struct MouseEvent {
 // Page content methods
 
 /// Set the page HTML content directly.
-fn page_set_content(html: String) -> PageContentResult { }
+native fn page_set_content(html: String) -> PageContentResult
 
 /// Get the full HTML content of the page.
-fn page_content() -> String { }
+native fn page_content() -> String
 
 /// Add a script to run before page load.
-fn page_add_init_script(script: String) -> ScriptTag { }
+native fn page_add_init_script(script: String) -> ScriptTag
 
 /// Inject a script tag into the page.
-fn page_add_script_tag(url_or_content: String) -> ScriptTag { }
+native fn page_add_script_tag(url_or_content: String) -> ScriptTag
 
 /// Inject a style tag into the page.
-fn page_add_style_tag(url_or_content: String) -> StyleTag { }
+native fn page_add_style_tag(url_or_content: String) -> StyleTag
 
 struct PageContentResult {
     loaded:         bool,
@@ -798,22 +734,22 @@ struct StyleTag {
 // Wait methods
 
 /// Wait for a JS function/expression to return truthy.
-fn page_wait_for_function(js_expression: String, timeout_ms: i64 = 30000) -> WaitResult { }
+native fn page_wait_for_function(js_expression: String, timeout_ms: i64 = 30000) -> WaitResult
 
 /// Wait for navigation to a URL matching pattern.
-fn page_wait_for_url(url_pattern: String, timeout_ms: i64 = 30000) -> WaitResult { }
+native fn page_wait_for_url(url_pattern: String, timeout_ms: i64 = 30000) -> WaitResult
 
 /// Wait for an outgoing request matching URL pattern.
-fn page_wait_for_request(url_pattern: String, timeout_ms: i64 = 30000) -> WaitResult { }
+native fn page_wait_for_request(url_pattern: String, timeout_ms: i64 = 30000) -> WaitResult
 
 /// Wait for a response matching URL pattern.
-fn page_wait_for_response(url_pattern: String, timeout_ms: i64 = 30000) -> WaitResult { }
+native fn page_wait_for_response(url_pattern: String, timeout_ms: i64 = 30000) -> WaitResult
 
 /// Wait for a named event.
-fn page_wait_for_event(event_name: String, timeout_ms: i64 = 30000) -> WaitResult { }
+native fn page_wait_for_event(event_name: String, timeout_ms: i64 = 30000) -> WaitResult
 
 /// Wait for specified milliseconds (explicit sleep).
-fn page_wait_for_timeout(ms: i64) -> WaitResult { }
+native fn page_wait_for_timeout(ms: i64) -> WaitResult
 
 struct WaitResult {
     result:     bool?,
@@ -830,10 +766,10 @@ struct WaitResult {
 // Expose function / binding
 
 /// Expose a Tallow function to the page's JavaScript context.
-fn page_expose_function(name: String, handler_name: String) -> ExposedFunction { }
+native fn page_expose_function(name: String, handler_name: String) -> ExposedFunction
 
 /// Expose a binding to the page (receives caller info).
-fn page_expose_binding(name: String, handler_name: String) -> ExposedBinding { }
+native fn page_expose_binding(name: String, handler_name: String) -> ExposedBinding
 
 struct ExposedFunction {
     name:    String,
@@ -850,22 +786,22 @@ struct ExposedBinding {
 // Event listeners
 
 /// Listen for console messages from the page.
-fn page_on_console(handler_name: String) -> EventListener { }
+native fn page_on_console(handler_name: String) -> EventListener
 
 /// Listen for uncaught page errors.
-fn page_on_error(handler_name: String) -> EventListener { }
+native fn page_on_error(handler_name: String) -> EventListener
 
 /// Listen for outgoing network requests.
-fn page_on_request(handler_name: String) -> EventListener { }
+native fn page_on_request(handler_name: String) -> EventListener
 
 /// Listen for network responses.
-fn page_on_response(handler_name: String) -> EventListener { }
+native fn page_on_response(handler_name: String) -> EventListener
 
 /// Listen for file chooser dialogs.
-fn page_on_filechooser(handler_name: String) -> EventListener { }
+native fn page_on_filechooser(handler_name: String) -> EventListener
 
 /// Listen for download events.
-fn page_on_download(handler_name: String) -> EventListener { }
+native fn page_on_download(handler_name: String) -> EventListener
 
 struct PageEvent {
     kind:    String,
@@ -882,11 +818,11 @@ struct EventListener {
 // Media & vision emulation
 
 /// Emulate CSS media type and preferences.
-fn page_emulate_media(media_type: String = "screen", color_scheme: String = "light", reduced_motion: String = "no-preference") -> MediaEmulation { }
+native fn page_emulate_media(media_type: String = "screen", color_scheme: String = "light", reduced_motion: String = "no-preference") -> MediaEmulation
 
 /// Emulate vision deficiency (color blindness, blur).
 /// Valid: none, blurred, protanopia, deuteranopia, tritanopia, achromatopsia
-fn page_emulate_vision(deficiency: String) -> VisionEmulation { }
+native fn page_emulate_vision(deficiency: String) -> VisionEmulation
 
 struct MediaEmulation {
     media_type:     String,
@@ -904,10 +840,10 @@ struct VisionEmulation {
 
 /// Throttle network to simulate connection conditions.
 /// Presets: offline, slow_2g, 2g, 3g, 4g, wifi, none
-fn page_throttle_network(preset: String) -> NetworkThrottle { }
+native fn page_throttle_network(preset: String) -> NetworkThrottle
 
 /// Throttle CPU execution speed.
-fn page_throttle_cpu(rate: f64) -> CpuThrottle { }
+native fn page_throttle_cpu(rate: f64) -> CpuThrottle
 
 struct NetworkThrottle {
     preset:        String,
@@ -1034,13 +970,13 @@ struct Screenshot {
 
 impl Screenshot {
     /// Capture a full-page screenshot.
-    fn capture(url: String, width: i64 = 1920, height: i64 = 1080) -> Screenshot { }
+    native fn capture(url: String, width: i64 = 1920, height: i64 = 1080) -> Screenshot
     /// Capture a screenshot of a specific element.
-    fn capture_element(url: String, selector: String) -> Screenshot { }
+    native fn capture_element(url: String, selector: String) -> Screenshot
     /// Compare two screenshots, returns match percentage.
-    fn compare(a: Screenshot, b: Screenshot, threshold: f64 = 0.95) -> ScreenshotComparison { }
+    native fn compare(a: Screenshot, b: Screenshot, threshold: f64 = 0.95) -> ScreenshotComparison
     /// Save a screenshot as a named baseline for regression testing.
-    fn save_baseline(name: String, data: Screenshot) -> ScreenshotBaseline { }
+    native fn save_baseline(name: String, data: Screenshot) -> ScreenshotBaseline
 }
 
 struct ScreenshotComparison {
@@ -1073,13 +1009,13 @@ struct HarEntry {
 
 impl HarRecorder {
     /// Create a new HAR recorder.
-    fn create() -> HarRecorder { }
+    native fn create() -> HarRecorder
     /// Add a network entry to the recorder (immutable update).
-    fn add_entry(recorder: HarRecorder, method: String, url: String, status: i64, duration_ms: i64) -> HarRecorder { }
+    native fn add_entry(recorder: HarRecorder, method: String, url: String, status: i64, duration_ms: i64) -> HarRecorder
     /// Export recorded entries as HAR 1.2 JSON.
-    fn export(recorder: HarRecorder) -> String { }
+    native fn export(recorder: HarRecorder) -> String
     /// Stop recording (immutable update, sets recording: false).
-    fn stop(recorder: HarRecorder) -> HarRecorder { }
+    native fn stop(recorder: HarRecorder) -> HarRecorder
 }
 
 /// Browser instance pool for parallel automation.
@@ -1137,15 +1073,15 @@ impl BrowserPool {
     /// risk). Real arm: interp.rs BrowserPool.create; per-instance egress is
     /// resolved in pool.rs resolve_proxy and applied to BrowserConfig.proxy
     /// (Chrome's --proxy-server flag).
-    fn create(max_size: i64 = 4, max_tasks: i64 = 100, headless: bool = true, egress: Map?) -> BrowserPool { }
+    native fn create(max_size: i64 = 4, max_tasks: i64 = 100, headless: bool = true, egress: Map?) -> BrowserPool
     /// Acquire a browser instance from the pool.
-    fn acquire(pool: BrowserPool) -> AcquireResult { }
+    native fn acquire(pool: BrowserPool) -> AcquireResult
     /// Release a browser instance back to the pool.
-    fn release(pool: BrowserPool, handle: BrowserHandle) -> BrowserPool { }
+    native fn release(pool: BrowserPool, handle: BrowserHandle) -> BrowserPool
     /// Get current pool statistics.
-    fn stats(pool: BrowserPool) -> PoolStats { }
+    native fn stats(pool: BrowserPool) -> PoolStats
     /// Run a health check on all pool instances.
-    fn health_check(pool: BrowserPool) -> HealthCheckResult { }
+    native fn health_check(pool: BrowserPool) -> HealthCheckResult
 }
 
 /// Network request interceptor for blocking, mocking, and modifying requests.
@@ -1164,15 +1100,15 @@ struct InterceptRule {
 
 impl NetworkInterceptor {
     /// Create a new network interceptor.
-    fn create() -> NetworkInterceptor { }
+    native fn create() -> NetworkInterceptor
     /// Add a rule (pattern + action). Action: "block", "allow", "mock".
-    fn add_rule(interceptor: NetworkInterceptor, pattern: String, action: String) -> NetworkInterceptor { }
+    native fn add_rule(interceptor: NetworkInterceptor, pattern: String, action: String) -> NetworkInterceptor
     /// Block all requests matching a glob pattern.
-    fn block_pattern(interceptor: NetworkInterceptor, glob: String) -> NetworkInterceptor { }
+    native fn block_pattern(interceptor: NetworkInterceptor, glob: String) -> NetworkInterceptor
     /// Mock responses for matching requests.
-    fn mock_response(interceptor: NetworkInterceptor, pattern: String, status: i64, body: String) -> NetworkInterceptor { }
+    native fn mock_response(interceptor: NetworkInterceptor, pattern: String, status: i64, body: String) -> NetworkInterceptor
     /// Clear all interception rules.
-    fn clear(interceptor: NetworkInterceptor) -> NetworkInterceptor { }
+    native fn clear(interceptor: NetworkInterceptor) -> NetworkInterceptor
 }
 
 /// Trace recorder for debugging and replay of browser sessions.
@@ -1193,11 +1129,11 @@ struct TraceAction {
 
 impl TraceRecorder {
     /// Start recording a trace.
-    fn start(name: String) -> TraceRecorder { }
+    native fn start(name: String) -> TraceRecorder
     /// Record an action (click, type, navigate, etc.).
-    fn record_action(trace: TraceRecorder, action_type: String, detail: String) -> TraceRecorder { }
+    native fn record_action(trace: TraceRecorder, action_type: String, detail: String) -> TraceRecorder
     /// Stop recording.
-    fn stop(trace: TraceRecorder) -> TraceRecorder { }
+    native fn stop(trace: TraceRecorder) -> TraceRecorder
 }
 
 /// Session persistence manager for cookies and storage.
@@ -1217,13 +1153,13 @@ struct SavedSession {
 
 impl SessionManager {
     /// Capture the current session state (cookies, storage).
-    fn capture(url: String) -> SessionData { }
+    native fn capture(url: String) -> SessionData
     /// Save a session to encrypted storage.
-    fn save(session: SessionData, name: String) -> SavedSession { }
+    native fn save(session: SessionData, name: String) -> SavedSession
     /// Load a previously saved session.
-    fn load(name: String) -> SessionData { }
+    native fn load(name: String) -> SessionData
     /// Clear all saved sessions.
-    fn clear() -> SessionResult { }
+    native fn clear() -> SessionResult
 }
 
 /// Accessibility auditing tools (WCAG compliance).
@@ -1252,11 +1188,11 @@ struct ContrastResult {
 
 impl AccessibilityAudit {
     /// Run a full accessibility audit on a URL.
-    fn run(url: String) -> AccessibilityReport { }
+    native fn run(url: String) -> AccessibilityReport
     /// Get the accessibility tree for a page.
-    fn get_tree(url: String) -> AccessibilityTree { }
+    native fn get_tree(url: String) -> AccessibilityTree
     /// Check color contrast ratio (WCAG AA/AAA).
-    fn check_contrast(foreground: String, background: String) -> ContrastResult { }
+    native fn check_contrast(foreground: String, background: String) -> ContrastResult
 }
 
 /// Device emulation for viewport, mobile, geolocation, timezone, and locale.
@@ -1285,19 +1221,19 @@ struct GeolocationConfig {
 
 impl DeviceEmulator {
     /// Set viewport dimensions and device pixel ratio.
-    fn set_viewport(width: i64, height: i64, scale: f64 = 1.0) -> ViewportConfig { }
+    native fn set_viewport(width: i64, height: i64, scale: f64 = 1.0) -> ViewportConfig
     /// Emulate a mobile device by name (iPhone 14, Pixel 7, iPad Pro).
-    fn set_mobile(device_name: String) -> MobileConfig { }
+    native fn set_mobile(device_name: String) -> MobileConfig
     /// Set geolocation coordinates.
-    fn set_geolocation(lat: f64, lon: f64) -> GeolocationConfig { }
+    native fn set_geolocation(lat: f64, lon: f64) -> GeolocationConfig
     /// Set timezone for the browser context.
-    fn set_timezone(tz: String) -> TimezoneConfig { }
+    native fn set_timezone(tz: String) -> TimezoneConfig
     /// Set locale for the browser context.
-    fn set_locale(locale: String) -> LocaleConfig { }
+    native fn set_locale(locale: String) -> LocaleConfig
     /// Set a custom user agent string.
-    fn set_user_agent(ua: String) -> UserAgentConfig { }
+    native fn set_user_agent(ua: String) -> UserAgentConfig
     /// Clear all emulation settings.
-    fn clear() -> EmulatorResult { }
+    native fn clear() -> EmulatorResult
 }
 
 /// CAPTCHA detection and classification.
@@ -1310,9 +1246,9 @@ struct CaptchaScanResult {
 
 impl CaptchaDetector {
     /// Scan a URL for CAPTCHA presence.
-    fn scan(url: String) -> CaptchaScanResult { }
+    native fn scan(url: String) -> CaptchaScanResult
     /// List supported CAPTCHA types.
-    fn types() -> []String { }
+    native fn types() -> []String
 }
 
 /// robots.txt compliance checker.
@@ -1326,9 +1262,9 @@ struct RobotsResult {
 
 impl RobotsChecker {
     /// Check if a URL is allowed by robots.txt for a given user agent.
-    fn check(url: String, user_agent: String = "tallow/0.1") -> RobotsResult { }
+    native fn check(url: String, user_agent: String = "tallow/0.1") -> RobotsResult
     /// Find sitemap URLs for a domain.
-    fn find_sitemaps(domain: String) -> []String { }
+    native fn find_sitemaps(domain: String) -> []String
 }
 
 /// Retry policy for robust browser automation.
@@ -1341,9 +1277,9 @@ struct RetryPolicy {
 
 impl RetryPolicy {
     /// Create a retry policy.
-    fn create(max_retries: i64 = 3, strategy: String = "exponential") -> RetryPolicy { }
+    native fn create(max_retries: i64 = 3, strategy: String = "exponential") -> RetryPolicy
     /// Configure backoff timing.
-    fn with_backoff(policy: RetryPolicy, initial_ms: i64, max_ms: i64) -> RetryPolicy { }
+    native fn with_backoff(policy: RetryPolicy, initial_ms: i64, max_ms: i64) -> RetryPolicy
 }
 
 // ── Phase 52: Device Profiles & Anti-Detection Suite ──────────────────
@@ -1362,11 +1298,11 @@ struct DeviceProfile {
 
 impl Device {
     /// Get a device profile by name (case-insensitive). Returns nil if not found.
-    fn get(name: String) -> DeviceProfile? { }
+    native fn get(name: String) -> DeviceProfile?
     /// List all 163 device profile names.
-    fn list() -> []String { }
+    native fn list() -> []String
     /// List device names filtered by category: "iphone", "ipad", "pixel", "galaxy", "desktop", "mobile", "tablet".
-    fn list_category(category: String) -> []String { }
+    native fn list_category(category: String) -> []String
 }
 
 /// Correlated browser fingerprint profile for stealth automation.
@@ -1394,12 +1330,12 @@ impl StealthProfile {
     /// Create a named stealth profile with correlated fingerprint data.
     /// Names: "chrome_windows", "chrome_macos", "chrome_linux", "chrome_android",
     ///        "safari_ios", "firefox_windows", "edge_windows"
-    fn create(name: String) -> StealthProfile { }
+    native fn create(name: String) -> StealthProfile
     /// Generate a random consistent stealth profile from built-in presets.
-    fn randomize() -> StealthProfile { }
+    native fn randomize() -> StealthProfile
     /// Validate that a profile's fields are internally consistent.
     /// Returns { consistent: bool, warnings: []String }.
-    fn validate(profile: StealthProfile) -> ValidationResult { }
+    native fn validate(profile: StealthProfile) -> ValidationResult
 }
 
 /// Anti-detection check result.
@@ -1458,11 +1394,11 @@ struct WebRtcLeakResult {
 /// Anti-detection suite for browser automation.
 impl AntiDetect {
     /// Run anti-detection checks against a URL.
-    fn check(url: String) -> AntiDetectResult { }
+    native fn check(url: String) -> AntiDetectResult
     /// Get the full browser fingerprint (35 vectors).
-    fn fingerprint() -> BrowserFingerprint { }
+    native fn fingerprint() -> BrowserFingerprint
     /// Check for WebRTC IP leaks.
-    fn webrtc_leak_check() -> WebRtcLeakResult { }
+    native fn webrtc_leak_check() -> WebRtcLeakResult
 }
 
 // ── Phase 64: Enterprise Browser Features ──────────────────────────────
@@ -1511,19 +1447,19 @@ struct ComplianceReport {
 impl BrowserAudit {
     /// Log a browser operation to the BLAKE3-chained audit log.
     /// Each entry's hash includes the previous entry's hash, forming a tamper-evident chain.
-    fn log(action: String, url: String, legal_basis: String = "public_data", details: String = "") -> AuditEntry { }
+    native fn log(action: String, url: String, legal_basis: String = "public_data", details: String = "") -> AuditEntry
 
     /// Verify the integrity of the entire audit chain.
     /// Returns whether all BLAKE3 hashes are consistent.
-    fn verify() -> AuditVerification { }
+    native fn verify() -> AuditVerification
 
     /// Export all audit log entries in the specified format.
     /// format: "json" (default) or "text"
-    fn export(format: String = "json") -> AuditExport { }
+    native fn export(format: String = "json") -> AuditExport
 
     /// Generate a compliance report for a specific jurisdiction.
     /// jurisdiction: "eu", "us", "uk", etc.
-    fn compliance_report(jurisdiction: String = "eu") -> ComplianceReport { }
+    native fn compliance_report(jurisdiction: String = "eu") -> ComplianceReport
 }
 
 /// Runtime rate limiting per domain.
@@ -1562,18 +1498,18 @@ struct RateLimiterStats {
 
 impl DomainRateLimiter {
     /// Create an empty rate limiter with no domain configurations.
-    fn create() -> DomainRateLimiter { }
+    native fn create() -> DomainRateLimiter
 
     /// Set the request rate for a specific domain.
     /// requests_per_second: maximum requests per second for this domain.
-    fn set_rate(limiter: DomainRateLimiter, domain: String, requests_per_second: f64) -> DomainRateLimiter { }
+    native fn set_rate(limiter: DomainRateLimiter, domain: String, requests_per_second: f64) -> DomainRateLimiter
 
     /// Check if a request to a domain is currently allowed.
     /// Returns allowed status and wait time if rate-limited.
-    fn check(limiter: DomainRateLimiter, domain: String) -> RateLimitResult { }
+    native fn check(limiter: DomainRateLimiter, domain: String) -> RateLimitResult
 
     /// Get per-domain rate statistics.
-    fn get_stats(limiter: DomainRateLimiter) -> RateLimiterStats { }
+    native fn get_stats(limiter: DomainRateLimiter) -> RateLimiterStats
 }
 
 /// Session affinity for multi-step browser workflows.
@@ -1599,13 +1535,13 @@ struct SessionValidation {
 
 impl StickySession {
     /// Create a new sticky session binding proxy, user-agent, and fingerprint.
-    fn create(proxy: String, user_agent: String = "tallow/0.1", fingerprint_id: String = "default") -> StickySession { }
+    native fn create(proxy: String, user_agent: String = "tallow/0.1", fingerprint_id: String = "default") -> StickySession
 
     /// Validate that a session's identity parameters are all consistent.
-    fn validate(session: StickySession) -> SessionValidation { }
+    native fn validate(session: StickySession) -> SessionValidation
 
     /// Extend a session with additional cookies (immutable update).
-    fn extend(session: StickySession, extra_cookies: String) -> StickySession { }
+    native fn extend(session: StickySession, extra_cookies: String) -> StickySession
 }
 
 /// Process isolation per job or tenant.
@@ -1634,13 +1570,13 @@ struct IsolationCheck {
 
 impl BrowserIsolation {
     /// Create an isolated sandbox for a browser job.
-    fn create_sandbox(job_id: String = "job-0") -> BrowserSandbox { }
+    native fn create_sandbox(job_id: String = "job-0") -> BrowserSandbox
 
     /// Destroy a sandbox, wiping all data and killing the process.
-    fn destroy_sandbox(sandbox: BrowserSandbox) -> SandboxDestroyed { }
+    native fn destroy_sandbox(sandbox: BrowserSandbox) -> SandboxDestroyed
 
     /// Check that a sandbox is properly isolated.
-    fn check_isolation(sandbox: BrowserSandbox) -> IsolationCheck { }
+    native fn check_isolation(sandbox: BrowserSandbox) -> IsolationCheck
 }
 
 /// Webhook notifications for browser automation events.
@@ -1676,14 +1612,14 @@ impl BrowserWebhook {
     /// Configure a webhook endpoint for browser events.
     /// events: "job_started", "job_completed", "job_failed", "rate_limited",
     ///         "pii_detected", "tos_changed", "screenshot_captured"
-    fn config(url: String, events: []String = ["job_completed"], secret: String = "webhook-secret") -> WebhookConfig { }
+    native fn config(url: String, events: []String = ["job_completed"], secret: String = "webhook-secret") -> WebhookConfig
 
     /// Fire a webhook notification for a specific event.
     /// Returns the fired status and HMAC-BLAKE3 signature.
-    fn fire(config: WebhookConfig, event: String, payload: String = "") -> WebhookFired { }
+    native fn fire(config: WebhookConfig, event: String, payload: String = "") -> WebhookFired
 
     /// Send a test ping to the webhook endpoint.
-    fn test(config: WebhookConfig) -> WebhookTestResult { }
+    native fn test(config: WebhookConfig) -> WebhookTestResult
 }
 
 /// Screenshot storage with content-addressed paths and retention policies.
@@ -1721,17 +1657,17 @@ struct PurgeResult {
 
 impl ScreenshotArchive {
     /// Create a screenshot archive with a base directory and retention period.
-    fn create(base_dir: String = "/tmp/tallow-screenshots", retention_days: i64 = 30) -> ScreenshotArchive { }
+    native fn create(base_dir: String = "/tmp/tallow-screenshots", retention_days: i64 = 30) -> ScreenshotArchive
 
     /// Store a screenshot (base64-encoded) for a URL.
     /// Path: {base_dir}/{BLAKE3(url)[0:8]}/{timestamp}.png
-    fn store(archive: ScreenshotArchive, url: String, screenshot_data_b64: String) -> ScreenshotStored { }
+    native fn store(archive: ScreenshotArchive, url: String, screenshot_data_b64: String) -> ScreenshotStored
 
     /// Purge all expired screenshots from the archive.
-    fn purge(archive: ScreenshotArchive) -> PurgeResult { }
+    native fn purge(archive: ScreenshotArchive) -> PurgeResult
 
     /// List all stored screenshots with metadata.
-    fn list(archive: ScreenshotArchive) -> []ScreenshotEntry { }
+    native fn list(archive: ScreenshotArchive) -> []ScreenshotEntry
 }
 
 /// Jurisdiction-aware robots.txt compliance auditing.
@@ -1761,7 +1697,7 @@ struct JurisdictionReport {
 
 impl RobotsTxtAudit {
     /// Check if a URL is allowed by robots.txt for a given user agent.
-    fn check(url: String, user_agent: String = "tallow/0.1") -> RobotsTxtResult { }
+    native fn check(url: String, user_agent: String = "tallow/0.1") -> RobotsTxtResult
 
     /// Generate a jurisdiction-specific legal analysis of robots.txt compliance.
     /// Includes case law references:
@@ -1769,7 +1705,7 @@ impl RobotsTxtAudit {
     ///   "us": "hiQ v. LinkedIn — robots.txt not binding under CFAA (9th Cir. 2022)"
     ///   "uk": "No specific case law — follow EU guidance"
     ///   "au": "Privacy Act 1988 — treat as EU equivalent"
-    fn jurisdiction_report(url: String, jurisdiction: String = "eu") -> JurisdictionReport { }
+    native fn jurisdiction_report(url: String, jurisdiction: String = "eu") -> JurisdictionReport
 }
 
 /// BLAKE3-based content deduplication registry.
@@ -1798,16 +1734,16 @@ struct DedupStats {
 
 impl ContentDedup {
     /// Create an empty deduplication registry.
-    fn create() -> ContentDedup { }
+    native fn create() -> ContentDedup
 
     /// Check if content already exists in the registry (does NOT add it).
-    fn check(registry: ContentDedup, content: String) -> DedupResult { }
+    native fn check(registry: ContentDedup, content: String) -> DedupResult
 
     /// Add content to the registry (immutable update). Tracks duplicates.
-    fn add(registry: ContentDedup, content: String) -> ContentDedup { }
+    native fn add(registry: ContentDedup, content: String) -> ContentDedup
 
     /// Get deduplication statistics.
-    fn stats(registry: ContentDedup) -> DedupStats { }
+    native fn stats(registry: ContentDedup) -> DedupStats
 }
 
 /// Memory scrubbing after sensitive page visits.
@@ -1841,16 +1777,16 @@ struct ScrubPolicy {
 impl MemoryScrub {
     /// Scrub all browser state after visiting a page.
     /// Navigates to about:blank, clears cookies, clears storage.
-    fn scrub_page(page_url: String) -> ScrubResult { }
+    native fn scrub_page(page_url: String) -> ScrubResult
 
     /// Scrub an entire browser session, killing the process.
-    fn scrub_session(session_id: String) -> SessionScrubResult { }
+    native fn scrub_session(session_id: String) -> SessionScrubResult
 
     /// Get the scrub policy for a given sensitivity level.
     /// "standard": clear cookies + local storage
     /// "sensitive": navigate blank + clear all storage + clear cache
     /// "critical": all of sensitive + kill process + wipe user data dir
-    fn policy(sensitivity_level: String = "standard") -> ScrubPolicy { }
+    native fn policy(sensitivity_level: String = "standard") -> ScrubPolicy
 }
 
 // ── Phase 65: Enterprise Browser Features Batch 2 ──────────────────────
@@ -1896,13 +1832,13 @@ struct PiiPolicy {
 
 impl PiiClassifier {
     /// Classify text into a PII tier (T1-T5).
-    fn classify(text: String) -> PiiClassification { }
+    native fn classify(text: String) -> PiiClassification
 
     /// Scan text, classify PII, and return redacted version with detections.
-    fn scan_and_classify(text: String) -> PiiScanResult { }
+    native fn scan_and_classify(text: String) -> PiiScanResult
 
     /// Get the GDPR policy requirements for a given tier.
-    fn policy(tier: String) -> PiiPolicy { }
+    native fn policy(tier: String) -> PiiPolicy
 }
 
 /// Terms of Service change detection and monitoring.
@@ -1935,15 +1871,15 @@ struct TosWatch {
 
 impl TosMonitor {
     /// Take a snapshot of ToS content for later comparison.
-    fn snapshot(url: String, content: String) -> TosSnapshot { }
+    native fn snapshot(url: String, content: String) -> TosSnapshot
 
     /// Compare a previous snapshot with new content.
     /// Detects significant changes: >5% word delta or restrictive keywords
     /// ("prohibit", "restrict", "automated", "scraping", "crawling", "bot", "data collection").
-    fn compare(old_snapshot: TosSnapshot, new_content: String) -> TosComparison { }
+    native fn compare(old_snapshot: TosSnapshot, new_content: String) -> TosComparison
 
     /// Start monitoring a ToS URL for changes.
-    fn watch(url: String, legal_basis_ref: String = "public_data") -> TosWatch { }
+    native fn watch(url: String, legal_basis_ref: String = "public_data") -> TosWatch
 }
 
 /// Data Processing Agreement generator.
@@ -1987,13 +1923,13 @@ struct DpaValidation {
 
 impl DpaGenerator {
     /// Generate a DPA from data categories, purposes, retention, jurisdictions, and sub-processors.
-    fn generate(data_categories: []String, purposes: []String, retention_days: i32, jurisdictions: []String, sub_processors: []String) -> DataProcessingAgreement { }
+    native fn generate(data_categories: []String, purposes: []String, retention_days: i32, jurisdictions: []String, sub_processors: []String) -> DataProcessingAgreement
 
     /// Convert a DPA to human-readable text.
-    fn to_text(dpa: DataProcessingAgreement) -> String { }
+    native fn to_text(dpa: DataProcessingAgreement) -> String
 
     /// Validate a DPA has all required fields.
-    fn validate(dpa: DataProcessingAgreement) -> DpaValidation { }
+    native fn validate(dpa: DataProcessingAgreement) -> DpaValidation
 }
 
 /// Data quality scoring for extracted data.
@@ -2024,10 +1960,10 @@ struct TypeMismatch {
 
 impl DataQuality {
     /// Score data quality against expected fields.
-    fn score(data: Map<String, String>, expected_fields: []String) -> DataQualityScore { }
+    native fn score(data: Map<String, String>, expected_fields: []String) -> DataQualityScore
 
     /// Validate data against a schema (field names and types).
-    fn validate_schema(data: Map<String, String>, schema: Map<String, String>) -> SchemaValidation { }
+    native fn validate_schema(data: Map<String, String>, schema: Map<String, String>) -> SchemaValidation
 }
 
 /// Secure credential management with in-memory encryption.
@@ -2061,19 +1997,19 @@ struct CredentialRotateResult {
 
 impl CredentialVault {
     /// Store a credential (encrypted in memory, never logged).
-    fn store(name: String, username: String, password: String) -> CredentialStoreResult { }
+    native fn store(name: String, username: String, password: String) -> CredentialStoreResult
 
     /// Retrieve a credential (decrypted on access).
-    fn get(name: String) -> Credential { }
+    native fn get(name: String) -> Credential
 
     /// Delete a credential (zero-wipes memory before removal).
-    fn delete(name: String) -> CredentialDeleteResult { }
+    native fn delete(name: String) -> CredentialDeleteResult
 
     /// List credential names only (NO passwords, NO usernames).
-    fn list() -> []String { }
+    native fn list() -> []String
 
     /// Rotate a credential's password (zero-wipes old, encrypts new).
-    fn rotate(name: String, new_password: String) -> CredentialRotateResult { }
+    native fn rotate(name: String, new_password: String) -> CredentialRotateResult
 }
 
 /// Geographic proxy routing.
@@ -2107,16 +2043,16 @@ struct GeoProxyStat {
 
 impl GeoProxy {
     /// Create a proxy pool from an array of {url, country} entries.
-    fn create(proxies_with_geo: []GeoProxyEntry) -> GeoProxyPool { }
+    native fn create(proxies_with_geo: []GeoProxyEntry) -> GeoProxyPool
 
     /// Route a request through a proxy matching the jurisdiction.
-    fn route(pool: GeoProxyPool, target_url: String, jurisdiction: String = "any") -> GeoProxyRoute { }
+    native fn route(pool: GeoProxyPool, target_url: String, jurisdiction: String = "any") -> GeoProxyRoute
 
     /// Add a proxy to an existing pool.
-    fn add(pool: GeoProxyPool, proxy_url: String, country: String) -> GeoProxyPool { }
+    native fn add(pool: GeoProxyPool, proxy_url: String, country: String) -> GeoProxyPool
 
     /// Get per-country proxy statistics.
-    fn stats(pool: GeoProxyPool) -> []GeoProxyStat { }
+    native fn stats(pool: GeoProxyPool) -> []GeoProxyStat
 }
 
 /// Priority job queue with retry and dead letter queue (DLQ).
@@ -2150,22 +2086,22 @@ struct QueueStatus {
 
 impl BrowserJobQueue {
     /// Create an empty job queue.
-    fn create() -> BrowserJobQueue { }
+    native fn create() -> BrowserJobQueue
 
     /// Enqueue a job with name, priority, URL, and optional config.
-    fn enqueue(queue: BrowserJobQueue, job_name: String, priority: String, url: String, config: String?) -> BrowserJobQueue { }
+    native fn enqueue(queue: BrowserJobQueue, job_name: String, priority: String, url: String, config: String?) -> BrowserJobQueue
 
     /// Dequeue the highest-priority job.
-    fn dequeue(queue: BrowserJobQueue) -> DequeueResult { }
+    native fn dequeue(queue: BrowserJobQueue) -> DequeueResult
 
     /// Re-enqueue a job by ID with incremented retry count.
-    fn retry(queue: BrowserJobQueue, job_id: i32) -> BrowserJobQueue { }
+    native fn retry(queue: BrowserJobQueue, job_id: i32) -> BrowserJobQueue
 
     /// Move a job to the dead letter queue with a reason.
-    fn dead_letter(queue: BrowserJobQueue, job_id: i32, reason: String) -> BrowserJobQueue { }
+    native fn dead_letter(queue: BrowserJobQueue, job_id: i32, reason: String) -> BrowserJobQueue
 
     /// Get queue status (pending, active, completed, failed, DLQ counts).
-    fn status(queue: BrowserJobQueue) -> QueueStatus { }
+    native fn status(queue: BrowserJobQueue) -> QueueStatus
 }
 
 /// Health monitoring for browser pool operations.
@@ -2192,16 +2128,16 @@ struct HealthSummary {
 
 impl BrowserHealthMetrics {
     /// Create an empty metrics store.
-    fn create() -> BrowserHealthMetrics { }
+    native fn create() -> BrowserHealthMetrics
 
     /// Record a health event (event type, domain, duration, success).
-    fn record(metrics: BrowserHealthMetrics, event_type: String, domain: String, duration_ms: i32, success: bool) -> BrowserHealthMetrics { }
+    native fn record(metrics: BrowserHealthMetrics, event_type: String, domain: String, duration_ms: i32, success: bool) -> BrowserHealthMetrics
 
     /// Compute summary statistics from recorded events.
-    fn summary(metrics: BrowserHealthMetrics) -> HealthSummary { }
+    native fn summary(metrics: BrowserHealthMetrics) -> HealthSummary
 
     /// Export metrics in Prometheus exposition format.
-    fn prometheus(metrics: BrowserHealthMetrics) -> String { }
+    native fn prometheus(metrics: BrowserHealthMetrics) -> String
 }
 
 

@@ -14,13 +14,13 @@ struct Fingerprint {
 }
 
 // Generate a random fingerprint profile
-fn Fingerprint.generate() -> Fingerprint
+native fn Fingerprint.generate() -> Fingerprint
 
 // Generate a new random fingerprint (same as generate, for rotation)
-fn Fingerprint.rotate() -> Fingerprint
+native fn Fingerprint.rotate() -> Fingerprint
 
 // Generate JavaScript to inject this fingerprint into a page
-fn Fingerprint.inject_js(self) -> String
+native fn Fingerprint.inject_js(self) -> String
 
 // Generate matching HTTP headers (User-Agent, Accept-Language, Sec-Ch-Ua, etc.)
-fn Fingerprint.to_headers(self) -> Map<String, String>
+native fn Fingerprint.to_headers(self) -> Map<String, String>

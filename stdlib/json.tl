@@ -32,14 +32,12 @@ native fn to_json_pretty<T>(value: T) -> Result<String>
 
 impl JsonValue {
     /// Get value at key (for objects)
-    fn get(self, key: String) -> JsonValue? {
-        // returns value at key or nil
-    }
+    // returns value at key or nil
+    native fn get(self, key: String) -> JsonValue?
 
     /// Get value at index (for arrays)
-    fn at(self, index: usize) -> JsonValue? {
-        // returns value at index or nil
-    }
+    // returns value at index or nil
+    native fn at(self, index: usize) -> JsonValue?
 
     /// Convert to String
     fn as_string(self) -> String? {

@@ -10,17 +10,17 @@
 // Extract a Cxense-metered article using every whitelisted referrer in order.
 // Optional cookie_header (str) lets you pass harvested cookies (Cxense meter
 // counters are stripped automatically).
-fn get_article(url: String, cookie_header: String?) -> Map
+native fn get_article(url: String, cookie_header: String?) -> Map
 
 // Fetch with one explicit referrer style:
 //   "drudge" | "social" | "google" | "facebook" | "hn"
-fn get_with_referrer(url: String, referrer_style: String) -> Map
+native fn get_with_referrer(url: String, referrer_style: String) -> Map
 
 // Pure JSON-LD `articleBody` extraction for a URL (no referrer tricks).
-fn extract_jsonld(url: String) -> Map
+native fn extract_jsonld(url: String) -> Map
 
 // Instructions for clearing the Cxense meter-cookie quota.
-fn reset_meter() -> Map
+native fn reset_meter() -> Map
 
 // The whitelisted referrer styles available to get_with_referrer.
-fn referrer_map() -> Map
+native fn referrer_map() -> Map

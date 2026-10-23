@@ -25,14 +25,14 @@ struct BlockCheck {
 }
 
 // Detect CAPTCHA/WAF on page HTML. Optional headers Map for server detection.
-fn CAPTCHA.detect(html: String, headers: Map<String, String>?) -> CaptchaChallenge
+native fn CAPTCHA.detect(html: String, headers: Map<String, String>?) -> CaptchaChallenge
 
 // Classify challenge type and extract sitekey params. Same as detect.
-fn CAPTCHA.classify(html: String, headers: Map<String, String>?) -> CaptchaChallenge
+native fn CAPTCHA.classify(html: String, headers: Map<String, String>?) -> CaptchaChallenge
 
 // Get bypass strategy recommendation for a challenge
-fn CAPTCHA.recommend(challenge: CaptchaChallenge) -> CaptchaRecommendation
-fn CaptchaChallenge.recommend(self) -> CaptchaRecommendation
+native fn CAPTCHA.recommend(challenge: CaptchaChallenge) -> CaptchaRecommendation
+native fn CaptchaChallenge.recommend(self) -> CaptchaRecommendation
 
 // Quick check if a response status code indicates a block page
-fn CAPTCHA.is_blocked(status: Int, html: String?) -> BlockCheck
+native fn CAPTCHA.is_blocked(status: Int, html: String?) -> BlockCheck
