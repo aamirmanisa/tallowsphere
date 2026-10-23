@@ -1746,6 +1746,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_block_ads(ptr)\n");
         ir.push_str("declare ptr @tallow_page_block_trackers(ptr)\n");
         ir.push_str("declare ptr @tallow_page_disable_adblock(ptr)\n");
+        ir.push_str("declare ptr @tallow_current_page()\n");
+        ir.push_str("declare void @tallow_missing_page_abort()\n");
         ir.push_str("declare ptr @tallow_page_extract_all_text(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_handle_cookie_consent_str(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_extract_all_text_array(ptr, ptr)\n");
@@ -8086,7 +8088,8 @@ void tallow_async_runtime_shutdown(void) {
         if let ExprKind::Ident(module_name) = &object.kind {
             match module_name.as_str() {
                 "math" | "env" | "time" | "fs" | "json" | "crypto" | "http" | "net" | "db"
-                | "compress" | "regex" | "rand" | "log" | "process" | "url" | "provenance" => {
+                | "compress" | "regex" | "rand" | "log" | "process" | "url" | "provenance"
+                | "browser" | "Browser" => {
                     if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
                         return Ok(result);
                     }
@@ -21515,10 +21518,169 @@ impl<'a> CodeGen<'a> {
             "Transfer" | "transfer" => self.emit_stdlib_transfer(method, args),
             "process" => self.emit_stdlib_process(method, args),
             "url" => self.emit_stdlib_url(method, args),
+            "browser" | "Browser" => self.emit_stdlib_browser(method, args),
             "html" | "Html" => self.emit_stdlib_html(method, args),
             "Extract" | "extract" => self.emit_stdlib_extract(method, args),
             _ => Ok(None),
         }
+    }
+
+    /// Module-level `browser.page_*` helpers in COMPILED code.
+    ///
+    /// These take no receiver: the interpreter reads its thread-local current
+    /// page (src/stdlib/browser.rs). Native code reads `tallow_current_page()`,
+    /// set when `tallow_browser_new_page` creates a page and cleared on close.
+    ///
+    /// A null current page is a real program error in the interpreter
+    /// ("no page bound in function dispatch"), so it must not become an empty
+    /// string here. The arms branch to `tallow_missing_page_abort`, which prints
+    /// the same sentence and aborts — the one behavioural difference is that the
+    /// interpreter's error is catchable and this one is not.
+    fn emit_stdlib_browser(
+        &mut self,
+        method: &str,
+        args: &[CallArg],
+    ) -> Result<Option<LLValue>, String> {
+        // Functions whose declared return is a plain String / []String / bool /
+        // Result<()> — the shapes this backend can represent. Struct-returning
+        // helpers (WaitResult, CpuThrottle, PageContentResult, ScriptTag) are
+        // lowered where the method form already knows their layout; where it
+        // does not, they stay interpreter-only and fail loudly by name.
+        let simple = matches!(
+            method,
+            "page_content"
+                | "page_text_redacted"
+                | "page_capture_dom_snapshot"
+                | "page_dom_snapshot"
+                | "page_block_non_essential"
+                | "page_wait_for_stable"
+                | "page_handle_cookie_consent"
+                | "page_structured_data"
+                | "page_set_content"
+        );
+        if !simple {
+            return Ok(None);
+        }
+
+        let page = self.emit_current_page_checked(method)?;
+
+        match method {
+            "page_content" => {
+                let reg = self.fresh_reg();
+                self.emit_line(&format!("{reg} = call ptr @tallow_page_content(ptr {page})"));
+                Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+            }
+            "page_text_redacted" => {
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_page_text_redacted(ptr {page})"
+                ));
+                Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+            }
+            "page_capture_dom_snapshot" | "page_dom_snapshot" => {
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_page_dom_snapshot(ptr {page})"
+                ));
+                Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+            }
+            "page_structured_data" => {
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_page_structured_data(ptr {page})"
+                ));
+                Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+            }
+            // `page_extract_all_text` is deliberately NOT lowered here.
+            //
+            // The FFI returns a native array whose slots hold C string pointers.
+            // The `let`-tracking that records "StringArray" keys on a
+            // (receiver-kind, method) pair, and a module-level call has no
+            // receiver variable to key on — so the array's slots would be
+            // printed as raw pointers with trailing garbage, and `--require-native`
+            // would still pass. Measured exactly that (output `\u0002`) before
+            // removing the arm. It stays interpreter-only until the tracking
+            // learns the module-level shape.
+            "page_block_non_essential" => {
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_block_non_essential(ptr {page})"
+                ));
+                Ok(Some(self.wrap_rc_in_result(&status)))
+            }
+            "page_wait_for_stable" => {
+                // Defaults mirror the interpreter arm (5000 / 200) so an omitted
+                // argument cannot diverge between engines.
+                let timeout = match args.first() {
+                    Some(arg) => self.emit_expr(&arg.value)?.reg,
+                    None => "5000".to_string(),
+                };
+                let quiesce = match args.get(1) {
+                    Some(arg) => self.emit_expr(&arg.value)?.reg,
+                    None => "200".to_string(),
+                };
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_wait_stable(ptr {page}, i64 {timeout}, i64 {quiesce})"
+                ));
+                Ok(Some(self.wrap_rc_in_result(&status)))
+            }
+            "page_handle_cookie_consent" => {
+                let strategy = match args.first() {
+                    Some(arg) => {
+                        let v = self.emit_expr(&arg.value)?;
+                        self.coerce_to_string(&v)?
+                    }
+                    None => self.intern_string("reject"),
+                };
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_handle_cookie_consent_str(ptr {page}, ptr {strategy})"
+                ));
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = icmp ne i32 {status}, 0"));
+                Ok(Some(LLValue::new(result, LLType::I1)))
+            }
+            "page_set_content" => {
+                let html = match args.first() {
+                    Some(arg) => {
+                        let v = self.emit_expr(&arg.value)?;
+                        self.coerce_to_string(&v)?
+                    }
+                    None => return Err("browser.page_set_content requires an HTML string".to_string()),
+                };
+                let status = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{status} = call i32 @tallow_page_set_content(ptr {page}, ptr {html})"
+                ));
+                // Same known gap as the Page method: declared PageContentResult
+                // has no native layout, so this is the status, not the struct.
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = sext i32 {status} to i64"));
+                Ok(Some(LLValue::new(result, LLType::I64)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Load the module-level current page, aborting with the interpreter's
+    /// wording when there is none.
+    fn emit_current_page_checked(&mut self, helper: &str) -> Result<String, String> {
+        let page = self.fresh_reg();
+        self.emit_line(&format!("{page} = call ptr @tallow_current_page()"));
+        let missing = self.fresh_reg();
+        self.emit_line(&format!("{missing} = icmp eq ptr {page}, null"));
+        let abort_label = self.fresh_label("nopage");
+        let have_label = self.fresh_label("havepage");
+        self.emit_line(&format!(
+            "br i1 {missing}, label %{abort_label}, label %{have_label}"
+        ));
+        self.emit_line(&format!("{abort_label}:"));
+        self.emit_line("call void @tallow_missing_page_abort()");
+        self.emit_line("unreachable");
+        self.emit_line(&format!("{have_label}:"));
+        let _ = helper;
+        Ok(page)
     }
 
     /// `html.parse` / `html.parse_bytes` -> opaque document handle.
@@ -33371,6 +33533,43 @@ mod tests {
     }
 
     #[test]
+    fn codegen_module_level_browser_page_helpers() {
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let b = Browser.launch(true)
+                let p = b.new_page()
+                browser.page_set_content("<h1>x</h1>")
+                print(browser.page_content())
+                print(browser.page_capture_dom_snapshot())
+                print(browser.page_text_redacted())
+                print(browser.page_handle_cookie_consent("reject"))
+                browser.page_block_non_essential()
+                browser.page_wait_for_stable(1000, 100)
+            }
+        "#,
+        );
+        assert!(
+            ir.contains("call ptr @tallow_current_page()"),
+            "module-level helpers need the native current-page handle"
+        );
+        assert!(
+            ir.contains("call void @tallow_missing_page_abort()"),
+            "a null current page must abort, not return an empty string"
+        );
+        for ffi in [
+            "@tallow_page_set_content",
+            "@tallow_page_content",
+            "@tallow_page_dom_snapshot",
+            "@tallow_page_text_redacted",
+            "@tallow_page_handle_cookie_consent_str",
+            "@tallow_page_block_non_essential",
+            "@tallow_page_wait_stable",
+        ] {
+            assert!(ir.contains(ffi), "missing lowering for {ffi}");
+        }
+    }
+
     fn codegen_stdlib_inverse_trig_and_integer_helpers() {
         let ir = compile_to_ir(
             r#"

@@ -110,7 +110,18 @@ checker type names, live-page tests in CI, WordPress fixture + ignored test,
 math native lowering, count published as 1,124, ADR 0001, audit doc, and the
 1.2.0 release (five platforms, checksums verified, published).
 
-Not done: **native lowering for the 41 `browser.page_*` functions.** They run in
+Partly done: **native lowering for the module-level `browser.page_*` helpers.**
+Seven now lower in compiled code — `page_content`, `page_text_redacted`,
+`page_capture_dom_snapshot`, `page_set_content`, `page_block_non_essential`,
+`page_wait_for_stable`, `page_handle_cookie_consent` — through a native
+`CURRENT_PAGE` thread-local set by `tallow_browser_new_page` and cleared by
+`tallow_page_close`. A null current page branches to `tallow_missing_page_abort`,
+which prints the interpreter's sentence and aborts, so a compiled program cannot
+quietly read an empty string where the interpreter raises. Verified by a parity
+test that runs the same program through both engines and compares stdout
+(5/5 browser tests, full lib suite 9,159 passed).
+
+Not done: **the remaining helpers, including every array-returning one.** They run in
 the interpreter and the native backend refuses them by name ("no lowering for
 method …"), so a `--require-native` build that calls one fails loudly rather
 than silently diverging. Closing it needs a native current-page registry set by
@@ -153,5 +164,14 @@ interpreter keeps one in a thread-local registry. The work is therefore:
 4. Parity tests: same program, `tallow run` vs `tallow run --interpret`, outputs
    compared; plus a `--require-native` build that must now succeed.
 
-Rough size: the registry and guard are small; the arms are mechanical but each
-needs its own parity case. It is a release of its own, not a patch to 1.2.0.
+`page_extract_all_text` was implemented, measured, and then REMOVED again: the
+FFI returns a native array whose slots hold C string pointers, and the
+`let`-tracking that records the `StringArray` kind keys on a (receiver-kind,
+method) pair that a module-level call does not have. Native printed `\u0002`
+where the interpreter printed `["A", "B"]`.
+The arm is out until the tracking learns the module-level shape — a lowered arm
+that emits the wrong KIND still passes `--require-native`, which is exactly the
+silent divergence this backend exists to refuse.
+
+Rough size for the rest: each arm is mechanical, but the array-returning and
+struct-returning ones each need a tracking or layout addition first.
