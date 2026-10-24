@@ -84,17 +84,44 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "opaque_login" => Some(crypto_opaque_login(&args)),
         "opaque_create_credential_response" => Some(crypto_opaque_create_credential_response(&args)),
         // BBS+ anonymous credentials (33-02) -- EXPERIMENTAL Ed25519-commitment approximation (NOT BBS+; no pairing-based security)
-        "bbs_issue_experimental" => Some(crypto_bbs_issue_experimental(&args)),
-        "bbs_prove_experimental" => Some(crypto_bbs_prove_experimental(&args)),
-        "bbs_verify_experimental" => Some(crypto_bbs_verify_experimental(&args)),
+        "bbs_issue_experimental" => Some(Err(
+            "crypto.bbs_issue_experimental is RETIRED: it was an approximation, not BBS+. Use crypto.bbs_issue, which implements the standard."
+                .to_string(),
+        )),
+        "bbs_prove_experimental" => Some(Err(
+            "crypto.bbs_prove_experimental is RETIRED: it was an approximation, not BBS+. Use crypto.bbs_prove, which implements the standard."
+                .to_string(),
+        )),
+        "bbs_verify_experimental" => Some(Err(
+            "crypto.bbs_verify_experimental is RETIRED: it was an approximation, not BBS+. Use crypto.bbs_verify, which implements the standard."
+                .to_string(),
+        )),
         // Threshold signatures (33-01) -- EXPERIMENTAL Shamir-split Ed25519 (NOT FROST; no DKG/aggregation; threshold property absent)
-        "threshold_dkg_experimental" => Some(crypto_threshold_dkg_experimental(&args)),
-        "threshold_sign_experimental" => Some(crypto_threshold_sign_experimental(&args)),
-        "threshold_verify_experimental" => Some(crypto_threshold_verify_experimental(&args)),
+        "threshold_dkg_experimental" => Some(Err(
+            "crypto.threshold_dkg_experimental is RETIRED: it was an approximation, not FROST (RFC 9591). Use crypto.frost_dkg, which implements the standard."
+                .to_string(),
+        )),
+        "threshold_sign_experimental" => Some(Err(
+            "crypto.threshold_sign_experimental is RETIRED: it was an approximation, not FROST (RFC 9591). Use crypto.frost_sign, which implements the standard."
+                .to_string(),
+        )),
+        "threshold_verify_experimental" => Some(Err(
+            "crypto.threshold_verify_experimental is RETIRED: it was an approximation, not FROST (RFC 9591). Use crypto.frost_verify, which implements the standard."
+                .to_string(),
+        )),
         // Blind signatures (33-01) -- EXPERIMENTAL XOR-blinding construction (NOT a standard blind signature scheme)
-        "blind_sign_experimental" => Some(crypto_blind_sign_experimental(&args)),
-        "blind_unblind_experimental" => Some(crypto_blind_unblind_experimental(&args)),
-        "blind_verify_experimental" => Some(crypto_blind_verify_experimental(&args)),
+        "blind_sign_experimental" => Some(Err(
+            "crypto.blind_sign_experimental is RETIRED: it was an approximation, not the blind signature. Use crypto.blind_sign, which implements the standard."
+                .to_string(),
+        )),
+        "blind_unblind_experimental" => Some(Err(
+            "crypto.blind_unblind_experimental is RETIRED: it was an approximation, not the blind signature. Use crypto.blind_unblind, which implements the standard."
+                .to_string(),
+        )),
+        "blind_verify_experimental" => Some(Err(
+            "crypto.blind_verify_experimental is RETIRED: it was an approximation, not the blind signature. Use crypto.blind_verify, which implements the standard."
+                .to_string(),
+        )),
         // FROST threshold signatures (RFC 9591) -- REAL: Pedersen DKG, two-round Schnorr signing
         // with aggregation, and the RFC's group equation. Implemented in `crate::frost`; the
         // `threshold_*_experimental` arms above remain for callers already using that spelling,

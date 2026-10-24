@@ -18656,24 +18656,47 @@ fn build_capabilities_report(probe: bool) -> Result<serde_json::Value, String> {
             let st = f["status"].as_str().unwrap_or("unknown").to_string();
             *counts.entry(st).or_insert(0) += 1;
         }
-        let experimental: Vec<String> = cache
+        // Arms that remain dispatchable only to *refuse*: the old
+        // `*_experimental` approximations, retired once the real standard
+        // implementations landed. They stay listed so a caller can see that the
+        // key exists, is not a silent failure, and now points at the real one.
+        let (retired, retired_detail): (Vec<String>, Vec<serde_json::Value>) = cache
             .get("crypto")
             .map(|cm| {
-                let mut v: Vec<String> = cm
-                    .arms
-                    .iter()
-                    .flat_map(|a| a.keys.iter())
-                    .filter(|k| k.ends_with("_experimental"))
-                    .cloned()
-                    .collect();
-                v.sort();
-                v.dedup();
-                v
+                let mut keys: Vec<String> = Vec::new();
+                let mut detail: Vec<serde_json::Value> = Vec::new();
+                for arm in &cm.arms {
+                    if !arm.rhs.contains("is RETIRED") {
+                        continue;
+                    }
+                    let replacement = first_quoted(&arm.rhs)
+                        .unwrap_or_default()
+                        .split("Use crypto.")
+                        .nth(1)
+                        .map(|s| {
+                            s.chars()
+                                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                                .collect::<String>()
+                        })
+                        .unwrap_or_default();
+                    for k in &arm.keys {
+                        keys.push(k.clone());
+                        detail.push(serde_json::json!({
+                            "name": k,
+                            "status": "retired",
+                            "replacement": replacement,
+                        }));
+                    }
+                }
+                keys.sort();
+                detail.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+                (keys, detail)
             })
             .unwrap_or_default();
         rec["functions"] = serde_json::Value::Array(fns);
         rec["functions_by_status"] = serde_json::json!(counts);
-        rec["experimental_arms"] = serde_json::json!(experimental);
+        rec["retired_arms"] = serde_json::json!(retired);
+        rec["retired"] = serde_json::Value::Array(retired_detail);
     }
 
     // CLI command surface: clap knows all 70 compiled-in subcommands.

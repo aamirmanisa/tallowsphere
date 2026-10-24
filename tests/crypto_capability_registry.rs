@@ -158,23 +158,34 @@ fn the_report_does_not_claim_gaps_that_were_already_closed() {
 }
 
 #[test]
-fn the_legacy_experimental_arms_are_still_listed() {
+fn the_retired_approximations_refuse_and_name_their_replacement() {
     let rec = crypto_record();
-    let arms: Vec<String> = rec["experimental_arms"]
+    let arms: Vec<&serde_json::Value> = rec["retired"]
         .as_array()
-        .expect("experimental_arms array")
+        .expect("retired array")
         .iter()
-        .map(|v| v.as_str().expect("arm name").to_string())
         .collect();
-    for expected in [
-        "bbs_issue_experimental",
-        "threshold_dkg_experimental",
-        "blind_sign_experimental",
-    ] {
+    assert!(
+        arms.len() >= 9,
+        "the nine legacy approximations must stay visible, found {}",
+        arms.len()
+    );
+    for arm in &arms {
+        let name = arm["name"].as_str().unwrap_or("<unnamed>");
+        let replacement = arm["replacement"].as_str().unwrap_or("");
+        assert_eq!(arm["status"], "retired", "{name} must be retired");
         assert!(
-            arms.iter().any(|a| a == expected),
-            "{expected} must stay visible: it is a legacy approximation that must not be \
-             mistaken for the real implementation. Listed: {arms:?}"
+            !replacement.is_empty(),
+            "{name} is retired but does not name the function to use instead"
         );
     }
+    // Spot-check the mapping the retirement promises.
+    let find = |n: &str| {
+        arms.iter()
+            .find(|a| a["name"] == n)
+            .unwrap_or_else(|| panic!("{n} missing from the retired list"))
+            .clone()
+    };
+    assert_eq!(find("threshold_sign_experimental")["replacement"], "frost_sign");
+    assert_eq!(find("bbs_issue_experimental")["replacement"], "bbs_issue");
 }
