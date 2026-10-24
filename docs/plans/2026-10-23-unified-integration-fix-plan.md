@@ -120,16 +120,30 @@ Fix: worker-side executor: one interpreter per worker thread (the M1 pattern),
 Gate: a Tallow program whose tasks are Tallow functions produces identical checkpoint
 hashes at 1 and 8 workers; a `llm` task replays with the model detached.
 
-**R7 — Speculative duplicates are in-process only.**
-Fix: decide explicitly. Recommendation: do not extend speculation to the wire
+**R7 — Speculative duplicates are in-process only.** — **DONE** (2026-10-24)
+Decided, not extended: §9 of `docs/architecture/tallow-mesh-execution-plane-2026-10-23.md`
+("speculation stays in-process") states the choice and the reason — speculation
+answers "slow but alive", lease reassignment answers "gone", and mixing them
+makes neither provable. The wire has no `speculate` frame. No code change, as the
+gate required.
+Original fix: decide explicitly. Recommendation: do not extend speculation to the wire
 (reassignment covers "gone"); document the decision in the architecture doc so it is
 not re-litigated.
 Gate: doc line + no code change.
 
 ### LLM
 
-**R8 — Providers are verified against a protocol mock, not vendors.**
-Evidence: `tests/llm_providers.rs` runs against a local server; no keys in CI.
+**R8 — Providers are verified against a protocol mock, not vendors.** — **DONE** (2026-10-24)
+`scripts/llm_verify_matrix.py` reads the same `llm.toml` the engine reads, runs
+`tallow llm verify <id>` per provider, and writes a dated table
+(`docs/operations/llm-verify-2026-10-24.md`: provider, protocol, model count,
+latency, status, detail). It refuses to run when a configured `key_file` is
+group/other readable (verified: mode 0644 → exit 1 with the reason) and never
+reads or prints key material. First run found a real defect in the local
+provider config: `model_path` had been set to the chat path, so verification
+requested `/v1/v1/chat/completions` and got a 404; corrected to `/models`, and
+the provider now answers (1 model, 4 ms).
+Original evidence: `tests/llm_providers.rs` runs against a local server; no keys in CI.
 Fix: `scripts/llm_verify_matrix.py` — reads `~/.config/tallow/llm.toml`, calls
 `tallow llm verify <p>` for each configured provider, writes a dated table (provider,
 protocol, model count, latency, status) to `docs/operations/llm-verify-<date>.md`.
