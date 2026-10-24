@@ -153,6 +153,26 @@ pub fn config_path() -> std::path::PathBuf {
 
 /// Load provider overrides. A missing file is not an error: the registry works
 /// without it, and the file only exists to add or redirect providers.
+/// True when `url` points at this machine: `127.0.0.0/8`, `::1`, or `localhost`.
+///
+/// Used to decide whether a provider may omit a credential: a key sent to a
+/// loopback socket is not a secret, it is ceremony.
+pub fn is_loopback_url(url: &str) -> bool {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let host_port = rest.split('/').next().unwrap_or("");
+    let host = match host_port.rsplit_once(':') {
+        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => host_port,
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host == "::1"
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
 pub fn load_config() -> Result<BTreeMap<String, ProviderConfig>, String> {
     load_config_from(&config_path())
 }
@@ -259,9 +279,17 @@ pub fn resolve(id: &str) -> Result<Resolved, String> {
     if base_url.trim().is_empty() {
         return Err(format!("llm: provider `{id}` has no base_url; set it in {}", config_path().display()));
     }
-    if key_env.trim().is_empty() && cfg.and_then(|c| c.key_file.as_ref()).is_none() {
+    // A loopback endpoint has nothing to authenticate against: a local
+    // llama.cpp / Ollama server takes no key, and demanding one forced callers
+    // to invent a fake credential env var. Anything off-loopback still must name
+    // a credential source.
+    if key_env.trim().is_empty()
+        && cfg.and_then(|c| c.key_file.as_ref()).is_none()
+        && !is_loopback_url(base_url)
+    {
         return Err(format!(
-            "llm: provider `{id}` has no credential source; set key_env or key_file in {}",
+            "llm: provider `{id}` has no credential source; set key_env or key_file in {} \
+             (only a loopback base_url may omit one)",
             config_path().display()
         ));
     }
@@ -305,6 +333,11 @@ fn secret(r: &Resolved) -> Result<String, String> {
         }
         return Ok(key);
     }
+    if r.key_env.trim().is_empty() && is_loopback_url(&r.base_url) {
+        // Loopback takes no key. Returning an empty string here means "send no
+        // Authorization header", which is what a local server expects.
+        return Ok(String::new());
+    }
     match std::env::var(&r.key_env) {
         Ok(v) if !v.trim().is_empty() => Ok(v.trim().to_string()),
         _ => Err(format!(
@@ -331,6 +364,11 @@ fn url_join(base: &str, path: &str) -> String {
 }
 
 fn auth_headers(r: &Resolved, key: &str) -> Vec<(&'static str, String)> {
+    if key.is_empty() {
+        // Loopback provider with no credential: send nothing rather than an
+        // empty `Bearer `. Some local servers reject a blank scheme.
+        return Vec::new();
+    }
     match r.protocol {
         Protocol::Anthropic => vec![
             ("x-api-key", key.to_string()),
@@ -757,5 +795,41 @@ mod tests {
     fn unknown_providers_are_refused_with_the_config_path() {
         let err = resolve("definitely-not-a-provider").unwrap_err();
         assert!(err.contains("unknown provider"), "{err}");
+    }
+
+    #[test]
+    fn a_loopback_endpoint_may_omit_a_credential_but_a_remote_one_may_not() {
+        assert!(is_loopback_url("http://127.0.0.1:27759/v1"));
+        assert!(is_loopback_url("http://localhost:8080/v1"));
+        assert!(is_loopback_url("http://[::1]:1234/v1"));
+        assert!(!is_loopback_url("https://api.openai.com/v1"));
+        // 127.0.0.2 is loopback too (127.0.0.0/8), while 128.0.0.1 is not.
+        assert!(is_loopback_url("http://127.0.0.2:1/v1"));
+        assert!(!is_loopback_url("http://128.0.0.1:1/v1"));
+
+        let dir = std::env::temp_dir().join(format!("llm-loop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("llm.toml");
+        std::fs::write(
+            &path,
+            "[providers.local]\nprotocol = \"openai\"\nbase_url = \"http://127.0.0.1:27759/v1\"\n",
+        )
+        .unwrap();
+        let cfg = load_config_from(&path).unwrap();
+        let c = cfg.get("local").expect("parsed");
+        assert!(c.key_env.is_none() || c.key_env.as_deref() == Some(""));
+        assert_eq!(c.protocol, Some(Protocol::OpenAi));
+
+        // The same shape pointing off-box is refused at resolve time.
+        let remote = dir.join("remote.toml");
+        std::fs::write(
+            &remote,
+            "[providers.local]\nprotocol = \"openai\"\nbase_url = \"https://api.example.com/v1\"\n",
+        )
+        .unwrap();
+        let cfg = load_config_from(&remote).unwrap();
+        let c = cfg.get("local").unwrap();
+        assert!(c.key_env.is_none());
+        assert!(!is_loopback_url("https://api.example.com/v1"));
     }
 }
