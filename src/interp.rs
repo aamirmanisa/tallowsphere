@@ -3261,16 +3261,15 @@ impl Interpreter {
                     }
                 }
 
-                // Unwrap provenance for transparent field access, and `Ok(…)`
-                // for the same reason `Index` and `for` do: the interpreter
-                // reports CDP results as `Ok(value)` while the compiled path
-                // yields the bare value, so `page.query_selector_all(sel).len`
-                // must count the array, not the Result wrapper. Before this
-                // arm it fell through to the default and answered 0 — measured
-                // as interp=[0,0,3] against native=[0,1,3].
+                // Unwrap provenance for transparent field access. `Ok(…)` is
+                // deliberately NOT unwrapped: a Result has no payload fields,
+                // and reading `.status` off one must refuse on both planes
+                // (tests/browser_result_field_refusal.rs). Browser calls that
+                // yield arrays return the array itself — see
+                // `query_selector_all` / `get_cookies` — so `.len` is legal
+                // there without weakening this rule.
                 let obj_ref = match &obj {
                     Value::Provenance(inner, _) => inner.as_ref(),
-                    Value::Ok(inner) => inner.as_ref(),
                     _ => &obj,
                 };
                 match (obj_ref, field.as_str()) {
@@ -18776,7 +18775,13 @@ impl Interpreter {
                                         })
                                     })
                                     .collect();
-                                Ok(Value::Ok(Box::new(Value::Array(vals))))
+                                // The compiled plane yields the array itself
+                                // (`page.query_selector_all(sel).len` counts
+                                // elements there), so the interpreter must too;
+                                // wrapping it in Ok made the same expression a
+                                // refusal on one plane and a number on the
+                                // other.
+                                Ok(Value::Array(vals))
                             }
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }
@@ -19016,7 +19021,8 @@ impl Interpreter {
                                         }
                                     })
                                     .collect();
-                                Ok(Value::Ok(Box::new(Value::Array(vals))))
+                                // Array, not Ok(array): see query_selector_all.
+                                Ok(Value::Array(vals))
                             }
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }
@@ -19624,7 +19630,10 @@ impl Interpreter {
                             Ok(texts) => {
                                 let vals: Vec<Value> =
                                     texts.into_iter().map(Value::String).collect();
-                                Ok(Value::Ok(Box::new(Value::Array(vals))))
+                                // Array, not Ok(array): the compiled plane
+                                // returns the array, so `.len` and indexing
+                                // must behave identically without a match.
+                                Ok(Value::Array(vals))
                             }
                             Err(e) => Ok(Value::Err(Box::new(Value::String(e.to_string())))),
                         }
