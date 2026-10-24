@@ -1685,6 +1685,11 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_transfer_tree_hash(ptr)\n");
         ir.push_str("declare ptr @tallow_transfer_manifest(ptr, i64, ptr)\n");
         ir.push('\n');
+        ir.push_str("; LLM FFI — llm.complete returns a %struct.Completion record\n");
+        ir.push_str("declare ptr @tallow_llm_complete(ptr, ptr, ptr, i64)\n");
+        ir.push_str("declare ptr @tallow_llm_last_error()\n");
+        ir.push_str("declare void @tallow_llm_abort()\n");
+        ir.push('\n');
 
         // Privacy enforcement: inline tallow_redact_private
         // Masks a string: "hello" → "h***o", short strings → "***"
@@ -2143,6 +2148,45 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.WaitResult".to_string(),
+                }
+            });
+
+        // `Completion` — the return of `llm.complete`. Declared in
+        // stdlib/llm.tl; the layout must exist before the generic struct scan
+        // so a field read resolves through the ordinary GEP path. Order and
+        // widths mirror `CompletionRaw` in src/runtime/llm_ffi.rs.
+        self.struct_layouts
+            .entry("Completion".to_string())
+            .or_insert_with(|| {
+                let names = [
+                    "text",
+                    "model",
+                    "provider",
+                    "prompt_hash",
+                    "response_hash",
+                    "tokens_in",
+                    "tokens_out",
+                    "elapsed_ms",
+                ];
+                let types = [
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I64,
+                    LLType::I64,
+                    LLType::I64,
+                ];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.Completion".to_string(),
                 }
             });
 
@@ -8089,7 +8133,7 @@ void tallow_async_runtime_shutdown(void) {
             match module_name.as_str() {
                 "math" | "env" | "time" | "fs" | "json" | "crypto" | "http" | "net" | "db"
                 | "compress" | "regex" | "rand" | "log" | "process" | "url" | "provenance"
-                | "browser" | "Browser" => {
+                | "browser" | "Browser" | "llm" | "Llm" => {
                     if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
                         return Ok(result);
                     }
@@ -21537,6 +21581,7 @@ impl<'a> CodeGen<'a> {
             "browser" | "Browser" => self.emit_stdlib_browser(method, args),
             "html" | "Html" => self.emit_stdlib_html(method, args),
             "Extract" | "extract" => self.emit_stdlib_extract(method, args),
+            "llm" | "Llm" => self.emit_stdlib_llm(method, args),
             _ => Ok(None),
         }
     }
@@ -23838,6 +23883,96 @@ impl<'a> CodeGen<'a> {
     /// `tree_hash` and `manifest` read the hashes back out of that array.
     /// Members with no arm still fail loudly by name so the interpreter runs
     /// the program instead of emitting IR that cannot be right.
+    /// `llm.complete(provider, model, prompt, max_tokens = 1024) -> Completion`.
+    ///
+    /// The runtime hands back a heap `%struct.Completion` record (see
+    /// src/runtime/llm_ffi.rs); the fields are loaded here so the program sees
+    /// the same struct the interpreter builds. A null record means the call
+    /// failed: the runtime has already stored the redacted reason, and
+    /// `tallow_llm_abort` prints that sentence and exits 1. The interpreter
+    /// returns `Err(sentence)` instead — a loud difference, deliberately, since
+    /// this backend has no Result lowering for stdlib calls and a zero-filled
+    /// struct would be worse than stopping.
+    fn emit_stdlib_llm(
+        &mut self,
+        method: &str,
+        args: &[CallArg],
+    ) -> Result<Option<LLValue>, String> {
+        match method {
+            "complete" => {
+                if args.len() < 3 {
+                    return Ok(None);
+                }
+                let provider = {
+                    let v = self.emit_expr(&args[0].value)?;
+                    self.coerce_to_string(&v)?
+                };
+                let model = {
+                    let v = self.emit_expr(&args[1].value)?;
+                    self.coerce_to_string(&v)?
+                };
+                let prompt = {
+                    let v = self.emit_expr(&args[2].value)?;
+                    self.coerce_to_string(&v)?
+                };
+                let max_tokens = match args.get(3) {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce_to_i64(&v)?
+                    }
+                    None => "1024".to_string(),
+                };
+                let record = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{record} = call ptr @tallow_llm_complete(ptr {provider}, ptr {model}, ptr {prompt}, i64 {max_tokens})"
+                ));
+                let present = self.fresh_reg();
+                self.emit_line(&format!("{present} = icmp ne ptr {record}, null"));
+                let ok_label = self.fresh_label("llm.ok");
+                let err_label = self.fresh_label("llm.err");
+                self.emit_line(&format!(
+                    "br i1 {present}, label %{ok_label}, label %{err_label}"
+                ));
+                self.body.push_str(&format!("{err_label}:\n"));
+                self.emit_line("call void @tallow_llm_abort()");
+                self.emit_line("unreachable");
+                self.body.push_str(&format!("{ok_label}:\n"));
+
+                let mut load = |cg: &mut Self, offset: i64, ty: &LLType| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+                    LLValue::new(reg, ty.clone())
+                };
+                let text = load(self, 0, &LLType::I8Ptr);
+                let model_v = load(self, 8, &LLType::I8Ptr);
+                let provider_v = load(self, 16, &LLType::I8Ptr);
+                let prompt_hash = load(self, 24, &LLType::I8Ptr);
+                let response_hash = load(self, 32, &LLType::I8Ptr);
+                let tokens_in = load(self, 40, &LLType::I64);
+                let tokens_out = load(self, 48, &LLType::I64);
+                let elapsed_ms = load(self, 56, &LLType::I64);
+                Ok(Some(self.build_plain_struct(
+                    "Completion",
+                    &[
+                        ("text", text.reg, LLType::I8Ptr),
+                        ("model", model_v.reg, LLType::I8Ptr),
+                        ("provider", provider_v.reg, LLType::I8Ptr),
+                        ("prompt_hash", prompt_hash.reg, LLType::I8Ptr),
+                        ("response_hash", response_hash.reg, LLType::I8Ptr),
+                        ("tokens_in", tokens_in.reg, LLType::I64),
+                        ("tokens_out", tokens_out.reg, LLType::I64),
+                        ("elapsed_ms", elapsed_ms.reg, LLType::I64),
+                    ],
+                )?))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn emit_stdlib_transfer(
         &mut self,
         method: &str,
