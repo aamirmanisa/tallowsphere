@@ -77,7 +77,7 @@ Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the cor
 every push; keep the release copy as the last gate.
 Gate: CI job present and green on main.
 
-**R3 — 38 integration suites are excluded.** — **3 remain** (2026-10-24)
+**R3 — 38 integration suites are excluded.** — **1 remains** (2026-10-24)
 Down from 38: 25 are wired (23 browser suites + directorate_desks), and this
 iteration removed two more by fixing why they could not run:
 
@@ -145,8 +145,16 @@ stays an operator opt-in — the browser zone routes through Tor by contract and
 Tor cannot reach a loopback fixture — so the guard stays in the test and CI
 opts in explicitly.
 
-The 3 that remain are perf suites by design (not per-commit). No triage, host,
-parked or service entries left.
+Then two of the three perf suites, after measuring them instead of assuming they
+were per-commit-hostile: `perf_binary_startup`'s startup case has a 100 ms bound
+and passes in 0.02 s, and `perf_install` passes 2/2 in 0.18 s. Both now run in the
+contract job. `compiler_bench` stays out with a measured reason: in a debug build
+the interpreted fibonacci case overflows the default test stack (RUST_MIN_STACK=64M
+fixes that) and blake3/1MB measures 54 MB/s against a release-build threshold —
+14/15 pass, so the failure is the build profile.
+
+One perf suite remains, with that reason recorded. No triage, host, parked or
+service entries left.
 
 Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
 Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a
