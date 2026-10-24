@@ -847,15 +847,15 @@ impl TracingJIT {
         );
 
         // Attempt Cranelift compilation.
+        let started = std::time::Instant::now();
         let native_fn = self.cranelift.compile_block(block, &guard);
+        let elapsed_us = started.elapsed().as_micros();
 
         if self.verbose {
             if native_fn.is_some() {
-                eprintln!(
-                    "[JIT] compiled block {} ({:?} μs)",
-                    block_id,
-                    0u64 // timing placeholder
-                );
+                // Real elapsed time: the earlier `0u64` was printed as if it
+                // were a measurement, which made a diagnostic lie.
+                eprintln!("[JIT] compiled block {block_id} ({elapsed_us} μs)");
             } else {
                 eprintln!("[JIT] compilation failed for block {}", block_id);
             }

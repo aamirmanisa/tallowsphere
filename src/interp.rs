@@ -23370,6 +23370,25 @@ impl Interpreter {
         name: &str,
         positional: &[Value],
     ) -> Option<Result<Value, RuntimeError>> {
+        // These surfaces used to return structs carrying `simulated: true` and a
+        // state that nothing underneath ever read: rules that block nothing, a
+        // trace recorder that records nothing, viewport settings applied to no
+        // page. A control that cannot act is a fake, so they refuse by name and
+        // say which protocol would make them real. The real implementations live
+        // in src/browser/network.rs against a live CDP session.
+        const NEEDS_SESSION: [(&str, &str); 3] = [
+            ("NetworkInterceptor.", "the CDP Fetch domain"),
+            ("TraceRecorder.", "the CDP Tracing domain"),
+            ("DeviceEmulator.", "the CDP Emulation domain"),
+        ];
+        for (prefix, protocol) in NEEDS_SESSION {
+            if name.starts_with(prefix) {
+                return Some(Ok(Value::Err(Box::new(Value::String(format!(
+                    "no browser connected — {name} needs a live session and works through {protocol}; \
+                     it was not applied"
+                ))))));
+            }
+        }
         match name {
             // ── Device.get(name) ──
             "Device.get" => {

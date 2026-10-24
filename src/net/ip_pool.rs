@@ -281,6 +281,15 @@ impl IPPool {
             PoolSize::Unlimited => usize::MAX,
         };
 
+        // io_uring is not wired: saying nothing made `IoUring` look honoured.
+        // The pool still works (epoll), so this is a warning rather than a
+        // refusal — but it is printed, not implied.
+        if matches!(config.backend, BackendType::IoUring) {
+            eprintln!(
+                "ip_pool: io_uring backend is not implemented in this build; using epoll. \
+                 Throughput characteristics are epoll's, not io_uring's."
+            );
+        }
         let backend: Box<dyn IpPoolBackend> = match &config.backend {
             BackendType::Auto | BackendType::Epoll | BackendType::IoUring => {
                 Box::new(EpollBackend::new(default_capacity))
