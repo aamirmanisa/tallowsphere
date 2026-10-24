@@ -1791,6 +1791,13 @@ impl Interpreter {
                 RuntimeError::Error(e.replacen("Mesh.plan:", "Mesh.run:", 1))
             })?);
         }
+        // A signed scope manifest, when configured, authorizes the task ids
+        // this run may execute. It is checked before any work is planned.
+        crate::scope_manifest::authorize_tasks(
+            &tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+        )
+        .map_err(|e| RuntimeError::Error(format!("Mesh.run: {e}")))?;
+
         for task in &tasks {
             if !self.functions.contains_key(&task.func) {
                 return Err(RuntimeError::Error(format!(
@@ -23721,7 +23728,11 @@ impl Interpreter {
                 fields: vec![
                     ("entries".into(), Value::Array(vec![])),
                     ("recording".into(), Value::Bool(false)),
-                    ("simulated".into(), Value::Bool(true)),
+                    // Not simulated: the entries are whatever the caller adds and
+                    // `export` serialises them into a real HAR 1.2 document. What
+                    // is *not* happening is passive capture — that needs a live
+                    // browser and lives in src/browser/network.rs.
+                    ("simulated".into(), Value::Bool(false)),
                     ("format".into(), Value::String("har_1.2".into())),
                     ("entry_count".into(), Value::Int(0)),
                 ],
@@ -23780,7 +23791,7 @@ impl Interpreter {
                     fields: vec![
                         ("entries".into(), Value::Array(entries)),
                         ("recording".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
+                        ("simulated".into(), Value::Bool(false)),
                         ("format".into(), Value::String("har_1.2".into())),
                         ("entry_count".into(), Value::Int(count)),
                     ],
@@ -24185,15 +24196,15 @@ impl Interpreter {
                 }))
             }
             // ── NetworkInterceptor ──────────────────────────────────────
-            "NetworkInterceptor.create" => Some(Ok(Value::Struct {
-                name: "NetworkInterceptor".to_string(),
-                fields: vec![
-                    ("rules".into(), Value::Array(vec![])),
-                    ("active".into(), Value::Bool(false)),
-                    ("simulated".into(), Value::Bool(true)),
-                    ("rule_count".into(), Value::Int(0)),
-                ],
-            })),
+            // Rules were being collected into a struct that nothing ever read:
+            // a control that cannot act. The real interceptor drives the CDP
+            // Fetch domain (src/browser/network.rs) and needs a live session, so
+            // this path says so instead of returning an object that pretends.
+            "NetworkInterceptor.create" => Some(Ok(Value::Err(Box::new(Value::String(
+                "no browser connected — NetworkInterceptor requires a live browser session; \
+                 interception is implemented against the CDP Fetch domain"
+                    .to_string(),
+            ))))),
             "NetworkInterceptor.add_rule" => {
                 let ifields = match positional.first() {
                     Some(Value::Struct { name, fields }) if name == "NetworkInterceptor" => {

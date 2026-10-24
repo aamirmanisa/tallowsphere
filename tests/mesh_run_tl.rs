@@ -115,3 +115,102 @@ fn main() {{
         r.stderr
     );
 }
+
+// ── Signed scope manifest ────────────────────────────────────────────────────
+//
+// `Mesh.run` refuses a task id the run's signed manifest does not list. The
+// manifest is Ed25519 over a fixed canonical byte string, so this test signs one
+// the same way an operator would and checks both directions: listed tasks run,
+// an unlisted one is refused by name.
+
+use ed25519_dalek::{Signer, SigningKey};
+
+fn manifest_json(run_id: &str, tasks: &[&str], key: &SigningKey) -> (String, String) {
+    let purpose = "mesh run test";
+    let issued_by = "test";
+    let not_before = "2026-01-01";
+    let expires_at = "2099-01-01";
+    let mut canon = format!("{purpose}\n{run_id}\n{issued_by}\n{not_before}\n{expires_at}\n");
+    for t in tasks {
+        canon.push_str(t);
+        canon.push('\n');
+    }
+    let sig = key.sign(canon.as_bytes());
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let json = serde_json::json!({
+        "purpose": purpose,
+        "run_id": run_id,
+        "issued_by": issued_by,
+        "not_before": not_before,
+        "expires_at": expires_at,
+        "allowed_tasks": tasks,
+        "sig": hex(&sig.to_bytes()),
+    });
+    (json.to_string(), hex(&key.verifying_key().to_bytes()))
+}
+
+fn run_with_manifest(source: &str, name: &str, manifest: &str, key: &str) -> Run {
+    let dir = std::env::temp_dir().join(format!("tallow-mesh-manifest-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let file = dir.join(format!("{name}.tl"));
+    std::fs::write(&file, source).expect("write");
+    let man = dir.join("manifest.json");
+    std::fs::write(&man, manifest).expect("manifest");
+    let out = Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .arg("run")
+        .arg(&file)
+        .current_dir(&dir)
+        .env("TALLOW_SCOPE_MANIFEST", &man)
+        .env("TALLOW_SCOPE_MANIFEST_KEY", key)
+        .output()
+        .expect("run tallow");
+    Run {
+        ok: out.status.success(),
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+    }
+}
+
+#[test]
+fn a_signed_manifest_authorizes_listed_tasks_and_refuses_others_by_name() {
+    let key = SigningKey::from_bytes(&[7u8; 32]);
+    let journal = ".tallow/manifest-run.jsonl";
+
+    // Listed: the run proceeds.
+    let (man, pubkey) = manifest_json("run-1", &["a", "b", "c"], &key);
+    let r = run_with_manifest(&program(2, journal), "listed", &man, &pubkey);
+    assert!(r.ok, "listed run failed: {}{}", r.stdout, r.stderr);
+
+    // Not listed: refused, and the refusal names the task and the run.
+    let (man, pubkey) = manifest_json("run-2", &["a", "b"], &key);
+    let r = run_with_manifest(&program(2, journal), "unlisted", &man, &pubkey);
+    assert!(!r.ok, "an unlisted task must refuse the run: {}", r.stdout);
+    let all = format!("{}{}", r.stdout, r.stderr);
+    assert!(all.contains("not listed as authorized"), "{all}");
+    assert!(all.contains("'c'"), "the refusal names the task: {all}");
+    assert!(all.contains("run-2"), "the refusal names the run: {all}");
+}
+
+#[test]
+fn an_expired_manifest_authorizes_nothing() {
+    let key = SigningKey::from_bytes(&[9u8; 32]);
+    let purpose = "mesh run test";
+    let canon = format!("{purpose}\nrun-old\ntest\n2025-01-01\n2026-01-01\na\nb\nc\n");
+    let sig = key.sign(canon.as_bytes());
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let man = serde_json::json!({
+        "purpose": purpose,
+        "run_id": "run-old",
+        "issued_by": "test",
+        "not_before": "2025-01-01",
+        "expires_at": "2026-01-01",
+        "allowed_tasks": ["a", "b", "c"],
+        "sig": hex(&sig.to_bytes()),
+    })
+    .to_string();
+    let pubkey = hex(&key.verifying_key().to_bytes());
+    let r = run_with_manifest(&program(2, ".tallow/expired.jsonl"), "expired", &man, &pubkey);
+    assert!(!r.ok, "an expired manifest must refuse: {}", r.stdout);
+    let all = format!("{}{}", r.stdout, r.stderr);
+    assert!(all.contains("expired on 2026-01-01"), "{all}");
+}
