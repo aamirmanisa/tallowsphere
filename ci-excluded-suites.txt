@@ -20,6 +20,4 @@
 # are registered as `triage` — a suite nobody runs is what hid them in the first place.
 # parked 1, triage 14).
 
-compiler_bench | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
-perf_binary_startup | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
-perf_install | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
+compiler_bench | perf | alden | needs `cargo test --release` and a larger stack: in a debug build the interpreted fibonacci case overflows the default test stack (RUST_MIN_STACK=64M fixes it) and blake3/1MB measures 54 MB/s against a threshold set for release builds — 14/15 pass, the failure is the build profile, not the code | 2027-01-31

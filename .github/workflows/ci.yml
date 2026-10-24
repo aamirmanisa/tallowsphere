@@ -285,6 +285,8 @@ jobs:
           --test egress_census
           --test process_contract
           --test request_plan_cli
+          --test perf_binary_startup
+          --test perf_install
           --test stdlib_method_refusals
           --test transfer_transport
           --test injection_redteam
