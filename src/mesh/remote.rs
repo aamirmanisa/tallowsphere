@@ -407,7 +407,24 @@ impl MeshServer {
         if peers.is_empty() {
             return Err("no nodes joined".to_string());
         }
-        let mut names: Vec<&String> = peers.keys().filter(|n| !exclude.contains(n)).collect();
+        // Assignment is where liveness has to matter. A node that stopped
+        // heartbeating keeps its socket, so the peer table alone would hand it
+        // work it cannot do and the wave would wait for a lease to expire.
+        let live: Option<Vec<&String>> = self.membership.lock().ok().map(|m| {
+            let now = Instant::now();
+            peers
+                .keys()
+                .filter(|n| m.is_live(n, now))
+                .filter(|n| !exclude.contains(n))
+                .collect()
+        });
+        let mut names: Vec<&String> = match live {
+            Some(v) if !v.is_empty() => v,
+            // No heartbeat yet (a run that starts immediately after join) or all
+            // nodes silent: fall back to the connected set rather than stranding
+            // the wave. The lease still fences whatever does not answer.
+            _ => peers.keys().filter(|n| !exclude.contains(n)).collect(),
+        };
         if names.is_empty() {
             names = peers.keys().collect();
         }
