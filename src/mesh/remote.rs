@@ -18,6 +18,7 @@
 //! when the straggler is slow rather than gone. Reassignment covers "gone".
 
 use crate::mesh::journal::{checkpoint_hash, Event, Journal};
+use crate::mesh::membership::{Membership, HEARTBEAT};
 use crate::mesh::wire::{
     hex, key_from_seed, read_frame, write_frame, Envelope, Trust, MAX_FRAME,
 };
@@ -38,6 +39,10 @@ use std::time::{Duration, Instant};
 pub struct NodeStatus {
     pub name: String,
     pub joined: bool,
+    /// Whether a heartbeat arrived within `3 × interval`. A node whose process
+    /// is stopped keeps its TCP connection open, so this is the only honest
+    /// liveness signal the coordinator has.
+    pub live: bool,
     pub committed: u64,
     /// True until the node has both joined and committed one task. Flipping this
     /// on connection alone would let a node that never ran anything report
@@ -65,6 +70,7 @@ pub struct MeshServer {
     run_id: String,
     trust: Arc<Mutex<Trust>>,
     peers: Arc<Mutex<HashMap<String, Peer>>>,
+    membership: Arc<Mutex<Membership>>,
     inbound: Receiver<Envelope>,
     stop: Arc<AtomicBool>,
     nonce: AtomicU64,
@@ -87,6 +93,11 @@ impl MeshServer {
         }
         let trust = Arc::new(Mutex::new(trust));
         let peers: Arc<Mutex<HashMap<String, Peer>>> = Arc::new(Mutex::new(HashMap::new()));
+        // Twice the worker's send interval, so two heartbeats must be lost before
+        // a live node is declared gone.
+        let membership = Arc::new(Mutex::new(Membership::new_after_verification(
+            std::time::Duration::from_millis(500),
+        )));
         let (tx, inbound) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let server_key = key.clone();
@@ -94,6 +105,7 @@ impl MeshServer {
 
         let accept_trust = Arc::clone(&trust);
         let accept_peers = Arc::clone(&peers);
+        let accept_membership = Arc::clone(&membership);
         let accept_stop = Arc::clone(&stop);
         thread::spawn(move || {
             for stream in listener.incoming() {
@@ -105,11 +117,12 @@ impl MeshServer {
                 let tx = tx.clone();
                 let trust = Arc::clone(&accept_trust);
                 let peers = Arc::clone(&accept_peers);
+                let membership = Arc::clone(&accept_membership);
                 let key = server_key.clone();
                 let run = run.clone();
                 let stop = Arc::clone(&accept_stop);
                 thread::spawn(move || {
-                    let _ = serve_connection(stream, run, key, trust, peers, tx, stop);
+                    let _ = serve_connection(stream, run, key, trust, peers, membership, tx, stop);
                 });
             }
         });
@@ -120,6 +133,7 @@ impl MeshServer {
             run_id: run_id.to_string(),
             trust,
             peers,
+            membership,
             inbound,
             stop,
             nonce: AtomicU64::new(1),
@@ -152,13 +166,22 @@ impl MeshServer {
             Ok(p) => p,
             Err(_) => return Vec::new(),
         };
+        let membership = match self.membership.lock() {
+            Ok(m) => m,
+            Err(_) => return Vec::new(),
+        };
+        let now = Instant::now();
         let mut out: Vec<NodeStatus> = peers
             .values()
             .map(|p| NodeStatus {
                 name: p.name.clone(),
+                // `joined` now means "the handshake completed"; `live` is the
+                // heartbeat question, answered by the table. A SIGSTOPped node
+                // keeps its socket open, so the socket alone cannot answer it.
                 joined: true,
+                live: membership.is_live(&p.name, now),
                 committed: p.committed,
-                simulated: p.committed == 0,
+                simulated: membership.is_simulated(&p.name, now),
             })
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -399,6 +422,7 @@ fn serve_connection(
     key: SigningKey,
     trust: Arc<Mutex<Trust>>,
     peers: Arc<Mutex<HashMap<String, Peer>>>,
+    membership: Arc<Mutex<Membership>>,
     inbound: Sender<Envelope>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -453,6 +477,11 @@ fn serve_connection(
     );
     welcome.sign(&key);
     write_frame(&mut stream, &welcome).map_err(|e| format!("welcome: {e}"))?;
+    // The handshake is complete from here on: heartbeats are now acceptable for
+    // this node, and until one arrives the node is present but not live.
+    if let Ok(mut m) = membership.lock() {
+        m.handshaken(&node, Instant::now());
+    }
 
     let (out_tx, out_rx) = channel::<Envelope>();
     peers
@@ -488,11 +517,44 @@ fn serve_connection(
                     continue;
                 }
                 drop(t);
+                if env.kind == HEARTBEAT {
+                    // Verified above; do not verify twice — the nonce guard
+                    // would treat the second pass as a replay.
+                    if let Ok(mut m) = membership.lock() {
+                        let _ = m.observe_after_verification(&env, Instant::now());
+                    }
+                    continue;
+                }
+                if env.kind == "result" {
+                    if let Ok(mut m) = membership.lock() {
+                        m.committed(&env.node);
+                    }
+                }
                 if inbound.send(env).is_err() {
+                    if std::env::var("TALLOW_DEBUG_MESH").is_ok() {
+                        eprintln!("[srv] {node}: inbound closed, dropping peer");
+                    }
                     break;
                 }
             }
-            Err(_) => break,
+            // A read timeout is not a disconnect. A worker frozen with SIGSTOP
+            // keeps its socket open and simply stops sending; treating the
+            // timeout as EOF removed the peer from the table, which made a
+            // "stopped" node indistinguishable from a departed one — and hid it
+            // from the liveness check entirely.
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::Interrupted =>
+            {
+                continue
+            }
+            Err(e) => {
+                if std::env::var("TALLOW_DEBUG_MESH").is_ok() {
+                    eprintln!("[srv] {node}: read error {e:?}, dropping peer");
+                }
+                break;
+            }
         }
     }
     if let Ok(mut p) = peers.lock() {
@@ -532,7 +594,27 @@ pub fn run_worker(
     let mut reader = crate::mesh::wire::FrameReader::new(stream.try_clone().map_err(|e| e.to_string())?);
     let mut nonce = 2u64;
     let mut welcomed = false;
+    // Heartbeats prove the process is alive, not merely connected: a stopped
+    // worker keeps its socket, so the server would otherwise see a healthy peer
+    // forever. The interval matches the server's table (500 ms, expiry 3×).
+    let mut last_beat = Instant::now();
+    let mut heartbeat_nonce = 1u64;
+    let beat_every = Duration::from_millis(500);
     loop {
+        if welcomed && last_beat.elapsed() >= beat_every {
+            heartbeat_nonce += 1;
+            let mut hb = Envelope::new(
+                HEARTBEAT,
+                run_id,
+                0,
+                node,
+                heartbeat_nonce,
+                json!({}),
+            );
+            hb.sign(&key);
+            write_frame(&mut stream, &hb).map_err(|e| format!("heartbeat: {e}"))?;
+            last_beat = Instant::now();
+        }
         let env = match reader.next() {
             Ok(Some(e)) => e,
             Ok(None) => continue,
@@ -543,6 +625,10 @@ pub fn run_worker(
                     Err("join refused or server closed before welcome".to_string())
                 }
             }
+            // SIGSTOP/SIGCONT interrupt a blocking read with EINTR. Treating
+            // that as failure killed the worker the moment it was resumed, and
+            // the server then saw a closed peer instead of a returning one.
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(format!("read: {e}")),
         };
         if env.kind == "refused" {
