@@ -452,3 +452,36 @@ message.
 | single placement decision | `kronos.py:495–503` | capability chosen once per worker at join |
 | rank-seeded RNG | `training_utils.py:set_seed` | `task_seed = H(seed, wave, id, attempt)` |
 | golden regression fixtures | `tests/data/regression_output_256.csv` | replay fixtures pin checkpoint hashes |
+
+---
+
+## 9. Decision: speculation stays in-process (B3, 2026-10-23)
+
+**Decision.** Speculative duplicates are issued only by the coordinator that owns the
+wave. They are never sent to another node by the coordinator, and the wire protocol has
+no `speculate` frame. A remote node receives a task only through an epoch lease; when
+that lease expires the task is reassigned to a node that is still heartbeating.
+
+**Why.** The two mechanisms answer different failures, and mixing them would make one
+unprovable:
+
+- *Speculation* answers "this attempt is slow but the node is alive". The duplicate runs
+  in-process under a new epoch, the first commit wins, and the slower attempt is fenced
+  by lease epoch. Cost: duplicated work, bounded by `budget_fraction` per wave.
+- *Reassignment* answers "this node is gone or unresponsive". Cost: one lease expiry of
+  latency, no duplicated execution on a healthy node.
+
+Sending duplicates across the wire would make every node's journal contain results it
+did not produce, which breaks `Mesh.replay`: the replay would have to know whether a
+commit came from the holder or a duplicate. Keeping duplicates local means the journal's
+`task_committed` line is always the commit of the attempt that won, and a remote node's
+journal is a record of leases it was granted and results it returned.
+
+**Consequence, stated as a limit.** Speculation cannot hide the latency of a node that is
+alive but slow — only reassignment can, and only after the lease expires. That is the
+intended trade: a lease is a promise about a time window, not about a task.
+
+**Implementation note.** The duplicate's target worker is chosen to be different from the
+slot holding the straggler (`919ca8e`); round-robin dispatch could otherwise queue the
+duplicate behind the stall it exists to escape, which was measured at 5.0005 s on a
+2-core runner.
