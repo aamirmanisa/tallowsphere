@@ -8,6 +8,7 @@ pub mod phone_cmd;
 pub mod pin_cmd;
 pub mod pins_cmd;
 pub mod plan_cmd;
+pub mod request_plan_cmd;
 pub mod rmdb_cmd;
 pub mod sandbox_cmd;
 pub mod schema_cmd;
