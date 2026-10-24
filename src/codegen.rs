@@ -10188,6 +10188,33 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_truthy_i1(val)
     }
 
+    /// Is `kind` one of the native array kinds (`[count][elem…]`)?
+    ///
+    /// Every native array kind ends in `Array`; the count slot is an i64 prefix,
+    /// so reading it is what `.len` must do — `strlen` over that slot answers 1
+    /// for any non-zero count because the count is followed by NUL bytes.
+    fn kind_is_native_array(kind: Option<&str>) -> bool {
+        kind.map(|k| k.ends_with("Array")).unwrap_or(false)
+    }
+
+    /// Does `field` of `owner_kind` hold a native array? Falls back to the
+    /// expression's own inferred kind when the owner is unknown.
+    fn field_kind_is_array(&self, owner_kind: Option<&str>, expr: &Expr) -> bool {
+        if let Some(owner) = owner_kind {
+            if let Some(field) = match &expr.kind {
+                ExprKind::FieldAccess { field, .. } => Some(field.clone()),
+                _ => None,
+            } {
+                if let Some(layout) = self.struct_layouts.get(owner) {
+                    if let Some(k) = layout.field_kinds.get(&field) {
+                        return Self::kind_is_native_array(Some(k));
+                    }
+                }
+            }
+        }
+        Self::kind_is_native_array(self.infer_kind(expr).as_deref())
+    }
+
     fn expr_is_native_array(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Ident(name) => {
@@ -10206,27 +10233,28 @@ void tallow_async_runtime_shutdown(void) {
             // for a 3-element array). The declaration is authoritative, so read it
             // rather than keeping a name list that would rot.
             ExprKind::FieldAccess { object, field } => {
-                let Some(kind) = self.infer_kind(object) else {
-                    return false;
+                let kind = match self.infer_kind(object) {
+                    Some(k) => k,
+                    // The receiver may be untyped (a call, a literal) while the
+                    // field itself has a known container kind — `sd2.json_ld.len`
+                    // resolves through the field kind, so use it rather than
+                    // answering false and strlen-ing the count slot.
+                    None => return self.field_kind_is_array(None, expr),
                 };
-                let Some(decl) = self.program.items.iter().find_map(|item| match item {
+                if let Some(decl) = self.program.items.iter().find_map(|item| match item {
                     Item::Struct(st) if st.name == kind => Some(st),
                     _ => None,
-                }) else {
-                    // Not a program struct: fall back to the registered field
-                    // kind (a `*Array` kind means a native array).
-                    return self
-                        .struct_layouts
-                        .get(&kind)
-                        .and_then(|l| l.field_kinds.get(field))
-                        .map(|k| k.ends_with("Array"))
+                }) {
+                    return decl
+                        .fields
+                        .iter()
+                        .find(|f| f.name == *field)
+                        .map(|f| matches!(f.ty.kind, TypeExprKind::Slice(_)))
                         .unwrap_or(false);
-                };
-                decl.fields
-                    .iter()
-                    .find(|f| f.name == *field)
-                    .map(|f| matches!(f.ty.kind, TypeExprKind::Slice(_)))
-                    .unwrap_or(false)
+                }
+                // Not a program struct: the registered field kind decides, and
+                // failing that the inferred kind of the whole expression does.
+                self.field_kind_is_array(Some(&kind), expr)
             }
             // Receiver-independent array builders. A chained use — `"a,b".split(",").len`,
             // `doc.select("a").map(...)[0]` — has no tracked variable to look up, and the
