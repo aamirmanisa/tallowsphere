@@ -77,7 +77,21 @@ Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the cor
 every push; keep the release copy as the last gate.
 Gate: CI job present and green on main.
 
-**R3 — 38 integration suites are excluded.**
+**R3 — 38 integration suites are excluded.** — **13 remain** (2026-10-24)
+Down from 38: 25 are wired (23 browser suites + directorate_desks), and this
+iteration removed two more by fixing why they could not run:
+
+* `injection_redteam` — 8/8 pass, no browser needed; now in the contract job.
+* `parity_runner` — the suite was failing because the runner treated every
+  non-zero *interpreter* exit as an error, so the three `*_refusal` fixtures
+  could never land in a named class. Added `Expect::RefuseBoth`: a refusal
+  fixture must be refused on both planes, and both legs must refuse for the same
+  reason. Result: 10 MATCH, 4 REFUSED, 0 divergences, 0 errors — and the suite
+  now runs in CI with a built binary.
+
+The 13 that remain are named debt with expiry dates (perf 3, host 2, service 1,
+parked 1, triage 6).
+
 Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
 Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a
 container job; (b) needs Chrome → run in the existing browser job with a headless
