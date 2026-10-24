@@ -20760,6 +20760,22 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 Ok(buf)
             }
+            // A 32-bit integer field — `stdlib/process.tl` declares
+            // `exit_code: i32`, and any struct field narrower than i64 lands
+            // here. Without this arm the concat fell through to the default and
+            // rendered `nil`: `"code=" + o.exit_code` printed `code=nil` on the
+            // compiled plane while the interpreter printed `code=0`.
+            LLType::I32 => {
+                let wide = self.fresh_reg();
+                self.emit_line(&format!("{wide} = sext i32 {} to i64", val.reg));
+                let buf = self.fresh_reg();
+                self.emit_line(&format!("{buf} = call ptr @malloc(i64 32)"));
+                let _r = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{_r} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 32, ptr @.fmt.int, i64 {wide})"
+                ));
+                Ok(buf)
+            }
             LLType::F64 => {
                 let buf = self.fresh_reg();
                 self.emit_line(&format!("{buf} = call ptr @malloc(i64 64)"));

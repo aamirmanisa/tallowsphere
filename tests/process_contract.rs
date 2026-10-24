@@ -74,11 +74,18 @@ fn exec_flattens_argument_arrays_and_returns_the_declared_struct() {
 }
 
 #[test]
-fn native_exec_refuses_instead_of_returning_zeroed_fields() {
+fn native_exec_returns_the_same_real_output_as_the_interpreter() {
+    // This test used to assert that the compiled path *refused* `process.exec`,
+    // because the lowering could not capture a child's output. That is no longer
+    // true: the native leg runs the process and fills the declared struct, so a
+    // refusal would now be the defect. Assert the stronger property instead —
+    // both planes produce identical, real fields.
     let (ok, out) = run("--require-native", EXEC, "native");
-    assert!(!ok, "native exec must refuse, not fake an empty Output:\n{out}");
+    assert!(ok, "native leg failed:\n{out}");
     assert!(
-        out.contains("process.exec/run") && out.contains("cannot capture output"),
-        "refusal must name the limitation:\n{out}"
+        out.contains("out=[hello\n]"),
+        "compiled exec must capture real stdout, not a zeroed field:\n{out}"
     );
+    assert!(out.contains("code=0"), "exit_code must be real:\n{out}");
+    assert!(out.contains("ok=true"), "success must be real:\n{out}");
 }
