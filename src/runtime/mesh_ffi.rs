@@ -235,3 +235,126 @@ pub extern "C" fn tallow_mesh_plan(
         wave_sizes: crate::runtime::browser::native_array(wave_sizes),
     }))
 }
+
+/// Mirrors `%struct.WaveCheckpoint`: `wave`, `tasks`, `checkpoint`.
+#[repr(C)]
+pub struct WaveCheckpointRaw {
+    pub wave: i64,
+    pub tasks: i64,
+    pub checkpoint: *mut c_char,
+}
+
+/// Mirrors `%struct.MeshReplay`: `waves`, `ok`, `checkpoints`.
+///
+/// `checkpoints` is the backend's native array `[count][ptr…]`, each slot
+/// pointing at a `WaveCheckpointRaw`.
+#[repr(C)]
+pub struct MeshReplayRaw {
+    pub waves: i64,
+    pub ok: i32,
+    pub count: i64,
+    pub checkpoints: *mut c_void,
+}
+
+fn own(value: String) -> *mut c_char {
+    std::ffi::CString::new(value.replace('\0', ""))
+        .map(|c| c.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// `Mesh.replay(journal_path) -> MeshReplay`
+///
+/// Reads a journal the mesh runtime wrote (never a hand-built one) and reports
+/// every verified checkpoint. Returns null on failure with the reason in
+/// `tallow_mesh_last_error()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_mesh_replay(path: *const c_char) -> *mut MeshReplayRaw {
+    use crate::interp::Value;
+
+    let path = if path.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned()
+    };
+    let Some(result) = crate::stdlib::mesh_exec::dispatch("replay", vec![Value::String(path)])
+    else {
+        set_error("Mesh.replay is not routed by the stdlib".to_string());
+        return std::ptr::null_mut();
+    };
+    let value = match result {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    let Value::Struct { name, fields } = value else {
+        set_error("Mesh.replay did not return a MeshReplay".to_string());
+        return std::ptr::null_mut();
+    };
+    if name != "MeshReplay" {
+        set_error(format!("Mesh.replay returned a {name} struct"));
+        return std::ptr::null_mut();
+    }
+    let int = |key: &str| -> i64 {
+        fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| match v {
+                Value::Int(i) => *i as i64,
+                other => other.as_string().parse().unwrap_or(0),
+            })
+            .unwrap_or(0)
+    };
+    let ok = fields
+        .iter()
+        .find(|(k, _)| k == "ok")
+        .map(|(_, v)| matches!(v, Value::Bool(true)))
+        .unwrap_or(false);
+    let checkpoints: Vec<Value> = fields
+        .iter()
+        .find(|(k, _)| k == "checkpoints")
+        .map(|(_, v)| match v {
+            Value::Array(items) => items.clone(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
+
+    let mut slots: Vec<i64> = Vec::with_capacity(checkpoints.len());
+    for item in &checkpoints {
+        let Value::Struct { fields, .. } = item else {
+            set_error("Mesh.replay returned a non-struct checkpoint".to_string());
+            return std::ptr::null_mut();
+        };
+        let text = |key: &str| -> String {
+            fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_string())
+                .unwrap_or_default()
+        };
+        let num = |key: &str| -> i64 {
+            fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| match v {
+                    Value::Int(i) => *i as i64,
+                    other => other.as_string().parse().unwrap_or(0),
+                })
+                .unwrap_or(0)
+        };
+        let record = Box::new(WaveCheckpointRaw {
+            wave: num("wave"),
+            tasks: num("tasks"),
+            checkpoint: own(text("checkpoint")),
+        });
+        slots.push(Box::into_raw(record) as i64);
+    }
+
+    Box::into_raw(Box::new(MeshReplayRaw {
+        waves: int("waves"),
+        ok: ok as i32,
+        count: checkpoints.len() as i64,
+        checkpoints: crate::runtime::browser::native_array(slots),
+    }))
+}

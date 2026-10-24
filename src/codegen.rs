@@ -386,6 +386,7 @@ fn array_elem_kind(array_kind: Option<&str>) -> Option<String> {
         "ElementArray" => Some("Element".to_string()),
         "PageEventArray" => Some("PageEvent".to_string()),
         "CookieArray" => Some("CdpCookie".to_string()),
+        "WaveCheckpointArray" => Some("WaveCheckpoint".to_string()),
         "AntibotStepArray" => Some("AntibotResolveStep".to_string()),
         _ => None,
     }
@@ -451,6 +452,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // refuses by name — correct, but it means the lowering is unusable.
         ("llm" | "Llm", "complete") => Some("Completion".to_string()),
         ("Mesh" | "mesh", "plan") => Some("MeshPlan".to_string()),
+        ("Mesh" | "mesh", "replay") => Some("MeshReplay".to_string()),
         ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
         ("Page", "query_selector") => Some("Element".to_string()),
         ("Page", "wait_for_selector") => Some("Element".to_string()),
@@ -1307,6 +1309,19 @@ void tallow_async_runtime_shutdown(void) {
 
         // Phase 0: Collect struct layouts, enum variants, and constants
         self.collect_structs();
+        // Container-field kinds for the synthesized records, applied after the
+        // scan so a program that declares a struct with the same name cannot
+        // silently drop them: the scan registers that name first, which makes
+        // every `or_insert_with` in `collect_structs` a no-op for it.
+        for (record, field, kind) in [
+            ("MeshPlan", "wave_sizes", "I64Array"),
+            ("MeshReplay", "checkpoints", "WaveCheckpointArray"),
+            ("AntibotResolveReport", "steps", "AntibotStepArray"),
+        ] {
+            if let Some(layout) = self.struct_layouts.get_mut(record) {
+                layout.field_kinds.insert(field.to_string(), kind.to_string());
+            }
+        }
         self.collect_enums();
         self.collect_constants();
 
@@ -1698,6 +1713,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_llm_providers()\n");
         ir.push_str("; Mesh FFI — Mesh.plan reads the program's own MeshTask layout\n");
         ir.push_str("declare ptr @tallow_mesh_plan(ptr, i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare ptr @tallow_mesh_replay(ptr)\n");
         ir.push_str("declare ptr @tallow_mesh_last_error()\n");
         ir.push_str("declare void @tallow_mesh_abort()\n");
         ir.push_str("declare ptr @tallow_llm_last_error()\n");
@@ -2179,6 +2195,46 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ModelInfo".to_string(),
+                }
+            });
+
+        // `WaveCheckpoint` — an element of `MeshReplay.checkpoints`.
+        self.struct_layouts
+            .entry("WaveCheckpoint".to_string())
+            .or_insert_with(|| {
+                let names = ["wave", "tasks", "checkpoint"];
+                let types = [LLType::I64, LLType::I64, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.WaveCheckpoint".to_string(),
+                }
+            });
+
+        // `MeshReplay` — the return of `Mesh.replay`. `checkpoints` is a native
+        // array of `WaveCheckpoint` records; the field kind is what lets
+        // `r.checkpoints.len` and `r.checkpoints[i].wave` resolve.
+        self.struct_layouts
+            .entry("MeshReplay".to_string())
+            .or_insert_with(|| {
+                let names = ["waves", "ok", "checkpoints"];
+                let types = [LLType::I64, LLType::I1, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                let mut field_kinds = HashMap::new();
+                field_kinds.insert("checkpoints".to_string(), "WaveCheckpointArray".to_string());
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds,
+                    llvm_name: "%struct.MeshReplay".to_string(),
                 }
             });
 
@@ -5394,9 +5450,17 @@ void tallow_async_runtime_shutdown(void) {
                     index,
                 } = &object.kind
                 {
-                    if let ExprKind::Ident(arr_name) = &arr.kind {
-                        if let Some(struct_name) =
+                    // The array may be a variable or a struct field —
+                    // `r.checkpoints[0].wave`. The Ident lookup only covers the
+                    // first; for the second, resolve the element kind from the
+                    // array's own registered kind (e.g. WaveCheckpointArray).
+                    let elem_struct_name = match &arr.kind {
+                        ExprKind::Ident(arr_name) => {
                             self.variable_array_elem_struct.get(arr_name).cloned()
+                        }
+                        _ => array_elem_kind(self.infer_kind(arr).as_deref()),
+                    };
+                    if let Some(struct_name) = elem_struct_name {
                         {
                             if let Some(layout) = self.struct_layouts.get(&struct_name).cloned() {
                                 if let Some((idx, field_ty)) = layout.field_map.get(field).cloned() {
@@ -10149,10 +10213,14 @@ void tallow_async_runtime_shutdown(void) {
                     Item::Struct(st) if st.name == kind => Some(st),
                     _ => None,
                 }) else {
-                    return matches!(
-                        (kind.as_str(), field.as_str()),
-                        ("MeshPlan", "wave_sizes")
-                    );
+                    // Not a program struct: fall back to the registered field
+                    // kind (a `*Array` kind means a native array).
+                    return self
+                        .struct_layouts
+                        .get(&kind)
+                        .and_then(|l| l.field_kinds.get(field))
+                        .map(|k| k.ends_with("Array"))
+                        .unwrap_or(false);
                 };
                 decl.fields
                     .iter()
@@ -24071,6 +24139,52 @@ impl<'a> CodeGen<'a> {
         method: &str,
         args: &[CallArg],
     ) -> Result<Option<LLValue>, String> {
+        if method == "replay" {
+            let Some(arg) = args.first() else {
+                return Ok(None);
+            };
+            let v = self.emit_expr(&arg.value)?;
+            let path = self.coerce_to_string(&v)?;
+            let record = self.fresh_reg();
+            self.emit_line(&format!(
+                "{record} = call ptr @tallow_mesh_replay(ptr {path})"
+            ));
+            let present = self.fresh_reg();
+            self.emit_line(&format!("{present} = icmp ne ptr {record}, null"));
+            let ok_label = self.fresh_label("mesh.replay.ok");
+            let err_label = self.fresh_label("mesh.replay.err");
+            self.emit_line(&format!(
+                "br i1 {present}, label %{ok_label}, label %{err_label}"
+            ));
+            self.body.push_str(&format!("{err_label}:\n"));
+            self.emit_line("call void @tallow_mesh_abort()");
+            self.emit_line("unreachable");
+            self.body.push_str(&format!("{ok_label}:\n"));
+
+            let mut load = |cg: &mut Self, offset: i64, ty: &LLType| {
+                let gep = cg.fresh_reg();
+                cg.emit_line(&format!(
+                    "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                ));
+                let reg = cg.fresh_reg();
+                cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+                LLValue::new(reg, ty.clone())
+            };
+            let waves = load(self, 0, &LLType::I64);
+            let ok32 = load(self, 8, &LLType::I32);
+            // 12 is padding: the C record's `ok` is i32, `count` starts at 16.
+            let checkpoints = load(self, 24, &LLType::I8Ptr);
+            let ok1 = self.fresh_reg();
+            self.emit_line(&format!("{ok1} = icmp ne i32 {}, 0", ok32.reg));
+            return Ok(Some(self.build_plain_struct(
+                "MeshReplay",
+                &[
+                    ("waves", waves.reg, LLType::I64),
+                    ("ok", ok1, LLType::I1),
+                    ("checkpoints", checkpoints.reg, LLType::I8Ptr),
+                ],
+            )?));
+        }
         if method != "plan" {
             return Ok(None);
         }

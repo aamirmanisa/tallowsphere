@@ -235,63 +235,50 @@ task non-replayable and `Mesh.replay` refuses that journal with a reason.
 Gate: replay of a public-class run succeeds with the model detached; replay of a
 private-class run fails with "non-replayable: private data class".
 
-**R10 — `llm` and `Mesh.plan` have no native lowering.** — **partially done** (2026-10-24)
+**R10 — `llm` and `Mesh` had no native lowering.** — **DONE** (2026-10-24)
 
-`llm.complete` now has a real lowering: `tallow_llm_complete` (src/runtime/llm_ffi.rs)
-returns a heap `%struct.Completion` record built by the same
-`stdlib::llm::dispatch` the interpreter calls, and codegen loads its eight fields
-through the ordinary GEP path. A mock OpenAI-compatible provider proves parity —
-`text`, `model`, `provider`, `tokens_in`, `tokens_out` are byte-identical on both
-planes (tests/llm_native_parity.rs).
+All six functions lower now, each proven on both planes:
 
-All four `llm` calls now lower (2026-10-24, second pass): `llm.providers`,
-`llm.models` and `llm.verify` use the same record/array shapes as `Transfer.chunk`
-and `llm.complete`. Two traps were silent-wrong-value bugs, not missing arms:
-without a `(llm, method) → struct` entry a field shared by two structs is
-ambiguous (the read refuses by name), and without `variable_array_element_type`
-a `for` binding over the array is a raw i64 so `p.id` cannot resolve.
+* **`llm.complete`** — the runtime fills a heap `%struct.Completion` record from
+  the same `stdlib::llm::dispatch` the interpreter calls; codegen declares the
+  struct and reads its eight fields through the ordinary GEP path.
+* **`llm.models`, `llm.providers`** — native arrays `[count][ptr…]` of
+  `ModelInfo` / `ProviderInfo` records, the shape `Transfer.chunk` uses.
+* **`llm.verify`** — a mixed record (two strings, a bool, two counters).
+* **`Mesh.plan`** — takes an array of a struct the *program* declares, so the
+  lowering does not assume a layout: codegen reads that declaration, requires the
+  five contract fields, verifies their types (`String, String, []String, String,
+  String?`), computes each field's byte offset from it and passes the offsets to
+  `tallow_mesh_plan`. A reordered struct plans correctly; a declaration the
+  backend cannot read (`deps: String`) is refused at compile time with the field
+  named — never read at the wrong offsets.
+* **`Mesh.replay`** — returns `MeshReplay { waves, ok, checkpoints:
+  []WaveCheckpoint }`. The element kind is attached to the `checkpoints` field so
+  `.len`, `[i]` and `[i].wave` resolve natively.
 
-**`Mesh.plan` is now lowered too** (2026-10-24, third pass). The blocker was
-input shape, and the fix is a compile-time contract rather than an assumption:
-codegen finds the program's own `struct MeshTask` declaration, verifies the five
-field types (`String, String, []String, String, String?`), computes each field's
-byte offset from that declaration and passes the offsets to
-`tallow_mesh_plan`. A reordered struct therefore plans correctly, and a
-declaration the backend cannot read (`deps: String`) is refused at compile time
-with the field named — never read at the wrong offsets. `tests/mesh_plan_parity.rs`
-pins all three properties (canonical order, reordered, refusal) on both planes.
+Four silent-wrong-answer traps had to be closed along the way, each of which
+produced a plausible number rather than an error:
 
-**Still open: `Mesh.replay`.** Measured this iteration: the
-interpreter plans a one-task graph correctly (`waves=1 tasks=1`), the compiled
-path refuses by name ("no lowering for method 'plan'"). `Mesh.replay(journal_path) -> MeshReplay` returns a struct whose
-`checkpoints` field is an array of `WaveCheckpoint` records — an array-of-structs
-*output*, the mirror of the input shape just solved. The loud fallback stays
-until that output path exists.
+1. `infer_kind` consulted `browser_variables` but not `variable_struct_types`, so
+   a struct binding had a type for field reads but not for the array test —
+   `p.wave_sizes.len` strlen'd the buffer and answered 1 for a 3-element array.
+2. `[]T` struct fields were not recognised as native arrays; that now comes from
+   the declaration rather than a name list.
+3. `(module, method) → struct` entries were missing for the new calls, so a field
+   shared by two structs (`provider`, `elapsed_ms`) was ambiguous and refused.
+4. Container field kinds were dropped when the *program* declared a struct with
+   the same name (its entry is created first by the struct scan, making every
+   `or_insert_with` in `collect_structs` a no-op) — applied after the scan now.
 
-Failure behaviour of the four `llm` lowerings is a documented difference: the
-compiled path aborts with the redacted sentence and exit 1 where the interpreter
-returns `Err(sentence)`.
+**Gate, met:** a program using all six functions builds with `--require-native`
+and prints byte-identical output on both planes. `tests/llm_native_parity.rs`
+covers the four `llm` calls against a mock provider; `tests/mesh_plan_parity.rs`
+covers plan (canonical, reordered, refusal) and replay (a journal written by a
+real `Mesh.run`, plus the missing-journal refusal).
 
-Measured this iteration. A native lowering for `llm.complete` was written (FFI
-`tallow_llm_complete`, three strings in / one string out) and it did reach the
-model from compiled code — but it returned the *text* where the interpreter
-returns a `Completion` struct, so the same program printed `ready` natively and
-`Completion { text: "ready", model: …, prompt_hash: …, tokens_in: 17, … }`
-interpreted. That is a parity break, not a fix, and it was reverted.
-
-The blocker for both items is the same: a method whose result is a struct with
-string fields needs struct-return lowering in this backend (`Transfer.chunk`
-shows the shape, returning `%struct .ChunkInfo`). `Mesh.plan` additionally takes
-an array of `MeshTask` structs. Until that exists, the loud interpreter fallback
-is the correct behaviour: it keeps both planes agreeing, which matters more than
-the string "native" on the build.
-
-Original fix:
-Evidence: shipped binary prints "native build unavailable … running in the interpreter".
-Fix: codegen arms for the four `llm` functions and `Mesh.plan/replay`; struct-return
-kinds already exist from the browser work.
-Gate: `--require-native` passes on a program using all six functions; outputs match the
-interpreter byte-for-byte.
+Failure behaviour is a documented difference: the compiled path aborts with the
+redacted sentence and exit 1 where the interpreter returns `Err(sentence)` —
+never a zero-filled struct.
 
 ### Directorate
 
