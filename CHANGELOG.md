@@ -9,6 +9,77 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.0] — 2026-10-24 — the operator workflow, and native llm lowerings
+
+### Added
+
+- **Request-plan operator verbs.** `tallow run-plan` executes or preflights a
+  `tallow.request_plan.v1` plan: `local` (default) evaluates policy and opens
+  nothing, `live-preflight` runs every live gate and still opens nothing, `live`
+  requires `--approve-live` plus a compliance gate report bound to the source
+  manifest's sha256 and then performs one GET per request. Refusals are reported,
+  never raised: stdout is a JSON run report with a stable `blocked_reason` code
+  per request and the process exits 2. Gates, in order: shape validation, URL
+  scheme, method, approval, compliance binding, header hygiene (a literal secret
+  in a header is refused and the value is never echoed), output-dir isolation,
+  source-manifest presence/sha, manifest allow/deny policy, browser fallback and
+  artifact capture (declared but unwired is refused by name), and vault
+  references (only `vault://local` resolves; the raw reference is never
+  serialised, only its sha256).
+- **Live artifacts.** A clean live run writes a redacted plan snapshot,
+  `requests.jsonl`, `response_metadata.jsonl`, `source_index.csv`,
+  `run_metrics.json`, `compliance_report.json`, per-request response files under
+  `responses/`, and an `artifact_manifest.json` carrying size and sha256 for every
+  file. Bodies — empty ones included — are stored as `<redacted:sha256:…>`.
+- **`tallow validate-manifest`** — v2 shape checks (schema, unique v2-safe target
+  ids, http(s) URLs, expressible methods, a complete compliance block), report to
+  stdout and `--report-path` identically.
+- **`tallow build-plan`** — manifest to plan, attaching the manifest's canonical
+  path and sha256 so `run-plan` can prove the pair has not drifted.
+- **`tallow package-report`** — recursive hash manifest of a run directory,
+  excluding its own output by file identity rather than by string comparison.
+- **`tallow fmt --check`** — verifies without rewriting, comparing against the
+  formatted body because a generated file's `@generated_by` header is not
+  reproduced by the formatter.
+- **`tallow lint --profile scraper`** — `E-SCRAPER-IMPORT` and `E-SCRAPER-LEGAL`;
+  an import alone is not HTTP work, so an import-only file passes.
+- **Native lowerings for `llm.complete`, `llm.models`, `llm.verify` and
+  `llm.providers`.** Compiled programs no longer fall back to the interpreter:
+  the runtime builds the same `Completion`, `ModelInfo`, `VerifyReport` and
+  `ProviderInfo` records the interpreter builds, and the compiled path reads them
+  through the ordinary struct/array GEP path. Failure is loud — the redacted
+  sentence and exit 1 — never a zero-filled struct.
+
+### Fixed
+
+- **Browser array calls returned `Ok(array)` interpreted and a bare array
+  compiled**, so `page.query_selector_all(sel).len` was 1 natively and 0
+  interpreted at a single result. The three calls now return the array on both
+  planes, and field access on a `Result` refuses on both planes again
+  (`http.get(url).status` must be bound first).
+- **An `i32` concatenated into a string rendered `nil`** (`"code=" + o.exit_code`
+  printed `code=nil` natively) — `coerce_to_string` had no i32 arm.
+- **`test_speed_test_nonzero` raced on a fixed temp filename** across processes;
+  the path is unique per call.
+- **`fmt --check` exited 64 for unformatted source** — 64 is the usage code; it
+  now exits 1.
+- **The WordPress fixture probed readiness once**, so a cold CI runner failed
+  before the container served; it now polls with a bounded timeout and prints the
+  container's last log lines on failure.
+- **The parity harness classified every non-zero interpreter exit as an error**,
+  so the `*_refusal` fixtures could never pass; both planes are now required to
+  refuse with the same sentence.
+
+### Verified
+
+- Full library suite: 9,250 passed / 0 failed / 33 ignored.
+- 118 test targets, 117 run in CI, 1 registered as debt (`compiler_bench`, which
+  needs `--release` and a larger stack; measured, not assumed).
+- `llm` parity against a mock OpenAI-compatible provider: identical
+  `text`/`model`/`provider`/`tokens_in`/`tokens_out`, model list, verify report
+  and provider registry on both planes.
+- Every CI job green on `71a8e8b`, including the new WordPress fixture job.
+
 ## [v1.4.0] — 2026-10-23 — model providers, without keys in the language
 
 ### Added

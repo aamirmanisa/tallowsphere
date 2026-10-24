@@ -446,6 +446,11 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("fs", "read_bytes") => Some("Bytes".to_string()),
         // http.batch(...) → native array of Result entries (one per URL).
         ("http", "batch") => Some("ResultArray".to_string()),
+        // The llm struct returns. Without these, a field shared by two of the
+        // structs (`provider`, `elapsed_ms`) is ambiguous and the field read
+        // refuses by name — correct, but it means the lowering is unusable.
+        ("llm" | "Llm", "complete") => Some("Completion".to_string()),
+        ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
         ("Page", "query_selector") => Some("Element".to_string()),
         ("Page", "wait_for_selector") => Some("Element".to_string()),
         ("Page", "query_selector_all") => Some("ElementArray".to_string()),
@@ -1688,6 +1693,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("; LLM FFI — llm.complete returns a %struct.Completion record\n");
         ir.push_str("declare ptr @tallow_llm_complete(ptr, ptr, ptr, i64)\n");
         ir.push_str("declare ptr @tallow_llm_models(ptr)\n");
+        ir.push_str("declare ptr @tallow_llm_verify(ptr)\n");
+        ir.push_str("declare ptr @tallow_llm_providers()\n");
         ir.push_str("declare ptr @tallow_llm_last_error()\n");
         ir.push_str("declare void @tallow_llm_abort()\n");
         ir.push('\n');
@@ -2167,6 +2174,59 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ModelInfo".to_string(),
+                }
+            });
+
+        // `ProviderInfo` — an element of `llm.providers()`. Eight strings; the
+        // runtime fills `ProviderInfoRaw` with this layout.
+        self.struct_layouts
+            .entry("ProviderInfo".to_string())
+            .or_insert_with(|| {
+                let names = [
+                    "id",
+                    "label",
+                    "protocol",
+                    "base_url",
+                    "key_env",
+                    "status",
+                    "docs",
+                    "unavailable_reason",
+                ];
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, LLType::I8Ptr));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.ProviderInfo".to_string(),
+                }
+            });
+
+        // `VerifyReport` — the return of `llm.verify`. Mixed kinds: two strings,
+        // an i1 and two i64s; the runtime fills `VerifyReportRaw` with this
+        // layout (i32 for the bool, because a C record cannot have an i1 field).
+        self.struct_layouts
+            .entry("VerifyReport".to_string())
+            .or_insert_with(|| {
+                let names = ["provider", "ok", "models", "elapsed_ms", "detail"];
+                let types = [
+                    LLType::I8Ptr,
+                    LLType::I1,
+                    LLType::I64,
+                    LLType::I64,
+                    LLType::I8Ptr,
+                ];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.VerifyReport".to_string(),
                 }
             });
 
@@ -4259,10 +4319,36 @@ void tallow_async_runtime_shutdown(void) {
                             // same three:`.len` reads the count slot, `ms[i]`
                             // inttoptrs the slot, and `ms[i].id` GEPs into
                             // `%struct.ModelInfo` instead of answering 0.
+                            // llm.complete / llm.verify bind a named struct:
+                            // without the kind, a field common to both
+                            // (`provider`, `elapsed_ms`…) cannot be resolved and
+                            // the call refuses by name.
+                            if matches!(obj_name.as_str(), "llm" | "Llm")
+                                && method == "complete"
+                            {
+                                self.browser_variables
+                                    .insert(name.clone(), "Completion".to_string());
+                            }
+                            if matches!(obj_name.as_str(), "llm" | "Llm") && method == "verify" {
+                                self.browser_variables
+                                    .insert(name.clone(), "VerifyReport".to_string());
+                            }
+                            if matches!(obj_name.as_str(), "llm" | "Llm")
+                                && method == "providers"
+                            {
+                                self.variable_is_array.insert(name.clone(), true);
+                                self.variable_array_elem_is_ptr.insert(name.clone(), true);
+                                self.variable_array_elem_struct
+                                    .insert(name.clone(), "ProviderInfo".to_string());
+                                self.variable_array_element_type
+                                    .insert(name.clone(), "ProviderInfo".to_string());
+                            }
                             if matches!(obj_name.as_str(), "llm" | "Llm") && method == "models" {
                                 self.variable_is_array.insert(name.clone(), true);
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_array_elem_struct
+                                    .insert(name.clone(), "ModelInfo".to_string());
+                                self.variable_array_element_type
                                     .insert(name.clone(), "ModelInfo".to_string());
                             }
                             // fs.read_bytes(...) → "Bytes" (t_70cad4f2): the
@@ -9825,6 +9911,8 @@ void tallow_async_runtime_shutdown(void) {
                     "http" => Some("http".to_string()),
                     // Struct-static namespace (`Crawler.from_links(...)`).
                     "Crawler" => Some("Crawler".to_string()),
+                    // Module namespaces whose calls return named structs.
+                    "llm" | "Llm" => Some("llm".to_string()),
                     _ => None,
                 }
             }
@@ -23997,6 +24085,77 @@ impl<'a> CodeGen<'a> {
                         ("tokens_in", tokens_in.reg, LLType::I64),
                         ("tokens_out", tokens_out.reg, LLType::I64),
                         ("elapsed_ms", elapsed_ms.reg, LLType::I64),
+                    ],
+                )?))
+            }
+            // `llm.providers() -> []ProviderInfo`: same array shape as
+            // llm.models, eight string fields per record.
+            "providers" => {
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = call ptr @tallow_llm_providers()"));
+                let present = self.fresh_reg();
+                self.emit_line(&format!("{present} = icmp ne ptr {result}, null"));
+                let ok_label = self.fresh_label("llm.providers.ok");
+                let err_label = self.fresh_label("llm.providers.err");
+                self.emit_line(&format!(
+                    "br i1 {present}, label %{ok_label}, label %{err_label}"
+                ));
+                self.body.push_str(&format!("{err_label}:\n"));
+                self.emit_line("call void @tallow_llm_abort()");
+                self.emit_line("unreachable");
+                self.body.push_str(&format!("{ok_label}:\n"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            // `llm.verify(provider) -> VerifyReport`: one heap record, same shape
+            // as `llm.complete` but with a bool and two counters. Offsets are
+            // provider/0, ok/8 (i32 in the C record), models/16, elapsed_ms/24,
+            // detail/32 — see `VerifyReportRaw`.
+            "verify" => {
+                let Some(arg) = args.first() else {
+                    return Ok(None);
+                };
+                let v = self.emit_expr(&arg.value)?;
+                let provider = self.coerce_to_string(&v)?;
+                let record = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{record} = call ptr @tallow_llm_verify(ptr {provider})"
+                ));
+                let present = self.fresh_reg();
+                self.emit_line(&format!("{present} = icmp ne ptr {record}, null"));
+                let ok_label = self.fresh_label("llm.verify.ok");
+                let err_label = self.fresh_label("llm.verify.err");
+                self.emit_line(&format!(
+                    "br i1 {present}, label %{ok_label}, label %{err_label}"
+                ));
+                self.body.push_str(&format!("{err_label}:\n"));
+                self.emit_line("call void @tallow_llm_abort()");
+                self.emit_line("unreachable");
+                self.body.push_str(&format!("{ok_label}:\n"));
+
+                let mut load = |cg: &mut Self, offset: i64, ty: &LLType| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+                    LLValue::new(reg, ty.clone())
+                };
+                let provider_v = load(self, 0, &LLType::I8Ptr);
+                let ok32 = load(self, 8, &LLType::I32);
+                let models = load(self, 16, &LLType::I64);
+                let elapsed = load(self, 24, &LLType::I64);
+                let detail = load(self, 32, &LLType::I8Ptr);
+                let ok1 = self.fresh_reg();
+                self.emit_line(&format!("{ok1} = icmp ne i32 {}, 0", ok32.reg));
+                Ok(Some(self.build_plain_struct(
+                    "VerifyReport",
+                    &[
+                        ("provider", provider_v.reg, LLType::I8Ptr),
+                        ("ok", ok1, LLType::I1),
+                        ("models", models.reg, LLType::I64),
+                        ("elapsed_ms", elapsed.reg, LLType::I64),
+                        ("detail", detail.reg, LLType::I8Ptr),
                     ],
                 )?))
             }
