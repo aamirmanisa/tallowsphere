@@ -158,6 +158,7 @@ pub mod sbom;
 pub mod scenario_matrix;
 pub mod scope;
 pub mod scope_jurisdiction;
+pub mod ombuds;
 pub mod scope_manifest;
 pub mod sentinel_lifecycle;
 pub mod shred;

@@ -1793,10 +1793,18 @@ impl Interpreter {
         }
         // A signed scope manifest, when configured, authorizes the task ids
         // this run may execute. It is checked before any work is planned.
-        crate::scope_manifest::authorize_tasks(
-            &tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
-        )
-        .map_err(|e| RuntimeError::Error(format!("Mesh.run: {e}")))?;
+        let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+        if let Err(e) = crate::scope_manifest::authorize_tasks(&task_ids) {
+            // A refusal is exactly what the ombuds channel exists to record.
+            // If the channel is configured and cannot be written, that is a
+            // second failure, and it is reported alongside the first.
+            let note = crate::ombuds::record_refusal("mesh.run", &e).err();
+            let msg = match note {
+                Some(n) => format!("Mesh.run: {e} (ombuds: {n})"),
+                None => format!("Mesh.run: {e}"),
+            };
+            return Err(RuntimeError::Error(msg));
+        }
 
         for task in &tasks {
             if !self.functions.contains_key(&task.func) {
