@@ -10,8 +10,10 @@
 // `Mesh.run` executes functions of the calling program: every task names one,
 // each runs in its own interpreter on a worker thread, and the coordinator
 // supplies content-derived seeds, lease fencing and retries by task class.
-// Topology (membership, gossip, DHT) lives in `mesh` and is still simulated —
-// see docs/operations/mesh-m4-hold-2026-10-23.md.
+// Topology (membership, gossip, DHT) lives in `mesh` and runs over real TCP
+// sockets: MeshNode.new binds a listener, join dials its bootstraps and
+// exchanges a hello, broadcast and dht_put write frames to handshaken peers.
+// See docs/architecture/tallow-mesh-execution-plane-2026-10-23.md §10-11.
 
 /// One unit of work in a plan.
 ///

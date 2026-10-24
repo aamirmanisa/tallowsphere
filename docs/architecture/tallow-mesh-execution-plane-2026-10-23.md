@@ -527,3 +527,39 @@ replayed.
 node's hardware is healthy or that its clock is right. Lease expiry remains the only
 mechanism that reassigns in-flight work, and a node that heartbeats while failing every
 task is caught by the attempt cap, not by this table.
+
+## 11. The language surface is now a socket client, not a map
+
+`stdlib/mesh.tl` documented the topology plane as simulated; `src/stdlib/mesh.rs` kept
+nodes, peers, messages and DHT entries in one process-wide `HashMap`. A Tallow program
+could create a node, join a peer and "receive" a message without a byte leaving the
+process — the structs even carried `simulated: true` to say so.
+
+That registry is gone. `MeshNode` is now a thin front end over TCP:
+
+| call | what it actually does |
+| --- | --- |
+| `MeshNode.new(port, bootstrap)` | binds `127.0.0.1:port` (or an ephemeral port for `0`), starts an accept thread, returns `simulated: false` |
+| `join()` | dials each bootstrap, sends `hello`, waits up to 2 s for the answer, then hands the socket to a reader thread; a refused dial is an error, not a fake peer |
+| `broadcast(topic, v)` | writes a `gossip` frame to every handshaken peer; returns the number of frames written |
+| `receive(topic)` | drains the node's inbox, waiting up to 1.5 s for the first delivery |
+| `dht_put/dht_get` | writes locally and replicates a `dht` frame; `get` waits up to 0.5 s for an in-flight replication |
+| `peers()` | one `PeerInfo` per distinct peer, `connected` true only if `hello` arrived, `simulated = !connected` |
+
+Three properties are worth stating because they are the difference between this and the
+simulation it replaced:
+
+1. **A peer id comes from the wire.** The dialer learns it from the bootstrap's `hello`
+   reply; the acceptor learns it from the dialer's `hello`. Nothing is looked up in a
+   local map by port number.
+2. **`simulated` is derived.** On a peer it is `!connected`. On the node itself it is
+   `false` because a listener exists. There is no branch that sets it to `true` for
+   convenience.
+3. **Failures are reported.** A bootstrap that refuses the connection returns
+   `mesh: cannot connect to bootstrap <addr>: <err>` and creates no peer; a bootstrap
+   that accepts but never says `hello` fails the join.
+
+Limits, unchanged in spirit from §10: gossip forwards exactly one hop, so the reach is the
+sender's peers and their peers; a dropped peer is not redialled; the DHT is last-write-wins
+replication, not a partitioned DHT. The surface did not grow — the same 7 methods exist —
+so the published function count (1,131) and module count (87) are unchanged.
