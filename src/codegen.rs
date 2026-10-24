@@ -454,6 +454,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("Mesh" | "mesh", "plan") => Some("MeshPlan".to_string()),
         ("Mesh" | "mesh", "replay") => Some("MeshReplay".to_string()),
         ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
+        ("crypto", "age_keygen") => Some("AgeKeypair".to_string()),
         ("Page", "query_selector") => Some("Element".to_string()),
         ("Page", "wait_for_selector") => Some("Element".to_string()),
         ("Page", "query_selector_all") => Some("ElementArray".to_string()),
@@ -1715,6 +1716,10 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_mesh_plan(ptr, i64, i64, i64, i64, i64, i64)\n");
         ir.push_str("declare ptr @tallow_mesh_replay(ptr)\n");
         ir.push_str("declare ptr @tallow_mesh_last_error()\n");
+        ir.push_str("; age FFI — the container is produced by the age crate\n");
+        ir.push_str("declare ptr @tallow_age_keygen()\n");
+        ir.push_str("declare ptr @tallow_age_encrypt(ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_age_decrypt(ptr, ptr)\n");
         ir.push_str("declare void @tallow_mesh_abort()\n");
         ir.push_str("declare ptr @tallow_llm_last_error()\n");
         ir.push_str("declare void @tallow_llm_abort()\n");
@@ -2281,6 +2286,25 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ProviderInfo".to_string(),
+                }
+            });
+
+        // `AgeKeypair` — the return of `crypto.age_keygen`. Two strings, in the
+        // order `AgeKeypairRaw` declares them in src/runtime/age_ffi.rs.
+        self.struct_layouts
+            .entry("AgeKeypair".to_string())
+            .or_insert_with(|| {
+                let names = ["recipient", "identity"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.AgeKeypair".to_string(),
                 }
             });
 
@@ -24640,6 +24664,55 @@ impl<'a> CodeGen<'a> {
         args: &[CallArg],
     ) -> Result<Option<LLValue>, String> {
         match method {
+            // `crypto.age_keygen() -> AgeKeypair`. One heap record, same shape as
+            // `AgeKeypairRaw`: recipient at +0, identity at +8. Both are heap C
+            // strings; `tallow_check_string` turns a null into a hard runtime
+            // error rather than letting it reach a strlen.
+            "age_keygen" => {
+                let record = self.fresh_reg();
+                self.emit_line(&format!("{record} = call ptr @tallow_age_keygen()"));
+                let mut load = |cg: &mut Self, offset: i64| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load ptr, ptr {gep}"));
+                    reg
+                };
+                let recipient = load(self, 0);
+                let identity = load(self, 8);
+                self.emit_line(&format!("call void @tallow_check_string(ptr {recipient})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {identity})"));
+                Ok(Some(self.build_plain_struct(
+                    "AgeKeypair",
+                    &[
+                        ("recipient", recipient, LLType::I8Ptr),
+                        ("identity", identity, LLType::I8Ptr),
+                    ],
+                )?))
+            }
+            // `crypto.age_encrypt(recipient, plaintext_hex) -> ciphertext_hex`
+            "age_encrypt" | "age_decrypt" => {
+                if args.len() < 2 {
+                    return Err(format!(
+                        "crypto.{method} needs 2 arguments (native lowering)"
+                    ));
+                }
+                let a = self.emit_expr(&args[0].value)?;
+                let b = self.emit_expr(&args[1].value)?;
+                let a = self.coerce_to_string(&a)?;
+                let b = self.coerce_to_string(&b)?;
+                let ffi = if method == "age_encrypt" {
+                    "tallow_age_encrypt"
+                } else {
+                    "tallow_age_decrypt"
+                };
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = call ptr @{ffi}(ptr {a}, ptr {b})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
             "hash" => {
                 // crypto.hash(data, algo?) — with an explicit algorithm label,
                 // route through the runtime dispatcher so the label is HONORED.

@@ -104,7 +104,8 @@ jobs:
             --test pq_tls_group \
             --test age_container \
             --test opaque_flow \
-            --test secret_display 2>&1 | tee integration.log
+            --test secret_display \
+            --test age_native_parity 2>&1 | tee integration.log
 
       - name: Write this run's measured numbers
         # The release body's Verified section is generated from these logs, not
