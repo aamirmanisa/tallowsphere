@@ -415,11 +415,11 @@ jobs:
           TALLOW_ALLOW_DIRECT: "1"
         run: ./target/debug/tallow browser install
       - name: Run the browser suites that pass on the pinned build
-        # 23 of the 29 previously-excluded browser suites run here. They were in
-        # the registry because no browser existed on the runner, not because they
-        # were broken: installed with `tallow browser install`, they pass. The six
-        # that still fail (DOMContentLoaded timeouts, array parity at 0/1/3) stay
-        # in the registry as triage with a named failing assertion.
+        # Every previously-excluded browser suite now runs here. They were in the
+        # registry because no browser existed on the runner, not because they
+        # were broken; the last four (array parity at 0/1/3, flow runtime) were
+        # blocked by an interpreter defect that wrapped browser array results in
+        # `Ok(…)`, which is fixed (9446bd1).
         env:
           TALLOW_ALLOW_DIRECT: "1"
         run: |
@@ -461,6 +461,47 @@ jobs:
   # named class: MATCH, REFUSED (a fixture marked `parity: expect-refusal` must be refused by BOTH
   # legs), FALLBACK (marked `parity: expect-build-fallback`, the documented fail-loud case), DIVERGE
   # (fails). An unclassified build failure is reported with its reason and is not counted as a pass.
+  wordpress-fixture:
+    name: WordPress fixture (wp_* browser helpers)
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: tallow-ci
+      - name: Install the native link dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang liblzma-dev libbz2-dev
+      - name: Build the engine
+        run: cargo build --locked --bin tallow
+      - name: Install Chrome for Testing (the wp_* helpers drive a real browser)
+        env:
+          TALLOW_ALLOW_DIRECT: "1"
+        run: ./target/debug/tallow browser install
+      - name: Start the WordPress fixture
+        # docker is present on the runner; the fixture script owns the whole
+        # lifecycle (network, mariadb, wordpress, core install) and waits for
+        # the front page to answer.
+        run: scripts/wordpress_fixture.sh up
+      - name: wp_* helpers against the fixture
+        # TALLOW_ALLOW_DIRECT is the operator's opt-in: the browser zone routes
+        # through Tor by contract, and Tor cannot reach a loopback fixture. The
+        # suite is #[ignore]d for exactly that reason, so CI runs it with
+        # --ignored rather than removing the guard for every local run.
+        env:
+          TALLOW_ALLOW_DIRECT: "1"
+          WP_URL: http://127.0.0.1:8099
+        run: cargo test --locked --test wordpress_login -- --ignored
+      - name: Stop the fixture
+        if: always()
+        run: scripts/wordpress_fixture.sh down
+
   parity:
     name: Parity (interp vs native)
     runs-on: ubuntu-latest

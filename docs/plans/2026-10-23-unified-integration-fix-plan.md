@@ -77,7 +77,7 @@ Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the cor
 every push; keep the release copy as the last gate.
 Gate: CI job present and green on main.
 
-**R3 — 38 integration suites are excluded.** — **4 remain** (2026-10-24)
+**R3 — 38 integration suites are excluded.** — **3 remain** (2026-10-24)
 Down from 38: 25 are wired (23 browser suites + directorate_desks), and this
 iteration removed two more by fixing why they could not run:
 
@@ -137,9 +137,16 @@ the suite:
 
 All 38 tests now run unignored in the contract job.
 
-The 4 that remain are named debt with expiry dates (perf 3, service 1 —
-`wordpress_login` needs a local WordPress fixture). No triage, host or parked
-entries left.
+Then `wordpress_login`, which only ever needed the fixture to exist: the suite
+passes 1/1 against the live `tallow-wp` container (6 s), and CI now starts the
+same fixture with `scripts/wordpress_fixture.sh up`, installs the pinned
+Chrome-for-Testing build and runs the test with `--ignored`. `TALLOW_ALLOW_DIRECT`
+stays an operator opt-in — the browser zone routes through Tor by contract and
+Tor cannot reach a loopback fixture — so the guard stays in the test and CI
+opts in explicitly.
+
+The 3 that remain are perf suites by design (not per-commit). No triage, host,
+parked or service entries left.
 
 Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
 Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a
