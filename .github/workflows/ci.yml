@@ -288,6 +288,7 @@ jobs:
           --test perf_binary_startup
           --test perf_install
           --test llm_native_parity
+          --test mesh_plan_parity
           --test stdlib_method_refusals
           --test transfer_transport
           --test injection_redteam
