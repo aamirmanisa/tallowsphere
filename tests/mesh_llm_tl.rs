@@ -34,6 +34,12 @@ struct MeshRun {
 
 /// A tiny OpenAI-compatible endpoint: one fixed answer per request.
 fn fixture_server() -> (u16, Arc<AtomicBool>) {
+    fixture_server_with("fixture-answer", false)
+}
+
+/// `as_reasoning` mimics reasoning-model servers (MiniCPM, R1-style): the
+/// answer arrives in `reasoning_content` and `content` is empty.
+fn fixture_server_with(answer: &'static str, as_reasoning: bool) -> (u16, Arc<AtomicBool>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
     let port = listener.local_addr().unwrap().port();
     let stop = Arc::new(AtomicBool::new(false));
@@ -60,8 +66,13 @@ fn fixture_server() -> (u16, Arc<AtomicBool>) {
             }
             let mut body = vec![0u8; content_length];
             let _ = std::io::Read::read_exact(&mut reader, &mut body);
+            let message = if as_reasoning {
+                serde_json::json!({"role": "assistant", "content": "", "reasoning_content": answer})
+            } else {
+                serde_json::json!({"role": "assistant", "content": answer})
+            };
             let payload = serde_json::json!({
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "fixture-answer"}, "finish_reason": "stop"}],
+                "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
                 "model": "fixture-model"
             })
@@ -212,6 +223,37 @@ fn main() {{
     assert!(
         output.contains("non-replayable: private data class"),
         "expected the named refusal, got: {output}"
+    );
+
+    stop.store(true, Ordering::SeqCst);
+}
+
+#[test]
+fn a_reasoning_model_answer_is_read_from_reasoning_content() {
+    let (port, stop) = fixture_server_with("reasoned answer", true);
+    let dir = std::env::temp_dir().join(format!("tallow-mesh-llm-reason-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let cfg = dir.join("llm.toml");
+    std::fs::write(
+        &cfg,
+        format!(
+            "[providers.fixture]\nprotocol = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+        ),
+    )
+    .expect("config");
+
+    let program = r#"
+@legal(basis: .public_data, purpose: "reasoning fallback", personal_data: false)
+fn main() {
+    let c = llm.complete("fixture", "fixture-model", "Say something.", 32)
+    print(c.text)
+}
+"#;
+    let (ok, output) = run_env(&dir, program, "reasoning", &cfg);
+    assert!(ok, "run failed: {output}");
+    assert!(
+        output.contains("reasoned answer"),
+        "content was empty; the reasoning field must be used: {output}"
     );
 
     stop.store(true, Ordering::SeqCst);
