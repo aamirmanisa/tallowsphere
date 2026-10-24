@@ -165,3 +165,63 @@ pub extern "C" fn tallow_llm_abort() -> ! {
     eprintln!("runtime error: {msg}");
     std::process::exit(1);
 }
+
+/// Mirrors `%struct.ModelInfo` (stdlib/llm.tl): `id`, `owned_by`.
+#[repr(C)]
+pub struct ModelInfoRaw {
+    pub id: *mut c_char,
+    pub owned_by: *mut c_char,
+}
+
+/// `llm.models(provider) -> []ModelInfo`
+///
+/// The array has the same shape `Transfer.chunk` returns — `[count][ptr…]` of
+/// heap records — so `models[0].id` and `.len` work through the ordinary array
+/// path instead of needing a second representation.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_llm_models(provider: *const c_char) -> *mut std::ffi::c_void {
+    use crate::interp::Value;
+
+    let provider = take_cstr(provider);
+    let Some(result) = crate::stdlib::llm::dispatch("models", vec![Value::String(provider)])
+    else {
+        set_error("llm.models is not routed by the stdlib".to_string());
+        return std::ptr::null_mut();
+    };
+    let value = match result {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    let Value::Array(items) = value else {
+        set_error("llm.models did not return an array".to_string());
+        return std::ptr::null_mut();
+    };
+
+    let mut slots: Vec<i64> = Vec::with_capacity(items.len());
+    for item in items {
+        let Value::Struct { name, fields } = item else {
+            set_error("llm.models returned a non-struct entry".to_string());
+            return std::ptr::null_mut();
+        };
+        if name != "ModelInfo" {
+            set_error(format!("llm.models returned a {name} entry"));
+            return std::ptr::null_mut();
+        }
+        let field = |key: &str| -> String {
+            fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_string())
+                .unwrap_or_default()
+        };
+        let record = Box::new(ModelInfoRaw {
+            id: own(field("id")),
+            owned_by: own(field("owned_by")),
+        });
+        slots.push(Box::into_raw(record) as i64);
+    }
+    crate::runtime::browser::native_array(slots)
+}
