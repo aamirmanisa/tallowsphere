@@ -18425,6 +18425,159 @@ fn rfc3339_utc_now() -> String {
     )
 }
 
+/// Per-function classification for `tallow.crypto`.
+///
+/// Static, like the rest of the default report: it reads the source and never
+/// executes a handler. The rules are deliberately narrow so they can be
+/// checked by eye against the quoted excerpt:
+///   * no dispatch arm            -> `absent`
+///   * arm body only returns Err   -> `unavailable`, reason = that Err text
+///   * arm or handler named `*_experimental` -> `experimental`
+///   * otherwise                   -> `implemented`
+///
+/// `reason` always carries the evidence (source excerpt), so a status can be
+/// audited without re-running the tool.
+fn crypto_function_rows(
+    manifest: &std::path::Path,
+    cache: &ModuleSourceCache,
+) -> Vec<serde_json::Value> {
+    let decl_path = manifest.join("stdlib/crypto.tl");
+    let decl = std::fs::read_to_string(&decl_path).unwrap_or_default();
+    let mut names: Vec<String> = Vec::new();
+    for line in decl.lines() {
+        // Column 0 only: indented `fn`s are members of a declared module block
+        // (e.g. `module Kem { fn encap ... }`), not dispatchable surface.
+        let Some(rest) = line.strip_prefix("fn ") else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    let Some(cm) = cache.get("crypto") else {
+        return Vec::new();
+    };
+    let rs = cm.rs_src.as_str();
+
+    names
+        .into_iter()
+        .map(|name| {
+            let arm = cm
+                .arms
+                .iter()
+                .find(|a| a.keys.iter().any(|k| k == &name));
+            let Some(arm) = arm else {
+                return serde_json::json!({
+                    "name": name,
+                    "status": "absent",
+                    "reason": "no dispatch arm for this declared function",
+                });
+            };
+            // Resolve the handler the arm calls, then read that handler's body
+            // (a fixed window is enough: these are small functions and the
+            // window is trimmed at the first `\n}` that closes it).
+            let handler = arm
+                .rhs
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .find(|tok| tok.starts_with("crypto_") || tok.starts_with("nist_") || tok.starts_with("cnsa2_") || tok.starts_with("fips_"))
+                .unwrap_or("");
+            // A handler may be defined twice under `#[cfg(...)]`: a real body
+            // for the feature and an Err-only body for the default build. Find
+            // every definition, note any `cfg(not(feature = "X"))` gate, and use
+            // the body that the *default* build compiles.
+            let mut body = String::new();
+            let mut gated_by: Option<String> = None;
+            if !handler.is_empty() {
+                let needle = format!("fn {handler}(");
+                let mut from = 0usize;
+                while let Some(rel) = rs[from..].find(&needle) {
+                    let i = from + rel;
+                    let pre_start = i.saturating_sub(240);
+                    let pre = &rs[pre_start..i];
+                    let rest = &rs[i..];
+                    let end = rest.find("\n}").map(|e| e + 2).unwrap_or(rest.len().min(4000));
+                    let this_body = &rest[..end];
+                    match pre.rfind("cfg(not(feature") {
+                        // `#[cfg(not(feature = "x"))]` immediately precedes the
+                        // default-build stub: that is the body a plain build gets.
+                        Some(off) => {
+                            let tail = &pre[off..];
+                            let name_start = tail.find('"').map(|q| off + q + 1);
+                            let feat = name_start.and_then(|ns| {
+                                let t = &pre[ns..];
+                                let e = t.find('"')?;
+                                Some(t[..e].to_string())
+                            });
+                            gated_by = feat;
+                            body = this_body.to_string();
+                        }
+                        None => {
+                            if body.is_empty() {
+                                body = this_body.to_string();
+                            }
+                        }
+                    }
+                    from = i + needle.len();
+                }
+            } else {
+                body = arm.rhs.clone();
+            }
+
+            let experimental = name.ends_with("_experimental")
+                || handler.ends_with("_experimental")
+                || body.contains("_experimental");
+            // A body that can succeed uses `Ok(`, `Ok {`, or returns a mapped
+            // value (`.map(...)`). Only a body with no success path at all is
+            // "unavailable" — an argument-type `Err` inside a working function
+            // must not be mistaken for a feature gate.
+            let has_success = body.contains("Ok(") || body.contains("Ok {") || body.contains(".map(");
+            let err_only = !has_success && body.contains("return Err(");
+            let simulated = body.contains("Simulated") || body.contains("simulated");
+
+            let excerpt = first_quoted(&body).unwrap_or_default();
+            let (status, reason) = if let Some(feature) = gated_by {
+                (
+                    "gated",
+                    format!("requires --features {feature} (default build returns the refusal below): {excerpt}"),
+                )
+            } else if experimental {
+                ("experimental", excerpt)
+            } else if err_only {
+                ("unavailable", excerpt)
+            } else if simulated {
+                ("simulated", excerpt)
+            } else {
+                ("implemented", String::new())
+            };
+
+            serde_json::json!({
+                "name": name,
+                "status": status,
+                "handler": handler,
+                "reason": reason,
+            })
+        })
+        .collect()
+}
+
+/// First double-quoted string literal in `src`, for the audit trail.
+fn first_quoted(src: &str) -> Option<String> {
+    let start = src.find('"')?;
+    let rest = &src[start + 1..];
+    let end = rest.find('"')?;
+    let msg = rest[..end].trim();
+    if msg.is_empty() {
+        None
+    } else {
+        Some(msg.chars().take(160).collect())
+    }
+}
+
 /// Build the full tallow.doctor.capabilities.v1 report value.
 ///
 /// `probe == false` (default): pure static classification — no dispatch
@@ -18471,6 +18624,41 @@ fn build_capabilities_report(probe: bool) -> Result<serde_json::Value, String> {
         let st = rec["status"].as_str().unwrap_or("unverified").to_string();
         *by_status.entry(st).or_insert(0) += 1;
         modules.push(rec);
+    }
+
+    // Per-function status for `crypto`. The module-level status says "real"
+    // even when an individual arm cannot execute in this build (the PQClean
+    // family is feature-gated) or when an arm is an explicitly experimental
+    // construction. Without this, a caller reads "crypto: real" and only finds
+    // out at the call site — which is how a capability claim goes wrong.
+    if let Some(rec) = modules
+        .iter_mut()
+        .find(|m| m.get("module").and_then(|v| v.as_str()) == Some("crypto"))
+    {
+        let fns = crypto_function_rows(&manifest, &cache);
+        let mut counts = std::collections::BTreeMap::new();
+        for f in &fns {
+            let st = f["status"].as_str().unwrap_or("unknown").to_string();
+            *counts.entry(st).or_insert(0) += 1;
+        }
+        let experimental: Vec<String> = cache
+            .get("crypto")
+            .map(|cm| {
+                let mut v: Vec<String> = cm
+                    .arms
+                    .iter()
+                    .flat_map(|a| a.keys.iter())
+                    .filter(|k| k.ends_with("_experimental"))
+                    .cloned()
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            })
+            .unwrap_or_default();
+        rec["functions"] = serde_json::Value::Array(fns);
+        rec["functions_by_status"] = serde_json::json!(counts);
+        rec["experimental_arms"] = serde_json::json!(experimental);
     }
 
     // CLI command surface: clap knows all 70 compiled-in subcommands.
