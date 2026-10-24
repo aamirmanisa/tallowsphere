@@ -84,6 +84,11 @@ fn main() {{
     let b = Browser.launch(true)
     let p = b.new_page()
     p.goto("http://127.0.0.1:{port}/")
+    // The window size is the runner's, not ours: read it rather than assume it.
+    // A CI runner opened at 800 wide made a hardcoded "1920" assertion fail for
+    // a reason that had nothing to do with the emulation.
+    let before = p.evaluate("document.documentElement.clientWidth")
+    print(before)
     let vp = DeviceEmulator.set_viewport(800, 600, 1.0)
     print(vp.applied)
     print(p.evaluate("document.documentElement.clientWidth"))
@@ -100,22 +105,23 @@ fn main() {{
     let (ok, all) = run(&src, "emu");
     assert!(ok, "{all}");
     let lines: Vec<&str> = all.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let width = |v: &str| -> Option<i64> {
+        v.strip_prefix("Ok(")?.strip_suffix(")")?.trim().parse::<i64>().ok()
+    };
+    let widths: Vec<i64> = lines.iter().filter_map(|l| width(l)).collect();
     assert!(lines.contains(&"true"), "applied must be true: {all}");
-    // Read the layout viewport, not `window.innerWidth`: the persona's
-    // fingerprint normalization installs a getter for innerWidth that keeps
-    // reporting the physical window (measured: clientWidth 800 while innerWidth
-    // stayed 1920). clientWidth is what the emulation actually controls.
-    assert!(
-        lines.iter().any(|l| l.contains("Ok(800)")),
-        "the page must report an 800px layout viewport after set_viewport: {all}"
-    );
     assert!(
         lines.iter().any(|l| l.contains("TallowSentinel/1.0")),
         "navigator.userAgent must carry the marker: {all}"
     );
-    assert!(
-        lines.iter().any(|l| l.contains("Ok(1920)")),
-        "clear() must restore a different inner width: {all}"
+    // Three widths: before, during, after clear.
+    assert_eq!(widths.len(), 3, "expected before/during/after widths: {all}");
+    let (before, during, after) = (widths[0], widths[1], widths[2]);
+    assert_eq!(during, 800, "the page must report an 800px layout viewport: {all}");
+    assert_ne!(before, during, "the header must actually change the width: {all}");
+    assert_eq!(
+        after, before,
+        "clear() must restore the width the page had before the override: {all}"
     );
 }
 

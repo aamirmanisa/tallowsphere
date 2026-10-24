@@ -231,11 +231,11 @@ pub fn set_user_agent(ua: &str) -> Result<(), String> {
 /// Remove every override the emulator can set, in the order CDP requires.
 pub fn clear_emulation() -> Result<(), String> {
     let page = page()?;
-    // `setVisibleSize` resizes the widget itself, so clearing the metrics
-    // override alone leaves the layout viewport at the emulated size (measured:
-    // clientWidth stayed 800 after clear). The real window size is read from the
-    // page before the override list is torn down, and the widget is put back.
-    let window_size = ORIGINAL_VIEWPORT.with(|slot| slot.borrow_mut().take()).or_else(|| {
+    // Order matters and was measured the wrong way round first: clearing the
+    // metrics override *after* resizing the widget re-applied the old metrics on
+    // the next layout, so the page kept reporting the emulated width. Clear the
+    // override first, then put the widget back to the size it had.
+    let original = ORIGINAL_VIEWPORT.with(|slot| slot.borrow_mut().take()).or_else(|| {
         run(async {
             page.evaluate_expression("window.outerWidth + ',' + window.outerHeight")
                 .await
@@ -249,7 +249,13 @@ pub fn clear_emulation() -> Result<(), String> {
             Some((w, h))
         })
     });
-    if let Some((w, h)) = window_size {
+
+    run(emulation(
+        &page,
+        "Emulation.clearDeviceMetricsOverride",
+        json!({}),
+    ))?;
+    if let Some((w, h)) = original {
         if w > 0 && h > 0 {
             run(emulation(
                 &page,
@@ -258,11 +264,6 @@ pub fn clear_emulation() -> Result<(), String> {
             ))?;
         }
     }
-    run(emulation(
-        &page,
-        "Emulation.clearDeviceMetricsOverride",
-        json!({}),
-    ))?;
     run(emulation(
         &page,
         "Emulation.clearGeolocationOverride",
@@ -282,7 +283,34 @@ pub fn clear_emulation() -> Result<(), String> {
         &page,
         "Emulation.setUserAgentOverride",
         json!({"userAgent": ""}),
-    ))
+    ))?;
+
+    // The widget resize is applied asynchronously by the browser. Without this
+    // wait the page still reports the emulated width immediately after `clear()`
+    // — measured as an intermittent failure, roughly one run in five, because
+    // the read raced the relayout. Wait for the value to actually change, and
+    // report the failure rather than returning as if the restore happened.
+    if let Some((w, _h)) = original {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+        loop {
+            let now = run(async {
+                page.evaluate_expression("document.documentElement.clientWidth").await
+            })
+            .ok()
+            .and_then(|v| v.as_i64());
+            if now == Some(w) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "clearDeviceMetricsOverride did not restore the layout width: expected {w}, \
+                     page still reports {now:?} after 1 s"
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+    Ok(())
 }
 
 // ── NetworkInterceptor ──────────────────────────────────────────────────────
