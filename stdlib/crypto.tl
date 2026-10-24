@@ -1062,3 +1062,10 @@ impl Cnsa2 {
         panic("crypto.tl is dispatch-only; this body must never execute")
     }
 }
+
+// HPKE (RFC 9180): DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM,
+// base mode. Hex in, hex out, like the rest of this module.
+fn hpke_suite() -> String
+fn hpke_generate_keypair() -> HpkeKeypair
+fn hpke_seal(recipient_pk_hex: String, info_hex: String, aad_hex: String, plaintext_hex: String) -> HpkeCiphertext
+fn hpke_open(recipient_sk_hex: String, enc_hex: String, info_hex: String, aad_hex: String, ciphertext_hex: String) -> String

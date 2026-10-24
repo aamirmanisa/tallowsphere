@@ -72,6 +72,7 @@ pub mod forecast;
 pub mod foresight_adapter;
 pub mod format_policy;
 pub mod frost;
+pub mod hpke;
 pub mod gap_register;
 pub mod grade_wording;
 pub mod harm_review;

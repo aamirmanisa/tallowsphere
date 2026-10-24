@@ -60,7 +60,7 @@ fn every_declared_function_is_reported_exactly_once() {
     let declared = declared_functions();
     assert_eq!(
         declared.len(),
-        28,
+        32,
         "the declared crypto surface changed size ({}) — update this gate deliberately",
         declared.len()
     );
@@ -136,6 +136,8 @@ fn the_report_does_not_claim_gaps_that_were_already_closed() {
         "bbs_verify",
         "noise_handshake",
         "spake2_exchange",
+        "hpke_seal",
+        "hpke_open",
     ] {
         let f = fns
             .iter()

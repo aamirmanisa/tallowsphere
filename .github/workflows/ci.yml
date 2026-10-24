@@ -288,6 +288,8 @@ jobs:
           --test perf_binary_startup
           --test perf_install
           --test llm_native_parity
+          --test crypto_capability_registry
+          --test hpke_rfc9180
           --test mesh_plan_parity
           --test stdlib_method_refusals
           --test transfer_transport

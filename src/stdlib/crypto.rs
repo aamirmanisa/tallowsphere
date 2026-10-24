@@ -59,6 +59,11 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "key_exchange_hybrid_decapsulate" => Some(crypto_key_exchange_hybrid_decapsulate(&args)),
         // HKDF key derivation (KINF-03) -- real via hkdf crate
         "hkdf_derive" => Some(crypto_hkdf_derive(&args)),
+        // HPKE (RFC 9180) -- real via the `hpke` crate, fixed suite, base mode
+        "hpke_suite" => Some(crypto_hpke_suite(&args)),
+        "hpke_generate_keypair" => Some(crypto_hpke_generate_keypair(&args)),
+        "hpke_seal" => Some(crypto_hpke_seal(&args)),
+        "hpke_open" => Some(crypto_hpke_open(&args)),
         // AES Key Wrap (KINF-02) -- real via aes-kw crate
         "key_wrap" => Some(crypto_key_wrap(&args)),
         "key_unwrap" => Some(crypto_key_unwrap(&args)),
@@ -2280,6 +2285,89 @@ fn crypto_parallel_hash(args: &[Value]) -> StdlibResult {
 // ---------------------------------------------------------------------------
 // HKDF Key Derivation (KINF-03) -- Real via hkdf crate
 // ---------------------------------------------------------------------------
+
+
+// ── HPKE (RFC 9180) ─────────────────────────────────────────────────────────
+//
+// One suite, named and reported: DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 /
+// AES-128-GCM — RFC 9180 Appendix A.1, whose vector is the test in
+// `src/hpke.rs`. Base mode only. The composition lives in `crate::hpke` because
+// the `hpke` crate cannot coexist with this tree's `ml-kem`/`kem` pins; that
+// module is a composition of X25519 + HKDF-SHA256 + AES-128-GCM, verified
+// against the RFC vector, not a new primitive.
+
+fn crypto_hpke_suite(_args: &[Value]) -> StdlibResult {
+    Ok(crate::hpke::value_suite())
+}
+
+fn crypto_hpke_generate_keypair(_args: &[Value]) -> StdlibResult {
+    use x25519_dalek::{PublicKey, StaticSecret};
+    let sk = StaticSecret::random_from_rng(rand_core_06::OsRng);
+    let pk = PublicKey::from(&sk);
+    Ok(Value::Struct {
+        name: "HpkeKeypair".into(),
+        fields: vec![
+            (
+                "public_key".into(),
+                Value::String(crate::hpke::hex(pk.as_bytes())),
+            ),
+            (
+                "secret_key".into(),
+                Value::String(crate::hpke::hex(&sk.to_bytes())),
+            ),
+        ],
+    })
+}
+
+fn crypto_hpke_seal(args: &[Value]) -> StdlibResult {
+    let recipient_pk = get_string_arg(args, 0).ok_or_else(|| {
+        "crypto.hpke_seal expects (recipient_pk_hex, info_hex, aad_hex, plaintext_hex)".to_string()
+    })?;
+    let info_hex = get_string_arg(args, 1).unwrap_or_default();
+    let aad_hex = get_string_arg(args, 2).unwrap_or_default();
+    let pt_hex = get_string_arg(args, 3)
+        .ok_or_else(|| "crypto.hpke_seal: plaintext_hex is required".to_string())?;
+
+    let pk = crate::hpke::public_key_from_hex(&recipient_pk)
+        .map_err(|e| format!("crypto.hpke_seal: {e}"))?;
+    let info = crate::hpke::unhex(&info_hex)?;
+    let aad = crate::hpke::unhex(&aad_hex)?;
+    let pt = crate::hpke::unhex(&pt_hex)?;
+
+    let (enc, ct) = crate::hpke::seal(&pk, &info, &aad, &pt);
+    Ok(Value::Struct {
+        name: "HpkeCiphertext".into(),
+        fields: vec![
+            ("enc".into(), Value::String(crate::hpke::hex(enc.as_bytes()))),
+            ("ciphertext".into(), Value::String(crate::hpke::hex(&ct))),
+        ],
+    })
+}
+
+fn crypto_hpke_open(args: &[Value]) -> StdlibResult {
+    let sk_hex = get_string_arg(args, 0).ok_or_else(|| {
+        "crypto.hpke_open expects (recipient_sk_hex, enc_hex, info_hex, aad_hex, ciphertext_hex)"
+            .to_string()
+    })?;
+    let enc_hex = get_string_arg(args, 1)
+        .ok_or_else(|| "crypto.hpke_open: enc_hex is required".to_string())?;
+    let info_hex = get_string_arg(args, 2).unwrap_or_default();
+    let aad_hex = get_string_arg(args, 3).unwrap_or_default();
+    let ct_hex = get_string_arg(args, 4)
+        .ok_or_else(|| "crypto.hpke_open: ciphertext_hex is required".to_string())?;
+
+    let sk = crate::hpke::secret_key_from_hex(&sk_hex)
+        .map_err(|e| format!("crypto.hpke_open: {e}"))?;
+    let enc = crate::hpke::public_key_from_hex(&enc_hex)
+        .map_err(|e| format!("crypto.hpke_open: encapsulated key: {e}"))?;
+    let info = crate::hpke::unhex(&info_hex)?;
+    let aad = crate::hpke::unhex(&aad_hex)?;
+    let ct = crate::hpke::unhex(&ct_hex)?;
+
+    let pt = crate::hpke::open(&sk, &enc, &info, &aad, &ct)
+        .map_err(|e| format!("crypto.hpke_open: {e}"))?;
+    Ok(Value::String(crate::hpke::hex(&pt)))
+}
 
 fn crypto_hkdf_derive(args: &[Value]) -> StdlibResult {
     let ikm_hex = match args.first() {
