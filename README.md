@@ -42,7 +42,7 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-22 · release `v1.1.5` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
+[measured 2026-10-24 · release `v1.5.0` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
 
 Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
 
@@ -94,7 +94,7 @@ installed tallow 1.5.0 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
-[measured 2026-10-22 · release `v1.1.5` · commit `a3ecdbe7b5`]
+[measured 2026-10-24 · release `v1.5.0` · commit `0fdd5797ee`]
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
@@ -116,11 +116,11 @@ $ ./install.sh --from ./tallow-linux-aarch64-1.5.0.tar.gz    # air-gapped
 
 ```console
 $ tallow --version
-tallow 1.1.5
+tallow 1.5.0
   platform: linux
   arch: aarch64
-  build: 2026-10-22T01:00:09Z
-  git: a3ecdbe7b5
+  build: 2026-10-24T14:15:55Z
+  git: 0fdd5797ee
 ```
 
 The `git:` line is provenance: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so the two are distinguishable.
@@ -325,9 +325,9 @@ The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)
 
 | Gate | Result | Revision |
 |---|---|---|
-| `cargo test --lib` | **9,150 passed · 0 failed · 33 ignored** (368.99 s) | `a3ecdbe7b5`, 2026-10-22 [measured] |
-| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, no egress | released 1.1.5 [measured] |
-| Conformance | **18 programs × 2 planes, 0 failures** against the installed 1.1.5 binary | 2026-10-22 [measured] |
+| `cargo test --lib` | **9,250 passed · 0 failed · 33 ignored** | `0fdd5797ee`, 2026-10-24 [measured] |
+| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, empty quarantine, no egress | released 1.5.0 [measured] |
+| Conformance | **18 programs × 2 planes, 0 failures** against the installed 1.5.0 binary | 2026-10-24 [measured] |
 | Examples & tutorial | **10 of 10 programs** byte-identical on both planes, including `error_handling.tl` (`String.parse` now lowers natively) | 2026-10-22 [measured] |
 | Install probe | compiles and runs a program from the installed archive | 2026-10-21 [measured] |
 
