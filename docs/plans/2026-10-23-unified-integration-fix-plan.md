@@ -88,7 +88,11 @@ Gate: `cargo deny check` clean with no warnings.
 
 ### Mesh
 
-**R5 — Topology plane is simulated.**
+**R5 — Topology plane is simulated.** — **DONE** (2026-10-24)
+Closed by `74f7029` (heartbeats, liveness, SIGSTOP/SIGCONT test) and `0de3e29`
+(`MeshNode` is a real TCP peer: listener, hello handshake, gossip and DHT over
+sockets; `simulated` derived from the handshake). The evidence below is the
+state that motivated the work, kept for the record.
 Evidence: `src/stdlib/mesh.rs:175` `("simulated", true)`; `:339` connectivity simulated.
 Fix: back membership with `src/mesh/wire.rs`: signed `join`/`heartbeat` frames, a peer
 table fed by completed handshakes, `simulated` computed per node from
