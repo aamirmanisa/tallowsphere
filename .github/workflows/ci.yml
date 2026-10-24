@@ -259,7 +259,9 @@ jobs:
       - name: Every test target is run or explicitly excluded
         run: python3 scripts/check_test_coverage.py
       - name: Build the engine for the parity runner
-        run: cargo build --locked --bin tallow
+        # --lib as well as --bin: the runner needs target/debug/libtallow.a next
+        # to the binary, which only the `staticlib` crate-type target produces.
+        run: cargo build --locked --lib --bin tallow
       - name: Parity fixtures (interpreter vs native, both planes)
         # parity_runner was excluded as unclassified. It was failing because the
         # runner treated every non-zero interpreter exit as an error, so the

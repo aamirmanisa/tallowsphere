@@ -232,18 +232,39 @@ fn snapshot_binary(src: &Path) -> std::io::Result<(PathBuf, Option<PathBuf>)> {
     let _ = std::fs::remove_file(&dst);
     std::fs::hard_link(src, &dst)?;
 
-    let lib_dst = src
+    // The runtime static library must sit next to the snapshot binary, because
+    // `find_runtime_lib_for_target` resolves it through `current_exe()`'s
+    // parent. `target/<profile>/libtallow.a` only exists once the `staticlib`
+    // target has been built; `cargo build --bin tallow` alone leaves only the
+    // hashed copy in `deps/`. CI hit exactly that: the snapshot had "runtime lib:
+    // none", so every program that calls a runtime helper linked with undefined
+    // references (tallow_display_map, tallow_last_error, …).
+    let lib_source = src
         .parent()
         .map(|p| p.join("libtallow.a"))
-        .and_then(|lib_src| {
-            if lib_src.is_file() {
-                let dst = dir.join("libtallow.a");
-                let _ = std::fs::remove_file(&dst);
-                std::fs::hard_link(&lib_src, &dst).ok().map(|_| dst)
-            } else {
-                None
+        .filter(|p| p.is_file())
+        .or_else(|| {
+            // Fall back to the newest hashed archive in `deps/`.
+            let deps = src.parent()?.join("deps");
+            let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+            for entry in std::fs::read_dir(deps).ok()? {
+                let path = entry.ok()?.path();
+                let name = path.file_name()?.to_string_lossy().to_string();
+                if !(name.starts_with("libtallow-") && name.ends_with(".a")) {
+                    continue;
+                }
+                let mtime = path.metadata().ok()?.modified().ok()?;
+                if best.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+                    best = Some((mtime, path));
+                }
             }
+            best.map(|(_, p)| p)
         });
+    let lib_dst = lib_source.and_then(|lib_src| {
+        let dst = dir.join("libtallow.a");
+        let _ = std::fs::remove_file(&dst);
+        std::fs::hard_link(&lib_src, &dst).ok().map(|_| dst)
+    });
     Ok((dst, lib_dst))
 }
 

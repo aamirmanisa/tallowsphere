@@ -3639,8 +3639,17 @@ fn speed_test(args: &[Value]) -> StdlibResult {
     let test_size = 10 * 1024 * 1024; // 10MB
     let data: Vec<u8> = (0..test_size).map(|i| (i % 256) as u8).collect();
 
-    // Write speed
-    let tmp = std::env::temp_dir().join("tallow_speed_test.tmp");
+    // Write speed. The path must be unique per call: the previous fixed name
+    // (`tallow_speed_test.tmp` in the shared temp dir) was a race — two callers,
+    // including two test threads, wrote and removed the same file, so one of
+    // them read ENOENT. CI caught it as
+    // `speed_test failed: Err("read: No such file or directory")`.
+    static SPEED_TEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SPEED_TEST_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = std::env::temp_dir().join(format!(
+        "tallow_speed_test_{}_{seq}.tmp",
+        std::process::id()
+    ));
     let start = std::time::Instant::now();
     std::fs::write(&tmp, &data).map_err(|e| format!("write: {e}"))?;
     let write_ms = start.elapsed().as_millis() as f64;
