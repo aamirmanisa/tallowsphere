@@ -13,6 +13,7 @@ use std::os::raw::c_char;
 use std::sync::OnceLock;
 
 pub mod age_ffi;
+pub mod opaque_ffi;
 pub mod browser;
 pub mod crypto_ffi;
 pub mod db_ffi;

@@ -455,6 +455,12 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("Mesh" | "mesh", "replay") => Some("MeshReplay".to_string()),
         ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
         ("crypto", "age_keygen") => Some("AgeKeypair".to_string()),
+        ("crypto", "opaque_register_start") => Some("OpaqueRegistration".to_string()),
+        ("crypto", "opaque_register_respond") => Some("OpaqueRegistrationResponse".to_string()),
+        ("crypto", "opaque_register_finish") => Some("OpaqueRegistrationUpload".to_string()),
+        ("crypto", "opaque_login_start") => Some("OpaqueLoginRequest".to_string()),
+        ("crypto", "opaque_login_respond") => Some("OpaqueLoginResponse".to_string()),
+        ("crypto", "opaque_login_finish") => Some("OpaqueLoginResult".to_string()),
         ("Page", "query_selector") => Some("Element".to_string()),
         ("Page", "wait_for_selector") => Some("Element".to_string()),
         ("Page", "query_selector_all") => Some("ElementArray".to_string()),
@@ -1004,7 +1010,10 @@ impl<'a> CodeGen<'a> {
 
         // Clean up temporary files (keep them for debugging if env var set)
         if std::env::var("TALLOW_KEEP_IR").is_err() {
-            let _ = std::fs::remove_file(&ll_path);
+            // TALLOW_KEEP_IR=1 keeps the .ll next to the binary for diagnosis.
+            if std::env::var("TALLOW_KEEP_IR").is_err() {
+                let _ = std::fs::remove_file(&ll_path);
+            }
             if let Some(stub) = stub_path {
                 let _ = std::fs::remove_file(&stub);
             }
@@ -1720,6 +1729,17 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_age_keygen()\n");
         ir.push_str("declare ptr @tallow_age_encrypt(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_age_decrypt(ptr, ptr)\n");
+        ir.push_str("; OPAQUE (RFC 9807) FFI — multi-value results are heap records\n");
+        ir.push_str("declare ptr @tallow_opaque_suite()\n");
+        ir.push_str("declare ptr @tallow_opaque_setup()\n");
+        ir.push_str("declare ptr @tallow_opaque_register_start(ptr)\n");
+        ir.push_str("declare ptr @tallow_opaque_register_respond(ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_opaque_register_finish(ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_opaque_register_store(ptr)\n");
+        ir.push_str("declare ptr @tallow_opaque_login_start(ptr)\n");
+        ir.push_str("declare ptr @tallow_opaque_login_respond(ptr, ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_opaque_login_finish(ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @tallow_opaque_login_server_finish(ptr, ptr)\n");
         ir.push_str("declare void @tallow_mesh_abort()\n");
         ir.push_str("declare ptr @tallow_llm_last_error()\n");
         ir.push_str("declare void @tallow_llm_abort()\n");
@@ -2286,6 +2306,120 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ProviderInfo".to_string(),
+                }
+            });
+
+        // `OpaqueRegistration` — a heap record whose field order matches the `#[repr(C)]`
+        // struct in src/runtime/opaque_ffi.rs.
+        self.struct_layouts
+            .entry("OpaqueRegistration".to_string())
+            .or_insert_with(|| {
+                let names = ["request", "state"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.OpaqueRegistration".to_string(),
+                }
+            });
+
+        // `OpaqueRegistrationResponse` — a heap record whose field order matches the `#[repr(C)]`
+        // struct in src/runtime/opaque_ffi.rs.
+        self.struct_layouts
+            .entry("OpaqueRegistrationResponse".to_string())
+            .or_insert_with(|| {
+                let names = ["response"];
+                let types = [LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.OpaqueRegistrationResponse".to_string(),
+                }
+            });
+
+        // `OpaqueRegistrationUpload` — a heap record whose field order matches the `#[repr(C)]`
+        // struct in src/runtime/opaque_ffi.rs.
+        self.struct_layouts
+            .entry("OpaqueRegistrationUpload".to_string())
+            .or_insert_with(|| {
+                let names = ["upload", "export_key"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.OpaqueRegistrationUpload".to_string(),
+                }
+            });
+
+        // `OpaqueLoginRequest` — a heap record whose field order matches the `#[repr(C)]`
+        // struct in src/runtime/opaque_ffi.rs.
+        self.struct_layouts
+            .entry("OpaqueLoginRequest".to_string())
+            .or_insert_with(|| {
+                let names = ["request", "state"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.OpaqueLoginRequest".to_string(),
+                }
+            });
+
+        // `OpaqueLoginResponse` — a heap record whose field order matches the `#[repr(C)]`
+        // struct in src/runtime/opaque_ffi.rs.
+        self.struct_layouts
+            .entry("OpaqueLoginResponse".to_string())
+            .or_insert_with(|| {
+                let names = ["response", "state"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.OpaqueLoginResponse".to_string(),
+                }
+            });
+
+        // `OpaqueLoginResult` — a heap record whose field order matches the `#[repr(C)]`
+        // struct in src/runtime/opaque_ffi.rs.
+        self.struct_layouts
+            .entry("OpaqueLoginResult".to_string())
+            .or_insert_with(|| {
+                let names = ["finalization", "session_key", "export_key"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.OpaqueLoginResult".to_string(),
                 }
             });
 
@@ -10033,6 +10167,11 @@ void tallow_async_runtime_shutdown(void) {
                     "Crawler" => Some("Crawler".to_string()),
                     // Module namespaces whose calls return named structs.
                     "llm" | "Llm" => Some("llm".to_string()),
+                    // `crypto.*` results that are named structs (AgeKeypair,
+                    // the OPAQUE records). Without this the binding had no type,
+                    // and a field shared by two structs (`request`) could not be
+                    // resolved at all.
+                    "crypto" => Some("crypto".to_string()),
                     "Mesh" | "mesh" => Some("Mesh".to_string()),
                     _ => None,
                 }
@@ -24664,6 +24803,165 @@ impl<'a> CodeGen<'a> {
         args: &[CallArg],
     ) -> Result<Option<LLValue>, String> {
         match method {
+            // ── OPAQUE (RFC 9807) ──────────────────────────────────────────
+            // Multi-value steps return a heap record; the record pointer is
+            // checked before any field is loaded, so an error becomes a runtime
+            // abort rather than a null dereference.
+            "opaque_suite" | "opaque_setup" => {
+                let result = self.fresh_reg();
+                let ffi = if method == "opaque_suite" {
+                    "tallow_opaque_suite"
+                } else {
+                    "tallow_opaque_setup"
+                };
+                self.emit_line(&format!("{result} = call ptr @{ffi}()"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            "opaque_register_respond" | "opaque_register_store"
+            | "opaque_login_server_finish" => {
+                let want = match method {
+                    "opaque_register_respond" => 3,
+                    "opaque_register_store" => 1,
+                    _ => 2,
+                };
+                if args.len() < want {
+                    return Err(format!("crypto.{method} needs {want} arguments"));
+                }
+                let mut vals = Vec::new();
+                for a in args.iter().take(want) {
+                    let v = self.emit_expr(&a.value)?;
+                    vals.push(self.coerce_to_string(&v)?);
+                }
+                let ffi = format!("tallow_{method}");
+                let list = vals
+                    .iter()
+                    .map(|r| format!("ptr {r}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let result = self.fresh_reg();
+                self.emit_line(&format!("{result} = call ptr @{ffi}({list})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            "opaque_register_start" | "opaque_login_start" => {
+                let Some(a) = args.first() else {
+                    return Err(format!("crypto.{method} needs 1 argument"));
+                };
+                let v = self.emit_expr(&a.value)?;
+                let pw = self.coerce_to_string(&v)?;
+                let ffi = format!("tallow_{method}");
+                let record = self.fresh_reg();
+                self.emit_line(&format!("{record} = call ptr @{ffi}(ptr {pw})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load ptr, ptr {gep}"));
+                    cg.emit_line(&format!("call void @tallow_check_string(ptr {reg})"));
+                    reg
+                };
+                let first = load(self, 0);
+                let second = load(self, 8);
+                let struct_name = if method == "opaque_register_start" {
+                    "OpaqueRegistration"
+                } else {
+                    "OpaqueLoginRequest"
+                };
+                Ok(Some(self.build_plain_struct(
+                    struct_name,
+                    &[
+                        ("request", first, LLType::I8Ptr),
+                        ("state", second, LLType::I8Ptr),
+                    ],
+                )?))
+            }
+            "opaque_register_finish" | "opaque_login_finish" => {
+                if args.len() < 3 {
+                    return Err(format!("crypto.{method} needs 3 arguments"));
+                }
+                let mut vals = Vec::new();
+                for a in args.iter().take(3) {
+                    let v = self.emit_expr(&a.value)?;
+                    vals.push(self.coerce_to_string(&v)?);
+                }
+                let ffi = format!("tallow_{method}");
+                let record = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{record} = call ptr @{ffi}(ptr {}, ptr {}, ptr {})",
+                    vals[0], vals[1], vals[2]
+                ));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load ptr, ptr {gep}"));
+                    cg.emit_line(&format!("call void @tallow_check_string(ptr {reg})"));
+                    reg
+                };
+                let a0 = load(self, 0);
+                let a1 = load(self, 8);
+                if method == "opaque_register_finish" {
+                    Ok(Some(self.build_plain_struct(
+                        "OpaqueRegistrationUpload",
+                        &[
+                            ("upload", a0, LLType::I8Ptr),
+                            ("export_key", a1, LLType::I8Ptr),
+                        ],
+                    )?))
+                } else {
+                    let a2 = load(self, 16);
+                    Ok(Some(self.build_plain_struct(
+                        "OpaqueLoginResult",
+                        &[
+                            ("finalization", a0, LLType::I8Ptr),
+                            ("session_key", a1, LLType::I8Ptr),
+                            ("export_key", a2, LLType::I8Ptr),
+                        ],
+                    )?))
+                }
+            }
+            "opaque_login_respond" => {
+                if args.len() < 4 {
+                    return Err("crypto.opaque_login_respond needs 4 arguments".into());
+                }
+                let mut vals = Vec::new();
+                for a in args.iter().take(4) {
+                    let v = self.emit_expr(&a.value)?;
+                    vals.push(self.coerce_to_string(&v)?);
+                }
+                let record = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{record} = call ptr @tallow_opaque_login_respond(ptr {}, ptr {}, ptr {}, ptr {})",
+                    vals[0], vals[1], vals[2], vals[3]
+                ));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load ptr, ptr {gep}"));
+                    cg.emit_line(&format!("call void @tallow_check_string(ptr {reg})"));
+                    reg
+                };
+                let a0 = load(self, 0);
+                let a1 = load(self, 8);
+                Ok(Some(self.build_plain_struct(
+                    "OpaqueLoginResponse",
+                    &[
+                        ("response", a0, LLType::I8Ptr),
+                        ("state", a1, LLType::I8Ptr),
+                    ],
+                )?))
+            }
             // `crypto.age_keygen() -> AgeKeypair`. One heap record, same shape as
             // `AgeKeypairRaw`: recipient at +0, identity at +8. Both are heap C
             // strings; `tallow_check_string` turns a null into a hard runtime
