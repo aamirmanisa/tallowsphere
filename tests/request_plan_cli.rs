@@ -338,7 +338,6 @@ fn policy_manifest(url: &str, deny_patterns: Vec<&str>) -> Value {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_without_explicit_approval_is_blocked_before_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -406,7 +405,6 @@ fn run_plan_live_without_explicit_approval_is_blocked_before_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_requires_compliance_gate_report_before_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -474,7 +472,6 @@ fn run_plan_live_preflight_requires_compliance_gate_report_before_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_requires_compliance_gate_report_before_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -539,7 +536,6 @@ fn run_plan_live_approved_requires_compliance_gate_report_before_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_rejects_compliance_report_missing_manifest_sha_before_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -619,7 +615,6 @@ fn run_plan_live_approved_rejects_compliance_report_missing_manifest_sha_before_
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_blocks_literal_sensitive_headers_before_network() {
     let (url, handle) = spawn_one_request_json_server();
     let literal_auth_header = "Bearer p1-010-canary-literal";
@@ -686,7 +681,6 @@ fn run_plan_live_approved_blocks_literal_sensitive_headers_before_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_blocks_token_like_literal_headers_before_network() {
     let (url, handle) = spawn_one_request_json_server();
     let literal_token_header = "phase2-access-token-canary";
@@ -752,7 +746,6 @@ fn run_plan_live_approved_blocks_token_like_literal_headers_before_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_requires_isolated_output_dir_before_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -815,7 +808,6 @@ fn run_plan_live_approved_requires_isolated_output_dir_before_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_executes_loopback_after_policy_gates() {
     let (url, handle) = spawn_one_request_json_server();
     let temp = tempfile::tempdir().expect("tempdir");
@@ -872,7 +864,6 @@ fn run_plan_live_approved_executes_loopback_after_policy_gates() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_writes_hash_checked_artifacts() {
     let (url, handle) = spawn_one_request_json_server();
     let temp = tempfile::tempdir().expect("tempdir");
@@ -993,7 +984,6 @@ fn run_plan_live_approved_writes_hash_checked_artifacts() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_hash_redacts_empty_response_body_artifact() {
     let (url, handle) = spawn_one_request_empty_server();
     let temp = tempfile::tempdir().expect("tempdir");
@@ -1049,7 +1039,6 @@ fn run_plan_live_approved_hash_redacts_empty_response_body_artifact() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_emits_non_claims_without_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1108,7 +1097,6 @@ fn run_plan_live_preflight_emits_non_claims_without_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_accepts_fake_local_auth_ref_as_redacted_metadata() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1200,7 +1188,6 @@ fn run_plan_live_preflight_accepts_fake_local_auth_ref_as_redacted_metadata() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_blocks_real_vault_auth_ref_before_network_without_raw_ref() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1294,7 +1281,6 @@ fn run_plan_live_approved_blocks_real_vault_auth_ref_before_network_without_raw_
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_blocks_reasoned_browser_fallback_without_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1364,7 +1350,6 @@ fn run_plan_live_preflight_blocks_reasoned_browser_fallback_without_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_approved_blocks_reasoned_browser_fallback_before_network() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1440,7 +1425,6 @@ fn run_plan_live_approved_blocks_reasoned_browser_fallback_before_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_blocks_browser_artifact_capture_without_fallback() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1505,7 +1489,6 @@ fn run_plan_live_preflight_blocks_browser_artifact_capture_without_fallback() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_blocks_malformed_browser_fields() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1573,7 +1556,6 @@ fn run_plan_live_preflight_blocks_malformed_browser_fields() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_rejects_post_until_native_live_support() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -1630,7 +1612,6 @@ fn run_plan_live_preflight_rejects_post_until_native_live_support() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_denied_manifest_url_is_blocked() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("policy-denied.request-plan.v1.json");
@@ -1678,7 +1659,6 @@ fn run_plan_live_preflight_denied_manifest_url_is_blocked() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_attached_missing_source_manifest_is_blocked() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("missing-manifest.request-plan.v1.json");
@@ -1724,7 +1704,6 @@ fn run_plan_attached_missing_source_manifest_is_blocked() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_attached_directory_source_manifest_is_blocked() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("directory-manifest.request-plan.v1.json");
@@ -1769,7 +1748,6 @@ fn run_plan_attached_directory_source_manifest_is_blocked() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_attached_invalid_json_source_manifest_is_blocked() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp
@@ -1815,7 +1793,6 @@ fn run_plan_attached_invalid_json_source_manifest_is_blocked() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_plan_level_source_manifest_block_applies_to_every_request() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp
@@ -1888,7 +1865,6 @@ fn run_plan_plan_level_source_manifest_block_applies_to_every_request() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_dry_run_rejects_non_http_urls() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("file-url.request-plan.v1.json");
@@ -1927,7 +1903,6 @@ fn run_plan_dry_run_rejects_non_http_urls() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_live_preflight_rejects_unsupported_methods() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("delete.request-plan.v1.json");
@@ -1973,7 +1948,6 @@ fn run_plan_live_preflight_rejects_unsupported_methods() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_dry_run_local_accepts_external_plan_without_network() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("external.request-plan.v1.json");
@@ -2019,7 +1993,6 @@ fn run_plan_dry_run_local_accepts_external_plan_without_network() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_dry_run_local_prints_report_and_does_not_connect() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -2094,7 +2067,6 @@ fn run_plan_dry_run_local_prints_report_and_does_not_connect() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn operator_cli_help_lists_supported_scraper_workflow() {
     let output = Command::new(env!("CARGO_BIN_EXE_tallow"))
         .arg("--help")
@@ -2125,7 +2097,6 @@ fn operator_cli_help_lists_supported_scraper_workflow() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn run_plan_accepts_positional_plan_path_for_operator_workflow() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     listener
@@ -2182,7 +2153,6 @@ fn run_plan_accepts_positional_plan_path_for_operator_workflow() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn validate_manifest_command_writes_local_no_network_report() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = temp.path().join("source-manifest.json");
@@ -2228,7 +2198,6 @@ fn validate_manifest_command_writes_local_no_network_report() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn validate_manifest_command_rejects_v2_unsafe_target_ids() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = temp.path().join("source-manifest.json");
@@ -2269,7 +2238,6 @@ fn validate_manifest_command_rejects_v2_unsafe_target_ids() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn build_plan_command_writes_request_plan_and_report() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = temp.path().join("source-manifest.json");
@@ -2315,7 +2283,6 @@ fn build_plan_command_writes_request_plan_and_report() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn package_report_excludes_existing_output_with_mixed_path_forms() {
     let temp = tempfile::tempdir().expect("tempdir");
     let run_dir = temp.path().join("run-dir");
@@ -2357,7 +2324,6 @@ fn package_report_excludes_existing_output_with_mixed_path_forms() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn package_report_command_writes_hash_checked_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let run_dir = temp.path().join("run-dir");
@@ -2406,7 +2372,6 @@ fn package_report_command_writes_hash_checked_manifest() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn fmt_generated_tl_check_accepts_formatted_header_without_rewriting() {
     let temp = tempfile::tempdir().expect("tempdir");
     let tl_path = temp.path().join("generated-formatted.tl");
@@ -2436,7 +2401,6 @@ fn fmt_generated_tl_check_accepts_formatted_header_without_rewriting() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn fmt_generated_tl_check_rejects_unformatted_without_rewriting() {
     let temp = tempfile::tempdir().expect("tempdir");
     let tl_path = temp.path().join("generated-unformatted.tl");
@@ -2471,7 +2435,6 @@ fn fmt_generated_tl_check_rejects_unformatted_without_rewriting() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn lint_generated_scraper_profile_blocks_missing_legal_and_http_import() {
     let temp = tempfile::tempdir().expect("tempdir");
     let tl_path = temp.path().join("generated-scraper.tl");
@@ -2522,7 +2485,6 @@ fn lint_generated_scraper_profile_blocks_missing_legal_and_http_import() {
 }
 
 #[test]
-#[ignore = "request-plan CLI verbs (run-plan, build-plan, lint, package-report, fmt --check) are not implemented in this tree — parked as U-218; this suite records the intended contract"]
 fn lint_generated_scraper_profile_allows_canonical_import_without_http_call() {
     let temp = tempfile::tempdir().expect("tempdir");
     let tl_path = temp.path().join("generated-scraper-import-only.tl");

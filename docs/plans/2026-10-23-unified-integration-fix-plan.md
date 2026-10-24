@@ -77,7 +77,7 @@ Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the cor
 every push; keep the release copy as the last gate.
 Gate: CI job present and green on main.
 
-**R3 — 38 integration suites are excluded.** — **5 remain** (2026-10-24)
+**R3 — 38 integration suites are excluded.** — **4 remain** (2026-10-24)
 Down from 38: 25 are wired (23 browser suites + directorate_desks), and this
 iteration removed two more by fixing why they could not run:
 
@@ -118,8 +118,28 @@ Then two "host" suites, by fixing the defect they exposed:
 * **`stdlib_method_refusals`** passed as soon as it was given the built binary;
   it was never host-specific.
 
-The 5 that remain are named debt with expiry dates (perf 3, service 1,
-parked 1: the `tallow plan` verb set). No triage or host entries left.
+Then the parked U-218 entry, by implementing the verbs instead of re-registering
+the suite:
+
+* **`run-plan`** — the gate stack (approval, compliance-report sha binding,
+  header hygiene, output isolation, manifest allow/deny, browser/artifact
+  refusals, vault refs as hashes only) plus live execution with redacted
+  artifacts and a hashed artifact manifest.
+* **`validate-manifest`**, **`build-plan`**, **`package-report`** — the local
+  half of the workflow; `build-plan` attaches the manifest sha256 so `run-plan`
+  can prove the pair still matches, and `package-report` excludes its own output
+  by file identity, not by string comparison.
+* **`fmt --check`** — verifies without rewriting, comparing against the
+  formatted body because a generated file's `// @generated_by` header is not
+  reproduced by the AST formatter.
+* **`lint --profile scraper`** — `E-SCRAPER-IMPORT` and `E-SCRAPER-LEGAL`, and an
+  import alone is not HTTP work.
+
+All 38 tests now run unignored in the contract job.
+
+The 4 that remain are named debt with expiry dates (perf 3, service 1 —
+`wordpress_login` needs a local WordPress fixture). No triage, host or parked
+entries left.
 
 Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
 Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a

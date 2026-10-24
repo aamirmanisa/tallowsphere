@@ -274,6 +274,28 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Validate a `tallow.target_manifest.v2` without touching the network.
+    /// Writes a `tallow.validate_manifest_report.v1` JSON report to stdout and,
+    /// with `--report-path`, to that file too. Exit codes: 0 valid, 2 invalid.
+    #[command(name = "validate-manifest")]
+    ValidateManifest {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Build a `tallow.request_plan.v1` plan from a target manifest, attaching
+    /// the manifest's sha256 so `run-plan` can prove they still match.
+    #[command(name = "build-plan")]
+    BuildPlan {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Hash a run directory into a `tallow.package_report.v1` manifest,
+    /// excluding the report's own output.
+    #[command(name = "package-report")]
+    PackageReport {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Execute or preflight a `tallow.request_plan.v1` plan against a
     /// `tallow.target_manifest.v2` source manifest. `--network-scope local`
     /// (default) evaluates policy and opens nothing; `live-preflight` runs every
@@ -491,11 +513,20 @@ enum Command {
         /// Output format: text, json, or sarif
         #[arg(long, default_value = "text")]
         format: String,
+
+        /// Profile gate: `scraper` checks generated scraper source for the
+        /// canonical HTTP import and a declared `@legal` basis.
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Format Tallow source files
     Fmt {
         #[arg()]
         file: PathBuf,
+
+        /// Check formatting without rewriting the file. Exit 0 if formatted.
+        #[arg(long)]
+        check: bool,
     },
     /// Generate documentation from source
     Doc {
@@ -2811,6 +2842,15 @@ fn real_main() -> anyhow::Result<()> {
             // the arm it calls is statically barred from naming the egress entry.
             std::process::exit(tallow::cli::plan_cmd::run_plan_args(&args));
         }
+        Command::ValidateManifest { args } => {
+            std::process::exit(tallow::cli::spec_tools_cmd::validate_manifest_args(&args));
+        }
+        Command::BuildPlan { args } => {
+            std::process::exit(tallow::cli::spec_tools_cmd::build_plan_args(&args));
+        }
+        Command::PackageReport { args } => {
+            std::process::exit(tallow::cli::spec_tools_cmd::package_report_args(&args));
+        }
         Command::RunPlan { args } => {
             // The lexicographically-first gate stack in the CLI: policy,
             // approval, compliance binding, header hygiene and output isolation
@@ -3076,8 +3116,12 @@ fn real_main() -> anyhow::Result<()> {
         } => {
             return create_project(name, template);
         }
-        Command::Fmt { ref file } => {
-            return format_file(file);
+        Command::Fmt { ref file, check } => {
+            return if check {
+                check_formatted(file)
+            } else {
+                format_file(file)
+            };
         }
         Command::Test {
             ref path,
@@ -10031,6 +10075,45 @@ fn real_main() -> anyhow::Result<()> {
             run_doc_project(path, format);
             return Ok(());
         }
+        // A profile gate answers only its own question, so it runs before the
+        // general lint pipeline (which would also report unrelated findings).
+        Command::Lint {
+            ref file,
+            ref format,
+            ref profile,
+        } if profile.is_some() => {
+            let profile = profile.clone().unwrap_or_default();
+            let source = match std::fs::read_to_string(file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("lint: {}: {e}", file.display());
+                    std::process::exit(exit_codes::IO_ERROR);
+                }
+            };
+            let outcome = run_profile_lint(&profile, &source);
+            match format.as_str() {
+                "json" => println!("{}", serde_json::to_string_pretty(&outcome).unwrap()),
+                _ => {
+                    if let Some(diags) = outcome.get("diagnostics").and_then(|d| d.as_array()) {
+                        for d in diags {
+                            println!(
+                                "{}: {}",
+                                d.get("code").and_then(|c| c.as_str()).unwrap_or("?"),
+                                d.get("message").and_then(|m| m.as_str()).unwrap_or("")
+                            );
+                        }
+                    }
+                    if outcome.get("passed").and_then(|p| p.as_bool()) == Some(true) {
+                        println!("{}: profile {profile} passed", file.display());
+                    }
+                }
+            }
+            std::process::exit(if outcome["passed"].as_bool().unwrap_or(false) {
+                0
+            } else {
+                1
+            });
+        }
         Command::Build { ref file, .. }
         | Command::Run { ref file, .. }
         | Command::Check { ref file, .. }
@@ -12030,6 +12113,78 @@ fn format_file(file: &PathBuf) -> anyhow::Result<()> {
     println!("formatted {}", file.display());
 
     Ok(())
+}
+
+/// `tallow fmt <file> --check` — verify without rewriting.
+///
+/// The comparison is against the formatted body, not the raw file, because a
+/// generated file carries a `// @generated_by(...)` header the AST formatter
+/// does not reproduce. The header is stripped from both sides; everything else
+/// must match byte for byte.
+fn check_formatted(file: &PathBuf) -> anyhow::Result<()> {
+    let source = std::fs::read_to_string(file)?;
+    let (tokens, lex_errors) = tallow::lexer::tokenize(&source);
+    if !lex_errors.is_empty() {
+        for err in &lex_errors {
+            let (line, col) = err.span().line_col(&source);
+            eprintln!("error[{line}:{col}]: {err}");
+        }
+        std::process::exit(exit_codes::IO_ERROR);
+    }
+    let program = match tallow::parser::Parser::parse(tokens) {
+        Ok(p) => p,
+        Err(err) => {
+            let (line, col) = err.span.line_col(&source);
+            eprintln!("error[{line}:{col}]: {err}");
+            std::process::exit(exit_codes::IO_ERROR);
+        }
+    };
+    let formatted = tallow::fmt::format_program(&program);
+    if strip_generated_header(&source) == formatted {
+        return Ok(());
+    }
+    eprintln!("{}: not formatted", file.display());
+    std::process::exit(exit_codes::USAGE_ERROR);
+}
+
+fn strip_generated_header(source: &str) -> String {
+    let mut out = String::new();
+    let mut in_header = true;
+    for line in source.lines() {
+        if in_header && (line.trim_start().starts_with("//") || line.trim().is_empty()) {
+            continue;
+        }
+        in_header = false;
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Run a named lint profile and return its JSON report. Unknown profiles are
+/// refused rather than silently treated as clean.
+fn run_profile_lint(profile: &str, source: &str) -> serde_json::Value {
+    match profile {
+        "scraper" => {
+            let diagnostics = tallow::cli::spec_tools_cmd::scraper_diagnostics(source);
+            serde_json::json!({
+                "schema_version": "tallow.lint_report.v1",
+                "profile": "scraper",
+                "passed": diagnostics.is_empty(),
+                "diagnostics": diagnostics,
+            })
+        }
+        other => serde_json::json!({
+            "schema_version": "tallow.lint_report.v1",
+            "profile": other,
+            "passed": false,
+            "diagnostics": [{
+                "code": "E-PROFILE-UNKNOWN",
+                "severity": "error",
+                "message": format!("unknown lint profile {other:?}; known: scraper"),
+            }],
+        }),
+    }
 }
 
 // ── tallow lint ───────────────────────────────────────────────────────────────

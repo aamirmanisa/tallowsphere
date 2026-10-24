@@ -262,10 +262,6 @@ jobs:
         # --lib as well as --bin: the runner needs target/debug/libtallow.a next
         # to the binary, which only the `staticlib` crate-type target produces.
         run: cargo build --locked --lib --bin tallow
-      - name: Request-plan CLI (run-plan gate stack)
-        # run-plan is implemented; the other five verbs in this file are not, so
-        # the target stays registered as debt and only the run-plan tests run.
-        run: cargo test --locked --test request_plan_cli -- --ignored run_plan
       - name: Parity fixtures (interpreter vs native, both planes)
         # parity_runner was excluded as unclassified. It was failing because the
         # runner treated every non-zero interpreter exit as an error, so the
@@ -288,6 +284,7 @@ jobs:
           --test directorate_desks
           --test egress_census
           --test process_contract
+          --test request_plan_cli
           --test stdlib_method_refusals
           --test transfer_transport
           --test injection_redteam
