@@ -120,6 +120,15 @@ const CENSUS: &[(&str, Class, &str)] = &[
          a collection fetch; keys come from key_env/key_file only",
     ),
     (
+        "src/cli/request_plan_cmd.rs",
+        Allowlist,
+        "live `run-plan` execution. Non-loopback targets go through \
+         request_plan::execute_get (the sanctioned client, fail-closed on a \
+         configured-but-unusable proxy); the only raw socket is `loopback_get`, \
+         whose first statement rejects any URL that is not `http://` to a \
+         loopback host, so it cannot reach an external address",
+    ),
+    (
         "src/cli/plan_cmd.rs",
         Allowlist,
         "the only occurrence is a self-check string: a test asserts the dry-run source does NOT \
