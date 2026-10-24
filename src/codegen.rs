@@ -12845,6 +12845,33 @@ void tallow_async_runtime_shutdown(void) {
                     _ => Ok(None),
                 }
             }
+            // A struct field holding a native array: `print(p.wave_sizes)`.
+            // Without this the value fell through to the string path, which
+            // strlen'd the `[count][elem…]` header and printed one control byte
+            // (`\u{3}` for a 3-element array) — a plausible-looking line rather
+            // than an error.
+            ExprKind::FieldAccess { object, field } => {
+                let Some(owner) = self.infer_kind(object) else {
+                    return Ok(None);
+                };
+                let Some(kind) = self
+                    .struct_layouts
+                    .get(&owner)
+                    .and_then(|l| l.field_kinds.get(field))
+                    .cloned()
+                else {
+                    return Ok(None);
+                };
+                match kind.as_str() {
+                    "StringArray" | "HtmlElementArray" | "ElementArray" => {
+                        Ok(Some(PrintCompositeRoute::Array { elem_kind: ELEM_STR }))
+                    }
+                    "I64Array" | "IntArray" => {
+                        Ok(Some(PrintCompositeRoute::Array { elem_kind: ELEM_INT }))
+                    }
+                    _ => Ok(None),
+                }
+            }
             _ => Ok(None),
         }
     }

@@ -44,6 +44,11 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
   on a page with two JSON-LD blocks printed 2 interpreted and 1 compiled. The check
   now falls back to the field's registered container kind and then to the
   expression's inferred kind.
+- **`print(<struct>.<array field>)` printed one control byte.** The composite
+  print route handled literals and bindings but not field access, so `print(p.wave_sizes)`
+  fell to the string path and strlen'd the `[count][elem…]` header — printing
+  `\u{3}` for a 3-element array instead of `[1, 2, 1]`. Field kinds now route to
+  the array renderer.
 - **Array-element field reads only worked for bindings**, not for struct fields —
   `r.checkpoints[0].wave` had no route to the element struct.
 - **The release workflow's body gate grepped `^## Added`** while the generator
