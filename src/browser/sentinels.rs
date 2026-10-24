@@ -40,6 +40,8 @@ struct Trace {
 }
 
 thread_local! {
+    /// The layout viewport as it was before the first override in this thread.
+    static ORIGINAL_VIEWPORT: std::cell::RefCell<Option<(i64, i64)>> = const { std::cell::RefCell::new(None) };
     static INTERCEPT: std::cell::RefCell<Option<Intercept>> = const { std::cell::RefCell::new(None) };
     static TRACE: std::cell::RefCell<Option<Trace>> = const { std::cell::RefCell::new(None) };
 }
@@ -83,8 +85,28 @@ async fn emulation(page: &Page, method: &str, params: serde_json::Value) -> Resu
 
 // ── DeviceEmulator ──────────────────────────────────────────────────────────
 
+fn capture_original(page: &Page) -> Option<(i64, i64)> {
+    ORIGINAL_VIEWPORT.with(|slot| {
+        if slot.borrow().is_some() {
+            return None;
+        }
+        let v = run(async {
+            page.evaluate_expression("document.documentElement.clientWidth + ',' + document.documentElement.clientHeight")
+                .await
+        })
+        .ok()?;
+        let text = v.as_str()?.to_string();
+        let mut it = text.split(',');
+        let w = it.next()?.trim().parse::<i64>().ok()?;
+        let h = it.next()?.trim().parse::<i64>().ok()?;
+        *slot.borrow_mut() = Some((w, h));
+        None
+    })
+}
+
 pub fn set_viewport(width: i64, height: i64, scale: f64) -> Result<(), String> {
     let page = page()?;
+    let _ = capture_original(&page);
     // `setDeviceMetricsOverride` alone leaves the layout viewport at the window
     // size in headless-shell builds (measured: innerWidth stayed 1920 after an
     // override to 800x600 that reported success). `setVisibleSize` is the
@@ -143,6 +165,7 @@ fn device_profile(name: &str) -> Option<(i64, i64, f64, &'static str)> {
 }
 
 pub fn set_mobile(name: &str) -> Result<(), String> {
+    let _ = capture_original(&page()?);
     let (w, h, scale, ua) = device_profile(name).ok_or_else(|| {
         format!(
             "DeviceEmulator.set_mobile: unknown profile '{name}' — known: iphone-15, pixel-8, ipad"
@@ -208,6 +231,33 @@ pub fn set_user_agent(ua: &str) -> Result<(), String> {
 /// Remove every override the emulator can set, in the order CDP requires.
 pub fn clear_emulation() -> Result<(), String> {
     let page = page()?;
+    // `setVisibleSize` resizes the widget itself, so clearing the metrics
+    // override alone leaves the layout viewport at the emulated size (measured:
+    // clientWidth stayed 800 after clear). The real window size is read from the
+    // page before the override list is torn down, and the widget is put back.
+    let window_size = ORIGINAL_VIEWPORT.with(|slot| slot.borrow_mut().take()).or_else(|| {
+        run(async {
+            page.evaluate_expression("window.outerWidth + ',' + window.outerHeight")
+                .await
+        })
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .and_then(|s| {
+            let mut it = s.split(',');
+            let w = it.next()?.trim().parse::<i64>().ok()?;
+            let h = it.next()?.trim().parse::<i64>().ok()?;
+            Some((w, h))
+        })
+    });
+    if let Some((w, h)) = window_size {
+        if w > 0 && h > 0 {
+            run(emulation(
+                &page,
+                "Emulation.setVisibleSize",
+                json!({"width": w, "height": h}),
+            ))?;
+        }
+    }
     run(emulation(
         &page,
         "Emulation.clearDeviceMetricsOverride",
@@ -240,6 +290,9 @@ pub fn clear_emulation() -> Result<(), String> {
 fn glob_match(pattern: &str, url: &str) -> bool {
     // Wildcard match over bytes, `*` matching any run. Anchored at both ends
     // only when the pattern is; a bare substring is a substring.
+    if !pattern.contains('*') {
+        return url.contains(pattern);
+    }
     let p: Vec<char> = pattern.chars().collect();
     let u: Vec<char> = url.chars().collect();
     let (mut pi, mut ui) = (0usize, 0usize);
@@ -265,11 +318,6 @@ fn glob_match(pattern: &str, url: &str) -> bool {
     }
     if pi == p.len() {
         return true;
-    }
-    // Not fully consumed: allow an unanchored match ("example.test" inside a
-    // longer URL), which is what a caller writing a pattern without `*` means.
-    if !pattern.contains('*') {
-        return url.contains(pattern);
     }
     false
 }
@@ -586,8 +634,12 @@ mod tests {
 
     #[test]
     fn glob_matching_is_anchored_only_when_the_pattern_is() {
-        assert!(glob_match("*.example.test", "https://a.example.test/x"));
-        assert!(!glob_match("a.example.test", "https://b.example.test/a.example.test"));
+        assert!(glob_match("*.example.test/*", "https://a.example.test/x"));
+        assert!(!glob_match("*.example.test", "https://a.example.test/x"));
+        // A pattern with no `*` is a substring: callers write "ads" meaning
+        // "any URL containing ads", not "a URL that is exactly ads".
+        assert!(glob_match("ads.js", "https://t.example/js/ads.js"));
+        assert!(!glob_match("ads.js", "https://t.example/js/news.js"));
         assert!(glob_match("example.test", "https://b.example.test/example.test"));
         assert!(glob_match("*", "anything"));
         assert!(glob_match("*ads*", "https://t.example/ads/1.js"));
