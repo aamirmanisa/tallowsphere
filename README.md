@@ -4,7 +4,7 @@
 
 **A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
-![status](https://img.shields.io/badge/status-1.1.5-informational?style=flat-square)
+![status](https://img.shields.io/badge/status-1.5.0-informational?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&logo=rust&logoColor=white)
 ![backend](https://img.shields.io/badge/backend-LLVM%20%C2%B7%20clang%2018-2d2d2d?style=flat-square)
@@ -88,9 +88,9 @@ $ curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/ins
 The installer resolves the newest release, verifies the checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before reporting success:
 
 ```console
-fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.1.5/tallow-linux-aarch64-1.1.5.tar.gz
-tallow-linux-aarch64-1.1.5.tar.gz: OK
-installed tallow 1.1.5 into /root/.local/bin
+fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.0/tallow-linux-aarch64-1.5.0.tar.gz
+tallow-linux-aarch64-1.5.0.tar.gz: OK
+installed tallow 1.5.0 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
@@ -98,8 +98,8 @@ probe ok — native compile and run work
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
-$ curl -fsSL …/install.sh | bash -s -- --version 1.1.5
-$ ./install.sh --from ./tallow-linux-aarch64-1.1.5.tar.gz    # air-gapped
+$ curl -fsSL …/install.sh | bash -s -- --version 1.5.0
+$ ./install.sh --from ./tallow-linux-aarch64-1.5.0.tar.gz    # air-gapped
 ```
 
 ### What the machine needs
@@ -265,8 +265,8 @@ $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
 For a fleet, keep versions side by side so an upgrade is a symlink swap and rollback is a directory:
 
 ```console
-$ install -d /opt/tallow/1.1.5 && tar -xzf tallow-linux-aarch64-1.1.5.tar.gz -C /opt/tallow/1.1.5
-$ ln -sfn /opt/tallow/1.1.5 /opt/tallow/current
+$ install -d /opt/tallow/1.5.0 && tar -xzf tallow-linux-aarch64-1.5.0.tar.gz -C /opt/tallow/1.5.0
+$ ln -sfn /opt/tallow/1.5.0 /opt/tallow/current
 $ ln -sf /opt/tallow/current/bin/tallow /usr/local/bin/tallow
 ```
 
@@ -316,7 +316,7 @@ ENTRYPOINT ["tallow"]
 
 ```console
 $ cargo build --profile release --locked --target aarch64-unknown-linux-gnu --bin tallow --lib
-$ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.1.5 --out dist/
+$ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.5.0 --out dist/
 ```
 
 The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)`. It writes the archive and its `.sha256`, and stamps the commit into the binary's version output. Upload both; the installer verifies the checksum before unpacking.
