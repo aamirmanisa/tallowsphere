@@ -106,6 +106,38 @@ const CENSUS: &[(&str, Class, &str)] = &[
     ("src/browser/page.rs", Contract, "page HTTP rides egress/zone markers (checked)"),
     ("src/browser/perf_engine.rs", Contract, "perf probes ride egress/zone markers (checked)"),
     ("src/browser/sitemap.rs", Contract, "sitemap fetch rides egress/zone markers (checked)"),
+    (
+        "src/mesh/remote.rs",
+        Allowlist,
+        "mesh peer transport: dials operator-run nodes over TCP. The mesh is a compute plane the \
+         operator provisions, not a collection target, so it does not ride the collection egress",
+    ),
+    (
+        "src/stdlib/llm.rs",
+        Allowlist,
+        "model inference endpoint: the provider the operator configured in llm.toml. Inference is \
+         deliberately its own plane (a hosted provider sees the request by definition) and is not \
+         a collection fetch; keys come from key_env/key_file only",
+    ),
+    (
+        "src/cli/plan_cmd.rs",
+        Allowlist,
+        "the only occurrence is a self-check string: a test asserts the dry-run source does NOT \
+         contain `reqwest::` (or ureq/execute_get). No request is issued from this file",
+    ),
+    (
+        "src/cli/veil_cmd.rs",
+        Allowlist,
+        "veil relay client: dials the relay endpoint the operator configured (and probes it); the \
+         relay is the transport, not a destination the engine chooses",
+    ),
+    (
+        "src/browser/socks_shim.rs",
+        Allowlist,
+        "loopback-only SOCKS5 credential relay: binds 127.0.0.1:0 and its single upstream dial is the \
+         per-run SOCKS endpoint the caller supplies (Tor on loopback). It forwards the client's SOCKS \
+         request rather than dialing the destination itself — no direct egress path exists here",
+    ),
     ("src/browser/zone.rs", Contract, "the browser-zone egress contract itself (browser_zone_* proxies)"),
     ("src/runtime/fetch.rs", Contract, "compiled-side egress contract (defines egress_proxy_url_ureq)"),
     ("src/stdlib/beehiiv.rs", Contract, "stdlib HTTP module; in-file egress routing marker present"),
@@ -150,6 +182,26 @@ const RESOLVER_CENSUS: &[(&str, bool, &[&str], &str)] = &[
     ("src/stdlib/net.rs", true, &["resolve_doh", "dns_guard::"], "DoH resolver present (resolve_doh); raw sites L349/L866/L950 adopt dns_guard (T-122b)"),
     ("src/browser/network_stealth.rs", false, &["dns_guard::"], "stealth TCP probes resolve via tokio lookup_host (L223/L290) gated by dns_guard::plain_dns_refusal (T-122b)"),
     ("src/stdlib/osint.rs", false, &["dns_guard::"], "probe helpers use ToSocketAddrs (L459/L1173) gated by dns_guard::check (T-122b)"),
+    (
+        "src/browser/socks_shim.rs",
+        false,
+        &[],
+        "loopback relay: resolves nothing — upstream is a SocketAddr parsed from the caller's \
+         loopback SOCKS endpoint",
+    ),
+    (
+        "src/cli/veil_cmd.rs",
+        false,
+        &[],
+        "resolves the operator-configured relay endpoint, not a collection target",
+    ),
+    (
+        "src/mesh/remote.rs",
+        false,
+        &[],
+        "mesh dial resolves the operator-configured peer address (a node the operator runs); \
+         mesh transport is not the collection egress plane",
+    ),
     ("src/stdlib/transfer.rs", false, &["dns_guard::"], "interface enumeration via to_socket_addrs (host:0, L935) gated by dns_guard (T-122b)"),
 ];
 

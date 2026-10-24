@@ -3261,9 +3261,16 @@ impl Interpreter {
                     }
                 }
 
-                // Unwrap provenance for transparent field access
+                // Unwrap provenance for transparent field access, and `Ok(…)`
+                // for the same reason `Index` and `for` do: the interpreter
+                // reports CDP results as `Ok(value)` while the compiled path
+                // yields the bare value, so `page.query_selector_all(sel).len`
+                // must count the array, not the Result wrapper. Before this
+                // arm it fell through to the default and answered 0 — measured
+                // as interp=[0,0,3] against native=[0,1,3].
                 let obj_ref = match &obj {
                     Value::Provenance(inner, _) => inner.as_ref(),
+                    Value::Ok(inner) => inner.as_ref(),
                     _ => &obj,
                 };
                 match (obj_ref, field.as_str()) {

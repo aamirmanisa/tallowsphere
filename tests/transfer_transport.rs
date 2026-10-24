@@ -252,7 +252,10 @@ fn direct_relay_path_still_round_trips_via_happy_eyeballs() {
     let out_dir = tmp.path().join("out");
     std::fs::create_dir(&out_dir).expect("mkdir out");
 
-    let code = "131-direct-path-code";
+    // The mint accepts 8 symbols only; this fixture predated that rule and used
+    // a descriptive string, so the test failed on the code validator rather than
+    // on the transport it is meant to exercise.
+    let code = "K7M2QPHD";
     let out_dir_s = out_dir.display().to_string();
     let relay_s = format!("127.0.0.1:{}", relay.addr.port());
 

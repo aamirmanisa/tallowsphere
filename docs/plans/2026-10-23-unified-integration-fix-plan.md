@@ -77,7 +77,7 @@ Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the cor
 every push; keep the release copy as the last gate.
 Gate: CI job present and green on main.
 
-**R3 — 38 integration suites are excluded.** — **13 remain** (2026-10-24)
+**R3 — 38 integration suites are excluded.** — **7 remain** (2026-10-24)
 Down from 38: 25 are wired (23 browser suites + directorate_desks), and this
 iteration removed two more by fixing why they could not run:
 
@@ -89,8 +89,25 @@ iteration removed two more by fixing why they could not run:
   reason. Result: 10 MATCH, 4 REFUSED, 0 divergences, 0 errors — and the suite
   now runs in CI with a built binary.
 
-The 13 that remain are named debt with expiry dates (perf 3, host 2, service 1,
-parked 1, triage 6).
+Then six more, by fixing the causes rather than the registrations:
+
+* **interpreter defect, found by `browser_array_parity_n`**: `page.query_selector_all(sel).len`
+  answered 0 for a one-element result because field access did not unwrap the
+  `Ok(…)` wrapper the interpreter uses for CDP results (`Index` and `for` already
+  did). Measured: interp `[0,0,3]` vs native `[0,1,3]`. With the unwrap,
+  browser_array_parity_{n,cookies,links} and browser_flow_runtime_integration all
+  pass.
+* **`egress_census`** was failing because five egress-capable files were never
+  classified: `browser/socks_shim.rs`, `cli/plan_cmd.rs`, `cli/veil_cmd.rs`,
+  `mesh/remote.rs`, `stdlib/llm.rs`. Each now carries a written reason (loopback
+  relay, self-check string, operator-configured relay, operator-run mesh peers,
+  the inference plane). The gate was doing its job.
+* **`transfer_transport`** failed on a stale fixture room code: the mint accepts
+  8 symbols and the test passed a descriptive string, so it failed the validator
+  instead of exercising the transport.
+
+The 7 that remain are named debt with expiry dates (perf 3, host 2, service 1,
+parked 1). No triage entries left.
 
 Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
 Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a

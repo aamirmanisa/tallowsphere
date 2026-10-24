@@ -20,16 +20,10 @@
 # are registered as `triage` — a suite nobody runs is what hid them in the first place.
 # parked 1, triage 14).
 
-browser_array_parity_cookies | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
-browser_array_parity_links | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
-browser_array_parity_n | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
-browser_flow_runtime_integration | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
 compiler_bench | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
-egress_census | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
 perf_binary_startup | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
 perf_install | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
 process_contract | host | alden | runs tallow against the host process table (local only, not in CI image) | 2027-01-31
 request_plan_cli | parked | alden | PARKED — verbs (run-plan/build-plan/lint/package-report, fmt --check) are not implemented; tests ignored with that reason (U-218) | 2027-01-31
 stdlib_method_refusals | host | alden | needs the cargo-built tallow bin path used by integration tests | 2027-01-31
-transfer_transport | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
 wordpress_login | service | alden | requires a local WordPress fixture (scripts/wordpress_fixture.sh up) and TALLOW_ALLOW_DIRECT=1; #[ignore]d by default | 2027-01-31
