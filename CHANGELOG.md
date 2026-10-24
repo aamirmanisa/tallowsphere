@@ -9,6 +9,54 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.1] — 2026-10-24 — llm and mesh compile natively
+
+### Added
+
+- **Native lowerings for all six `llm`/`Mesh` entry points.** `llm.complete`,
+  `llm.models`, `llm.verify`, `llm.providers`, `Mesh.plan` and `Mesh.replay` now
+  build with `--require-native` instead of falling back to the interpreter. The
+  runtime builds the same records the interpreter builds (`Completion`,
+  `ModelInfo`, `VerifyReport`, `ProviderInfo`, `MeshPlan`, `MeshReplay`) and the
+  compiled path reads them through the ordinary struct/array GEP path.
+- **`Mesh.plan` respects the program's own `struct MeshTask`.** The lowering reads
+  that declaration, requires the five contract fields, verifies their types
+  (`String, String, []String, String, String?`) and passes each field's byte
+  offset to the FFI, so a reordered struct plans correctly and a declaration the
+  backend cannot read (`deps: String`) is refused at compile time with the field
+  named.
+
+### Fixed
+
+- **`infer_kind` ignored `variable_struct_types`**, so a struct binding had a type
+  for field reads but not for the array test: `p.wave_sizes.len` strlen'd the
+  buffer and answered 1 for a 3-element array.
+- **A `[]T` struct field was not recognised as a native array**; that now comes
+  from the declaration instead of a hard-coded name list.
+- **Container field kinds were dropped when a program declared a struct with the
+  same name** as a synthesized record (`struct MeshReplay`), because the struct
+  scan registers that name first and every `or_insert_with` for it was a no-op.
+- **Array-element field reads only worked for bindings**, not for struct fields —
+  `r.checkpoints[0].wave` had no route to the element struct.
+- **The release workflow's body gate grepped `^## Added`** while the generator
+  emits `### Added`, which blocked every release since 1.3.0 after all five
+  platform builds and checksums had succeeded.
+- **The SBOM snapshot lagged the version bump**, failing the drift gate on the
+  release commit; regenerated with the count unchanged at 716 packages.
+- **README carried 1.1.5 claims** four releases late; every dated claim was
+  re-measured against the released artifact.
+
+### Verified
+
+- Compiled and interpreted planes print byte-identical output for the six
+  functions: `text`/`model`/`provider`/`tokens_in`/`tokens_out`, the model list,
+  the verify report and the provider registry against a mock provider; and
+  `Mesh.plan` (3 waves, sizes [2,1,1]) plus `Mesh.replay` of a journal written by
+  a real `Mesh.run` (waves=2, ok=true, 2 checkpoints).
+- Full library suite: 9,250 passed / 0 failed / 33 ignored.
+- 119 test targets, 118 run in CI, 1 registered as debt (`compiler_bench`, which
+  needs `--release` and a larger stack).
+
 ## [v1.5.0] — 2026-10-24 — the operator workflow, and native llm lowerings
 
 ### Added
