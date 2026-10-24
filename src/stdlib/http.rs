@@ -341,6 +341,15 @@ pub fn governed_get(
     limiter: &Mutex<RateGovernor>,
     max_retries: u32,
 ) -> Result<(u16, String, u32, bool), String> {
+    // Budget and stop rule, checked before anything leaves the process. When no
+    // ledger is configured this is a branch on a `None` and nothing else.
+    let host = crate::net::egress::host_of(url);
+    if let Some(ledger) = crate::net::egress::ledger() {
+        if let Err(reason) = ledger.permit(&host) {
+            ledger.record_refusal(&host, url, "GET", &reason);
+            return Err(format!("governed_get({url}): {reason}"));
+        }
+    }
     limiter.lock().unwrap().wait();
     let mut retries = 0u32;
     loop {
@@ -359,6 +368,9 @@ pub fn governed_get(
                     limiter.lock().unwrap().wait();
                     continue;
                 }
+                if let Some(ledger) = crate::net::egress::ledger() {
+                    ledger.record(&host, url, "GET", status);
+                }
                 return Ok((status, body, retries, status == 429));
             }
             Err(ureq::Error::StatusCode(code)) => {
@@ -368,6 +380,9 @@ pub fn governed_get(
                     retries += 1;
                     limiter.lock().unwrap().wait();
                     continue;
+                }
+                if let Some(ledger) = crate::net::egress::ledger() {
+                    ledger.record(&host, url, "GET", status);
                 }
                 return Ok((status, String::new(), retries, status == 429));
             }
@@ -574,6 +589,27 @@ pub fn unified_get(
     Ok((status, body))
 }
 
+
+/// Ask the egress ledger for permission before a request leaves, returning the
+/// host so the result can be recorded against it. With no ledger configured this
+/// is a no-op returning the host.
+fn egress_guard(url: &str, method: &str) -> Result<String, String> {
+    let host = crate::net::egress::host_of(url);
+    if let Some(ledger) = crate::net::egress::ledger() {
+        if let Err(reason) = ledger.permit(&host) {
+            ledger.record_refusal(&host, url, method, &reason);
+            return Err(reason);
+        }
+    }
+    Ok(host)
+}
+
+fn egress_record(host: &str, url: &str, method: &str, status: u16) {
+    if let Some(ledger) = crate::net::egress::ledger() {
+        ledger.record(host, url, method, status);
+    }
+}
+
 fn http_get(args: Vec<Value>) -> StdlibResult {
     let url = args
         .first()
@@ -582,6 +618,11 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
 
     let headers = extract_headers(&args[1..]);
     let timeout = extract_timeout(&args[1..]);
+
+    let host = match egress_guard(&url, "GET") {
+        Ok(h) => h,
+        Err(reason) => return Err(format!("http.get: {reason}")),
+    };
 
     #[cfg(feature = "stealth-http")]
     {
@@ -600,6 +641,7 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
                 proxy.as_deref(),
             ) {
                 Ok((status, body)) => {
+                    egress_record(&host, &url, "GET", status);
                     return Ok(build_response_value(
                         status,
                         body.into_bytes(),
@@ -628,6 +670,7 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
             let status = resp.status().as_u16();
             let resp_headers = collect_response_headers(&resp);
             let body = resp.into_body().read_to_vec().unwrap_or_default();
+            egress_record(&host, &url, "GET", status);
             Ok(build_response_value(
                 status,
                 body,
@@ -636,9 +679,18 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
                 elapsed_ms_since(started),
             ))
         }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(format!(
-            "http.get: {e}"
-        ))))),
+        Err(e) => {
+            // A status error is still an answer from the target: record it, so a
+            // 403 stops the host even though the caller sees an Err value.
+            let status = match &e {
+                ureq::Error::StatusCode(code) => *code,
+                _ => 0,
+            };
+            egress_record(&host, &url, "GET", status);
+            Ok(Value::Err(Box::new(Value::String(format!(
+                "http.get: {e}"
+            )))))
+        }
     }
 }
 
