@@ -258,6 +258,14 @@ jobs:
           python3 scripts/check_capability_registry.py
       - name: Every test target is run or explicitly excluded
         run: python3 scripts/check_test_coverage.py
+      - name: Build the engine for the parity runner
+        run: cargo build --locked --bin tallow
+      - name: Parity fixtures (interpreter vs native, both planes)
+        # parity_runner was excluded as unclassified. It was failing because the
+        # runner treated every non-zero interpreter exit as an error, so the
+        # *_refusal fixtures could never land in a named class. With
+        # `Expect::RefuseBoth` they do: 10 MATCH, 4 REFUSED, 0 diverge.
+        run: cargo test --locked --test parity_runner
       - run: >-
           cargo test --locked --no-fail-fast
           --test audit_cli_contract
@@ -272,6 +280,7 @@ jobs:
           --test mesh_workers
           --test browser_sentinels_tl
           --test directorate_desks
+          --test injection_redteam
           --test ombuds_mesh_tl
           --test fingerprint_audit_cli
           --test http_result_model

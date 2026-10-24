@@ -26,8 +26,6 @@ browser_array_parity_n | triage | alden | fails on the pinned Chrome-for-Testing
 browser_flow_runtime_integration | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
 compiler_bench | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
 egress_census | triage | alden | fails on the pinned Chrome-for-Testing build on this host (2026-10-23): DOMContentLoaded timeout / array parity at 0-1-3; needs a network-capable fixture before it can be a CI gate | 2026-11-06
-injection_redteam | triage | alden | UNCLASSIFIED - needs triage | 2026-11-06
-parity_runner | triage | alden | UNCLASSIFIED - needs triage | 2026-11-06
 perf_binary_startup | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
 perf_install | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
 process_contract | host | alden | runs tallow against the host process table (local only, not in CI image) | 2027-01-31

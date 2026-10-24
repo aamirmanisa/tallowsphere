@@ -90,6 +90,23 @@ enum Expect {
         must_print: &'static [&'static str],
         guard: &'static str,
     },
+    /// The program is *meant* to be refused at runtime — a fixture that passes
+    /// the wrong type to a native function. Both planes must refuse, with the
+    /// same sentence. Before this variant existed the runner treated every
+    /// non-zero interpreter exit as an error, so the refusal fixtures could
+    /// never be classified and the suite was excluded from CI.
+    RefuseBoth,
+}
+
+/// The refusal sentence, normalised: the last line naming a runtime error.
+fn refusal_line(stderr: &str) -> String {
+    stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains("runtime error:"))
+        .last()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
 }
 
 fn expect_for(name: &str) -> Expect {
@@ -102,6 +119,7 @@ fn expect_for(name: &str) -> Expect {
             must_print: &["add5(10) = 15", "CLOSURE_RETURN_OK"],
             guard: "returns a closure",
         },
+        n if n.ends_with("_refusal.tl") => Expect::RefuseBoth,
         _ => Expect::Match,
     }
 }
@@ -342,7 +360,8 @@ fn parity_fixtures_interpreter_vs_native() {
                 continue;
             }
         };
-        if ref_leg.rc != 0 {
+        let expect_refusal = matches!(expect, Expect::RefuseBoth);
+        if ref_leg.rc != 0 && !expect_refusal {
             errors.push(format!(
                 "{name}: ERROR(interp) rc={} stderr={}",
                 ref_leg.rc,
@@ -350,7 +369,7 @@ fn parity_fixtures_interpreter_vs_native() {
             ));
             continue;
         }
-        if ref_leg.stdout.is_empty() {
+        if ref_leg.stdout.is_empty() && !expect_refusal {
             errors.push(format!(
                 "{name}: ERROR(interp) reference produced no stdout — a byte-compare would be vacuous"
             ));
@@ -433,6 +452,30 @@ fn parity_fixtures_interpreter_vs_native() {
                         let _ = std::fs::remove_dir_all(&work);
                     }
                 }
+                // A refusal fixture whose native build refuses the program for the
+                // same reason the interpreter refuses it at runtime is a refusal
+                // on both planes — the compile-time message is checked below.
+                Expect::RefuseBoth => {
+                    let msg = build
+                        .stderr
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| l.starts_with("build failed:"))
+                        .last()
+                        .unwrap_or("")
+                        .to_string();
+                    if msg.is_empty() {
+                        errors.push(format!(
+                            "{name}: ERROR(build) native build failed without a 'build failed:' line; \
+                             stderr={}",
+                            tail(&build.stderr)
+                        ));
+                    } else {
+                        n_refused += 1;
+                        println!("{name}: REFUSED-BOTH (build refused: {msg})");
+                        let _ = std::fs::remove_dir_all(&work);
+                    }
+                }
                 Expect::Match => {
                     // Distinguish a cap artifact from a real link failure — a build
                     // killed by the address-space cap must never read as a normal error.
@@ -480,6 +523,25 @@ fn parity_fixtures_interpreter_vs_native() {
                 "{name}: ERROR(native-timeout) rc={} (cap {NATIVE_TIMEOUT_S}s) — binary did not terminate",
                 nat_leg.rc
             ));
+            continue;
+        }
+
+        if expect_refusal {
+            let want = refusal_line(&ref_leg.stderr);
+            let got = refusal_line(&nat_leg.stderr);
+            if nat_leg.rc == 0 {
+                errors.push(format!(
+                    "{name}: ERROR(refusal) native leg succeeded where the interpreter refused ({want:?})"
+                ));
+            } else if want.is_empty() || got.is_empty() || want != got {
+                diverges.push(format!(
+                    "{name}: DIVERGE(refusal) interp refused with {want:?}, native with {got:?}"
+                ));
+            } else {
+                n_refused += 1;
+                println!("{name}: REFUSED-BOTH (same sentence on both planes: {want:?})");
+                let _ = std::fs::remove_dir_all(&work);
+            }
             continue;
         }
 
@@ -668,11 +730,18 @@ fn shell_runner_verdicts_match_fixture_table() {
         });
         let want = match expect_for(name) {
             Expect::Match => "MATCH",
-            Expect::NativeFailLoud { .. } => "ERROR(build)",
+            // The shell runner reports a documented fail-loud build as FALLBACK,
+            // because `tallow run` still succeeds via the interpreter.
+            Expect::NativeFailLoud { .. } => "FALLBACK",
+            // The shell runner classifies a both-planes refusal as its own
+            // verdict; anything else would make this table disagree with the
+            // runner it is checking.
+            Expect::RefuseBoth => "REFUSED",
         };
-        assert_eq!(
-            got, want,
-            "shell runner verdict for {name} drifted from the E1 fixture table"
+        // The shell runner prints `VERDICT(detail…)`; compare the class only.
+        assert!(
+            got.starts_with(want),
+            "shell runner verdict for {name} drifted from the E1 fixture table: got {got:?}, want {want:?}"
         );
     }
     assert_eq!(
