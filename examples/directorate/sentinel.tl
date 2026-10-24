@@ -54,3 +54,8 @@ fn main() {
 
     print(provenance.to_json(graded))
 }
+
+// The task-graph fragment this desk contributes (ids match directorate.tl).
+fn fragment() -> String {
+    return "sentinel.collect_iocs,sentinel.correlate,sentinel.verdict"
+}
