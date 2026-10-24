@@ -143,16 +143,27 @@ interpreter byte-for-byte.
 
 ### Directorate
 
-**R11 — Four of five desks exist only as a design.**
-Evidence: `examples/directorate/sentinel.tl` runs; ORACLE, GHOST, CARTOGRAPHER,
-QUARTERMASTER do not.
+**R11 — Four of five desks exist only as a design.** — **DONE** (2026-10-24)
+All five desks are programs: `examples/directorate/{sentinel,oracle,ghost,cartographer,quartermaster}.tl`.
+Each runs on real stdlib calls (`TLSProfile.list`, `process.exec`, `provenance.*`),
+writes a graded provenance record, and has a refusal branch that fires on a real
+condition (ORACLE: inventory too thin to rank; GHOST: private data on a
+non-anonymous plane; CARTOGRAPHER: fewer than two subjects/axes; QUARTERMASTER:
+a plan with no rollback; SENTINEL: grade below the dissemination threshold).
+Each declares the task ids it contributes in `fragment()`, and
+`tests/directorate_desks.rs` fails if one of those ids is not planned by
+`directorate.tl`. Evidence from the audit:
 Fix: one program per desk following the SENTINEL pattern — real stdlib calls, a
 provenance record, one refusal branch, and a task-graph fragment consumed by
 `directorate.tl`.
 Gate: each desk runs end-to-end on fixtures; `directorate.tl` still plans 5 waves.
 
-**R12 — No agent cognition is wired.**
-Fix: D3 from the architecture doc — CARTOGRAPHER's `brief` task becomes an `llm` task
+**R12 — No agent cognition is wired.** — **DONE** (2026-10-24)
+`directorate.tl` runs the full graph against the local model: 5 waves [5,5,3,1,1],
+15 tasks committed, 0 failed, `replayable=true`. The journal carries
+`{"kind":"llm_recorded","model":"MiniCPM","prompt_hash":…,"response":…,"response_hash":…}`
+for CARTOGRAPHER's brief. SENTINEL's verdict stays rule-based, as the plan required.
+Original fix: D3 from the architecture doc — CARTOGRAPHER's `brief` task becomes an `llm` task
 with a fixed prompt template and a recorded response; SENTINEL's verdict stays
 rule-based until the llm path is proven.
 Gate: one directorate run whose journal shows an `llm` task with prompt/response

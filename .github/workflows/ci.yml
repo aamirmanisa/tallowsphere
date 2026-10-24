@@ -271,6 +271,7 @@ jobs:
           --test mesh_remote
           --test mesh_workers
           --test browser_sentinels_tl
+          --test directorate_desks
           --test ombuds_mesh_tl
           --test fingerprint_audit_cli
           --test http_result_model
