@@ -225,3 +225,143 @@ pub extern "C" fn tallow_llm_models(provider: *const c_char) -> *mut std::ffi::c
     }
     crate::runtime::browser::native_array(slots)
 }
+
+/// Mirrors `%struct.VerifyReport` (stdlib/llm.tl):
+/// `provider`, `ok` (i1), `models`, `elapsed_ms`, `detail`.
+#[repr(C)]
+pub struct VerifyReportRaw {
+    pub provider: *mut c_char,
+    pub ok: i32,
+    pub models: i64,
+    pub elapsed_ms: i64,
+    pub detail: *mut c_char,
+}
+
+/// `llm.verify(provider) -> VerifyReport`
+///
+/// Resolves credentials and lists models — the check an operator runs after
+/// entering a key. Returns null on failure with the redacted reason in
+/// `tallow_llm_last_error()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_llm_verify(provider: *const c_char) -> *mut VerifyReportRaw {
+    use crate::interp::Value;
+
+    let provider = take_cstr(provider);
+    let Some(result) = crate::stdlib::llm::dispatch("verify", vec![Value::String(provider)])
+    else {
+        set_error("llm.verify is not routed by the stdlib".to_string());
+        return std::ptr::null_mut();
+    };
+    let value = match result {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    let Value::Struct { name, fields } = value else {
+        set_error("llm.verify did not return a VerifyReport".to_string());
+        return std::ptr::null_mut();
+    };
+    if name != "VerifyReport" {
+        set_error(format!("llm.verify returned a {name} struct"));
+        return std::ptr::null_mut();
+    }
+    let text = |key: &str| -> String {
+        fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_string())
+            .unwrap_or_default()
+    };
+    let int = |key: &str| -> i64 {
+        fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| match v {
+                Value::Int(i) => *i as i64,
+                other => other.as_string().parse().unwrap_or(0),
+            })
+            .unwrap_or(0)
+    };
+    let ok = fields
+        .iter()
+        .find(|(k, _)| k == "ok")
+        .map(|(_, v)| matches!(v, Value::Bool(true)))
+        .unwrap_or(false);
+
+    Box::into_raw(Box::new(VerifyReportRaw {
+        provider: own(text("provider")),
+        ok: ok as i32,
+        models: int("models"),
+        elapsed_ms: int("elapsed_ms"),
+        detail: own(text("detail")),
+    }))
+}
+
+/// Mirrors `%struct.ProviderInfo` (stdlib/llm.tl): eight string fields.
+#[repr(C)]
+pub struct ProviderInfoRaw {
+    pub id: *mut c_char,
+    pub label: *mut c_char,
+    pub protocol: *mut c_char,
+    pub base_url: *mut c_char,
+    pub key_env: *mut c_char,
+    pub status: *mut c_char,
+    pub docs: *mut c_char,
+    pub unavailable_reason: *mut c_char,
+}
+
+/// `llm.providers() -> []ProviderInfo`
+///
+/// Same native array shape as `llm.models`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_llm_providers() -> *mut std::ffi::c_void {
+    use crate::interp::Value;
+
+    let Some(result) = crate::stdlib::llm::dispatch("providers", Vec::new()) else {
+        set_error("llm.providers is not routed by the stdlib".to_string());
+        return std::ptr::null_mut();
+    };
+    let value = match result {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    let Value::Array(items) = value else {
+        set_error("llm.providers did not return an array".to_string());
+        return std::ptr::null_mut();
+    };
+    let mut slots: Vec<i64> = Vec::with_capacity(items.len());
+    for item in items {
+        let Value::Struct { name, fields } = item else {
+            set_error("llm.providers returned a non-struct entry".to_string());
+            return std::ptr::null_mut();
+        };
+        if name != "ProviderInfo" {
+            set_error(format!("llm.providers returned a {name} entry"));
+            return std::ptr::null_mut();
+        }
+        let text = |key: &str| -> String {
+            fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_string())
+                .unwrap_or_default()
+        };
+        let record = Box::new(ProviderInfoRaw {
+            id: own(text("id")),
+            label: own(text("label")),
+            protocol: own(text("protocol")),
+            base_url: own(text("base_url")),
+            key_env: own(text("key_env")),
+            status: own(text("status")),
+            docs: own(text("docs")),
+            unavailable_reason: own(text("unavailable_reason")),
+        });
+        slots.push(Box::into_raw(record) as i64);
+    }
+    crate::runtime::browser::native_array(slots)
+}

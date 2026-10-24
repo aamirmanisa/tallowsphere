@@ -58,6 +58,16 @@ fn main() {
     print("models_len=" + ms.len)
     print("model0=" + ms[0].id)
     print("owner0=" + ms[0].owned_by)
+    let vr = llm.verify("mock")
+    print("verify_ok=" + vr.ok)
+    print("verify_models=" + vr.models)
+    print("verify_detail=" + vr.detail)
+    let ps = llm.providers()
+    var found = 0
+    for p in ps {
+        if p.id == "mock" { found = 1 }
+    }
+    if found == 1 { print("providers_has_mock=1") } else { print("providers_has_mock=0") }
 }
 "#;
 
@@ -143,5 +153,14 @@ fn completion_struct_matches_on_both_planes() {
             && native.contains(&"model0=mock-1".to_string())
             && native.contains(&"owner0=fixture".to_string()),
         "llm.models must return the real model list on both planes, got {native:?}"
+    );
+    assert!(
+        native.contains(&"verify_ok=true".to_string())
+            && native.contains(&"verify_models=2".to_string()),
+        "llm.verify must report the provider's real state, got {native:?}"
+    );
+    assert!(
+        native.contains(&"providers_has_mock=1".to_string()),
+        "llm.providers must include the configured provider, got {native:?}"
     );
 }
