@@ -31,7 +31,14 @@ pub struct Job {
 
 #[derive(Clone, Debug)]
 pub enum Outcome {
-    Done { wave: usize, task: String, value: String, seed: u64 },
+    Done {
+        wave: usize,
+        task: String,
+        value: String,
+        seed: u64,
+        /// Completions made while running this task, for the journal.
+        llm_calls: Vec<crate::stdlib::llm::LlmCall>,
+    },
     Failed { wave: usize, task: String, error: String },
 }
 
@@ -80,13 +87,23 @@ impl Pool {
                         // shipped profiles set panic="abort", so the process
                         // aborts before this catch can return. Dev/test only
                         // (unwind) — docs/PANIC-POLICY.md.
+                        let is_llm = matches!(task.class, super::TaskClass::Llm);
+                        if is_llm {
+                            crate::stdlib::llm::begin_capture();
+                        }
                         let result = catch_unwind(AssertUnwindSafe(|| f.call(&task, seed)));
+                        let llm_calls = if is_llm {
+                            crate::stdlib::llm::take_capture()
+                        } else {
+                            Vec::new()
+                        };
                         let outcome = match result {
                             Ok(Ok(value)) => Outcome::Done {
                                 wave,
                                 task: task.id.clone(),
                                 value,
                                 seed,
+                                llm_calls,
                             },
                             Ok(Err(error)) => Outcome::Failed {
                                 wave,

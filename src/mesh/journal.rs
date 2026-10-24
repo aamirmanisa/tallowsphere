@@ -18,6 +18,18 @@ pub enum Event {
     RunStarted { run_id: String, mesh_seed: u64, tasks: usize },
     WaveStarted { wave: usize, seed: u64 },
     TaskCommitted { wave: usize, task: String, result_hash: String },
+    /// What a model was asked and what it answered. `response` is `None` for a
+    /// private data class: the hashes are still recorded, the text is not, and
+    /// replay refuses the run rather than pretending it can reproduce it.
+    LlmRecorded {
+        wave: usize,
+        task: String,
+        model: String,
+        prompt_hash: String,
+        response_hash: String,
+        response: Option<String>,
+        data_class: String,
+    },
     TaskRetried { wave: usize, task: String, attempt: u32, reason: String },
     TaskFailed { wave: usize, task: String, reason: String },
     InjectApplied { wave: usize, key: String, value: String },
@@ -36,6 +48,11 @@ impl Event {
             }),
             Event::TaskCommitted { wave, task, result_hash } => json!({
                 "kind": "task_committed", "wave": wave, "task": task, "hash": result_hash
+            }),
+            Event::LlmRecorded { wave, task, model, prompt_hash, response_hash, response, data_class } => json!({
+                "kind": "llm_recorded", "wave": wave, "task": task, "model": model,
+                "prompt_hash": prompt_hash, "response_hash": response_hash,
+                "response": response, "data_class": data_class
             }),
             Event::TaskRetried { wave, task, attempt, reason } => json!({
                 "kind": "task_retried", "wave": wave, "task": task, "attempt": attempt, "reason": reason
@@ -129,6 +146,18 @@ pub fn replay(path: impl AsRef<Path>) -> Result<Vec<ReplayedWave>, String> {
             "wave_started" => {
                 current = Some(v["wave"].as_u64().unwrap_or(0) as usize);
                 results.clear();
+            }
+            "llm_recorded" => {
+                // A private-class run has hashes but no text. Replay cannot
+                // reproduce a model answer without the text it was given, and
+                // pretending otherwise would be the simulation this plane
+                // exists to rule out.
+                if v["data_class"].as_str().unwrap_or("public") == "private" {
+                    return Err(format!(
+                        "replay: non-replayable: private data class at line {}",
+                        lineno + 1
+                    ));
+                }
             }
             "task_committed" => {
                 results.push((
