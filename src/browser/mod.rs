@@ -34,6 +34,7 @@ pub mod cadence;
 pub mod canary;
 pub mod captcha;
 pub mod cdp;
+pub mod sentinels;
 pub mod cft_pins;
 pub mod circuit_breaker;
 pub mod compliance;

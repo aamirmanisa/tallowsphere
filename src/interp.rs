@@ -23379,24 +23379,9 @@ impl Interpreter {
         positional: &[Value],
     ) -> Option<Result<Value, RuntimeError>> {
         // These surfaces used to return structs carrying `simulated: true` and a
-        // state that nothing underneath ever read: rules that block nothing, a
-        // trace recorder that records nothing, viewport settings applied to no
-        // page. A control that cannot act is a fake, so they refuse by name and
-        // say which protocol would make them real. The real implementations live
-        // in src/browser/network.rs against a live CDP session.
-        const NEEDS_SESSION: [(&str, &str); 3] = [
-            ("NetworkInterceptor.", "the CDP Fetch domain"),
-            ("TraceRecorder.", "the CDP Tracing domain"),
-            ("DeviceEmulator.", "the CDP Emulation domain"),
-        ];
-        for (prefix, protocol) in NEEDS_SESSION {
-            if name.starts_with(prefix) {
-                return Some(Ok(Value::Err(Box::new(Value::String(format!(
-                    "no browser connected — {name} needs a live session and works through {protocol}; \
-                     it was not applied"
-                ))))));
-            }
-        }
+        // state nothing underneath ever read. They now drive the CDP Emulation,
+        // Tracing and Fetch domains through src/browser/sentinels.rs against the
+        // bound page; with no page bound they say so instead of pretending.
         match name {
             // ── Device.get(name) ──
             "Device.get" => {
@@ -24227,244 +24212,147 @@ impl Interpreter {
             // a control that cannot act. The real interceptor drives the CDP
             // Fetch domain (src/browser/network.rs) and needs a live session, so
             // this path says so instead of returning an object that pretends.
-            "NetworkInterceptor.create" => Some(Ok(Value::Err(Box::new(Value::String(
-                "no browser connected — NetworkInterceptor requires a live browser session; \
-                 interception is implemented against the CDP Fetch domain"
-                    .to_string(),
-            ))))),
+            "NetworkInterceptor.create" => match crate::browser::sentinels::intercept_create() {
+                Ok(()) => Some(Ok(Value::Struct {
+                    name: "NetworkInterceptor".to_string(),
+                    fields: vec![
+                        ("rules".into(), Value::Array(vec![])),
+                        ("active".into(), Value::Bool(crate::browser::sentinels::intercept_active())),
+                        ("simulated".into(), Value::Bool(false)),
+                        ("rule_count".into(), Value::Int(0)),
+                    ],
+                })),
+                Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+            }
             "NetworkInterceptor.add_rule" => {
-                let ifields = match positional.first() {
-                    Some(Value::Struct { name, fields }) if name == "NetworkInterceptor" => {
-                        fields.clone()
-                    }
-                    _ => {
-                        return Some(Err(RuntimeError::TypeError(
-                            "NetworkInterceptor.add_rule requires a NetworkInterceptor struct"
-                                .into(),
-                        )));
-                    }
-                };
                 let pattern = positional.get(1).map(|v| v.as_string()).unwrap_or_default();
-                let action = positional
-                    .get(2)
-                    .map(|v| v.as_string())
-                    .unwrap_or_else(|| "block".into());
-                let rule = Value::Struct {
-                    name: "InterceptRule".to_string(),
-                    fields: vec![
-                        ("pattern".into(), Value::String(pattern)),
-                        ("action".into(), Value::String(action)),
-                    ],
-                };
-                let mut rules = match ifields.iter().find(|(k, _)| k == "rules") {
-                    Some((_, Value::Array(arr))) => arr.clone(),
-                    _ => vec![],
-                };
-                rules.push(rule);
-                let count = rules.len() as i128;
-                Some(Ok(Value::Struct {
-                    name: "NetworkInterceptor".to_string(),
-                    fields: vec![
-                        ("rules".into(), Value::Array(rules)),
-                        ("active".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                        ("rule_count".into(), Value::Int(count)),
-                    ],
-                }))
-            }
-            "NetworkInterceptor.block_pattern" => {
-                let ifields =
-                    match positional.first() {
-                        Some(Value::Struct { name, fields }) if name == "NetworkInterceptor" => {
-                            fields.clone()
-                        }
-                        _ => return Some(Err(RuntimeError::TypeError(
-                            "NetworkInterceptor.block_pattern requires a NetworkInterceptor struct"
-                                .into(),
-                        ))),
-                    };
-                let glob = positional.get(1).map(|v| v.as_string()).unwrap_or_default();
-                let rule = Value::Struct {
-                    name: "InterceptRule".to_string(),
-                    fields: vec![
-                        ("pattern".into(), Value::String(glob)),
-                        ("action".into(), Value::String("block".into())),
-                    ],
-                };
-                let mut rules = match ifields.iter().find(|(k, _)| k == "rules") {
-                    Some((_, Value::Array(arr))) => arr.clone(),
-                    _ => vec![],
-                };
-                rules.push(rule);
-                let count = rules.len() as i128;
-                Some(Ok(Value::Struct {
-                    name: "NetworkInterceptor".to_string(),
-                    fields: vec![
-                        ("rules".into(), Value::Array(rules)),
-                        ("active".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                        ("rule_count".into(), Value::Int(count)),
-                    ],
-                }))
-            }
-            "NetworkInterceptor.mock_response" => {
-                let ifields =
-                    match positional.first() {
-                        Some(Value::Struct { name, fields }) if name == "NetworkInterceptor" => {
-                            fields.clone()
-                        }
-                        _ => return Some(Err(RuntimeError::TypeError(
-                            "NetworkInterceptor.mock_response requires a NetworkInterceptor struct"
-                                .into(),
-                        ))),
-                    };
-                let pattern = positional.get(1).map(|v| v.as_string()).unwrap_or_default();
-                let status = positional
-                    .get(2)
-                    .and_then(|v| {
-                        if let Value::Int(n) = v {
-                            Some(*n)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(200);
-                let body = positional.get(3).map(|v| v.as_string()).unwrap_or_default();
-                let rule = Value::Struct {
-                    name: "InterceptRule".to_string(),
-                    fields: vec![
-                        ("pattern".into(), Value::String(pattern)),
-                        ("action".into(), Value::String("mock".into())),
-                        ("mock_status".into(), Value::Int(status)),
-                        ("mock_body".into(), Value::String(body)),
-                    ],
-                };
-                let mut rules = match ifields.iter().find(|(k, _)| k == "rules") {
-                    Some((_, Value::Array(arr))) => arr.clone(),
-                    _ => vec![],
-                };
-                rules.push(rule);
-                let count = rules.len() as i128;
-                Some(Ok(Value::Struct {
-                    name: "NetworkInterceptor".to_string(),
-                    fields: vec![
-                        ("rules".into(), Value::Array(rules)),
-                        ("active".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                        ("rule_count".into(), Value::Int(count)),
-                    ],
-                }))
-            }
-            "NetworkInterceptor.clear" => {
-                match positional.first() {
-                    Some(Value::Struct { name, .. }) if name == "NetworkInterceptor" => {}
-                    _ => {
-                        return Some(Err(RuntimeError::TypeError(
-                            "NetworkInterceptor.clear requires a NetworkInterceptor struct".into(),
-                        )));
+                let action = positional.get(2).map(|v| v.as_string()).unwrap_or_else(|| "block".into());
+                match action.as_str() {
+                    "block" => crate::browser::sentinels::intercept_add_rule(
+                        crate::browser::sentinels::Rule::Block(pattern),
+                    ),
+                    "mock" => crate::browser::sentinels::intercept_add_rule(
+                        crate::browser::sentinels::Rule::Mock {
+                            pattern,
+                            status: positional.get(3).and_then(|v| match v { Value::Int(n) => Some(*n as i64), _ => None }).unwrap_or(200),
+                            body: positional.get(4).map(|v| v.as_string()).unwrap_or_default(),
+                        },
+                    ),
+                    other => {
+                        return Some(Ok(Value::Err(Box::new(Value::String(format!(
+                            "NetworkInterceptor.add_rule: unknown action '{other}' — use block or mock"
+                        ))))));
                     }
-                };
+                }
                 Some(Ok(Value::Struct {
                     name: "NetworkInterceptor".to_string(),
                     fields: vec![
                         ("rules".into(), Value::Array(vec![])),
-                        ("active".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                        ("rule_count".into(), Value::Int(0)),
+                        ("active".into(), Value::Bool(crate::browser::sentinels::intercept_active())),
+                        ("simulated".into(), Value::Bool(false)),
+                        ("rule_count".into(), Value::Int(crate::browser::sentinels::intercept_rule_count() as i128)),
                     ],
                 }))
             }
-            // ── TraceRecorder ───────────────────────────────────────────
+            "NetworkInterceptor.block_pattern" => {
+                let glob = positional.get(1).map(|v| v.as_string()).unwrap_or_default();
+                crate::browser::sentinels::intercept_add_rule(
+                    crate::browser::sentinels::Rule::Block(glob),
+                );
+                Some(Ok(Value::Struct {
+                    name: "NetworkInterceptor".to_string(),
+                    fields: vec![
+                        ("rules".into(), Value::Array(vec![])),
+                        ("active".into(), Value::Bool(crate::browser::sentinels::intercept_active())),
+                        ("simulated".into(), Value::Bool(false)),
+                        ("rule_count".into(), Value::Int(crate::browser::sentinels::intercept_rule_count() as i128)),
+                    ],
+                }))
+            }
+            "NetworkInterceptor.mock_response" => {
+                let pattern = positional.get(1).map(|v| v.as_string()).unwrap_or_default();
+                let status = positional.get(2).and_then(|v| match v { Value::Int(n) => Some(*n as i64), _ => None }).unwrap_or(200);
+                let body = positional.get(3).map(|v| v.as_string()).unwrap_or_default();
+                crate::browser::sentinels::intercept_add_rule(
+                    crate::browser::sentinels::Rule::Mock { pattern, status, body },
+                );
+                Some(Ok(Value::Struct {
+                    name: "NetworkInterceptor".to_string(),
+                    fields: vec![
+                        ("rules".into(), Value::Array(vec![])),
+                        ("active".into(), Value::Bool(crate::browser::sentinels::intercept_active())),
+                        ("simulated".into(), Value::Bool(false)),
+                        ("rule_count".into(), Value::Int(crate::browser::sentinels::intercept_rule_count() as i128)),
+                    ],
+                }))
+            }
+            "NetworkInterceptor.clear" => match crate::browser::sentinels::intercept_clear() {
+                Ok(()) => Some(Ok(Value::Struct {
+                    name: "NetworkInterceptor".to_string(),
+                    fields: vec![
+                        ("rules".into(), Value::Array(vec![])),
+                        ("active".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(false)),
+                        ("rule_count".into(), Value::Int(0)),
+                    ],
+                })),
+                Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+            }
             "TraceRecorder.start" => {
                 let trace_name = positional
                     .first()
                     .map(|v| v.as_string())
                     .unwrap_or_else(|| "trace".into());
-                Some(Ok(Value::Struct {
-                    name: "TraceRecorder".to_string(),
-                    fields: vec![
-                        ("name".into(), Value::String(trace_name)),
-                        ("actions".into(), Value::Array(vec![])),
-                        ("screenshots".into(), Value::Array(vec![])),
-                        ("network".into(), Value::Array(vec![])),
-                        ("recording".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                        ("action_count".into(), Value::Int(0)),
-                    ],
-                }))
+                match crate::browser::sentinels::trace_start(&trace_name) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "TraceRecorder".to_string(),
+                        fields: vec![
+                            ("name".into(), Value::String(trace_name)),
+                            ("actions".into(), Value::Array(vec![])),
+                            ("screenshots".into(), Value::Array(vec![])),
+                            ("network".into(), Value::Array(vec![])),
+                            ("recording".into(), Value::Bool(true)),
+                            ("simulated".into(), Value::Bool(false)),
+                            ("action_count".into(), Value::Int(0)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
             }
             "TraceRecorder.record_action" => {
-                let tfields = match positional.first() {
-                    Some(Value::Struct { name, fields }) if name == "TraceRecorder" => {
-                        fields.clone()
-                    }
-                    _ => {
-                        return Some(Err(RuntimeError::TypeError(
-                            "TraceRecorder.record_action requires a TraceRecorder struct".into(),
-                        )));
-                    }
-                };
-                let action_type = positional
-                    .get(1)
-                    .map(|v| v.as_string())
-                    .unwrap_or_else(|| "click".into());
+                let action_type = positional.get(1).map(|v| v.as_string()).unwrap_or_default();
                 let detail = positional.get(2).map(|v| v.as_string()).unwrap_or_default();
-                let ts = crate::stdlib::time::epoch_secs_to_iso(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64,
-                );
-                let action = Value::Struct {
-                    name: "TraceAction".to_string(),
+                match crate::browser::sentinels::trace_mark(&action_type, &detail) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "TraceRecorder".to_string(),
+                        fields: vec![
+                            ("name".into(), Value::String("trace".into())),
+                            ("actions".into(), Value::Array(vec![Value::String(format!("{action_type}: {detail}"))])),
+                            ("screenshots".into(), Value::Array(vec![])),
+                            ("network".into(), Value::Array(vec![])),
+                            ("recording".into(), Value::Bool(crate::browser::sentinels::trace_active())),
+                            ("simulated".into(), Value::Bool(false)),
+                            ("action_count".into(), Value::Int(1)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
+            }
+            "TraceRecorder.stop" => match crate::browser::sentinels::trace_stop() {
+                Ok((name, path, entries)) => Some(Ok(Value::Struct {
+                    name: "TraceRecorder".to_string(),
                     fields: vec![
-                        ("action_type".into(), Value::String(action_type)),
-                        ("detail".into(), Value::String(detail)),
-                        ("timestamp".into(), Value::String(ts)),
+                        ("name".into(), Value::String(name)),
+                        ("actions".into(), Value::Array(vec![])),
+                        ("screenshots".into(), Value::Array(vec![])),
+                        ("network".into(), Value::Array(vec![Value::String(path.display().to_string())])),
+                        ("recording".into(), Value::Bool(false)),
+                        ("simulated".into(), Value::Bool(false)),
+                        ("action_count".into(), Value::Int(entries as i128)),
                     ],
-                };
-                let mut actions = match tfields.iter().find(|(k, _)| k == "actions") {
-                    Some((_, Value::Array(arr))) => arr.clone(),
-                    _ => vec![],
-                };
-                actions.push(action);
-                let count = actions.len() as i128;
-                let mut new_fields = tfields;
-                for (k, v) in &mut new_fields {
-                    match k.as_str() {
-                        "actions" => *v = Value::Array(actions.clone()),
-                        "action_count" => *v = Value::Int(count),
-                        _ => {}
-                    }
-                }
-                Some(Ok(Value::Struct {
-                    name: "TraceRecorder".to_string(),
-                    fields: new_fields,
-                }))
+                })),
+                Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
             }
-            "TraceRecorder.stop" => {
-                let tfields = match positional.first() {
-                    Some(Value::Struct { name, fields }) if name == "TraceRecorder" => {
-                        fields.clone()
-                    }
-                    _ => {
-                        return Some(Err(RuntimeError::TypeError(
-                            "TraceRecorder.stop requires a TraceRecorder struct".into(),
-                        )));
-                    }
-                };
-                let mut new_fields = tfields;
-                for (k, v) in &mut new_fields {
-                    if k == "recording" {
-                        *v = Value::Bool(false);
-                    }
-                }
-                Some(Ok(Value::Struct {
-                    name: "TraceRecorder".to_string(),
-                    fields: new_fields,
-                }))
-            }
-            // ── SessionManager ──────────────────────────────────────────
             "SessionManager.capture" => {
                 let page_url = positional
                     .first()
@@ -24592,159 +24480,107 @@ impl Interpreter {
             }
             // ── DeviceEmulator ──────────────────────────────────────────
             "DeviceEmulator.set_viewport" => {
-                let width = positional
-                    .first()
-                    .and_then(|v| {
-                        if let Value::Int(n) = v {
-                            Some(*n)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(1920);
-                let height = positional
-                    .get(1)
-                    .and_then(|v| {
-                        if let Value::Int(n) = v {
-                            Some(*n)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(1080);
-                let scale = positional
-                    .get(2)
-                    .and_then(|v| match v {
-                        Value::Float(f) => Some(*f),
-                        Value::Int(n) => Some(*n as f64),
-                        _ => None,
-                    })
-                    .unwrap_or(1.0);
-                Some(Ok(Value::Struct {
-                    name: "ViewportConfig".to_string(),
-                    fields: vec![
-                        ("width".into(), Value::Int(width)),
-                        ("height".into(), Value::Int(height)),
-                        ("scale".into(), Value::Float(scale)),
-                        ("applied".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                    ],
-                }))
+                let width = positional.first().and_then(|v| match v { Value::Int(n) => Some(*n), _ => None }).unwrap_or(1920);
+                let height = positional.get(1).and_then(|v| match v { Value::Int(n) => Some(*n), _ => None }).unwrap_or(1080);
+                let scale = positional.get(2).and_then(|v| match v { Value::Float(f) => Some(*f), Value::Int(n) => Some(*n as f64), _ => None }).unwrap_or(1.0);
+                match crate::browser::sentinels::set_viewport(width as i64, height as i64, scale) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "ViewportConfig".to_string(),
+                        fields: vec![
+                            ("width".into(), Value::Int(width)),
+                            ("height".into(), Value::Int(height)),
+                            ("scale".into(), Value::Float(scale)),
+                            ("applied".into(), Value::Bool(true)),
+                            ("simulated".into(), Value::Bool(false)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
             }
             "DeviceEmulator.set_mobile" => {
                 let device_name = positional
                     .first()
                     .map(|v| v.as_string())
-                    .unwrap_or_else(|| "iPhone 14".into());
-                let (w, h, s, ua) = match device_name.as_str() {
-                    "iPhone 14" | "iPhone 14 Pro" => (
-                        390,
-                        844,
-                        3.0,
-                        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)",
-                    ),
-                    "Pixel 7" => (412, 915, 2.625, "Mozilla/5.0 (Linux; Android 13; Pixel 7)"),
-                    "iPad Pro" => (
-                        1024,
-                        1366,
-                        2.0,
-                        "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X)",
-                    ),
-                    _ => (
-                        375,
-                        812,
-                        3.0,
-                        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)",
-                    ),
-                };
-                Some(Ok(Value::Struct {
-                    name: "MobileConfig".to_string(),
-                    fields: vec![
-                        ("device".into(), Value::String(device_name)),
-                        ("width".into(), Value::Int(w)),
-                        ("height".into(), Value::Int(h)),
-                        ("scale".into(), Value::Float(s)),
-                        ("user_agent".into(), Value::String(ua.into())),
-                        ("applied".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                    ],
-                }))
+                    .unwrap_or_else(|| "iphone-15".into());
+                match crate::browser::sentinels::set_mobile(&device_name) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "MobileConfig".to_string(),
+                        fields: vec![
+                            ("device".into(), Value::String(device_name)),
+                            ("applied".into(), Value::Bool(true)),
+                            ("simulated".into(), Value::Bool(false)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
             }
             "DeviceEmulator.set_geolocation" => {
-                let lat = positional
-                    .first()
-                    .and_then(|v| match v {
-                        Value::Float(f) => Some(*f),
-                        Value::Int(n) => Some(*n as f64),
-                        _ => None,
-                    })
-                    .unwrap_or(0.0);
-                let lon = positional
-                    .get(1)
-                    .and_then(|v| match v {
-                        Value::Float(f) => Some(*f),
-                        Value::Int(n) => Some(*n as f64),
-                        _ => None,
-                    })
-                    .unwrap_or(0.0);
-                Some(Ok(Value::Struct {
-                    name: "GeolocationConfig".to_string(),
-                    fields: vec![
-                        ("lat".into(), Value::Float(lat)),
-                        ("lon".into(), Value::Float(lon)),
-                        ("accuracy".into(), Value::Int(100)),
-                        ("applied".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                    ],
-                }))
+                let lat = positional.first().and_then(|v| match v { Value::Float(f) => Some(*f), Value::Int(n) => Some(*n as f64), _ => None }).unwrap_or(0.0);
+                let lon = positional.get(1).and_then(|v| match v { Value::Float(f) => Some(*f), Value::Int(n) => Some(*n as f64), _ => None }).unwrap_or(0.0);
+                let acc = positional.get(2).and_then(|v| match v { Value::Float(f) => Some(*f), Value::Int(n) => Some(*n as f64), _ => None }).unwrap_or(1.0);
+                match crate::browser::sentinels::set_geolocation(lat, lon, acc) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "GeolocationConfig".to_string(),
+                        fields: vec![
+                            ("latitude".into(), Value::Float(lat)),
+                            ("longitude".into(), Value::Float(lon)),
+                            ("accuracy".into(), Value::Float(acc)),
+                            ("applied".into(), Value::Bool(true)),
+                            ("simulated".into(), Value::Bool(false)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
             }
             "DeviceEmulator.set_timezone" => {
-                let tz = positional
-                    .first()
-                    .map(|v| v.as_string())
-                    .unwrap_or_else(|| "UTC".into());
-                Some(Ok(Value::Struct {
-                    name: "TimezoneConfig".to_string(),
-                    fields: vec![
-                        ("timezone".into(), Value::String(tz)),
-                        ("applied".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                    ],
-                }))
+                let tz = positional.first().map(|v| v.as_string()).unwrap_or_else(|| "UTC".into());
+                match crate::browser::sentinels::set_timezone(&tz) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "TimezoneConfig".to_string(),
+                        fields: vec![
+                            ("timezone".into(), Value::String(tz)),
+                            ("applied".into(), Value::Bool(true)),
+                            ("simulated".into(), Value::Bool(false)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
             }
             "DeviceEmulator.set_locale" => {
-                let locale = positional
-                    .first()
-                    .map(|v| v.as_string())
-                    .unwrap_or_else(|| "en-US".into());
-                Some(Ok(Value::Struct {
-                    name: "LocaleConfig".to_string(),
-                    fields: vec![
-                        ("locale".into(), Value::String(locale)),
-                        ("applied".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                    ],
-                }))
+                let locale = positional.first().map(|v| v.as_string()).unwrap_or_else(|| "en-US".into());
+                match crate::browser::sentinels::set_locale(&locale) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "LocaleConfig".to_string(),
+                        fields: vec![
+                            ("locale".into(), Value::String(locale)),
+                            ("applied".into(), Value::Bool(true)),
+                            ("simulated".into(), Value::Bool(false)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
             }
             "DeviceEmulator.set_user_agent" => {
-                let ua = positional
-                    .first()
-                    .map(|v| v.as_string())
-                    .unwrap_or_default();
-                Some(Ok(Value::Struct {
-                    name: "UserAgentConfig".to_string(),
-                    fields: vec![
-                        ("user_agent".into(), Value::String(ua)),
-                        ("applied".into(), Value::Bool(false)),
-                        ("simulated".into(), Value::Bool(true)),
-                    ],
-                }))
+                let ua = positional.first().map(|v| v.as_string()).unwrap_or_default();
+                match crate::browser::sentinels::set_user_agent(&ua) {
+                    Ok(()) => Some(Ok(Value::Struct {
+                        name: "UserAgentConfig".to_string(),
+                        fields: vec![
+                            ("user_agent".into(), Value::String(ua)),
+                            ("applied".into(), Value::Bool(true)),
+                            ("simulated".into(), Value::Bool(false)),
+                        ],
+                    })),
+                    Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+                }
             }
-            "DeviceEmulator.clear" => Some(Ok(Value::Struct {
-                name: "EmulatorResult".to_string(),
-                fields: vec![("cleared".into(), Value::Bool(true))],
-            })),
-            // ── CaptchaDetector ─────────────────────────────────────────
+            "DeviceEmulator.clear" => match crate::browser::sentinels::clear_emulation() {
+                Ok(()) => Some(Ok(Value::Struct {
+                    name: "EmulatorResult".to_string(),
+                    fields: vec![("cleared".into(), Value::Bool(true))],
+                })),
+                Err(e) => Some(Ok(Value::Err(Box::new(Value::String(e))))),
+            }
             "CaptchaDetector.scan" => {
                 let url = positional
                     .first()
