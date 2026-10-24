@@ -274,6 +274,20 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Execute or preflight a `tallow.request_plan.v1` plan against a
+    /// `tallow.target_manifest.v2` source manifest. `--network-scope local`
+    /// (default) evaluates policy and opens nothing; `live-preflight` runs every
+    /// live gate and opens nothing; `live` additionally requires
+    /// `--approve-live` plus a compliance gate report bound to the manifest
+    /// sha256, then performs one GET per request and writes the artifact set.
+    /// Exit codes: 0 = passed, 2 = blocked or failed, 64 = usage error.
+    #[command(name = "run-plan")]
+    RunPlan {
+        /// Everything after `run-plan`, e.g.
+        /// `--plan p.json --output-dir out --network-scope live-preflight`
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Extract `tallow.extraction_row.v1` rows from a LOCAL html file using a
     /// `tallow.extraction_schema.v1` contract. Performs NO network access: the
     /// row contract permits only `mode: local_mock` with `live_scraping: false`.
@@ -2796,6 +2810,12 @@ fn real_main() -> anyhow::Result<()> {
             // is named), 64 usage / unreadable file. This path must not egress —
             // the arm it calls is statically barred from naming the egress entry.
             std::process::exit(tallow::cli::plan_cmd::run_plan_args(&args));
+        }
+        Command::RunPlan { args } => {
+            // The lexicographically-first gate stack in the CLI: policy,
+            // approval, compliance binding, header hygiene and output isolation
+            // all run before a socket exists.
+            std::process::exit(tallow::cli::request_plan_cmd::run_plan_args(&args));
         }
         Command::Extract { args } => {
             // Exit status is the verdict: 0 rows written, 1 nothing usable (the
