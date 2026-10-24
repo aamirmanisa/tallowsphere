@@ -158,9 +158,17 @@ rule-based until the llm path is proven.
 Gate: one directorate run whose journal shows an `llm` task with prompt/response
 hashes, replayable per R9.
 
-**R13 — Research controls are design, not code.**
-Evidence: scope manifest, ombuds channel, jurisdiction check, egress ledger are
-described in `docs/architecture/tallow-directorate-2026-10-23.md` §6; none is implemented.
+**R13 — Research controls are design, not code.** — **DONE** (2026-10-24)
+All four controls are code, each with a test that fails when bypassed:
+egress ledger `f4593a0` (budget + stop on 403/429, fail-closed JSONL);
+jurisdiction gate `e889bf1` (explicit table, checked before the budget);
+scope manifest `5f697b7` (Ed25519 over canonical bytes, unlisted task refused
+by name, expired authorizes nothing); ombuds channel `src/ombuds.rs` (append
++ fsync, hash chain + Ed25519 over each entry, key must be 0600, restart
+resumes the chain). A `Mesh.run` refusal is written to the channel when one is
+configured — tests/ombuds_mesh_tl proves it end to end and verifies the log
+with the public key alone.
+Evidence kept from the audit:
 Fix: implement in this order — (1) scope manifest as a signed JSON object checked at
 task creation, (2) egress ledger (per-target budget, stop on 403/429) inside `http`,
 (3) jurisdiction table checked before a collection task is planned, (4) ombuds as an
