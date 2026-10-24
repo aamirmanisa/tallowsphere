@@ -157,6 +157,7 @@ pub mod sast_pass;
 pub mod sbom;
 pub mod scenario_matrix;
 pub mod scope;
+pub mod scope_jurisdiction;
 pub mod sentinel_lifecycle;
 pub mod shred;
 pub mod shred_ledger;

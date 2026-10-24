@@ -98,18 +98,31 @@ fn authorize_loopback(dir: &std::path::Path) {
 }
 
 fn run(dir: &std::path::Path, source: &str, name: &str, ledger: &std::path::Path, budget: u32) -> (bool, String) {
+    run_with(dir, source, name, ledger, budget, None)
+}
+
+fn run_with(
+    dir: &std::path::Path,
+    source: &str,
+    name: &str,
+    ledger: &std::path::Path,
+    budget: u32,
+    jurisdiction: Option<&std::path::Path>,
+) -> (bool, String) {
     let file = dir.join(format!("{name}.tl"));
     std::fs::write(&file, source).expect("write");
     authorize_loopback(dir);
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
-        .arg("run")
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"));
+    cmd.arg("run")
         .arg(&file)
         .current_dir(dir)
         .env("TALLOW_EGRESS_LEDGER", ledger)
         .env("TALLOW_EGRESS_BUDGET", budget.to_string())
-        .env("TALLOW_ALLOW_DIRECT", "1")
-        .output()
-        .expect("run tallow");
+        .env("TALLOW_ALLOW_DIRECT", "1");
+    if let Some(p) = jurisdiction {
+        cmd.env("TALLOW_JURISDICTION_CONFIG", p);
+    }
+    let out = cmd.output().expect("run tallow");
     (
         out.status.success(),
         format!(
@@ -192,5 +205,42 @@ fn the_budget_refuses_the_request_after_the_limit() {
     assert!(
         text.contains("budget 1 exhausted for 127.0.0.1"),
         "the refusal names the budget and the host: {text}"
+    );
+}
+
+/// A jurisdiction table that blocks the fixture by explicit host. This is the
+/// real shape of the control: no geolocation, a named list.
+const JURISDICTION: &str = r#"
+[[blocked]]
+code = "TEST"
+reason = "the fixture is a blocked jurisdiction for this run"
+hosts = ["127.0.0.1"]
+"#;
+
+#[test]
+fn a_blocked_jurisdiction_refuses_before_any_socket_is_opened() {
+    let (port, hits) = fixture_ok();
+    let dir = std::env::temp_dir().join(format!("tallow-juris-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let ledger = dir.join("juris.jsonl");
+    let _ = std::fs::remove_file(&ledger);
+    let table = dir.join("jurisdiction.toml");
+    std::fs::write(&table, JURISDICTION).expect("table");
+
+    let program = PROGRAM.replace("PORT", &port.to_string());
+    let (ok, output) = run_with(&dir, &program, "blocked", &ledger, 10, Some(&table));
+    assert!(ok, "the program still returns a per-URL result: {output}");
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "a blocked jurisdiction must not be contacted"
+    );
+
+    // Nothing was sent, so the ledger has no request — the refusal happened
+    // before the budget was even consulted.
+    let text = std::fs::read_to_string(&ledger).unwrap_or_default();
+    assert!(
+        !text.contains("\"status\":200"),
+        "no request should have been recorded: {text}"
     );
 }
