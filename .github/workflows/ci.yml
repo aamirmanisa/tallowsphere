@@ -270,6 +270,8 @@ jobs:
           --test egress_ledger
           --test mesh_remote
           --test mesh_workers
+          --test browser_sentinels_tl
+          --test ombuds_mesh_tl
           --test fingerprint_audit_cli
           --test http_result_model
           --test pkg_cli
@@ -408,6 +410,7 @@ jobs:
           # parallelism contends for loopback ports rather than saving time.
           cargo test --locked --no-fail-fast \
             --test browser_antibot_opts \
+            --test browser_sentinels_live \
             --test browser_antibot_parity \
             --test browser_array_len \
             --test browser_authenticated_parity \
