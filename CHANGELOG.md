@@ -9,6 +9,37 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.2] — 2026-10-24 — the release gate runs what CI judges the tree by
+
+### Added
+
+- **The release gate runs the integration suites.** `parity_runner`,
+  `mesh_plan_tl`, `mesh_plan_parity`, `process_contract`, `stdlib_method_refusals`,
+  `injection_redteam`, `egress_census` and `llm_native_parity` now run before any
+  target is built, and `integration.log` travels with the run's artifacts. Before
+  this, two v1.5.1 tags published from a tree whose lib suite and conformance
+  corpus were green while those suites were red — the gate duplicated CI's cheap
+  half and skipped the half that catches codegen regressions.
+
+### Fixed
+
+- **README version claims.** The badge, install transcript, `--version` block and
+  `/opt` paths still named 1.5.0 and commit `0fdd5797ee`, four releases late. Every
+  dated claim was re-measured against the published 1.5.1 artefact (checksum
+  verified, installer probe passed, `schema check` exit 0, `extract` one row with
+  an empty quarantine).
+- **The `--version` transcript no longer pins a commit sha** it cannot know before
+  the tag exists; it shows the version, platform, arch and build stamp, and says
+  the `git:` line names the tagged commit.
+
+### Verified
+
+- v1.5.1's published linux-aarch64 tarball: sha256 `70748912…e492f9b` matches its
+  sidecar; extracted binary prints `1.5.1`; `Mesh.replay` runs natively; the
+  two-JSON-LD `.len` probe returns 2 interpreted and 2 compiled.
+- Full library suite 9,250 passed / 0 failed / 33 ignored; 13 integration suites
+  re-run green after the codegen fixes.
+
 ## [v1.5.1] — 2026-10-24 — llm and mesh compile natively
 
 ### Added
