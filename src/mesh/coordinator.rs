@@ -61,6 +61,9 @@ pub struct Coordinator {
     drain_ms: u64,
     speculation: SpeculationPolicy,
     control: Arc<RunControl>,
+    /// How the journal treats model prompt/response text: `public` keeps it,
+    /// `private` keeps only hashes and makes the run non-replayable.
+    data_class: String,
 }
 
 impl Coordinator {
@@ -83,7 +86,18 @@ impl Coordinator {
             drain_ms: 5_000,
             speculation: SpeculationPolicy::default(),
             control: Arc::new(RunControl::new()),
+            data_class: "public".to_string(),
         })
+    }
+
+    /// Mark the run's data class. Defaults to `public`, which is the only class
+    /// whose model text is journalled.
+    pub fn with_data_class(mut self, class: &str) -> Self {
+        self.data_class = match class {
+            "private" => "private".to_string(),
+            _ => "public".to_string(),
+        };
+        self
     }
 
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
@@ -315,7 +329,7 @@ impl Coordinator {
                 in_flight.remove(&id);
 
                 match outcome {
-                    Outcome::Done { value, seed, .. } => {
+                    Outcome::Done { value, seed, llm_calls, .. } => {
                         if !pending.contains_key(&id) {
                             continue;
                         }
@@ -339,6 +353,26 @@ impl Coordinator {
                                 result_hash: hash.clone(),
                             })
                             .map_err(|e| format!("mesh: journal: {e}"))?;
+                        // `llm`-class tasks record what the model saw and said.
+                        // The response text is kept only for the public data
+                        // class; the hashes are always kept.
+                        for call in &llm_calls {
+                            self.journal
+                                .append(&Event::LlmRecorded {
+                                    wave: wave.index,
+                                    task: id.clone(),
+                                    model: call.model.clone(),
+                                    prompt_hash: call.prompt_hash.clone(),
+                                    response_hash: call.response_hash.clone(),
+                                    response: if self.data_class == "private" {
+                                        None
+                                    } else {
+                                        Some(call.response.clone())
+                                    },
+                                    data_class: self.data_class.clone(),
+                                })
+                                .map_err(|e| format!("mesh: journal: {e}"))?;
+                        }
                         if let Some(t0) = started_at.remove(&id) {
                             completed_ms.push(t0.elapsed().as_millis() as u64);
                         }

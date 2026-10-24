@@ -173,6 +173,46 @@ pub fn is_loopback_url(url: &str) -> bool {
             .unwrap_or(false)
 }
 
+// ══════════════════════════════════════════════════════════════════
+// Call capture (mesh `llm`-class tasks)
+// ══════════════════════════════════════════════════════════════════
+
+/// One completion that crossed the wire, in a `Send` form: the mesh worker
+/// thread that made the call hands this back to the coordinator so the journal
+/// can record what the model was asked and what it answered without storing the
+/// `Value` types that cannot leave the thread.
+#[derive(Clone, Debug)]
+pub struct LlmCall {
+    pub model: String,
+    pub prompt_hash: String,
+    pub response_hash: String,
+    pub response: String,
+}
+
+thread_local! {
+    static LLM_CAPTURE: std::cell::RefCell<Option<Vec<LlmCall>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Start recording completions on this thread. Nested calls are not a thing:
+/// a second `begin_capture` replaces whatever was pending.
+pub fn begin_capture() {
+    LLM_CAPTURE.with(|c| *c.borrow_mut() = Some(Vec::new()));
+}
+
+/// Stop recording and return what was recorded on this thread.
+pub fn take_capture() -> Vec<LlmCall> {
+    LLM_CAPTURE.with(|c| c.borrow_mut().take().unwrap_or_default())
+}
+
+fn record_call(call: LlmCall) {
+    LLM_CAPTURE.with(|c| {
+        if let Some(v) = c.borrow_mut().as_mut() {
+            v.push(call);
+        }
+    });
+}
+
 pub fn load_config() -> Result<BTreeMap<String, ProviderConfig>, String> {
     load_config_from(&config_path())
 }
@@ -704,6 +744,12 @@ fn do_complete(args: Vec<Value>) -> StdlibResult {
     let r = resolve(&id)?;
     let started = Instant::now();
     let c = complete(&r, &model, &prompt, max_tokens)?;
+    record_call(LlmCall {
+        model: c.model.clone(),
+        prompt_hash: blake3::hash(prompt.as_bytes()).to_hex().to_string(),
+        response_hash: blake3::hash(c.text.as_bytes()).to_hex().to_string(),
+        response: c.text.clone(),
+    });
     Ok(Value::Struct {
         name: "Completion".to_string(),
         fields: vec![

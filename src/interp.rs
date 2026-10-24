@@ -1778,6 +1778,12 @@ impl Interpreter {
             Some(Value::Int(n)) => *n as u64,
             _ => 0xA11CE,
         };
+        // `public` keeps model text in the journal; `private` keeps hashes only
+        // and makes `Mesh.replay` refuse the run.
+        let data_class = match args.get(4) {
+            Some(Value::String(s)) if s == "private" => "private",
+            _ => "public",
+        };
 
         let mut tasks = Vec::with_capacity(items.len());
         for item in &items {
@@ -1820,6 +1826,7 @@ impl Interpreter {
             &journal,
             mesh_seed,
         )
+        .map(|c| c.with_data_class(data_class))
         .map_err(|e| RuntimeError::Error(format!("Mesh.run: {e}")))?;
         let outcome = coordinator
             .run("mesh.run", &waves)
