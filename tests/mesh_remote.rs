@@ -198,3 +198,84 @@ fn _read_first_line(mut child: Child) -> String {
     let _ = BufReader::new(out).read_line(&mut line);
     line
 }
+
+#[test]
+fn a_stopped_worker_leaves_the_live_table_and_returns() {
+    let run_id = format!("run-live-{}", std::process::id());
+    let server_key = SigningKey::from_bytes(&[21u8; 32]);
+    let server_vk = server_key.verifying_key();
+    let w_key = SigningKey::from_bytes(&[22u8; 32]);
+
+    let server = MeshServer::bind(
+        "127.0.0.1:0",
+        &run_id,
+        server_key,
+        vec![("w1".to_string(), w_key.verifying_key())],
+    )
+    .expect("bind");
+    let addr = server.addr().to_string();
+    let pubkey = hex(server_vk.as_bytes());
+
+    let w1 = spawn_worker(&addr, "w1", 22, &pubkey, &run_id);
+
+    fn wait_for(
+        server: &MeshServer,
+        budget: Duration,
+        what: &str,
+        pred: impl Fn(&MeshServer) -> bool,
+    ) {
+        let deadline = Instant::now() + budget;
+        while !pred(server) {
+            assert!(Instant::now() < deadline, "{what}: {:?}", server.node_status());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    // Join is not liveness: the socket opens first, the first heartbeat follows.
+    wait_for(&server, Duration::from_secs(15), "worker did not join", |s| {
+        s.node_status().first().is_some()
+    });
+    wait_for(&server, Duration::from_secs(10), "worker never sent a heartbeat", |s| {
+        s.node_status().first().is_some_and(|n| n.live)
+    });
+    assert!(
+        server.node_status()[0].simulated,
+        "a live node that committed nothing is still simulated"
+    );
+
+    // Stopped, not disconnected: the TCP connection stays open, so only the
+    // heartbeat horizon can tell the coordinator this node is gone.
+    Command::new("kill")
+        .arg("-STOP")
+        .arg(w1.pid.to_string())
+        .output()
+        .expect("freeze worker");
+    wait_for(
+        &server,
+        Duration::from_secs(10),
+        "stopped worker stayed live past 3 x interval",
+        |s| s.node_status().first().map(|n| !n.live).unwrap_or(true),
+    );
+    assert!(
+        server.node_status().first().is_some_and(|n| n.simulated),
+        "a stopped node must report simulated: {:?}",
+        server.node_status()
+    );
+
+    Command::new("kill")
+        .arg("-CONT")
+        .arg(w1.pid.to_string())
+        .output()
+        .expect("thaw worker");
+    wait_for(
+        &server,
+        Duration::from_secs(10),
+        "thawed worker did not resume heartbeating",
+        |s| s.node_status().first().map(|n| n.live).unwrap_or(false),
+    );
+    assert!(
+        server.node_status().first().is_some_and(|n| n.live),
+        "after SIGCONT the node must be listed and live: {:?}",
+        server.node_status()
+    );
+}

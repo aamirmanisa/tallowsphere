@@ -93,6 +93,13 @@ impl Membership {
         }
     }
 
+    /// A table for a server that verifies every frame itself before routing it.
+    /// Heartbeats go through [`Membership::observe_after_verification`]; the
+    /// table keeps no trust state of its own.
+    pub fn new_after_verification(interval: Duration) -> Self {
+        Membership::new(interval, Trust::new())
+    }
+
     pub fn interval(&self) -> Duration {
         self.interval
     }
@@ -162,6 +169,46 @@ impl Membership {
         peer.last_seq = env.nonce;
         peer.last_seen = now;
         Ok(())
+    }
+
+    /// Accept a heartbeat whose signature the caller has already verified
+    /// through the same [`Trust`] instance (the server verifies every frame once,
+    /// before routing it). Calling [`Membership::observe`] after that would
+    /// consume the nonce twice and every heartbeat would look replayed.
+    pub fn observe_after_verification(
+        &mut self,
+        env: &Envelope,
+        now: Instant,
+    ) -> Result<(), MembershipError> {
+        if env.kind != HEARTBEAT {
+            return Err(MembershipError::NotAHeartbeat(env.kind.clone()));
+        }
+        let peer = self
+            .peers
+            .get_mut(&env.node)
+            .ok_or_else(|| MembershipError::NoHandshake(env.node.clone()))?;
+        if !peer.handshaken {
+            return Err(MembershipError::NoHandshake(env.node.clone()));
+        }
+        if env.nonce <= peer.last_seq {
+            return Err(MembershipError::StaleNonce {
+                node: env.node.clone(),
+                seen: peer.last_seq,
+                got: env.nonce,
+            });
+        }
+        peer.last_seq = env.nonce;
+        peer.last_seen = now;
+        Ok(())
+    }
+
+    /// Whether the node is currently live (handshaken and within the horizon).
+    pub fn is_live(&self, node: &str, now: Instant) -> bool {
+        let horizon = self.interval * EXPIRY_INTERVALS;
+        match self.peers.get(node) {
+            Some(p) => p.handshaken && now.saturating_duration_since(p.last_seen) <= horizon,
+            None => false,
+        }
     }
 
     /// Nodes seen within `EXPIRY_INTERVALS × interval`, in name order so the
