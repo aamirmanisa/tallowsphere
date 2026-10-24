@@ -80,6 +80,26 @@ jobs:
           cargo build --locked --bin tallow
           python3 conformance/run.py --tallow target/debug/tallow 2>&1 | tee conformance.log
 
+      - name: Integration suites (the proofs CI's contract job owns)
+        # The release gate must run what the artefact is judged by. On 1.5.1 the
+        # lib suite and the conformance corpus were green while two integration
+        # suites were red (`parity_runner`'s structured-data fixture and
+        # `mesh_plan_tl`'s array print), and both releases published anyway —
+        # the gap was this job, not CI. These are the fastest suites that have
+        # caught real codegen regressions this cycle.
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked \
+            --test parity_runner \
+            --test mesh_plan_tl \
+            --test mesh_plan_parity \
+            --test process_contract \
+            --test stdlib_method_refusals \
+            --test injection_redteam \
+            --test egress_census \
+            --test llm_native_parity 2>&1 | tee integration.log
+
       - name: Write this run's measured numbers
         # The release body's Verified section is generated from these logs, not
         # from memory: a number in a release page must come from the run that
@@ -98,6 +118,7 @@ jobs:
             summary.md
             lib.log
             conformance.log
+            integration.log
           retention-days: 7
 
   # ── Build one archive per shipped target ───────────────────────────────
