@@ -48,13 +48,11 @@ fn serve() -> u16 {
 }
 
 fn program(base: &str, interp: bool) -> String {
-    let three = if interp {
-        r#"    let all = page.extract_all_text(".hit") match { Ok(v) -> v Err(e) -> { print(e) Nil } }
-    print(all.len)"#
-    } else {
-        r#"    let all = page.extract_all_text(".hit")
-    print(all.len)"#
-    };
+    // One program for both planes: `extract_all_text` returns the array itself
+    // everywhere, so no `match` is needed on the interpreter leg.
+    let _ = interp;
+    let three = r#"    let all = page.extract_all_text(".hit")
+    print(all.len)"#;
     format!(
         r#"import tallow.browser
 @cra_class(.default)

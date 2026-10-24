@@ -17,26 +17,18 @@ const PAGE: &str = "<!doctype html><html><head><title>n</title></head><body>\
 </body></html>";
 
 fn program(url: &str, interp: bool) -> String {
-    // Same asymmetry as resolve_antibot: the interpreter needs match/if-let on
-    // Result-returning calls, the native build takes direct field access.
-    let body = if interp {
-        r##"    print(page.query_selector_all(".missing").len)
-    print(page.query_selector_all("#only").len)
-    let all = page.query_selector_all(".hit") match {
-        Ok(v) -> v
-        Err(e) -> { print(e) Nil }
-    }
-    print(all.len)
-    print(all[0].text())
-    print(all[2].text())"##
-    } else {
-        r##"    print(page.query_selector_all(".missing").len)
+    // Both planes yield the array itself, so one program serves both legs.
+    // This test used to carry two variants: the interpreter needed
+    // `match { Ok(v) -> v … }` because `query_selector_all` wrapped its result,
+    // while the compiled plane indexed the bare array directly. The wrapper was
+    // the defect (it also made `query_selector_all(sel).len` report 0 at N=1),
+    // so the asymmetry — and the second variant — are gone.
+    let body = r##"    print(page.query_selector_all(".missing").len)
     print(page.query_selector_all("#only").len)
     let all = page.query_selector_all(".hit")
     print(all.len)
     print(all[0].text())
-    print(all[2].text())"##
-    };
+    print(all[2].text())"##;
     let body = body.replace("{url}", url);
     format!(
         r#"import tallow.browser
