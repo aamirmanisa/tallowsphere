@@ -439,9 +439,13 @@ jobs:
           python3 scripts/release_body.py "${{ github.ref_name }}" \
             --verified test-summary/summary.md > release_body.md
           test -s release_body.md
-          grep -q '^## Added' release_body.md
-          grep -q '^## Fixed' release_body.md
-          grep -q '^## Verified' release_body.md
+          # release_body.py emits the CHANGELOG's own heading level (###), so
+          # requiring exactly '## ' here failed every release after the body was
+          # generated from a section. Accept 2+ hashes; the headings are what
+          # matter, not their depth.
+          grep -qE '^#{2,3} Added' release_body.md
+          grep -qE '^#{2,3} Fixed' release_body.md
+          grep -qE '^#{2,3} Verified' release_body.md
 
       - name: Draft release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
