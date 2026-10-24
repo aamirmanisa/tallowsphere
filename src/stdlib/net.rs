@@ -325,7 +325,7 @@ async fn quic_connect_async(
     use std::sync::Arc;
 
     // Ensure a CryptoProvider is installed (ring via feature flag)
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = crate::net::tls_provider::install();
 
     // Build rustls client config with webpki root certs
     let mut root_store = rustls::RootCertStore::empty();

@@ -27,7 +27,7 @@ use super::StdlibResult;
 /// Create a QUIC server config with a freshly-generated self-signed cert.
 fn create_server_config() -> Result<quinn::ServerConfig, String> {
     // Ensure ring provider is installed
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = crate::net::tls_provider::install();
 
     let subject_alt_names = vec!["localhost".to_string(), "tallow-transfer".to_string()];
     let cert = rcgen::generate_simple_self_signed(subject_alt_names)
@@ -64,7 +64,7 @@ fn create_server_config() -> Result<quinn::ServerConfig, String> {
 /// self-signed peers). Default builds require CA-validated certificates
 /// (webpki roots) — W5 decision D, 2026-09-27.
 fn create_client_config() -> Result<quinn::ClientConfig, String> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = crate::net::tls_provider::install();
 
     #[cfg(feature = "dangerous_skip_verify")]
     let crypto = rustls::ClientConfig::builder()

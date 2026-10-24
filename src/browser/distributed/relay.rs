@@ -43,7 +43,7 @@ impl CdpRelay {
     pub async fn start(&self) -> Result<(), String> {
         let config = create_relay_server_config()?;
 
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::net::tls_provider::install();
 
         let endpoint = quinn::Endpoint::server(config, self.addr)
             .map_err(|e| format!("[CdpRelay] failed to bind QUIC endpoint on {}: {e}", self.addr))?;
@@ -197,7 +197,7 @@ async fn route_command_core(
 
 /// Create a QUIC server config with a runtime-generated self-signed cert.
 fn create_relay_server_config() -> Result<quinn::ServerConfig, String> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = crate::net::tls_provider::install();
 
     let subject_alt_names = vec![
         "localhost".to_string(),

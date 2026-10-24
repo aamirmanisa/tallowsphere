@@ -2656,6 +2656,21 @@ fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
+    // TLS provider: install only when the operator opted into the PQ hybrid
+    // (TALLOW_TLS_PQ). Default stays ring with classical groups, so today's
+    // handshake bytes and fingerprints are unchanged. Installing here — before
+    // any command runs — means every rustls consumer in this process sees the
+    // same provider, and `tallow doctor` can report which one is in force.
+    if tallow::net::tls_provider::pq_requested() {
+        let info = tallow::net::tls_provider::install();
+        if !info.pq_offered {
+            eprintln!(
+                "tallow: TALLOW_TLS_PQ is set but the {} provider offered no ML-KEM group",
+                info.provider
+            );
+        }
+    }
+
     // Process hardening (T-125): core dumps off + NOFILE soft floor.
     // Best-effort - warn and continue when the environment denies setrlimit.
     if let Err(err) = tallow::runtime::hardening::apply_process_hardening() {
