@@ -54,6 +54,10 @@ ignore = [
     "RUSTSEC-2026-0162",
     "RUSTSEC-2026-0163",
     "RUSTSEC-2026-0165",
+    # Matches only in the --all-features graph (pqcrypto-classicmceliece), which
+    # is the gate CI runs. A plain `cargo deny check` therefore reports it as
+    # not-detected: that warning is the expected consequence of gating on the
+    # superset, not a stale entry.
     "RUSTSEC-2026-0167",
     # mach 0.3.2 ... reachable only through the optional JIT feature:
     # cranelift-jit -> region -> mach. No safe upgrade (region pins mach 0.3).
