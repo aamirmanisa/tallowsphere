@@ -64,6 +64,10 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "hpke_generate_keypair" => Some(crypto_hpke_generate_keypair(&args)),
         "hpke_seal" => Some(crypto_hpke_seal(&args)),
         "hpke_open" => Some(crypto_hpke_open(&args)),
+        // age (C2SP) file format -- real via the `age` crate
+        "age_keygen" => Some(crypto_age_keygen(&args)),
+        "age_encrypt" => Some(crypto_age_encrypt(&args)),
+        "age_decrypt" => Some(crypto_age_decrypt(&args)),
         // AES Key Wrap (KINF-02) -- real via aes-kw crate
         "key_wrap" => Some(crypto_key_wrap(&args)),
         "key_unwrap" => Some(crypto_key_unwrap(&args)),
@@ -2322,6 +2326,86 @@ fn crypto_parallel_hash(args: &[Value]) -> StdlibResult {
 // the `hpke` crate cannot coexist with this tree's `ml-kem`/`kem` pins; that
 // module is a composition of X25519 + HKDF-SHA256 + AES-128-GCM, verified
 // against the RFC vector, not a new primitive.
+
+
+// ── age file format (C2SP) ──────────────────────────────────────────────────
+//
+// A real age container, not a lookalike: the `age` crate writes it, so the
+// reference `age(1)` binary can decrypt what this produces and vice versa.
+// Recipient/identity strings are the canonical `age1…` / `AGE-SECRET-KEY-1…`
+// forms; the payload crosses the language boundary as hex because the runtime
+// has no byte-buffer value type.
+
+fn crypto_age_keygen(_args: &[Value]) -> StdlibResult {
+    let identity = age::x25519::Identity::generate();
+    let recipient = identity.to_public();
+    Ok(Value::Struct {
+        name: "AgeKeypair".into(),
+        fields: vec![
+            ("recipient".into(), Value::String(recipient.to_string())),
+            // `Identity::to_string()` is a `SecretBox<str>` on purpose; it must
+            // be exposed deliberately here because this function's whole job is
+            // to hand the operator the key material.
+            ("identity".into(), Value::String({
+                use secrecy::ExposeSecret;
+                identity.to_string().expose_secret().to_string()
+            })),
+        ],
+    })
+}
+
+fn crypto_age_encrypt(args: &[Value]) -> StdlibResult {
+    use std::io::Write;
+    let recipient = get_string_arg(args, 0)
+        .ok_or_else(|| "crypto.age_encrypt expects (recipient, plaintext_hex)".to_string())?;
+    let pt_hex = get_string_arg(args, 1)
+        .ok_or_else(|| "crypto.age_encrypt: plaintext_hex is required".to_string())?;
+
+    let recipient: age::x25519::Recipient = recipient
+        .parse()
+        .map_err(|e| format!("crypto.age_encrypt: invalid recipient: {e}"))?;
+    let pt = hex_decode(&pt_hex)?;
+
+    let encryptor = age::Encryptor::with_recipients(std::iter::once(&recipient as _))
+        .map_err(|e| format!("crypto.age_encrypt: {e}"))?;
+    let mut out = Vec::new();
+    {
+        let mut writer = encryptor
+            .wrap_output(&mut out)
+            .map_err(|e| format!("crypto.age_encrypt: {e}"))?;
+        writer
+            .write_all(&pt)
+            .map_err(|e| format!("crypto.age_encrypt: {e}"))?;
+        writer
+            .finish()
+            .map_err(|e| format!("crypto.age_encrypt: {e}"))?;
+    }
+    Ok(Value::String(hex_encode(&out)))
+}
+
+fn crypto_age_decrypt(args: &[Value]) -> StdlibResult {
+    use std::io::Read;
+    let identity = get_string_arg(args, 0)
+        .ok_or_else(|| "crypto.age_decrypt expects (identity, ciphertext_hex)".to_string())?;
+    let ct_hex = get_string_arg(args, 1)
+        .ok_or_else(|| "crypto.age_decrypt: ciphertext_hex is required".to_string())?;
+
+    let identity: age::x25519::Identity = identity
+        .parse()
+        .map_err(|e| format!("crypto.age_decrypt: invalid identity: {e}"))?;
+    let ct = hex_decode(&ct_hex)?;
+
+    let decryptor =
+        age::Decryptor::new(&ct[..]).map_err(|e| format!("crypto.age_decrypt: {e}"))?;
+    let mut reader = decryptor
+        .decrypt(std::iter::once(&identity as _))
+        .map_err(|e| format!("crypto.age_decrypt: {e}"))?;
+    let mut pt = Vec::new();
+    reader
+        .read_to_end(&mut pt)
+        .map_err(|e| format!("crypto.age_decrypt: {e}"))?;
+    Ok(Value::String(hex_encode(&pt)))
+}
 
 fn crypto_hpke_suite(_args: &[Value]) -> StdlibResult {
     Ok(crate::hpke::value_suite())

@@ -1069,3 +1069,8 @@ fn hpke_suite() -> String
 fn hpke_generate_keypair() -> HpkeKeypair
 fn hpke_seal(recipient_pk_hex: String, info_hex: String, aad_hex: String, plaintext_hex: String) -> HpkeCiphertext
 fn hpke_open(recipient_sk_hex: String, enc_hex: String, info_hex: String, aad_hex: String, ciphertext_hex: String) -> String
+
+// age (C2SP) file format: real container, interoperable with age(1).
+fn age_keygen() -> AgeKeypair
+fn age_encrypt(recipient: String, plaintext_hex: String) -> String
+fn age_decrypt(identity: String, ciphertext_hex: String) -> String

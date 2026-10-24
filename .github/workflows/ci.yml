@@ -291,6 +291,7 @@ jobs:
           --test crypto_capability_registry
           --test hpke_rfc9180
           --test pq_tls_group
+          --test age_container
           --test mesh_plan_parity
           --test stdlib_method_refusals
           --test transfer_transport
