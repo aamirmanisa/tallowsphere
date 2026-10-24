@@ -485,3 +485,45 @@ intended trade: a lease is a promise about a time window, not about a task.
 slot holding the straggler (`919ca8e`); round-robin dispatch could otherwise queue the
 duplicate behind the stall it exists to escape, which was measured at 5.0005 s on a
 2-core runner.
+
+## 10. Liveness is a heartbeat fact, not a connection fact
+
+A member's socket stays open when its process is stopped (`SIGSTOP`), when its host is
+paused, or when the scheduler simply starves it. Treating "connected" as "alive" therefore
+produced a mesh that would wait out a lease for a node that could not possibly answer, and
+reported `simulated: false` for a node that had once committed and then died.
+
+The plane now separates three facts about a node:
+
+| fact | source | failure it catches |
+| --- | --- | --- |
+| joined | signed `join` accepted, `welcome` sent | a stranger claiming a node name |
+| live | `heartbeat` within `3 × interval` (500 ms → 1.5 s) | a frozen, paused or dead process |
+| real | joined **and** live **and** committed ≥ 1 task | a node that is up but has never done anything |
+
+Two consequences are deliberate. `NodeStatus::simulated` is derived from all three, so it
+cannot be flipped by connecting alone. And assignment (`pick_node`) steers away from nodes
+that are not live, which means a frozen node receives no work at all — the wave does not
+pay a lease timeout for a peer the table already knows is silent.
+
+The fallback matters as much as the rule: if no node has a live heartbeat yet (a run that
+starts immediately after join, before the first 500 ms tick), assignment falls back to the
+connected set rather than refusing to start. A telemetry gap must not stop work.
+
+Two wire-level defects surfaced while implementing this, both of which had made stopped
+nodes indistinguishable from departed ones:
+
+- A read timeout was treated as EOF, so the server dropped the peer. Timeouts now continue.
+- `SIGCONT` interrupts a blocked read with `EINTR`; the worker exited on it, so a resumed
+  node never came back. `Interrupted` now retries.
+
+`Trust` reports a bad signature and a replayed nonce as the same error; membership splits
+them into `Untrusted`, `Replay` and `StaleNonce` by verifying the signature separately, and
+the server routes frames through `observe_after_verification` because it has already
+verified them once — verifying twice would consume the nonce and make every heartbeat look
+replayed.
+
+**Limit.** Heartbeats prove a process is scheduled and reachable; they do not prove the
+node's hardware is healthy or that its clock is right. Lease expiry remains the only
+mechanism that reassigns in-flight work, and a node that heartbeats while failing every
+task is caught by the attempt cap, not by this table.
