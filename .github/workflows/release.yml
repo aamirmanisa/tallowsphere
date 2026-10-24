@@ -102,7 +102,8 @@ jobs:
             --test crypto_capability_registry \
             --test hpke_rfc9180 \
             --test pq_tls_group \
-            --test age_container 2>&1 | tee integration.log
+            --test age_container \
+            --test opaque_flow 2>&1 | tee integration.log
 
       - name: Write this run's measured numbers
         # The release body's Verified section is generated from these logs, not

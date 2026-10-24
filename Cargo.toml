@@ -239,6 +239,7 @@ cranelift-jit = { version = "0.111", optional = true }
 cranelift-module = { version = "0.111", optional = true }
 target-lexicon = { version = "0.12", optional = true }
 age = "0.12.1"
+opaque-ke = { version = "4.0.1", features = ["argon2", "std"] }
 
 [features]
 # `stealth-http` is enabled BY DEFAULT so a stock build uses the real

@@ -65,6 +65,17 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "hpke_seal" => Some(crypto_hpke_seal(&args)),
         "hpke_open" => Some(crypto_hpke_open(&args)),
         // age (C2SP) file format -- real via the `age` crate
+        // OPAQUE (RFC 9807) -- real via opaque-ke, message-passing surface
+        "opaque_suite" => Some(crypto_opaque_suite(&args)),
+        "opaque_setup" => Some(crypto_opaque_setup(&args)),
+        "opaque_register_start" => Some(crypto_opaque_register_start(&args)),
+        "opaque_register_respond" => Some(crypto_opaque_register_respond(&args)),
+        "opaque_register_finish" => Some(crypto_opaque_register_finish(&args)),
+        "opaque_register_store" => Some(crypto_opaque_register_store(&args)),
+        "opaque_login_start" => Some(crypto_opaque_login_start(&args)),
+        "opaque_login_respond" => Some(crypto_opaque_login_respond(&args)),
+        "opaque_login_finish" => Some(crypto_opaque_login_finish(&args)),
+        "opaque_login_server_finish" => Some(crypto_opaque_login_server_finish(&args)),
         "age_keygen" => Some(crypto_age_keygen(&args)),
         "age_encrypt" => Some(crypto_age_encrypt(&args)),
         "age_decrypt" => Some(crypto_age_decrypt(&args)),
@@ -2344,6 +2355,116 @@ fn crypto_parallel_hash(args: &[Value]) -> StdlibResult {
 // Recipient/identity strings are the canonical `age1…` / `AGE-SECRET-KEY-1…`
 // forms; the payload crosses the language boundary as hex because the runtime
 // has no byte-buffer value type.
+
+
+// ── OPAQUE (RFC 9807) ───────────────────────────────────────────────────────
+// The protocol lives in `crate::opaque`; these are marshalling shims. Each step
+// returns the next message plus the state the caller must carry forward, both as
+// hex. `export_key` is the long-term secret the client may use for its own
+// purposes; `session_key` is the per-login shared secret.
+
+fn crypto_opaque_suite(_args: &[Value]) -> StdlibResult {
+    Ok(Value::String(crate::opaque::suite_name().into()))
+}
+
+fn crypto_opaque_setup(_args: &[Value]) -> StdlibResult {
+    crate::opaque::setup_new().map(Value::String)
+}
+
+fn sarg(args: &[Value], i: usize, what: &str) -> Result<String, String> {
+    get_string_arg(args, i).ok_or_else(|| format!("crypto.{what}: missing argument {i}"))
+}
+
+fn crypto_opaque_register_start(args: &[Value]) -> StdlibResult {
+    let password = sarg(args, 0, "opaque_register_start")?;
+    let (request, state) = crate::opaque::registration_start(&password)?;
+    Ok(Value::Struct {
+        name: "OpaqueRegistration".into(),
+        fields: vec![
+            ("request".into(), Value::String(request)),
+            ("state".into(), Value::String(state)),
+        ],
+    })
+}
+
+fn crypto_opaque_register_respond(args: &[Value]) -> StdlibResult {
+    let setup = sarg(args, 0, "opaque_register_respond")?;
+    let request = sarg(args, 1, "opaque_register_respond")?;
+    let cred = sarg(args, 2, "opaque_register_respond")?;
+    let (response, _state) = crate::opaque::registration_respond(&setup, &request, &cred)?;
+    Ok(Value::Struct {
+        name: "OpaqueRegistrationResponse".into(),
+        fields: vec![("response".into(), Value::String(response))],
+    })
+}
+
+fn crypto_opaque_register_finish(args: &[Value]) -> StdlibResult {
+    let state = sarg(args, 0, "opaque_register_finish")?;
+    let password = sarg(args, 1, "opaque_register_finish")?;
+    let response = sarg(args, 2, "opaque_register_finish")?;
+    let (upload, export_key) = crate::opaque::registration_finish(&state, &password, &response)?;
+    Ok(Value::Struct {
+        name: "OpaqueRegistrationUpload".into(),
+        fields: vec![
+            ("upload".into(), Value::String(upload)),
+            ("export_key".into(), Value::String(export_key)),
+        ],
+    })
+}
+
+fn crypto_opaque_register_store(args: &[Value]) -> StdlibResult {
+    let upload = sarg(args, 0, "opaque_register_store")?;
+    crate::opaque::registration_server_finish(&upload).map(Value::String)
+}
+
+fn crypto_opaque_login_start(args: &[Value]) -> StdlibResult {
+    let password = sarg(args, 0, "opaque_login_start")?;
+    let (request, state) = crate::opaque::login_start(&password)?;
+    Ok(Value::Struct {
+        name: "OpaqueLoginRequest".into(),
+        fields: vec![
+            ("request".into(), Value::String(request)),
+            ("state".into(), Value::String(state)),
+        ],
+    })
+}
+
+fn crypto_opaque_login_respond(args: &[Value]) -> StdlibResult {
+    let setup = sarg(args, 0, "opaque_login_respond")?;
+    let record = sarg(args, 1, "opaque_login_respond")?;
+    let request = sarg(args, 2, "opaque_login_respond")?;
+    let cred = sarg(args, 3, "opaque_login_respond")?;
+    let (response, state) = crate::opaque::login_respond(&setup, &record, &request, &cred)?;
+    Ok(Value::Struct {
+        name: "OpaqueLoginResponse".into(),
+        fields: vec![
+            ("response".into(), Value::String(response)),
+            ("state".into(), Value::String(state)),
+        ],
+    })
+}
+
+fn crypto_opaque_login_finish(args: &[Value]) -> StdlibResult {
+    let state = sarg(args, 0, "opaque_login_finish")?;
+    let password = sarg(args, 1, "opaque_login_finish")?;
+    let response = sarg(args, 2, "opaque_login_finish")?;
+    let (finalization, session_key, export_key) =
+        crate::opaque::login_finish(&state, &password, &response)?;
+    Ok(Value::Struct {
+        name: "OpaqueLoginResult".into(),
+        fields: vec![
+            ("finalization".into(), Value::String(finalization)),
+            ("session_key".into(), Value::String(session_key)),
+            ("export_key".into(), Value::String(export_key)),
+        ],
+    })
+}
+
+fn crypto_opaque_login_server_finish(args: &[Value]) -> StdlibResult {
+    let state = sarg(args, 0, "opaque_login_server_finish")?;
+    let finalization = sarg(args, 1, "opaque_login_server_finish")?;
+    crate::opaque::login_server_finish(&state, &finalization).map(Value::String)
+}
 
 fn crypto_age_keygen(_args: &[Value]) -> StdlibResult {
     let identity = age::x25519::Identity::generate();

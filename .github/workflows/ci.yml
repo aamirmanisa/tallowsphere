@@ -292,6 +292,7 @@ jobs:
           --test hpke_rfc9180
           --test pq_tls_group
           --test age_container
+          --test opaque_flow
           --test mesh_plan_parity
           --test stdlib_method_refusals
           --test transfer_transport

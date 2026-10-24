@@ -1074,3 +1074,17 @@ fn hpke_open(recipient_sk_hex: String, enc_hex: String, info_hex: String, aad_he
 fn age_keygen() -> AgeKeypair
 fn age_encrypt(recipient: String, plaintext_hex: String) -> String
 fn age_decrypt(identity: String, ciphertext_hex: String) -> String
+
+// OPAQUE (RFC 9807): real message-passing PAKE via opaque-ke.
+// Hex strings throughout; each step returns the next message plus the state the
+// caller must carry forward.
+fn opaque_suite() -> String
+fn opaque_setup() -> String
+fn opaque_register_start(password: String) -> OpaqueRegistration
+fn opaque_register_respond(setup: String, request: String, credential_id: String) -> OpaqueRegistrationResponse
+fn opaque_register_finish(state: String, password: String, response: String) -> OpaqueRegistrationUpload
+fn opaque_register_store(upload: String) -> String
+fn opaque_login_start(password: String) -> OpaqueLoginRequest
+fn opaque_login_respond(setup: String, record: String, request: String, credential_id: String) -> OpaqueLoginResponse
+fn opaque_login_finish(state: String, password: String, response: String) -> OpaqueLoginResult
+fn opaque_login_server_finish(state: String, finalization: String) -> String
