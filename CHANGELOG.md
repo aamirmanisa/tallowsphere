@@ -36,6 +36,14 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 - **Container field kinds were dropped when a program declared a struct with the
   same name** as a synthesized record (`struct MeshReplay`), because the struct
   scan registers that name first and every `or_insert_with` for it was a no-op.
+- **`.len` on a struct-field array strung the count slot.** `expr_is_native_array`
+  returned `false` whenever the owner type was not a program-declared struct, so
+  `sd.json_ld.len` fell through to `strlen` over the native array's `[count][…]`
+  header — and since a little-endian count is followed by NUL bytes, that answered
+  **1 for every non-empty array**. The parity fixture caught it: `StructuredData.extract`
+  on a page with two JSON-LD blocks printed 2 interpreted and 1 compiled. The check
+  now falls back to the field's registered container kind and then to the
+  expression's inferred kind.
 - **Array-element field reads only worked for bindings**, not for struct fields —
   `r.checkpoints[0].wave` had no route to the element struct.
 - **The release workflow's body gate grepped `^## Added`** while the generator
