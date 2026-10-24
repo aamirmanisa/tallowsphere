@@ -251,15 +251,22 @@ without a `(llm, method) → struct` entry a field shared by two structs is
 ambiguous (the read refuses by name), and without `variable_array_element_type`
 a `for` binding over the array is a raw i64 so `p.id` cannot resolve.
 
-**Still open: `Mesh.plan` / `Mesh.replay`.** Measured this iteration: the
+**`Mesh.plan` is now lowered too** (2026-10-24, third pass). The blocker was
+input shape, and the fix is a compile-time contract rather than an assumption:
+codegen finds the program's own `struct MeshTask` declaration, verifies the five
+field types (`String, String, []String, String, String?`), computes each field's
+byte offset from that declaration and passes the offsets to
+`tallow_mesh_plan`. A reordered struct therefore plans correctly, and a
+declaration the backend cannot read (`deps: String`) is refused at compile time
+with the field named — never read at the wrong offsets. `tests/mesh_plan_parity.rs`
+pins all three properties (canonical order, reordered, refusal) on both planes.
+
+**Still open: `Mesh.replay`.** Measured this iteration: the
 interpreter plans a one-task graph correctly (`waves=1 tasks=1`), the compiled
-path refuses by name ("no lowering for method 'plan'"). The blocker is input
-shape, not output: `Mesh.plan(tasks: []MeshTask, seed)` needs an array of
-user-declared structs whose fields include a nested `[]String`, so the lowering
-has to agree with whatever field order the program declared. A lowering that
-assumes the canonical order would read the wrong offsets for a reordered struct —
-exactly the class of silent wrong answer this backend refuses to emit. The loud
-fallback is correct until that contract exists.
+path refuses by name ("no lowering for method 'plan'"). `Mesh.replay(journal_path) -> MeshReplay` returns a struct whose
+`checkpoints` field is an array of `WaveCheckpoint` records — an array-of-structs
+*output*, the mirror of the input shape just solved. The loud fallback stays
+until that output path exists.
 
 Failure behaviour of the four `llm` lowerings is a documented difference: the
 compiled path aborts with the redacted sentence and exit 1 where the interpreter

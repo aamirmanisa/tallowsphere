@@ -450,6 +450,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // structs (`provider`, `elapsed_ms`) is ambiguous and the field read
         // refuses by name — correct, but it means the lowering is unusable.
         ("llm" | "Llm", "complete") => Some("Completion".to_string()),
+        ("Mesh" | "mesh", "plan") => Some("MeshPlan".to_string()),
         ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
         ("Page", "query_selector") => Some("Element".to_string()),
         ("Page", "wait_for_selector") => Some("Element".to_string()),
@@ -1695,6 +1696,10 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_llm_models(ptr)\n");
         ir.push_str("declare ptr @tallow_llm_verify(ptr)\n");
         ir.push_str("declare ptr @tallow_llm_providers()\n");
+        ir.push_str("; Mesh FFI — Mesh.plan reads the program's own MeshTask layout\n");
+        ir.push_str("declare ptr @tallow_mesh_plan(ptr, i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare ptr @tallow_mesh_last_error()\n");
+        ir.push_str("declare void @tallow_mesh_abort()\n");
         ir.push_str("declare ptr @tallow_llm_last_error()\n");
         ir.push_str("declare void @tallow_llm_abort()\n");
         ir.push('\n');
@@ -2174,6 +2179,25 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ModelInfo".to_string(),
+                }
+            });
+
+        // `MeshPlan` — the return of `Mesh.plan`. Three counters and the
+        // per-wave sizes as a native `[]i64` array.
+        self.struct_layouts
+            .entry("MeshPlan".to_string())
+            .or_insert_with(|| {
+                let names = ["waves", "tasks", "seed", "wave_sizes"];
+                let types = [LLType::I64, LLType::I64, LLType::I64, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MeshPlan".to_string(),
                 }
             });
 
@@ -8250,7 +8274,7 @@ void tallow_async_runtime_shutdown(void) {
             match module_name.as_str() {
                 "math" | "env" | "time" | "fs" | "json" | "crypto" | "http" | "net" | "db"
                 | "compress" | "regex" | "rand" | "log" | "process" | "url" | "provenance"
-                | "browser" | "Browser" | "llm" | "Llm" => {
+                | "browser" | "Browser" | "llm" | "Llm" | "Mesh" | "mesh" => {
                     if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
                         return Ok(result);
                     }
@@ -9894,6 +9918,14 @@ void tallow_async_runtime_shutdown(void) {
                 if let Some(kind) = self.browser_variables.get(name) {
                     return Some(kind.clone());
                 }
+                // A variable bound to a known struct carries that kind. Without
+                // this, `p.wave_sizes.len` could not tell that `p` is a struct
+                // (the field read worked through `variable_struct_types`, but the
+                // array test above it did not see the type) and strlen answered 1
+                // for a 3-element array.
+                if let Some(kind) = self.variable_struct_types.get(name) {
+                    return Some(kind.clone());
+                }
                 // Module namespaces: only used as a receiver *kind* so the
                 // (kind, method) table below can resolve `html.parse(...)`.
                 // Deliberately NOT in `HANDLE_KINDS`, so the dispatch site does
@@ -9913,6 +9945,7 @@ void tallow_async_runtime_shutdown(void) {
                     "Crawler" => Some("Crawler".to_string()),
                     // Module namespaces whose calls return named structs.
                     "llm" | "Llm" => Some("llm".to_string()),
+                    "Mesh" | "mesh" => Some("Mesh".to_string()),
                     _ => None,
                 }
             }
@@ -10104,6 +10137,29 @@ void tallow_async_runtime_shutdown(void) {
                     )
             }
             ExprKind::Array(_) => true,
+            // A struct field declared as `[]T` is a native array: `p.wave_sizes.len`
+            // must read the count slot, not strlen the buffer (which answered 1
+            // for a 3-element array). The declaration is authoritative, so read it
+            // rather than keeping a name list that would rot.
+            ExprKind::FieldAccess { object, field } => {
+                let Some(kind) = self.infer_kind(object) else {
+                    return false;
+                };
+                let Some(decl) = self.program.items.iter().find_map(|item| match item {
+                    Item::Struct(st) if st.name == kind => Some(st),
+                    _ => None,
+                }) else {
+                    return matches!(
+                        (kind.as_str(), field.as_str()),
+                        ("MeshPlan", "wave_sizes")
+                    );
+                };
+                decl.fields
+                    .iter()
+                    .find(|f| f.name == *field)
+                    .map(|f| matches!(f.ty.kind, TypeExprKind::Slice(_)))
+                    .unwrap_or(false)
+            }
             // Receiver-independent array builders. A chained use — `"a,b".split(",").len`,
             // `doc.select("a").map(...)[0]` — has no tracked variable to look up, and the
             // receiver is often an untracked literal/call whose `infer_kind` is `None`, so
@@ -21701,6 +21757,7 @@ impl<'a> CodeGen<'a> {
             "html" | "Html" => self.emit_stdlib_html(method, args),
             "Extract" | "extract" => self.emit_stdlib_extract(method, args),
             "llm" | "Llm" => self.emit_stdlib_llm(method, args),
+            "Mesh" | "mesh" => self.emit_stdlib_mesh(method, args),
             _ => Ok(None),
         }
     }
@@ -24002,6 +24059,131 @@ impl<'a> CodeGen<'a> {
     /// `tree_hash` and `manifest` read the hashes back out of that array.
     /// Members with no arm still fail loudly by name so the interpreter runs
     /// the program instead of emitting IR that cannot be right.
+    /// `Mesh.plan(tasks: []MeshTask, seed) -> MeshPlan`.
+    ///
+    /// The task record's field order is the program's, not ours, so the lowering
+    /// reads the declaration, verifies the five fields and their types, and
+    /// passes the byte offset of each one to the FFI. A declaration that does not
+    /// match the contract is refused here — at compile time — rather than read at
+    /// the wrong offsets, which would be a silent wrong answer.
+    fn emit_stdlib_mesh(
+        &mut self,
+        method: &str,
+        args: &[CallArg],
+    ) -> Result<Option<LLValue>, String> {
+        if method != "plan" {
+            return Ok(None);
+        }
+        let (Some(tasks_arg), Some(seed_arg)) = (args.first(), args.get(1)) else {
+            return Ok(None);
+        };
+        // The array's element struct is known only when the argument is a
+        // binding we tracked; anything else refuses by name.
+        let ExprKind::Ident(arr_name) = &tasks_arg.value.kind else {
+            return Ok(None);
+        };
+        let Some(elem_struct) = self.variable_array_elem_struct.get(arr_name).cloned() else {
+            return Ok(None);
+        };
+        let Some(decl) = self.program.items.iter().find_map(|item| match item {
+            Item::Struct(s) if s.name == elem_struct => Some(s),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+
+        // Byte offsets, in the program's declared order. Every contract field is
+        // pointer- or i64-sized (8 bytes) in this backend.
+        const CONTRACT: [&str; 5] = ["id", "func", "deps", "class", "idempotency_key"];
+        if decl.fields.len() != CONTRACT.len()
+            || !CONTRACT.iter().all(|f| decl.fields.iter().any(|d| d.name == *f))
+        {
+            return Err(format!(
+                "Mesh.plan: `{elem_struct}` must declare exactly {} to lower natively",
+                CONTRACT.join(", ")
+            ));
+        }
+        let mut offsets = [0i64; 5];
+        for (i, field) in decl.fields.iter().enumerate() {
+            let slot = CONTRACT
+                .iter()
+                .position(|c| *c == field.name)
+                .expect("checked above");
+            offsets[slot] = (i * 8) as i64;
+        }
+        // Type contract: deps must be a slice; the string fields must be String
+        // or String?. A `deps: String` would be read as an array pointer.
+        for field in &decl.fields {
+            let ok = match (field.name.as_str(), &field.ty.kind) {
+                ("deps", TypeExprKind::Slice(_)) => true,
+                ("id" | "func" | "class", TypeExprKind::Named(n)) => n == "String",
+                ("idempotency_key", TypeExprKind::Named(n)) => n == "String",
+                ("idempotency_key", TypeExprKind::Optional(inner)) => {
+                    matches!(&inner.kind, TypeExprKind::Named(n) if n == "String")
+                }
+                _ => false,
+            };
+            if !ok {
+                return Err(format!(
+                    "Mesh.plan: `{elem_struct}.{}` has a type the native lowering cannot read \
+                     (expected String, String, []String, String, String?)",
+                    field.name
+                ));
+            }
+        }
+
+        let arr = self.emit_expr(&tasks_arg.value)?;
+        let arr_ptr = if arr.ty == LLType::I64 {
+            let r = self.fresh_reg();
+            self.emit_line(&format!("{r} = inttoptr i64 {} to ptr", arr.reg));
+            r
+        } else {
+            arr.reg
+        };
+        let seed_val = self.emit_expr(&seed_arg.value)?;
+        let seed = self.coerce_to_i64(&seed_val)?;
+
+        let record = self.fresh_reg();
+        self.emit_line(&format!(
+            "{record} = call ptr @tallow_mesh_plan(ptr {arr_ptr}, i64 {seed}, i64 {}, i64 {}, i64 {}, i64 {}, i64 {})",
+            offsets[0], offsets[1], offsets[2], offsets[3], offsets[4]
+        ));
+        let present = self.fresh_reg();
+        self.emit_line(&format!("{present} = icmp ne ptr {record}, null"));
+        let ok_label = self.fresh_label("mesh.plan.ok");
+        let err_label = self.fresh_label("mesh.plan.err");
+        self.emit_line(&format!(
+            "br i1 {present}, label %{ok_label}, label %{err_label}"
+        ));
+        self.body.push_str(&format!("{err_label}:\n"));
+        self.emit_line("call void @tallow_mesh_abort()");
+        self.emit_line("unreachable");
+        self.body.push_str(&format!("{ok_label}:\n"));
+
+        let mut load = |cg: &mut Self, offset: i64, ty: &LLType| {
+            let gep = cg.fresh_reg();
+            cg.emit_line(&format!(
+                "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+            ));
+            let reg = cg.fresh_reg();
+            cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+            LLValue::new(reg, ty.clone())
+        };
+        let waves = load(self, 0, &LLType::I64);
+        let tasks = load(self, 8, &LLType::I64);
+        let seed_out = load(self, 16, &LLType::I64);
+        let wave_sizes = load(self, 24, &LLType::I8Ptr);
+        Ok(Some(self.build_plain_struct(
+            "MeshPlan",
+            &[
+                ("waves", waves.reg, LLType::I64),
+                ("tasks", tasks.reg, LLType::I64),
+                ("seed", seed_out.reg, LLType::I64),
+                ("wave_sizes", wave_sizes.reg, LLType::I8Ptr),
+            ],
+        )?))
+    }
+
     /// `llm.complete(provider, model, prompt, max_tokens = 1024) -> Completion`.
     ///
     /// The runtime hands back a heap `%struct.Completion` record (see
