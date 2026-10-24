@@ -1,11 +1,11 @@
 //! The browser v2 sentinels that used to pretend.
 //!
 //! `NetworkInterceptor`, `TraceRecorder` and `DeviceEmulator` each returned a
-//! struct with `simulated: true` and a state nothing underneath ever read — rules
-//! that blocked nothing, a recorder that recorded nothing, viewport settings
-//! applied to no page. The interpreter now refuses those calls by name and says
-//! which CDP domain would make them real. This test pins that refusal so the
-//! fakes cannot come back quietly.
+//! struct with `simulated: true` and a state nothing underneath ever read. They
+//! now drive the CDP domains against the bound page (proved in
+//! tests/browser_sentinels_live.rs). With no page bound there is nothing to act
+//! on, and these tests pin the refusal: no struct, no `simulated` flag, just the
+//! reason and the way to get a page.
 
 use std::process::Command;
 
@@ -39,8 +39,8 @@ fn main() {
 }
 "#;
     let (_ok, all) = run(src, "intercept");
-    assert!(all.contains("no browser connected"), "{all}");
-    assert!(all.contains("CDP Fetch domain"), "{all}");
+    assert!(all.contains("no page bound"), "{all}");
+    assert!(all.contains("Browser.launch"), "{all}");
 }
 
 #[test]
@@ -52,8 +52,8 @@ fn main() {
 }
 "#;
     let (_ok, all) = run(src, "viewport");
-    assert!(all.contains("no browser connected"), "{all}");
-    assert!(all.contains("CDP Emulation domain"), "{all}");
+    assert!(all.contains("no page bound"), "{all}");
+    assert!(all.contains("Browser.launch"), "{all}");
 }
 
 #[test]
@@ -65,6 +65,6 @@ fn main() {
 }
 "#;
     let (_ok, all) = run(src, "trace");
-    assert!(all.contains("no browser connected"), "{all}");
-    assert!(all.contains("CDP Tracing domain"), "{all}");
+    assert!(all.contains("no page bound"), "{all}");
+    assert!(all.contains("Browser.launch"), "{all}");
 }
