@@ -32,6 +32,7 @@ pub mod gzip_ffi;
 pub mod hardening;
 pub mod html_ffi;
 pub mod io_uring_runtime;
+pub mod llm_ffi;
 pub mod ippool_ffi;
 pub mod kernel_tune;
 pub mod net_ffi;

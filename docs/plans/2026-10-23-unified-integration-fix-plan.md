@@ -235,7 +235,20 @@ task non-replayable and `Mesh.replay` refuses that journal with a reason.
 Gate: replay of a public-class run succeeds with the model detached; replay of a
 private-class run fails with "non-replayable: private data class".
 
-**R10 — `llm` and `Mesh.plan` have no native lowering.** — **investigated, still open** (2026-10-24)
+**R10 — `llm` and `Mesh.plan` have no native lowering.** — **partially done** (2026-10-24)
+
+`llm.complete` now has a real lowering: `tallow_llm_complete` (src/runtime/llm_ffi.rs)
+returns a heap `%struct.Completion` record built by the same
+`stdlib::llm::dispatch` the interpreter calls, and codegen loads its eight fields
+through the ordinary GEP path. A mock OpenAI-compatible provider proves parity —
+`text`, `model`, `provider`, `tokens_in`, `tokens_out` are byte-identical on both
+planes (tests/llm_native_parity.rs).
+
+Remaining in R10: `llm.providers`, `llm.models`, `llm.verify` (arrays of structs —
+same shape as `Transfer.chunk`, not yet wired) and `Mesh.plan`/`Mesh.replay`
+(arrays of `MeshTask` structs). Failure behaviour is a documented difference:
+the compiled path aborts with the redacted sentence and exit 1 where the
+interpreter returns `Err(sentence)`.
 
 Measured this iteration. A native lowering for `llm.complete` was written (FFI
 `tallow_llm_complete`, three strings in / one string out) and it did reach the
