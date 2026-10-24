@@ -1,7 +1,7 @@
 {
   "format": "tallow-sbom-min/1",
   "generator": "scripts/sbom-gen.py",
-  "lockfileSha256": "3a90191dce3676db51be3794d96376d046d7670716ba58f18aad5298b2405563",
+  "lockfileSha256": "a7788663692c6f98507dc2d42e0c8042289fcf504f0edd2af8b1d5b73fb00847",
   "packageCount": 716,
   "packages": [
     {"license":"0BSD OR MIT OR Apache-2.0","name":"adler2","source":"registry+https://github.com/rust-lang/crates.io-index","version":"2.0.1"},
@@ -528,7 +528,7 @@
     {"license":"MIT OR Apache-2.0","name":"system-configuration","source":"registry+https://github.com/rust-lang/crates.io-index","version":"0.7.0"},
     {"license":"MIT OR Apache-2.0","name":"system-configuration-sys","source":"registry+https://github.com/rust-lang/crates.io-index","version":"0.6.0"},
     {"license":"MIT/Apache-2.0","name":"tagptr","source":"registry+https://github.com/rust-lang/crates.io-index","version":"0.2.0"},
-    {"license":"MIT","name":"tallow","source":"workspace-path","version":"1.4.0"},
+    {"license":"MIT","name":"tallow","source":"workspace-path","version":"1.5.0"},
     {"license":"MIT","name":"tallow-admission","source":"workspace-path","version":"0.1.0"},
     {"license":"MIT","name":"tallow-advisory","source":"workspace-path","version":"0.1.0"},
     {"license":"MIT","name":"tallow-copy-engine","source":"workspace-path","version":"0.1.0"},
