@@ -8537,7 +8537,7 @@ fn sm2_verify(args: &[Value]) -> StdlibResult {
         sm2::dsa::VerifyingKey::from_sec1_bytes(&distid, &pk_bytes)
             .ok()
             .and_then(|vk| {
-                let sig = sm2::dsa::Signature::from_bytes(&sig_arr).ok()?;
+                let sig = sm2::dsa::Signature::from_slice(&sig_arr).ok()?;
                 vk.verify(message.as_bytes(), &sig).ok()
             })
             .is_some()
