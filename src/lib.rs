@@ -73,6 +73,7 @@ pub mod foresight_adapter;
 pub mod format_policy;
 pub mod frost;
 pub mod opaque;
+pub mod secret_fields;
 pub mod hpke;
 pub mod gap_register;
 pub mod grade_wording;

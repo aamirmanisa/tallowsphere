@@ -624,9 +624,17 @@ impl Value {
                 }
             }
             Value::Struct { name, fields } => {
+                // Secret fields are redacted by name rather than by value shape:
+                // `print(kp)` used to write an age private key to stdout.
                 let inner: Vec<String> = fields
                     .iter()
-                    .map(|(k, v)| format!("{k}: {}", v.display()))
+                    .map(|(k, v)| {
+                        if crate::secret_fields::is_secret(name, k) {
+                            format!("{k}: {}", crate::secret_fields::REDACTED)
+                        } else {
+                            format!("{k}: {}", v.display())
+                        }
+                    })
                     .collect();
                 format!("{name} {{ {} }}", inner.join(", "))
             }

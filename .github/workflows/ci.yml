@@ -293,6 +293,7 @@ jobs:
           --test pq_tls_group
           --test age_container
           --test opaque_flow
+          --test secret_display
           --test mesh_plan_parity
           --test stdlib_method_refusals
           --test transfer_transport
