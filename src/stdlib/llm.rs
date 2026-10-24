@@ -584,11 +584,27 @@ pub fn complete(r: &Resolved, model: &str, prompt: &str, max_tokens: u32) -> Res
         Protocol::Unavailable => return Err(format!("llm: {} is unavailable", r.id)),
     };
     let resp = send("POST", &url, &headers, Some(&body))?;
-    let text = resp
+    let mut text = resp
         .pointer(text_path)
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    if text.trim().is_empty() {
+        // Reasoning models (MiniCPM, DeepSeek-R1-style servers, some llama.cpp
+        // builds) put the answer in `reasoning_content` and leave `content`
+        // empty when the token budget ends inside the reasoning. Reading only
+        // `content` made a live local model look like it had answered nothing.
+        if matches!(r.protocol, Protocol::OpenAi | Protocol::AzureOpenAi) {
+            if let Some(alt) = resp
+                .pointer("/choices/0/message/reasoning_content")
+                .and_then(|v| v.as_str())
+            {
+                if !alt.trim().is_empty() {
+                    text = alt.to_string();
+                }
+            }
+        }
+    }
     if text.is_empty() {
         return Err(format!(
             "llm: {} returned no text (model {model}); response keys were {}",
