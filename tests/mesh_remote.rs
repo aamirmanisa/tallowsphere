@@ -279,3 +279,68 @@ fn a_stopped_worker_leaves_the_live_table_and_returns() {
         server.node_status()
     );
 }
+
+#[test]
+fn work_is_not_assigned_to_a_node_that_stopped_heartbeating() {
+    let run_id = format!("run-skip-{}", std::process::id());
+    let server_key = SigningKey::from_bytes(&[31u8; 32]);
+    let w1_key = SigningKey::from_bytes(&[32u8; 32]);
+    let w2_key = SigningKey::from_bytes(&[33u8; 32]);
+
+    let server = MeshServer::bind(
+        "127.0.0.1:0",
+        &run_id,
+        server_key.clone(),
+        vec![
+            ("w1".to_string(), w1_key.verifying_key()),
+            ("w2".to_string(), w2_key.verifying_key()),
+        ],
+    )
+    .expect("bind");
+    let addr = server.addr().to_string();
+    let pubkey = hex(server_key.verifying_key().as_bytes());
+
+    let w1 = spawn_worker(&addr, "w1", 32, &pubkey, &run_id);
+    let _w2 = spawn_worker(&addr, "w2", 33, &pubkey, &run_id);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while server.node_status().iter().filter(|n| n.live).count() < 2 {
+        assert!(Instant::now() < deadline, "workers did not heartbeat: {:?}", server.node_status());
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Freeze w1 and wait for the table to notice, *before* the plan starts.
+    // This is the case the peer table alone cannot see: the socket is open.
+    Command::new("kill").arg("-STOP").arg(w1.pid.to_string()).output().expect("freeze");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while server.node_status().iter().any(|n| n.name == "w1" && n.live) {
+        assert!(Instant::now() < deadline, "w1 stayed live past the horizon");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let tasks: Vec<Task> = (0..4)
+        .map(|i| Task::new(&format!("t{i}"), "hash", vec![], TaskClass::Pure, None))
+        .collect();
+    let journal = std::env::temp_dir().join(format!("mesh-skip-{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&journal);
+
+    let report = server
+        .run_plan(&tasks, 7, journal.to_str().unwrap(), 300)
+        .expect("run over the wire");
+    let local = local_checkpoints(&tasks, 7).expect("local reference");
+    let remote: Vec<String> = report.waves.iter().map(|(_, _, cp)| cp.clone()).collect();
+    assert_eq!(remote, local, "results must still match the local reference");
+
+    let statuses = server.node_status();
+    let w1_status = statuses.iter().find(|n| n.name == "w1").expect("w1 present");
+    let w2_status = statuses.iter().find(|n| n.name == "w2").expect("w2 present");
+    assert_eq!(
+        w1_status.committed, 0,
+        "a node that stopped heartbeating must receive no work: {:?}",
+        statuses
+    );
+    assert_eq!(w2_status.committed, 4, "the live node ran everything: {:?}", statuses);
+    assert_eq!(report.reassigned, 0, "nothing needed reassignment — it was never sent");
+
+    let _ = Command::new("kill").arg("-CONT").arg(w1.pid.to_string()).output();
+}
