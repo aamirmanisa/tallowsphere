@@ -299,7 +299,13 @@ mod tests {
 
     #[test]
     fn an_unwritable_ledger_stops_all_egress() {
-        let l = EgressLedger::new("/proc/definitely/not/writable.jsonl", 50);
+        // A directory used as a file path is unwritable on every platform; the
+        // earlier version relied on "/proc", which Windows treats as an ordinary
+        // path and happily creates, so the test passed on Linux and failed on
+        // Windows CI for a reason that had nothing to do with the ledger.
+        let dir = std::env::temp_dir().join(format!("egress-unwritable-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let l = EgressLedger::new(&dir, 50);
         l.record("a.example", "https://a.example/", "GET", 200);
         let err = l.permit("b.example").unwrap_err();
         assert!(err.contains("refusing all egress"), "{err}");
