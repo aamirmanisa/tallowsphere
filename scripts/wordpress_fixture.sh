@@ -40,8 +40,22 @@ case "${1:-up}" in
       sleep 2
     done
 
-    if ! curl -sf -o /dev/null "http://127.0.0.1:${PORT}/wp-login.php"; then
-      echo "wordpress did not answer on 127.0.0.1:${PORT}" >&2
+    # WordPress needs its entrypoint to copy core, wait for mariadb and run the
+    # installer; on a cold CI runner that is tens of seconds after `docker run`
+    # returns. Poll instead of probing once — the first CI run failed here
+    # because the single curl landed before the container was serving.
+    ready=0
+    for _ in $(seq 1 60); do
+      if curl -sf -o /dev/null "http://127.0.0.1:${PORT}/wp-login.php"; then
+        ready=1
+        break
+      fi
+      sleep 2
+    done
+
+    if [ "$ready" -ne 1 ]; then
+      echo "wordpress did not answer on 127.0.0.1:${PORT} after 120s" >&2
+      docker logs --tail 40 "$NAME_WP" >&2 || true
       exit 1
     fi
 
