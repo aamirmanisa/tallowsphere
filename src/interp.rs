@@ -54256,7 +54256,7 @@ fn main() {
         assert_eq!(output[3], "https://example.com");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_screenshot_capture_element() {
         let (_, output) = run(r#"
@@ -54274,7 +54274,7 @@ fn main() {
         assert_eq!(output[3], ".header");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_screenshot_compare() {
         let (_, output) = run(r#"
@@ -54292,7 +54292,7 @@ fn main() {
         assert_eq!(output[2], "0.9");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_screenshot_save_baseline() {
         let (_, output) = run(r#"
@@ -54306,7 +54306,7 @@ fn main() {
         assert_eq!(output[1], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_har_recorder_create_export() {
         let (_, output) = run(r#"
@@ -54391,7 +54391,7 @@ fn main() {
         assert_eq!(output[2], "0");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_network_interceptor_add_rule() {
         let (_, output) = run(r#"
@@ -54412,24 +54412,23 @@ fn main() {
     }
 
     #[test]
-    fn test_network_interceptor_mock() {
+    fn test_network_interceptor_refuses_without_a_page() {
+        // With no page bound there is no Fetch session to attach to, so the
+        // interceptor refuses and says why. The real behaviour — rules that
+        // block — is proved against live Chrome in
+        // tests/browser_sentinels_live.rs, where the fixture server is the
+        // witness that the blocked request never arrived.
         let (_, output) = run(r#"
 fn main() {
     let ni = NetworkInterceptor.create()
-    let ni2 = NetworkInterceptor.mock_response(ni, "/api/data", 200, "ok")
-    print(ni2.rule_count)
-    let ni3 = NetworkInterceptor.block_pattern(ni2, "*.png")
-    print(ni3.rule_count)
-    let ni4 = NetworkInterceptor.clear(ni3)
-    print(ni4.rule_count)
+    print(ni)
 }
 "#);
-        assert_eq!(output[0], "1");
-        assert_eq!(output[1], "2");
-        assert_eq!(output[2], "0");
+        let all = output.join(" ");
+        assert!(all.contains("no page bound"), "{all}");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_trace_recorder_lifecycle() {
         let (_, output) = run(r##"
@@ -54456,7 +54455,7 @@ fn main() {
         assert_eq!(output[6], "2");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_session_manager_capture_save() {
         let (_, output) = run(r#"
@@ -54481,7 +54480,7 @@ fn main() {
         assert_eq!(output[5], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_accessibility_audit_run() {
         let (_, output) = run(r#"
@@ -54514,7 +54513,7 @@ fn main() {
         assert_eq!(output[2], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_accessibility_audit_get_tree() {
         let (_, output) = run(r#"
@@ -54528,7 +54527,7 @@ fn main() {
         assert_eq!(output[1], "128");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_device_emulator_set_viewport() {
         let (_, output) = run(r#"
@@ -54546,7 +54545,7 @@ fn main() {
         assert_eq!(output[3], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_device_emulator_set_mobile() {
         let (_, output) = run(r#"
@@ -54564,7 +54563,7 @@ fn main() {
         assert_eq!(output[3], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_device_emulator_geolocation_timezone_locale() {
         let (_, output) = run(r#"
@@ -54829,7 +54828,7 @@ fn main() {
         assert_eq!(output[1], "0");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_anti_detect_fingerprint() {
         let (_, output) = run(r#"
@@ -54866,7 +54865,7 @@ fn main() {
         assert_eq!(output[2], "0");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_anti_detect_webrtc_leak_check() {
         let (_, output) = run(r#"
@@ -55254,7 +55253,7 @@ fn main() {
         assert_eq!(output[5], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_phase54_sentinel_har_recorder_pipeline() {
         let (_, output) = run(r#"
@@ -55281,7 +55280,7 @@ fn main() {
         assert_eq!(output[5], "false");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_phase54_sentinel_session_manager_pipeline() {
         let (_, output) = run(r#"
@@ -55304,7 +55303,7 @@ fn main() {
         assert_eq!(output[4], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_phase54_sentinel_trace_recorder() {
         let (_, output) = run(r##"
@@ -55329,7 +55328,7 @@ fn main() {
         assert_eq!(output[5], "false");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_phase54_sentinel_network_interceptor_full() {
         let (_, output) = run(r#"
@@ -55392,7 +55391,7 @@ fn main() {
         assert_eq!(output[10], "true");
     }
 
-    #[ignore = "requires a live browser session — the call refuses with 'no browser connected' without one"]
+    #[ignore = "requires a live browser session — refuses with 'no page bound' without one"]
     #[test]
     fn test_phase54_sentinel_device_emulator() {
         let (_, output) = run(r#"
