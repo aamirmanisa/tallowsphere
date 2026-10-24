@@ -77,7 +77,7 @@ Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the cor
 every push; keep the release copy as the last gate.
 Gate: CI job present and green on main.
 
-**R3 — 38 integration suites are excluded.** — **7 remain** (2026-10-24)
+**R3 — 38 integration suites are excluded.** — **5 remain** (2026-10-24)
 Down from 38: 25 are wired (23 browser suites + directorate_desks), and this
 iteration removed two more by fixing why they could not run:
 
@@ -106,8 +106,20 @@ Then six more, by fixing the causes rather than the registrations:
   8 symbols and the test passed a descriptive string, so it failed the validator
   instead of exercising the transport.
 
-The 7 that remain are named debt with expiry dates (perf 3, host 2, service 1,
-parked 1). No triage entries left.
+Then two "host" suites, by fixing the defect they exposed:
+
+* **`process_contract`** asserted that the compiled path must *refuse*
+  `process.exec`, because the lowering could not capture output. It now captures
+  it, so the assertion was inverted — and updating it surfaced a second, real
+  defect: `"code=" + o.exit_code` printed `code=nil` natively because
+  `coerce_to_string` had arms for i64/i1/f64/Result but not i32, and
+  `exit_code: i32` is exactly that width. Sign-extend + format is now an arm of
+  its own; compiled output matches the interpreter (`code=0`).
+* **`stdlib_method_refusals`** passed as soon as it was given the built binary;
+  it was never host-specific.
+
+The 5 that remain are named debt with expiry dates (perf 3, service 1,
+parked 1: the `tallow plan` verb set). No triage or host entries left.
 
 Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
 Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a

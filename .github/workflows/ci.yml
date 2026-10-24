@@ -281,6 +281,8 @@ jobs:
           --test browser_sentinels_tl
           --test directorate_desks
           --test egress_census
+          --test process_contract
+          --test stdlib_method_refusals
           --test transfer_transport
           --test injection_redteam
           --test ombuds_mesh_tl
