@@ -18551,7 +18551,12 @@ fn crypto_function_rows(
             // "unavailable" — an argument-type `Err` inside a working function
             // must not be mistaken for a feature gate.
             let has_success = body.contains("Ok(") || body.contains("Ok {") || body.contains(".map(");
-            let err_only = !has_success && body.contains("return Err(");
+            // A whole arm can be a refusal too: `Some(Err("..."))` has no
+            // `return Err(` and no success path. Missing that made retired keys
+            // report "implemented" — a lie of exactly the kind this report exists
+            // to prevent.
+            let err_only = !has_success
+                && (body.contains("return Err(") || body.contains("Some(Err("));
             let simulated = body.contains("Simulated") || body.contains("simulated");
 
             let excerpt = first_quoted(&body).unwrap_or_default();
@@ -18669,15 +18674,23 @@ fn build_capabilities_report(probe: bool) -> Result<serde_json::Value, String> {
                     if !arm.rhs.contains("is RETIRED") {
                         continue;
                     }
-                    let replacement = first_quoted(&arm.rhs)
-                        .unwrap_or_default()
-                        .split("Use crypto.")
-                        .nth(1)
-                        .map(|s| {
-                            s.chars()
+                    // The refusal names the replacement as `crypto.<name>`;
+                    // take the last such token, which is the one the sentence
+                    // actually recommends ("... Use crypto.spake2_start").
+                    // Scan the whole arm, not the truncated excerpt: a long
+                    // refusal can push "... Use crypto.x" past 160 chars.
+                    let replacement = arm
+                        .rhs
+                        .clone()
+                        .split_whitespace()
+                        .filter_map(|tok| tok.strip_prefix("crypto."))
+                        .map(|t| {
+                            t.chars()
                                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                                 .collect::<String>()
                         })
+                        .filter(|t| !t.is_empty() && !arm.keys.contains(t))
+                        .last()
                         .unwrap_or_default();
                     for k in &arm.keys {
                         keys.push(k.clone());

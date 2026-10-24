@@ -168,7 +168,7 @@ fn the_retired_approximations_refuse_and_name_their_replacement() {
         .iter()
         .collect();
     assert!(
-        arms.len() >= 9,
+        arms.len() >= 12,
         "the nine legacy approximations must stay visible, found {}",
         arms.len()
     );
@@ -190,4 +190,5 @@ fn the_retired_approximations_refuse_and_name_their_replacement() {
     };
     assert_eq!(find("threshold_sign_experimental")["replacement"], "frost_sign");
     assert_eq!(find("bbs_issue_experimental")["replacement"], "bbs_issue");
+    assert_eq!(find("opaque_register")["replacement"], "spake2_start");
 }

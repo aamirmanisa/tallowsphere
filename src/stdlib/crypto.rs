@@ -84,9 +84,18 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "paseto_v4_public" => Some(crypto_paseto_v4_public(&args)),
         "paseto_v4_verify" => Some(crypto_paseto_v4_verify(&args)),
         // OPAQUE-style aPAKE (33-02) -- EXPERIMENTAL Argon2id+Ed25519 envelope (NOT RFC 9392 OPAQUE; no hash/salt returned; login fails closed)
-        "opaque_register" => Some(crypto_opaque_register(&args)),
-        "opaque_login" => Some(crypto_opaque_login(&args)),
-        "opaque_create_credential_response" => Some(crypto_opaque_create_credential_response(&args)),
+        "opaque_register" => Some(Err(
+            "crypto.opaque_register is RETIRED: it was never RFC 9807 OPAQUE — it is an Argon2id + Ed25519 envelope with no oblivious protocol and no server-side credential. Use crypto.spake2_start (SPAKE2, RFC 9382)."
+                .to_string(),
+        )),
+        "opaque_login" => Some(Err(
+            "crypto.opaque_login is RETIRED: it was never RFC 9807 OPAQUE — it is an Argon2id + Ed25519 envelope with no oblivious protocol. Use crypto.spake2_start (SPAKE2, RFC 9382)."
+                .to_string(),
+        )),
+        "opaque_create_credential_response" => Some(Err(
+            "crypto.opaque_create_credential_response is RETIRED: it was never RFC 9807 OPAQUE — it is an Argon2id + Ed25519 envelope, not an OPAQUE credential response. Use crypto.spake2_start (SPAKE2, RFC 9382)."
+                .to_string(),
+        )),
         // BBS+ anonymous credentials (33-02) -- EXPERIMENTAL Ed25519-commitment approximation (NOT BBS+; no pairing-based security)
         "bbs_issue_experimental" => Some(Err(
             "crypto.bbs_issue_experimental is RETIRED: it was an approximation, not BBS+. Use crypto.bbs_issue, which implements the standard."
