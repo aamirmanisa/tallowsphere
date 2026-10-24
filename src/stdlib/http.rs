@@ -595,6 +595,7 @@ pub fn unified_get(
 /// is a no-op returning the host.
 fn egress_guard(url: &str, method: &str) -> Result<String, String> {
     let host = crate::net::egress::host_of(url);
+    crate::scope_jurisdiction::check(&host)?;
     if let Some(ledger) = crate::net::egress::ledger() {
         if let Err(reason) = ledger.permit(&host) {
             ledger.record_refusal(&host, url, method, &reason);

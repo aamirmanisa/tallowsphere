@@ -602,9 +602,18 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
             VTYPE_STRING,
         );
     }
+    // Jurisdiction is checked before the budget: a host we may not touch at all
+    // should not consume a request slot or a ledger line.
+    let host = crate::net::egress::host_of(&url);
+    if let Err(reason) = crate::scope_jurisdiction::check(&host) {
+        return result_box(
+            1,
+            string_to_cstr(&format!("http.batch[{url}]: {reason}")) as *mut c_void,
+            VTYPE_STRING,
+        );
+    }
     // The egress ledger applies to the native batch path too, or the control
     // would depend on which engine ran the program.
-    let host = crate::net::egress::host_of(&url);
     if let Some(ledger) = crate::net::egress::ledger() {
         if let Err(reason) = ledger.permit(&host) {
             ledger.record_refusal(&host, &url, "GET", &reason);
