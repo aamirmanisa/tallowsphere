@@ -4,7 +4,7 @@
 
 **A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
-![status](https://img.shields.io/badge/status-1.5.0-informational?style=flat-square)
+![status](https://img.shields.io/badge/status-1.5.1-informational?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&logo=rust&logoColor=white)
 ![backend](https://img.shields.io/badge/backend-LLVM%20%C2%B7%20clang%2018-2d2d2d?style=flat-square)
@@ -42,7 +42,7 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-24 · release `v1.5.0` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
+[measured 2026-10-24 · release `v1.5.1` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
 
 Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
 
@@ -88,18 +88,18 @@ $ curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/ins
 The installer resolves the newest release, verifies the checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before reporting success:
 
 ```console
-fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.0/tallow-linux-aarch64-1.5.0.tar.gz
-tallow-linux-aarch64-1.5.0.tar.gz: OK
-installed tallow 1.5.0 into /root/.local/bin
+fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.1/tallow-linux-aarch64-1.5.1.tar.gz
+tallow-linux-aarch64-1.5.1.tar.gz: OK
+installed tallow 1.5.1 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
-[measured 2026-10-24 · release `v1.5.0` · commit `0fdd5797ee`]
+[measured 2026-10-24 · release `v1.5.1` · commit `6467a76b92`]
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
-$ curl -fsSL …/install.sh | bash -s -- --version 1.5.0
-$ ./install.sh --from ./tallow-linux-aarch64-1.5.0.tar.gz    # air-gapped
+$ curl -fsSL …/install.sh | bash -s -- --version 1.5.1
+$ ./install.sh --from ./tallow-linux-aarch64-1.5.1.tar.gz    # air-gapped
 ```
 
 ### What the machine needs
@@ -116,11 +116,11 @@ $ ./install.sh --from ./tallow-linux-aarch64-1.5.0.tar.gz    # air-gapped
 
 ```console
 $ tallow --version
-tallow 1.5.0
+tallow 1.5.1
   platform: linux
   arch: aarch64
-  build: 2026-10-24T14:15:55Z
-  git: 0fdd5797ee
+  build: 2026-10-24T18:25:28Z
+  git: 6467a76b92
 ```
 
 The `git:` line is provenance: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so the two are distinguishable.
@@ -265,8 +265,8 @@ $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
 For a fleet, keep versions side by side so an upgrade is a symlink swap and rollback is a directory:
 
 ```console
-$ install -d /opt/tallow/1.5.0 && tar -xzf tallow-linux-aarch64-1.5.0.tar.gz -C /opt/tallow/1.5.0
-$ ln -sfn /opt/tallow/1.5.0 /opt/tallow/current
+$ install -d /opt/tallow/1.5.1 && tar -xzf tallow-linux-aarch64-1.5.1.tar.gz -C /opt/tallow/1.5.1
+$ ln -sfn /opt/tallow/1.5.1 /opt/tallow/current
 $ ln -sf /opt/tallow/current/bin/tallow /usr/local/bin/tallow
 ```
 
@@ -316,7 +316,7 @@ ENTRYPOINT ["tallow"]
 
 ```console
 $ cargo build --profile release --locked --target aarch64-unknown-linux-gnu --bin tallow --lib
-$ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.5.0 --out dist/
+$ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.5.1 --out dist/
 ```
 
 The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)`. It writes the archive and its `.sha256`, and stamps the commit into the binary's version output. Upload both; the installer verifies the checksum before unpacking.
@@ -326,8 +326,8 @@ The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)
 | Gate | Result | Revision |
 |---|---|---|
 | `cargo test --lib` | **9,250 passed · 0 failed · 33 ignored** | `0fdd5797ee`, 2026-10-24 [measured] |
-| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, empty quarantine, no egress | released 1.5.0 [measured] |
-| Conformance | **18 programs × 2 planes, 0 failures** against the installed 1.5.0 binary | 2026-10-24 [measured] |
+| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, empty quarantine, no egress | released 1.5.1 [measured] |
+| Conformance | **18 programs × 2 planes, 0 failures** against the installed 1.5.1 binary | 2026-10-24 [measured] |
 | Examples & tutorial | **10 of 10 programs** byte-identical on both planes, including `error_handling.tl` (`String.parse` now lowers natively) | 2026-10-22 [measured] |
 | Install probe | compiles and runs a program from the installed archive | 2026-10-21 [measured] |
 
