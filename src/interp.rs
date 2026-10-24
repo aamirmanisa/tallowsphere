@@ -9628,6 +9628,20 @@ impl Interpreter {
                 let method_str = name.split('.').nth(1).unwrap_or("get").to_uppercase();
                 if let Some(url) = positional.first() {
                     let url_str = url.as_string();
+                    // Egress ledger: budget and the stop-on-403/429 rule are
+                    // checked here because this is the path `http.get` actually
+                    // takes (the stdlib dispatcher's copy is not reached from a
+                    // program). A refusal never opens a socket.
+                    let ledger_host = crate::net::egress::host_of(&url_str);
+                    if let Some(ledger) = crate::net::egress::ledger() {
+                        if let Err(reason) = ledger.permit(&ledger_host) {
+                            ledger.record_refusal(&ledger_host, &url_str, &method_str, &reason);
+                            return Ok(Value::Err(Box::new(Value::String(format!(
+                                "http.{}: {reason}",
+                                method_str.to_lowercase()
+                            )))));
+                        }
+                    }
                     let result: Result<ureq::http::Response<ureq::Body>, ureq::Error> =
                         {
                             // Egress + politeness: these were bare `ureq::*` calls with
@@ -9658,6 +9672,9 @@ impl Interpreter {
                     match result {
                         Ok(resp) => {
                             let status = resp.status().as_u16() as i128;
+                            if let Some(ledger) = crate::net::egress::ledger() {
+                                ledger.record(&ledger_host, &url_str, &method_str, status as u16);
+                            }
                             let body = resp.into_body().read_to_vec().unwrap_or_default();
                             let response = Value::Struct {
                                 name: "Response".to_string(),
@@ -9671,6 +9688,9 @@ impl Interpreter {
                             return Ok(response);
                         }
                         Err(ureq::Error::StatusCode(code)) => {
+                            if let Some(ledger) = crate::net::egress::ledger() {
+                                ledger.record(&ledger_host, &url_str, &method_str, code);
+                            }
                             let response = Value::Struct {
                                 name: "Response".to_string(),
                                 fields: vec![
@@ -9683,6 +9703,9 @@ impl Interpreter {
                             return Ok(response);
                         }
                         Err(e) => {
+                            if let Some(ledger) = crate::net::egress::ledger() {
+                                ledger.record(&ledger_host, &url_str, &method_str, 0);
+                            }
                             return Ok(Value::Err(Box::new(Value::String(format!(
                                 "http.{}: {e}",
                                 method_str.to_lowercase()

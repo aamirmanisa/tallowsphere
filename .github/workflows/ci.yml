@@ -267,6 +267,7 @@ jobs:
           --test mesh_plan_tl
           --test mesh_run_tl
           --test mesh_llm_tl
+          --test egress_ledger
           --test mesh_remote
           --test mesh_workers
           --test fingerprint_audit_cli

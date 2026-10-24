@@ -77,3 +77,22 @@ A fourth defect was found by the contract suite once the browser job went green:
 could land in the same worker queue as the task it was meant to replace. Fixed in
 `919ca8e`: the duplicate now targets a worker other than the straggler's slot. Verified
 under `taskset -c 0,1`: 3/3 passes (was 0/3).
+
+## 5. `http.get` issues no request when its fields are read directly (2026-10-24)
+
+Evidence, measured with a local fixture server that logs connections:
+
+- `let a = http.get("http://127.0.0.1:28111/"); print(a.status)` prints `-1`,
+  `print(a.url)` prints `(null)`, the server records **zero** connections, and an
+  egress ledger watching the same run records nothing.
+- The same URL consumed by `match a { Ok(r) -> ... }` **does** perform the
+  request: the ledger records `{"status":200,...}` and the server serves it.
+
+So the defect is specific to field access on the result value, not to HTTP. The
+stdlib path (`http_get`) and the interpreter path (`interp.rs` http block) both
+execute when reached; the field-access form reaches neither.
+
+Impact: the egress-ledger integration tests (`tests/egress_ledger.rs`) are
+`#[ignore]`d with this reason. The ledger itself is covered by its unit tests.
+
+Owner: engine. Reproduction is the two-line program above.
