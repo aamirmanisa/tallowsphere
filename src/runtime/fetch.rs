@@ -602,23 +602,55 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
             VTYPE_STRING,
         );
     }
+    // The egress ledger applies to the native batch path too, or the control
+    // would depend on which engine ran the program.
+    let host = crate::net::egress::host_of(&url);
+    if let Some(ledger) = crate::net::egress::ledger() {
+        if let Err(reason) = ledger.permit(&host) {
+            ledger.record_refusal(&host, &url, "GET", &reason);
+            return result_box(
+                1,
+                string_to_cstr(&format!("http.batch[{url}]: {reason}")) as *mut c_void,
+                VTYPE_STRING,
+            );
+        }
+    }
     // Baseline politeness delay, same limiter as `tallow_fetch` (per host).
     crate::runtime::egress_http::rate_limit_wait(&url);
     crate::runtime::egress_http::note_missing_ech_on_direct_egress(&url);
     match agent.get(&url).call() {
-        Ok(response) => match response_to_handle_result(response, &url) {
-            Ok(handle) => result_box(0, handle, VTYPE_HANDLE),
-            Err(e) => result_box(
+        Ok(response) => {
+            // Read the status before the response is consumed into a handle:
+            // a 403 must reach the ledger as a 403, not as "allowed".
+            let status = response.status().as_u16();
+            match response_to_handle_result(response, &url) {
+                Ok(handle) => {
+                    if let Some(ledger) = crate::net::egress::ledger() {
+                        ledger.record(&host, &url, "GET", status);
+                    }
+                    result_box(0, handle, VTYPE_HANDLE)
+                }
+                Err(e) => result_box(
+                    1,
+                    string_to_cstr(&format!("http.batch[{url}]: {e}")) as *mut c_void,
+                    VTYPE_STRING,
+                ),
+            }
+        }
+        Err(e) => {
+            let status = match &e {
+                ureq::Error::StatusCode(code) => *code,
+                _ => 0,
+            };
+            if let Some(ledger) = crate::net::egress::ledger() {
+                ledger.record(&host, &url, "GET", status);
+            }
+            result_box(
                 1,
-                string_to_cstr(&format!("http.batch[{url}]: {e}")) as *mut c_void,
+                string_to_cstr(&format!("http.batch[{url}]: fetch: {e}")) as *mut c_void,
                 VTYPE_STRING,
-            ),
-        },
-        Err(e) => result_box(
-            1,
-            string_to_cstr(&format!("http.batch[{url}]: fetch: {e}")) as *mut c_void,
-            VTYPE_STRING,
-        ),
+            )
+        }
     }
 }
 

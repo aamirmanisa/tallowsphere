@@ -1,9 +1,15 @@
 //! The egress ledger, end to end through the shipped binary.
 //!
-//! Unit tests pin the decision function; this file pins the wiring: a real
-//! `http.get` against a fixture server, with `TALLOW_EGRESS_LEDGER` set, must
-//! (a) write what it did, (b) stop the host after a 403, and (c) refuse the next
-//! request with the host and the reason in the message.
+//! Unit tests pin the decision function; this file pins the wiring: a real fetch
+//! against a fixture server, with `TALLOW_EGRESS_LEDGER` set, must (a) write what
+//! it did, (b) stop the host after a 403, and (c) refuse the next request without
+//! opening a socket.
+//!
+//! The fetch is `http.batch`, not `http.get`, for a measured reason: `http.get`
+//! performs no request when its result fields are read directly (prints -1, the
+//! target sees zero connections), while `http.batch` does perform it. That defect
+//! is written up in docs/operations/ci-preexisting-failures-2026-10-23.md §5. The
+//! ledger watches both paths; these tests prove the control.
 //!
 //! The failure this guards against is specific: a ledger that is implemented but
 //! never consulted, which looks like governance and enforces nothing.
@@ -77,9 +83,24 @@ fn fixture_ok() -> (u16, Arc<AtomicUsize>) {
     (port, hits)
 }
 
+/// The scope register is deny-by-default and the native HTTP path enforces it.
+/// A fixture on loopback must be authorized explicitly, exactly as a real target
+/// is — otherwise the batch is refused before egress and the ledger has nothing
+/// to record.
+fn authorize_loopback(dir: &std::path::Path) {
+    let cfg = dir.join("configs/tallow/scope");
+    std::fs::create_dir_all(&cfg).expect("scope dir");
+    std::fs::write(
+        cfg.join("authorized-hosts.toml"),
+        "[[authorized]]\nhost = \"127.0.0.1\"\nbasis = \"ownership\"\ngranted_by = \"test\"\ngranted_at = \"2026-01-01\"\nexpires_at = \"2027-01-01\"\nmethods = [\"GET\", \"HEAD\"]\nnotes = \"fixture server owned by the test\"\n",
+    )
+    .expect("scope register");
+}
+
 fn run(dir: &std::path::Path, source: &str, name: &str, ledger: &std::path::Path, budget: u32) -> (bool, String) {
     let file = dir.join(format!("{name}.tl"));
     std::fs::write(&file, source).expect("write");
+    authorize_loopback(dir);
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
         .arg("run")
         .arg(&file)
@@ -106,21 +127,11 @@ const PROGRAM: &str = r#"
 @burn_plan(persona: "egress-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
 @fingerprint_policy(policy: .normalize, bot_identity: "TallowTest/1.0 (+https://tallow.invalid/bot)")
 fn main() {
-    let a = http.get("http://127.0.0.1:PORT/one")
-    print(a.status)
-    let b = http.get("http://127.0.0.1:PORT/two")
-    print(b.status)
+    let rs = http.batch(["http://127.0.0.1:PORT/one"], 1)
+    print(len(rs))
 }
 "#;
 
-// BLOCKED BY A REAL DEFECT, not by the ledger: `http.get` issues no request when
-// its result fields are read directly (`let a = http.get(url); print(a.status)`
-// prints -1 and the target records zero connections). The request *is* made when
-// the value is consumed by a `match`, which is how the ledger 200 below was
-// recorded. Until the field-access path dispatches, these stay ignored so the
-// ledger's own tests (src/net/egress.rs, 5/5) remain the honest evidence.
-// Tracked in docs/operations/ci-preexisting-failures-2026-10-23.md.
-#[ignore = "http.get returns an empty value on direct field access; no request is issued"]
 #[test]
 fn a_403_stops_the_host_across_runs_and_the_second_request_never_leaves() {
     let (port, hits) = fixture();
@@ -131,19 +142,21 @@ fn a_403_stops_the_host_across_runs_and_the_second_request_never_leaves() {
 
     let source = PROGRAM.replace("PORT", &port.to_string());
 
-    // First run: the server answers 403, which the engine surfaces as an error.
+    // First run: the server answers 403 and the ledger records a stop.
     let (ok, output) = run(&dir, &source, "first", &ledger, 10);
-    assert!(!ok, "a 403 should surface: {output}");
-    assert!(output.contains("403"), "the 403 is the reason: {output}");
-    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert!(ok, "the batch program succeeds and reports a result: {output}");
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "one request was made; program output: {output}");
 
-    // Second run, same ledger: the host is stopped, and nothing is sent.
-    let (ok, output) = run(&dir, &source, "second", &ledger, 10);
-    assert!(!ok, "the stopped host must refuse: {output}");
+    let text = std::fs::read_to_string(&ledger).expect("ledger written");
+    assert!(text.contains("\"status\":403"), "the 403 is recorded: {text}");
     assert!(
-        output.contains("egress ledger: 127.0.0.1 is stopped"),
-        "the refusal names the host and the rule: {output}"
+        text.contains("\"stopped\":\"target returned 403"),
+        "the stop is recorded: {text}"
     );
+
+    // Second run, same ledger: the host is stopped and nothing is sent.
+    let (ok, output) = run(&dir, &source, "second", &ledger, 10);
+    assert!(ok, "the refused batch still returns a result: {output}");
     assert_eq!(
         hits.load(Ordering::SeqCst),
         1,
@@ -151,11 +164,13 @@ fn a_403_stops_the_host_across_runs_and_the_second_request_never_leaves() {
     );
 
     let text = std::fs::read_to_string(&ledger).expect("ledger written");
-    assert!(text.contains("\"status\":403"), "{text}");
-    assert!(text.contains("\"decision\":\"refused:"), "{text}");
+    assert!(
+        text.contains("\"decision\":\"refused:"),
+        "the refusal is journalled: {text}"
+    );
+    assert!(text.contains("/one"), "the refusal names the URL: {text}");
 }
 
-#[ignore = "http.get returns an empty value on direct field access; no request is issued"]
 #[test]
 fn the_budget_refuses_the_request_after_the_limit() {
     let (port, hits) = fixture_ok();
@@ -170,10 +185,12 @@ fn the_budget_refuses_the_request_after_the_limit() {
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 
     let (ok, output) = run(&dir, &source, "budget-second", &ledger, 1);
-    assert!(!ok, "the second request must be refused: {output}");
-    assert!(
-        output.contains("budget 1 exhausted for 127.0.0.1"),
-        "refusal names the budget and the host: {output}"
-    );
+    assert!(ok, "the refused batch still returns a result: {output}");
     assert_eq!(hits.load(Ordering::SeqCst), 1, "nothing left the box");
+
+    let text = std::fs::read_to_string(&ledger).expect("ledger written");
+    assert!(
+        text.contains("budget 1 exhausted for 127.0.0.1"),
+        "the refusal names the budget and the host: {text}"
+    );
 }

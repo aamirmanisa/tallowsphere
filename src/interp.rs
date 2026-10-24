@@ -9632,6 +9632,9 @@ impl Interpreter {
                     // checked here because this is the path `http.get` actually
                     // takes (the stdlib dispatcher's copy is not reached from a
                     // program). A refusal never opens a socket.
+                    if std::env::var("TALLOW_TRACE_HTTP").is_ok() {
+                        eprintln!("[trace] interp http block {url_str}");
+                    }
                     let ledger_host = crate::net::egress::host_of(&url_str);
                     if let Some(ledger) = crate::net::egress::ledger() {
                         if let Err(reason) = ledger.permit(&ledger_host) {

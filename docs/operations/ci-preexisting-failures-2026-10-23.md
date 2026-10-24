@@ -96,3 +96,20 @@ Impact: the egress-ledger integration tests (`tests/egress_ledger.rs`) are
 `#[ignore]`d with this reason. The ledger itself is covered by its unit tests.
 
 Owner: engine. Reproduction is the two-line program above.
+
+### Update (2026-10-24, same day)
+
+The ledger is now wired into the **native** batch path (`src/runtime/fetch.rs`),
+which is the path a program actually takes for `http.batch`: the scope gate, the
+request, and the status are all recorded, so the control no longer depends on
+which engine ran the program. Two things follow from that work:
+
+- A program's `http.batch` is refused before egress unless the host is in the
+  scope register — the tests now write a register authorizing their loopback
+  fixture, which is what a real target needs too.
+- The native path had no ledger at all, so the same program was governed or not
+  depending on whether the result's fields were read. That inconsistency is fixed.
+
+`http.get` with direct field access remains broken as described above (no
+request, empty value); `http.batch` is the working form and the one the
+integration tests use.

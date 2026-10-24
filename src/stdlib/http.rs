@@ -619,6 +619,9 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
     let headers = extract_headers(&args[1..]);
     let timeout = extract_timeout(&args[1..]);
 
+    if std::env::var("TALLOW_TRACE_HTTP").is_ok() {
+        eprintln!("[trace] stdlib http_get {url}");
+    }
     let host = match egress_guard(&url, "GET") {
         Ok(h) => h,
         Err(reason) => return Err(format!("http.get: {reason}")),
@@ -833,6 +836,20 @@ fn http_batch(args: Vec<Value>) -> StdlibResult {
                 };
             }
 
+            // Same ledger as the single-request path: batch is a fetch too.
+            let host = crate::net::egress::host_of(&url);
+            if let Some(ledger) = crate::net::egress::ledger() {
+                if let Err(reason) = ledger.permit(&host) {
+                    ledger.record_refusal(&host, &url, "GET", &reason);
+                    return batch_item(
+                        &url,
+                        false,
+                        elapsed_ms_since(started) as i128,
+                        Value::Nil,
+                        Some(("egress_refused", None, false, reason)),
+                    );
+                }
+            }
             let mut req = BATCH_AGENT.get(&url);
             for (k, v) in &headers {
                 req = req.header(k.as_str(), v.as_str());
@@ -840,19 +857,31 @@ fn http_batch(args: Vec<Value>) -> StdlibResult {
             match req.call() {
                 Ok(resp) => {
                     let status = resp.status().as_u16();
+                    if let Some(ledger) = crate::net::egress::ledger() {
+                        ledger.record(&host, &url, "GET", status);
+                    }
                     let body = resp.into_body().read_to_vec().unwrap_or_default();
                     let elapsed = elapsed_ms_since(started) as i128;
                     let response =
                         build_response_value(status, body, &url, vec![], elapsed_ms_since(started));
                     classify(&url, response, elapsed)
                 }
-                Err(e) => batch_item(
-                    &url,
-                    false,
-                    elapsed_ms_since(started) as i128,
-                    Value::Nil,
-                    Some(("transport", None, true, format!("http.get: {e}"))),
-                ),
+                Err(e) => {
+                    let status = match &e {
+                        ureq::Error::StatusCode(code) => *code,
+                        _ => 0,
+                    };
+                    if let Some(ledger) = crate::net::egress::ledger() {
+                        ledger.record(&host, &url, "GET", status);
+                    }
+                    batch_item(
+                        &url,
+                        false,
+                        elapsed_ms_since(started) as i128,
+                        Value::Nil,
+                        Some(("transport", None, true, format!("http.get: {e}"))),
+                    )
+                }
             }
         })
         .collect();
