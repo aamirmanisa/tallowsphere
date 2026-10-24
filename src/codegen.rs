@@ -1687,6 +1687,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push('\n');
         ir.push_str("; LLM FFI — llm.complete returns a %struct.Completion record\n");
         ir.push_str("declare ptr @tallow_llm_complete(ptr, ptr, ptr, i64)\n");
+        ir.push_str("declare ptr @tallow_llm_models(ptr)\n");
         ir.push_str("declare ptr @tallow_llm_last_error()\n");
         ir.push_str("declare void @tallow_llm_abort()\n");
         ir.push('\n');
@@ -2148,6 +2149,24 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.WaitResult".to_string(),
+                }
+            });
+
+        // `ModelInfo` — an element of `llm.models(provider)`. Two string
+        // fields; the runtime fills `ModelInfoRaw` records with this layout.
+        self.struct_layouts
+            .entry("ModelInfo".to_string())
+            .or_insert_with(|| {
+                let names = ["id", "owned_by"];
+                let mut field_map = HashMap::new();
+                for (i, name) in names.iter().enumerate() {
+                    field_map.insert((*name).to_string(), (i, LLType::I8Ptr));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.ModelInfo".to_string(),
                 }
             });
 
@@ -4233,6 +4252,18 @@ void tallow_async_runtime_shutdown(void) {
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_array_elem_struct
                                     .insert(name.clone(), "ChunkInfo".to_string());
+                            }
+                            // llm.models(...) → []ModelInfo: same native array
+                            // layout as Transfer.chunk (runtime/llm_ffi.rs fills
+                            // `ModelInfoRaw` records), so the three flags are the
+                            // same three:`.len` reads the count slot, `ms[i]`
+                            // inttoptrs the slot, and `ms[i].id` GEPs into
+                            // `%struct.ModelInfo` instead of answering 0.
+                            if matches!(obj_name.as_str(), "llm" | "Llm") && method == "models" {
+                                self.variable_is_array.insert(name.clone(), true);
+                                self.variable_array_elem_is_ptr.insert(name.clone(), true);
+                                self.variable_array_elem_struct
+                                    .insert(name.clone(), "ModelInfo".to_string());
                             }
                             // fs.read_bytes(...) → "Bytes" (t_70cad4f2): the
                             // native value is the base64 text the FFI returns,
@@ -23968,6 +23999,32 @@ impl<'a> CodeGen<'a> {
                         ("elapsed_ms", elapsed_ms.reg, LLType::I64),
                     ],
                 )?))
+            }
+            // `llm.models(provider) -> []ModelInfo`: the runtime returns the same
+            // `[count][ptr…]` array shape as `Transfer.chunk`, so `.len` and
+            // indexing go through the ordinary array path.
+            "models" => {
+                let Some(arg) = args.first() else {
+                    return Ok(None);
+                };
+                let v = self.emit_expr(&arg.value)?;
+                let provider = self.coerce_to_string(&v)?;
+                let result = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{result} = call ptr @tallow_llm_models(ptr {provider})"
+                ));
+                let present = self.fresh_reg();
+                self.emit_line(&format!("{present} = icmp ne ptr {result}, null"));
+                let ok_label = self.fresh_label("llm.models.ok");
+                let err_label = self.fresh_label("llm.models.err");
+                self.emit_line(&format!(
+                    "br i1 {present}, label %{ok_label}, label %{err_label}"
+                ));
+                self.body.push_str(&format!("{err_label}:\n"));
+                self.emit_line("call void @tallow_llm_abort()");
+                self.emit_line("unreachable");
+                self.body.push_str(&format!("{ok_label}:\n"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
             }
             _ => Ok(None),
         }

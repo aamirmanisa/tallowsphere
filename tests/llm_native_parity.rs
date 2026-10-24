@@ -19,14 +19,20 @@ fn serve_completion() -> u16 {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
             let mut buf = [0u8; 8192];
-            let _ = stream.read(&mut buf);
-            let body = r#"{
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let head = String::from_utf8_lossy(&buf[..n]).to_string();
+            // One mock, two endpoints: the model list and the chat completion.
+            let body = if head.contains("GET /v1/models") {
+                r#"{"object":"list","data":[{"id":"mock-1","object":"model","owned_by":"fixture"},{"id":"mock-2","object":"model","owned_by":"fixture"}]}"#
+            } else {
+                r#"{
                 "id": "chatcmpl-mock",
                 "object": "chat.completion",
                 "model": "mock-1",
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": "ready"}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
-            }"#;
+            }"#
+            };
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
@@ -48,6 +54,10 @@ fn main() {
     print("provider=" + c.provider)
     print("tokens_in=" + c.tokens_in)
     print("tokens_out=" + c.tokens_out)
+    let ms = llm.models("mock")
+    print("models_len=" + ms.len)
+    print("model0=" + ms[0].id)
+    print("owner0=" + ms[0].owned_by)
 }
 "#;
 
@@ -127,5 +137,11 @@ fn completion_struct_matches_on_both_planes() {
     assert!(
         native.contains(&"provider=mock".to_string()),
         "the provider id must be the configured one, got {native:?}"
+    );
+    assert!(
+        native.contains(&"models_len=2".to_string())
+            && native.contains(&"model0=mock-1".to_string())
+            && native.contains(&"owner0=fixture".to_string()),
+        "llm.models must return the real model list on both planes, got {native:?}"
     );
 }
