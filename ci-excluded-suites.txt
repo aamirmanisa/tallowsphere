@@ -23,4 +23,3 @@
 compiler_bench | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
 perf_binary_startup | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
 perf_install | perf | alden | specialized suite (bench/perf/fuzz), not per-commit | 2027-01-31
-wordpress_login | service | alden | requires a local WordPress fixture (scripts/wordpress_fixture.sh up) and TALLOW_ALLOW_DIRECT=1; #[ignore]d by default | 2027-01-31
