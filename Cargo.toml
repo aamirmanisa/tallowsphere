@@ -225,7 +225,7 @@ aegis = { version = "0.6", optional = true, default-features = false, features =
 poly1305 = "0.8"
 universal-hash = "0.5"
 sp800-185 = { version = "0.2", features = ["parallelhash"] }
-sm2 = "0.13"
+sm2 = "0.14"
 cryptoki = { version = "0.12" }
 
 # Real Cranelift JIT backend (feature-gated, default OFF — see [features]):
