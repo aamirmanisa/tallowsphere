@@ -134,3 +134,133 @@ fn a_declaration_the_backend_cannot_read_is_refused_by_name() {
         "the refusal must name the field, got: {raw}"
     );
 }
+
+// ───────────────────────────── Mesh.replay ──────────────────────────────────
+
+const TASK_STRUCT: &str = r#"struct MeshTask {
+    id: String,
+    func: String,
+    deps: []String,
+    class: String,
+    idempotency_key: String?,
+}
+
+struct MeshRun {
+    waves: i64,
+    committed: i64,
+    failed: i64,
+    journal: String,
+}
+
+struct WaveCheckpoint {
+    wave: i64,
+    tasks: i64,
+    checkpoint: String,
+}
+
+struct MeshReplay {
+    waves: i64,
+    ok: bool,
+    checkpoints: []WaveCheckpoint,
+}
+"#;
+
+fn journal_program(journal: &str) -> String {
+    format!(
+        r#"import tallow.mesh
+
+{TASK_STRUCT}
+fn alpha() -> String {{ "a" }}
+fn beta() -> String {{ "b" }}
+fn gamma() -> String {{ "c" }}
+
+@legal(basis: .public_data, purpose: "mesh replay fixture", personal_data: false)
+fn main() {{
+    let tasks = [
+        MeshTask {{ id: "a", func: "alpha", deps: [], class: "pure", idempotency_key: nil }},
+        MeshTask {{ id: "b", func: "beta", deps: ["a"], class: "pure", idempotency_key: nil }},
+        MeshTask {{ id: "c", func: "gamma", deps: ["a"], class: "pure", idempotency_key: nil }}
+    ]
+    let out = Mesh.run(tasks, 4, "{journal}", 7)
+    print("waves=" + out.waves)
+    print("committed=" + out.committed)
+}}
+"#
+    )
+}
+
+fn replay_program(journal: &str) -> String {
+    format!(
+        r#"import tallow.mesh
+
+{TASK_STRUCT}
+fn main() {{
+    let r = Mesh.replay("{journal}")
+    print("waves=" + r.waves)
+    if r.ok {{ print("ok=true") }} else {{ print("ok=false") }}
+    print("checks=" + r.checkpoints.len)
+    print("cp0_wave=" + r.checkpoints[0].wave)
+    print("cp0_tasks=" + r.checkpoints[0].tasks)
+    print("cp0_len=" + r.checkpoints[0].checkpoint.len)
+    print("cp1_wave=" + r.checkpoints[1].wave)
+}}
+"#
+    )
+}
+
+#[test]
+fn replay_matches_on_both_planes_for_a_journal_the_runtime_wrote() {
+    // The journal must come from the real execution plane, never be hand-built.
+    let dir = std::env::temp_dir().join(format!("tallow-mesh-replay-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tempdir");
+    let journal = dir.join("journal.jsonl");
+    let journal_str = journal.display().to_string();
+
+    let (produced, out, raw) = run("--interpret", &journal_program(&journal_str), "producer");
+    assert!(produced, "Mesh.run failed: {raw}");
+    assert!(
+        out.contains(&"waves=2".to_string()) && out.contains(&"committed=3".to_string()),
+        "the plan must run 2 waves and commit 3 tasks, got {out:?}"
+    );
+    assert!(journal.exists(), "Mesh.run must write the journal it reports");
+
+    let source = replay_program(&journal_str);
+    let (interp_ok, interp, interp_raw) = run("--interpret", &source, "replay-interp");
+    assert!(interp_ok, "interpreter replay failed: {interp_raw}");
+    let (native_ok, native, native_raw) = run("--require-native", &source, "replay-native");
+    assert!(native_ok, "compiled replay failed: {native_raw}");
+    assert_eq!(
+        native, interp,
+        "planes disagree on MeshReplay:\nnative={native:?}\ninterp={interp:?}"
+    );
+    assert_eq!(
+        native,
+        vec![
+            "waves=2".to_string(),
+            "ok=true".to_string(),
+            "checks=2".to_string(),
+            "cp0_wave=0".to_string(),
+            "cp0_tasks=1".to_string(),
+            "cp0_len=64".to_string(),
+            "cp1_wave=1".to_string(),
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn replay_of_a_missing_journal_is_refused_on_the_compiled_plane() {
+    let missing = std::env::temp_dir().join(format!(
+        "tallow-mesh-missing-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&missing);
+    let source = replay_program(&missing.display().to_string());
+    let (ok, _lines, raw) = run("--require-native", &source, "replay-missing");
+    assert!(!ok, "a missing journal must not replay: {raw}");
+    assert!(
+        raw.contains("Mesh.replay") || raw.contains("journal"),
+        "the refusal must name the journal, got: {raw}"
+    );
+}
