@@ -328,9 +328,15 @@ Future native `tallow run-plan` command
 
 ---
 
-## P0-007 — Create a `tallow run-plan` CLI command
+## P0-007 — Create a `tallow run-plan` CLI command — **DONE (2026-10-24)**
 
-**Problem:** Today the main reliable path is Python scripts plus generated `.tl`, but the CLI does not expose a first-class request-plan execution command.
+Implemented in `src/cli/request_plan_cmd.rs` (plus `src/cli/spec_tools_cmd.rs`
+for `validate-manifest`, `build-plan`, `package-report`), covered by all 38 tests
+in `tests/request_plan_cli.rs`, which run in CI. The command shape below is the
+one that shipped. See `docs/operations/request-plan-2026-10-24.md` for the gate
+order, the artifact set and the exit codes.
+
+**Problem (original):** Today the main reliable path is Python scripts plus generated `.tl`, but the CLI does not expose a first-class request-plan execution command.
 
 **Files:**
 

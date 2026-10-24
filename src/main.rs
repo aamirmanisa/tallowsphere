@@ -12144,7 +12144,9 @@ fn check_formatted(file: &PathBuf) -> anyhow::Result<()> {
         return Ok(());
     }
     eprintln!("{}: not formatted", file.display());
-    std::process::exit(exit_codes::USAGE_ERROR);
+    // `1` means "the file is fine, it just is not formatted" — `64` is reserved
+    // for usage errors, and a CI job wants to tell those apart.
+    std::process::exit(1);
 }
 
 fn strip_generated_header(source: &str) -> String {
