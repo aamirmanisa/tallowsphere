@@ -143,7 +143,23 @@ task non-replayable and `Mesh.replay` refuses that journal with a reason.
 Gate: replay of a public-class run succeeds with the model detached; replay of a
 private-class run fails with "non-replayable: private data class".
 
-**R10 — `llm` and `Mesh.plan` have no native lowering.**
+**R10 — `llm` and `Mesh.plan` have no native lowering.** — **investigated, still open** (2026-10-24)
+
+Measured this iteration. A native lowering for `llm.complete` was written (FFI
+`tallow_llm_complete`, three strings in / one string out) and it did reach the
+model from compiled code — but it returned the *text* where the interpreter
+returns a `Completion` struct, so the same program printed `ready` natively and
+`Completion { text: "ready", model: …, prompt_hash: …, tokens_in: 17, … }`
+interpreted. That is a parity break, not a fix, and it was reverted.
+
+The blocker for both items is the same: a method whose result is a struct with
+string fields needs struct-return lowering in this backend (`Transfer.chunk`
+shows the shape, returning `%struct .ChunkInfo`). `Mesh.plan` additionally takes
+an array of `MeshTask` structs. Until that exists, the loud interpreter fallback
+is the correct behaviour: it keeps both planes agreeing, which matters more than
+the string "native" on the build.
+
+Original fix:
 Evidence: shipped binary prints "native build unavailable … running in the interpreter".
 Fix: codegen arms for the four `llm` functions and `Mesh.plan/replay`; struct-return
 kinds already exist from the browser work.
