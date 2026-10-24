@@ -244,11 +244,26 @@ through the ordinary GEP path. A mock OpenAI-compatible provider proves parity �
 `text`, `model`, `provider`, `tokens_in`, `tokens_out` are byte-identical on both
 planes (tests/llm_native_parity.rs).
 
-Remaining in R10: `llm.providers`, `llm.models`, `llm.verify` (arrays of structs —
-same shape as `Transfer.chunk`, not yet wired) and `Mesh.plan`/`Mesh.replay`
-(arrays of `MeshTask` structs). Failure behaviour is a documented difference:
-the compiled path aborts with the redacted sentence and exit 1 where the
-interpreter returns `Err(sentence)`.
+All four `llm` calls now lower (2026-10-24, second pass): `llm.providers`,
+`llm.models` and `llm.verify` use the same record/array shapes as `Transfer.chunk`
+and `llm.complete`. Two traps were silent-wrong-value bugs, not missing arms:
+without a `(llm, method) → struct` entry a field shared by two structs is
+ambiguous (the read refuses by name), and without `variable_array_element_type`
+a `for` binding over the array is a raw i64 so `p.id` cannot resolve.
+
+**Still open: `Mesh.plan` / `Mesh.replay`.** Measured this iteration: the
+interpreter plans a one-task graph correctly (`waves=1 tasks=1`), the compiled
+path refuses by name ("no lowering for method 'plan'"). The blocker is input
+shape, not output: `Mesh.plan(tasks: []MeshTask, seed)` needs an array of
+user-declared structs whose fields include a nested `[]String`, so the lowering
+has to agree with whatever field order the program declared. A lowering that
+assumes the canonical order would read the wrong offsets for a reordered struct —
+exactly the class of silent wrong answer this backend refuses to emit. The loud
+fallback is correct until that contract exists.
+
+Failure behaviour of the four `llm` lowerings is a documented difference: the
+compiled path aborts with the redacted sentence and exit 1 where the interpreter
+returns `Err(sentence)`.
 
 Measured this iteration. A native lowering for `llm.complete` was written (FFI
 `tallow_llm_complete`, three strings in / one string out) and it did reach the
