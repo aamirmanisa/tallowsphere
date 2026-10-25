@@ -9,6 +9,52 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.7] — 2026-10-25 — the audit pass: dependency refresh and a register that renders
+
+### Added
+
+- `docs/operations/dependency-exceptions-2026-10-25.md` — the eight advisories
+  that survive this refresh, each with the code path it can reach and a
+  2027-01-31 expiry, cross-referenced from `deny.toml` so the decision lives in
+  one place and the gate re-opens the question on a date instead of forever.
+
+### What was wrong
+
+- **248 crates were behind their published versions.** Not one of them was a
+  security fix we could take, but the tree had drifted enough that every future
+  advisory would have needed a manual "is this reachable?" argument against a
+  stale graph.
+- **The stub register did not render.** Twenty-six rows were malformed — 22
+  written with three columns, three missing a closing cell, two carrying
+  unescaped `|` from pipe-operator examples — and ids 104 and 120 were absent.
+  The guard that should have caught it asserted `1..=103` and had been failing
+  since the register grew past that.
+- **The advisory gate was red with no decision recorded.** `cargo deny
+  --all-features` reported eight advisories and nothing in the tree said whether
+  any of them mattered here.
+
+### What was fixed
+
+- `cargo update`: 248 semver-compatible upgrades (lockfile 852 insertions /
+  987 deletions), SBOM snapshot regenerated in the same change.
+- Stub register normalised to five columns per row (surplus `|` → `│`, omitted
+  columns padded with `—` and the header states what `—` means), the two gap ids
+  recorded as gaps rather than renumbered, and the guard now derives N from the
+  file.
+- Every advisory is now an explicit entry with a reachability argument:
+  `crypto-bigint 0.5.5` (RUSTSEC-2026-0387) is reached only through HPKE's
+  **ephemeral** P-256 keys and never through our OPAQUE, which is Ristretto255;
+  the three `libcrux-*` advisories exist only behind `--features fhe` and are
+  pinned by `tfhe 1.8.2`.
+
+### Verified
+
+- `cargo test --lib` → 9,267 passed / 0 failed / 33 ignored (153.88 s).
+- Nineteen release-gate integration suites → 19/19 ok, 0 failures.
+- `cargo deny --all-features check advisories` → advisories ok.
+- `tests/test_docs_truth_maintenance.py` → 10 tests OK; `check_test_coverage.py`
+  → 136 targets, 134 in CI, 2 registered debt, 0 unaccounted.
+
 ## [v1.5.6] — 2026-10-25 — `?` keeps the payload's kind
 
 ### Added
