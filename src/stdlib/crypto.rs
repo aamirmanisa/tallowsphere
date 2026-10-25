@@ -2417,7 +2417,8 @@ fn crypto_mls_unavailable() -> StdlibResult {
 #[cfg(not(feature = "fhe"))]
 fn crypto_fhe_unavailable() -> StdlibResult {
     Err("crypto.fhe_* has no implementation in a build without `--features fhe`: \
-         the feature links tfhe; rebuild with it or run --interpret"
+         the feature links tfhe. Rebuild with --features fhe: the interpreter \
+         refuses too, because this module is compiled into both planes"
         .to_string())
 }
 
@@ -2459,7 +2460,8 @@ fn crypto_fhe_decrypt(args: &[Value]) -> StdlibResult {
 #[cfg(not(feature = "zk"))]
 fn crypto_zk_unavailable() -> StdlibResult {
     Err("crypto.zk_* has no implementation in a build without `--features zk`: \
-         the feature links curve25519 arithmetic; rebuild with it or run --interpret"
+         the feature links curve25519 arithmetic. Rebuild with --features zk: \
+         the interpreter refuses too, because this module is compiled into both planes"
         .to_string())
 }
 
