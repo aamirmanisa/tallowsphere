@@ -9,6 +9,70 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.3] — 2026-10-25 — crypto that does the thing, and says so when it cannot
+
+### Added
+
+- **age containers (C2SP)**, interoperable with `age(1)` in both directions —
+  proven by decrypting each implementation's output with the other, not by a
+  self round-trip.
+- **OPAQUE (RFC 9807)** via `opaque-ke` (ristretto255, TripleDH/SHA-512), with a
+  ten-call message-passing surface and a real registration/login flow.
+- **MLS (RFC 9420)** via openmls 0.7.1, feature-gated behind `--features mls`.
+  Group state lives in an in-process registry keyed by handle; a Welcome can only
+  be processed by the provider that created the key package, so the handle is
+  returned from `key_package_new`.
+- **Chunked, resumable transfer**: a directory of ordinary age containers plus a
+  manifest; resume re-encrypts only the missing parts. Measured on 2.5 MB / 1 MiB
+  parts: 3 parts, native round-trip byte-identical.
+- **Opt-in ZK** (`--features zk`): Bulletproofs range proofs,
+  `crypto.zk_range_prove` / `zk_range_verify`, no trusted setup.
+- **Opt-in FHE** (`--features fhe`): tfhe 1.8.2, `crypto.fhe_{keygen,encrypt,add,decrypt}`.
+  Measured: keygen 1,436 ms, add 174 ms, 200+100 → 44 (modular, as an unsigned
+  byte should be).
+- **Native lowering** for age, OPAQUE, keypair generation, MLS and chunked
+  transfer, each verified under `--require-native` against the interpreter.
+- **A per-function capability report** (`tallow doctor --capabilities`): every
+  declared crypto function with its status and a quoted reason for anything that
+  is not `implemented`.
+- **Assurance**: KATs (FIPS 180-4, BLAKE3, RFC 5869, RFC 8032), a deterministic
+  mutation sweep (8,000 hostile inputs, zero panics), a dudect-style AEAD timing
+  harness, and a `cargo-fuzz` harness whose two targets executed 2,358,971 and
+  1,587,576 runs in 101 s each with no crashes.
+- **MLS, ZK and FHE CI jobs**, so none of the opt-in paths is hand-verified only.
+
+### Fixed
+
+- **Nine crypto calls were approximations that returned plausible values** for
+  algorithms they did not implement, and `opaque_register` was not OPAQUE at all.
+  They now refuse and name what replaces them.
+- **`print()` of a struct leaked private keys**: `print(crypto.age_keygen())`
+  wrote an `AGE-SECRET-KEY-1…` to stdout, and the same hole exposed the secret
+  half of nine key types. Redaction is table-driven and a gate fails any new
+  struct with a secret-sounding field.
+- **OPAQUE's native lowering segfaulted**: the C side returned a bare pointer
+  where the language surface declared a record, so the generated IR read text
+  bytes as a pointer. Every new FFI returns a `#[repr(C)]` record mirroring the
+  codegen layout.
+- **`print(<struct>)` on the native plane printed binary garbage**; it is now a
+  named compile-time refusal that tells you to print a field.
+- **`fs.delete` asked `stat` for `is_dir` through a missing extern**, and a
+  result-carrying program could not run natively at all.
+- **`copy` verification was unfalsifiable and memory-unbounded**; `copy.try_file`
+  returns `Result<CopyStats>` and the engine copies in bounded chunks.
+- **Feature refusals told the reader to `--interpret`**, which fails identically
+  because the stdlib module is compiled into both planes. They now say which
+  feature to rebuild with.
+
+### Verified
+
+- Library suite green; 135 test targets, 133 wired into CI, 2 registered debt
+  (perf), 0 unaccounted.
+- age/OPAQUE/MLS native paths byte-identical to the interpreter on the same
+  program; chunked transfer round-trips 2,500,000 bytes as 3 parts.
+- Default build refuses `crypto.mls_*`, `crypto.zk_*` and `crypto.fhe_*` by name
+  with exit 1; feature builds run them.
+
 ## [v1.5.2] — 2026-10-24 — the release gate runs what CI judges the tree by
 
 ### Added
