@@ -66,6 +66,26 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "hpke_open" => Some(crypto_hpke_open(&args)),
         // age (C2SP) file format -- real via the `age` crate
         // OPAQUE (RFC 9807) -- real via opaque-ke, message-passing surface
+        // MLS (RFC 9420) — only with `--features mls`; the arms below refuse
+        // by name when the feature is off, so the surface never silently lacks
+        // a capability it advertises.
+        #[cfg(not(feature = "mls"))]
+        "mls_key_package" | "mls_create_group" | "mls_add_member" | "mls_join"
+        | "mls_encrypt" | "mls_process" | "mls_info" => Some(crypto_mls_unavailable()),
+        #[cfg(feature = "mls")]
+        "mls_key_package" => Some(crypto_mls_key_package(&args)),
+        #[cfg(feature = "mls")]
+        "mls_create_group" => Some(crypto_mls_create_group(&args)),
+        #[cfg(feature = "mls")]
+        "mls_add_member" => Some(crypto_mls_add_member(&args)),
+        #[cfg(feature = "mls")]
+        "mls_join" => Some(crypto_mls_join(&args)),
+        #[cfg(feature = "mls")]
+        "mls_encrypt" => Some(crypto_mls_encrypt(&args)),
+        #[cfg(feature = "mls")]
+        "mls_process" => Some(crypto_mls_process(&args)),
+        #[cfg(feature = "mls")]
+        "mls_info" => Some(crypto_mls_info(&args)),
         "opaque_suite" => Some(crypto_opaque_suite(&args)),
         "opaque_setup" => Some(crypto_opaque_setup(&args)),
         "opaque_register_start" => Some(crypto_opaque_register_start(&args)),
@@ -2356,6 +2376,117 @@ fn crypto_parallel_hash(args: &[Value]) -> StdlibResult {
 // forms; the payload crosses the language boundary as hex because the runtime
 // has no byte-buffer value type.
 
+
+
+/// The whole MLS surface, when this build has no `mls` feature. One function so
+/// the capability report sees an explicit `cfg(not(feature = "mls"))` body and
+/// reports these as GATED rather than implemented.
+#[cfg(not(feature = "mls"))]
+fn crypto_mls_unavailable() -> StdlibResult {
+    Err("crypto.mls_* requires building with `--features mls`: openmls is optional \
+         because its dependency tree conflicts with the pinned ml-kem stack."
+        .to_string())
+}
+
+// ── MLS (RFC 9420) ──────────────────────────────────────────────────────────
+// Group state lives in `crate::mls`'s in-process registry; these shims only
+// marshal hex strings and structs. Only compiled with `--features mls`.
+
+#[cfg(feature = "mls")]
+fn crypto_mls_key_package(args: &[Value]) -> StdlibResult {
+    let identity = sarg(args, 0, "mls_key_package")?;
+    let (handle, kp) = crate::mls::key_package_new(&identity)?;
+    Ok(Value::Struct {
+        name: "MlsKeyPackage".into(),
+        fields: vec![
+            ("handle".into(), Value::String(handle)),
+            ("key_package".into(), Value::String(kp)),
+        ],
+    })
+}
+
+#[cfg(feature = "mls")]
+fn crypto_mls_create_group(args: &[Value]) -> StdlibResult {
+    let identity = sarg(args, 0, "mls_create_group")?;
+    let (handle, kp) = crate::mls::create_group(&identity)?;
+    Ok(Value::Struct {
+        name: "MlsKeyPackage".into(),
+        fields: vec![
+            ("handle".into(), Value::String(handle)),
+            ("key_package".into(), Value::String(kp)),
+        ],
+    })
+}
+
+#[cfg(feature = "mls")]
+fn crypto_mls_add_member(args: &[Value]) -> StdlibResult {
+    let handle = sarg(args, 0, "mls_add_member")?;
+    let kp = sarg(args, 1, "mls_add_member")?;
+    let (welcome, epoch) = crate::mls::add_member(&handle, &kp)?;
+    Ok(Value::Struct {
+        name: "MlsWelcome".into(),
+        fields: vec![
+            ("welcome".into(), Value::String(welcome)),
+            ("epoch".into(), Value::Int(epoch as i128)),
+        ],
+    })
+}
+
+#[cfg(feature = "mls")]
+fn crypto_mls_join(args: &[Value]) -> StdlibResult {
+    let pending = sarg(args, 0, "mls_join")?;
+    let welcome = sarg(args, 1, "mls_join")?;
+    let (handle, epoch) = crate::mls::join_from_welcome(&pending, &welcome)?;
+    Ok(Value::Struct {
+        name: "MlsJoined".into(),
+        fields: vec![
+            ("handle".into(), Value::String(handle)),
+            ("epoch".into(), Value::Int(epoch as i128)),
+        ],
+    })
+}
+
+#[cfg(feature = "mls")]
+fn crypto_mls_encrypt(args: &[Value]) -> StdlibResult {
+    let handle = sarg(args, 0, "mls_encrypt")?;
+    let pt = sarg(args, 1, "mls_encrypt")?;
+    let (message, epoch) = crate::mls::encrypt(&handle, &pt)?;
+    Ok(Value::Struct {
+        name: "MlsMessage".into(),
+        fields: vec![
+            ("message".into(), Value::String(message)),
+            ("epoch".into(), Value::Int(epoch as i128)),
+        ],
+    })
+}
+
+#[cfg(feature = "mls")]
+fn crypto_mls_process(args: &[Value]) -> StdlibResult {
+    let handle = sarg(args, 0, "mls_process")?;
+    let msg = sarg(args, 1, "mls_process")?;
+    let (kind, plaintext, epoch) = crate::mls::process(&handle, &msg)?;
+    Ok(Value::Struct {
+        name: "MlsIncoming".into(),
+        fields: vec![
+            ("kind".into(), Value::String(kind)),
+            ("plaintext".into(), Value::String(plaintext)),
+            ("epoch".into(), Value::Int(epoch as i128)),
+        ],
+    })
+}
+
+#[cfg(feature = "mls")]
+fn crypto_mls_info(args: &[Value]) -> StdlibResult {
+    let handle = sarg(args, 0, "mls_info")?;
+    let (members, epoch) = crate::mls::group_info(&handle)?;
+    Ok(Value::Struct {
+        name: "MlsGroupInfo".into(),
+        fields: vec![
+            ("members".into(), Value::Int(members as i128)),
+            ("epoch".into(), Value::Int(epoch as i128)),
+        ],
+    })
+}
 
 // ── OPAQUE (RFC 9807) ───────────────────────────────────────────────────────
 // The protocol lives in `crate::opaque`; these are marshalling shims. Each step

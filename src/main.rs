@@ -18512,7 +18512,13 @@ fn crypto_function_rows(
                 let mut from = 0usize;
                 while let Some(rel) = rs[from..].find(&needle) {
                     let i = from + rel;
-                    let pre_start = i.saturating_sub(240);
+                    // Floor to a char boundary: a fixed byte window can land
+                    // inside a multi-byte character (box-drawing comment rules
+                    // are common in this tree) and slice-panics the doctor.
+                    let mut pre_start = i.saturating_sub(240);
+                    while pre_start > 0 && !rs.is_char_boundary(pre_start) {
+                        pre_start -= 1;
+                    }
                     let pre = &rs[pre_start..i];
                     let rest = &rs[i..];
                     let end = rest.find("\n}").map(|e| e + 2).unwrap_or(rest.len().min(4000));

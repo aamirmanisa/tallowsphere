@@ -1596,6 +1596,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i64 @ftell(ptr)\n");
         ir.push_str("declare i32 @access(ptr, i32)\n");
         ir.push_str("declare i32 @remove(ptr)\n");
+        ir.push_str("declare i32 @rename(ptr, ptr)\n");
         ir.push_str("declare ptr @calloc(i64, i64)\n");
         ir.push_str("declare i32 @stat(ptr, ptr)\n");
         ir.push('\n');
@@ -3761,6 +3762,15 @@ void tallow_async_runtime_shutdown(void) {
                     if self.struct_layouts.contains_key(elem_name.as_str()) {
                         self.variable_array_element_type
                             .insert(param.name.clone(), elem_name.clone());
+                    } else if elem_name == "String" {
+                        // A `[]String` parameter holds pointer elements. Without
+                        // this flag `for a in args` binds `a` as a bare i64 and
+                        // any string method on it (`a.starts_with("-")`) has no
+                        // lowering — a very common shape in argument parsing.
+                        self.variable_array_elem_is_ptr
+                            .insert(param.name.clone(), true);
+                        self.browser_variables
+                            .insert(param.name.clone(), "StringArray".to_string());
                     }
                 }
             } else if let TypeExprKind::Named(type_name) = &param.ty.kind {
@@ -23877,6 +23887,9 @@ impl<'a> CodeGen<'a> {
             "write_file" => Ok(Some(self.emit_fs_write_file(args)?)),
             "exists" => Ok(Some(self.emit_fs_exists(args)?)),
             "is_file" => Ok(Some(self.emit_fs_is_file(args)?)),
+            "is_dir" => Ok(Some(self.emit_fs_is_dir(args)?)),
+            "delete" | "delete_file" => Ok(Some(self.emit_fs_delete(args)?)),
+            "rename" => Ok(Some(self.emit_fs_rename(args)?)),
             "remove" => Ok(Some(self.emit_fs_remove(args)?)),
             "append_file" => Ok(Some(self.emit_fs_append_file(args)?)),
             "remove_dir_all" => Ok(Some(self.emit_fs_remove_dir_all(args)?)),
@@ -24109,6 +24122,115 @@ impl<'a> CodeGen<'a> {
         let both = self.fresh_reg();
         self.emit_line(&format!("{both} = and i1 {ok}, {is_reg}"));
         Ok(LLValue::new(both, LLType::I1))
+    }
+
+    /// `fs.is_dir(path)` — S_ISDIR on the same `struct stat` read `is_file` uses.
+    fn emit_fs_is_dir(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        let mode_offset: i64 = if cfg!(target_arch = "x86_64") {
+            24
+        } else if cfg!(target_arch = "aarch64") {
+            16
+        } else {
+            return Err(format!(
+                "native backend has no `struct stat` layout for fs.is_dir on {}; \
+                 failing loudly so the interpreter runs it",
+                std::env::consts::ARCH
+            ));
+        };
+
+        let path_val = self.emit_expr(&args[0].value)?;
+        let path_str = self.coerce_to_string(&path_val)?;
+
+        let buf = self.fresh_reg();
+        self.emit_line(&format!("{buf} = call ptr @calloc(i64 1, i64 160)"));
+
+        let rc = self.fresh_reg();
+        self.emit_line(&format!("{rc} = call i32 @stat(ptr {path_str}, ptr {buf})"));
+        let ok = self.fresh_reg();
+        self.emit_line(&format!("{ok} = icmp eq i32 {rc}, 0"));
+
+        let mode_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{mode_ptr} = getelementptr i8, ptr {buf}, i64 {mode_offset}"
+        ));
+        let mode = self.fresh_reg();
+        self.emit_line(&format!("{mode} = load i32, ptr {mode_ptr}"));
+        // S_IFMT = 0170000, S_IFDIR = 0040000.
+        let file_type = self.fresh_reg();
+        self.emit_line(&format!("{file_type} = and i32 {mode}, 61440"));
+        let is_dir = self.fresh_reg();
+        self.emit_line(&format!("{is_dir} = icmp eq i32 {file_type}, 16384"));
+
+        let both = self.fresh_reg();
+        self.emit_line(&format!("{both} = and i1 {ok}, {is_dir}"));
+        Ok(LLValue::new(both, LLType::I1))
+    }
+
+    /// On a failed libc call, build `<prefix><strerror> (os error <n>)` and exit
+    /// 1 — the same message shape the interpreter renders — then continue in the
+    /// ok block. Silent failure was the alternative, and a copy tool that cannot
+    /// report a failed rename is worse than one that stops.
+    fn emit_libc_fail(&mut self, failed: &str, prefix: &str) {
+        let ok_b = self.fresh_label("libcok");
+        let fail_b = self.fresh_label("libcfail");
+        self.emit_line(&format!(
+            "br i1 {failed}, label %{fail_b}, label %{ok_b}"
+        ));
+        self.body.push_str(&format!("{fail_b}:\n"));
+
+        let errno_loc = self.fresh_reg();
+        self.emit_line(&format!("{errno_loc} = call ptr @__errno_location()"));
+        let errno_val = self.fresh_reg();
+        self.emit_line(&format!("{errno_val} = load i32, ptr {errno_loc}"));
+        let errno64 = self.fresh_reg();
+        self.emit_line(&format!("{errno64} = sext i32 {errno_val} to i64"));
+        let sysmsg = self.fresh_reg();
+        self.emit_line(&format!("{sysmsg} = call ptr @strerror(i32 {errno_val})"));
+        let buf = self.fresh_reg();
+        self.emit_line(&format!("{buf} = call ptr @malloc(i64 512)"));
+        let fmt = self.intern_string(&format!("{prefix}%s (os error %lld)"));
+        let w = self.fresh_reg();
+        self.emit_line(&format!(
+            "{w} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 512, ptr {fmt}, ptr {sysmsg}, i64 {errno64})"
+        ));
+        let p_reg = self.fresh_reg();
+        self.emit_line(&format!(
+            "{p_reg} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {buf})"
+        ));
+        self.emit_line("call void @exit(i32 1)");
+        self.emit_line("unreachable");
+        self.body.push_str(&format!("{ok_b}:\n"));
+    }
+
+    /// `fs.rename(from, to)` -> Nil via libc `rename()`.
+    fn emit_fs_rename(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        if args.len() < 2 {
+            return Err("fs.rename requires (from, to)".into());
+        }
+        let from_val = self.emit_expr(&args[0].value)?;
+        let from = self.coerce_to_string(&from_val)?;
+        let to_val = self.emit_expr(&args[1].value)?;
+        let to = self.coerce_to_string(&to_val)?;
+
+        let rc = self.fresh_reg();
+        self.emit_line(&format!("{rc} = call i32 @rename(ptr {from}, ptr {to})"));
+        let failed = self.fresh_reg();
+        self.emit_line(&format!("{failed} = icmp slt i32 {rc}, 0"));
+        self.emit_libc_fail(&failed, "fs.rename: ");
+        Ok(LLValue::new("0".to_string(), LLType::I64))
+    }
+
+    /// `fs.delete(path)` / `fs.delete_file(path)` -> Nil via libc `remove()`.
+    fn emit_fs_delete(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        let path_val = self.emit_expr(&args[0].value)?;
+        let path_str = self.coerce_to_string(&path_val)?;
+
+        let rc = self.fresh_reg();
+        self.emit_line(&format!("{rc} = call i32 @remove(ptr {path_str})"));
+        let failed = self.fresh_reg();
+        self.emit_line(&format!("{failed} = icmp slt i32 {rc}, 0"));
+        self.emit_libc_fail(&failed, "fs.delete: ");
+        Ok(LLValue::new("0".to_string(), LLType::I64))
     }
 
     fn emit_fs_remove(&mut self, args: &[CallArg]) -> Result<LLValue, String> {

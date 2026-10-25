@@ -60,7 +60,7 @@ fn every_declared_function_is_reported_exactly_once() {
     let declared = declared_functions();
     assert_eq!(
         declared.len(),
-        45,
+        52,
         "the declared crypto surface changed size ({}) — update this gate deliberately",
         declared.len()
     );

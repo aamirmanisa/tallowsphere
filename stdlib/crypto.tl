@@ -1088,3 +1088,13 @@ fn opaque_login_start(password: String) -> OpaqueLoginRequest
 fn opaque_login_respond(setup: String, record: String, request: String, credential_id: String) -> OpaqueLoginResponse
 fn opaque_login_finish(state: String, password: String, response: String) -> OpaqueLoginResult
 fn opaque_login_server_finish(state: String, finalization: String) -> String
+
+// MLS (RFC 9420) — requires a build with --features mls; otherwise each call
+// refuses by name. Group state is in-process: handles do not survive the run.
+fn mls_key_package(identity: String) -> MlsKeyPackage
+fn mls_create_group(identity: String) -> MlsKeyPackage
+fn mls_add_member(handle: String, key_package: String) -> MlsWelcome
+fn mls_join(pending_handle: String, welcome: String) -> MlsJoined
+fn mls_encrypt(handle: String, plaintext_hex: String) -> MlsMessage
+fn mls_process(handle: String, message: String) -> MlsIncoming
+fn mls_info(handle: String) -> MlsGroupInfo
