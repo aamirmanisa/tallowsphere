@@ -302,6 +302,19 @@ fn get_string_arg(args: &[Value], idx: usize) -> Option<String> {
 
 // ── Top-level copy orchestration ──────────────────────────────────────
 
+/// `copy.try_file(src, dst)` → `Result<CopyStats>`.
+///
+/// `copy.file` raises on the first failure, so a caller copying a list of files
+/// loses the whole run to one unreadable source (EACCES, ENOSPC, ESTALE on NFS).
+/// This variant hands the error back as a value, which is what a batch tool
+/// wants: count the failures, keep going.
+fn copy_try_file(args: &[Value]) -> StdlibResult {
+    Ok(match copy_file(args) {
+        Ok(stats) => Value::Ok(Box::new(stats)),
+        Err(e) => Value::Err(Box::new(Value::String(e.to_string()))),
+    })
+}
+
 fn copy_file(args: &[Value]) -> StdlibResult {
     let src = get_string_arg(args, 0)
         .ok_or_else(|| "copy.file: requires source path (string)".to_string())?;
@@ -647,6 +660,7 @@ fn copy_dir(args: &[Value]) -> StdlibResult {
 pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
     match function {
         "file" => Some(copy_file(&args)),
+        "try_file" => Some(copy_try_file(&args)),
         "verify_file" => Some(verify_file(&args)),
         "verify_dir" => Some(verify_dir(&args)),
         "dir" => Some(copy_dir(&args)),
@@ -694,6 +708,54 @@ pub fn dispatch_method(object: &Value, method: &str, _args: Vec<Value>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn try_file_hands_back_an_error_instead_of_raising() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dst = tmp.path().join("never.bin");
+        let v = copy_try_file(&[
+            Value::String("__no_such_source__.bin".to_string()),
+            Value::String(dst.to_string_lossy().to_string()),
+        ])
+        .expect("try_file must not raise for a bad source");
+
+        match v {
+            Value::Err(inner) => match *inner {
+                Value::String(msg) => assert!(msg.contains("copy:"), "unexpected message: {msg}"),
+                other => panic!("Err payload must be a string, got {other:?}"),
+            },
+            other => panic!("expected Value::Err, got {other:?}"),
+        }
+        assert!(!dst.exists(), "a failed copy must not leave a destination file");
+    }
+
+    #[test]
+    fn try_file_returns_ok_stats_on_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.bin");
+        std::fs::write(&src, b"payload").unwrap();
+        let dst = tmp.path().join("dst.bin");
+        let v = copy_try_file(&[
+            Value::String(src.to_string_lossy().to_string()),
+            Value::String(dst.to_string_lossy().to_string()),
+        ])
+        .unwrap();
+
+        match v {
+            Value::Ok(stats) => match *stats {
+                Value::Struct { name, fields } => {
+                    assert_eq!(name, "CopyStats");
+                    let verified = fields.iter().find(|(k, _)| k == "verified").map(|(_, v)| v.clone());
+                    assert!(matches!(verified, Some(Value::Bool(true))), "verified must survive boxing");
+                    let files = fields.iter().find(|(k, _)| k == "files_copied").map(|(_, v)| v.clone());
+                    assert!(matches!(files, Some(Value::Int(1))), "files_copied must be 1");
+                }
+                other => panic!("Ok payload must be CopyStats, got {other:?}"),
+            },
+            other => panic!("expected Value::Ok, got {other:?}"),
+        }
+        assert_eq!(std::fs::read(&dst).unwrap(), b"payload");
+    }
 
     #[test]
     fn test_copy_file_streaming_basic() {
