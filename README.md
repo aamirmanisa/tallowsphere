@@ -42,7 +42,7 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-24 · release `v1.5.2` · `schema check` exit 0; `extract` exit 0 with one row, empty quarantine]
+[measured 2026-10-25 · release `v1.5.5` · `schema check` exit 0; `extract` exit 0 with one row]
 
 Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
 
@@ -88,13 +88,15 @@ $ curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/ins
 The installer resolves the newest release, verifies the checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before reporting success:
 
 ```console
-fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.2/tallow-linux-aarch64-1.5.2.tar.gz
-tallow-linux-aarch64-1.5.2.tar.gz: OK
-installed tallow 1.5.2 into /root/.local/bin
+fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.5/tallow-linux-aarch64-1.5.5.tar.gz
+tallow-linux-aarch64-1.5.5.tar.gz: OK
+installed tallow 1.5.5 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
-[measured 2026-10-24 · release `v1.5.2`]
+[measured 2026-10-25 · release `v1.5.5` · the published linux-aarch64 tarball is
+173,699,963 B, sha256 `4f89ca68…a0406fda` matches its sidecar, and the extracted
+binary prints `1.5.5` and runs a program]
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
