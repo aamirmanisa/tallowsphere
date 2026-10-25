@@ -80,10 +80,18 @@ fn a_tampered_container_is_refused() {
     let l = lines(&stdout);
     let (identity, ct) = (l[0].clone(), l[1].clone());
 
+    // Tamper the LAST nibble, not the middle. The container is a binary age
+    // file hex-encoded, and the header's stanza body is base64 INSIDE it: a
+    // character in the middle can land on the final character of a base64
+    // quantum, whose low two bits the decoder discards. Flipping there changes
+    // the text and not the decoded bytes, so the "tampered" container decrypts
+    // perfectly and this test fails on a coin flip (~1 in 43). The last nibble
+    // is the low half of the final Poly1305 tag byte — raw binary, no encoding
+    // to absorb it — so the AEAD always rejects.
     let mut chars: Vec<char> = ct.chars().collect();
-    let mid = chars.len() / 2;
-    let original = chars[mid];
-    chars[mid] = if original == '0' { '1' } else { '0' };
+    let last = chars.len() - 1;
+    let original = chars[last];
+    chars[last] = if original == '0' { '1' } else { '0' };
     let tampered: String = chars.into_iter().collect();
     assert_ne!(tampered, ct, "the tamper must change the container");
 
