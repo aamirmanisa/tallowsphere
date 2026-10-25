@@ -29,8 +29,7 @@
 //! documented in `docs/ops/zeroization.md`; adopting these primitives across
 //! those types is the separate (pending) adoption follow-up.
 //!
-//! Not wired into `lib.rs` yet (the parent does that):
-//! `pub mod zeroize_util;`
+//! Wired into `lib.rs` as `pub mod zeroize_util;`.
 
 use std::fmt;
 

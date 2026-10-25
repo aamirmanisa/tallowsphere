@@ -13,12 +13,11 @@
 #   * no entry may be added without a bucket and an owner
 #   * the goal is an empty file — entries are debt, not policy
 #
-# Counts at 2026-10-23: 15 entries (triage 8, perf 3, service 1, host 2, parked 1).
-#
-# 23 browser suites moved into the `browser` CI job this date: they pass against the
-# pinned Chrome-for-Testing build once the binary is installed. The six that do not
-# are registered as `triage` — a suite nobody runs is what hid them in the first place.
-# parked 1, triage 14).
+# Counts at 2026-10-24: 2 entries (perf 2). Everything else — including the 23 browser
+# suites moved into the `browser` CI job — is now run by CI. The earlier "15 entries
+# (triage 8, perf 3, service 1, host 2, parked 1)" line and the dangling "parked 1,
+# triage 14)." fragment were stale by the time they were read; corrected here against
+# the file's own contents rather than left to mislead the next reader.
 
 compiler_bench | perf | alden | needs `cargo test --release` and a larger stack: in a debug build the interpreted fibonacci case overflows the default test stack (RUST_MIN_STACK=64M fixes it) and blake3/1MB measures 54 MB/s against a threshold set for release builds — 14/15 pass, the failure is the build profile, not the code | 2027-01-31
 timing_aead | perf | alden | dudect-style distribution measurement; needs an idle host, runs on demand with --ignored | 2027-01-31
