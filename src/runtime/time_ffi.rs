@@ -82,20 +82,17 @@ mod tests {
 
 /// Monotonic clock in NANOSECONDS (`time.monotonic()`).
 ///
-/// CLOCK_MONOTONIC: never jumps backwards on an NTP step, which is the whole
-/// point of using it for elapsed-time measurement. The interpreter returns the
-/// same unit (stdlib/time.tl: `-> u64`, "monotonic nanoseconds").
+/// `Instant` is monotonic on every supported target and needs no platform
+/// `libc` binding — the previous `libc::clock_gettime(CLOCK_MONOTONIC)` did not
+/// exist on Windows and broke that target's build.
+///
+/// The epoch is the first call in this process, not boot: `monotonic()` only
+/// promises never to go backwards, and callers use differences, so the origin
+/// is irrelevant. The interpreter returns the same unit (stdlib/time.tl:
+/// `-> u64`, "monotonic nanoseconds").
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_time_monotonic_ns() -> i64 {
-    let mut ts = std::mem::MaybeUninit::<libc::timespec>::uninit();
-    // SAFETY: clock_gettime writes both fields on success; the return code is
-    // checked before the value is read.
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };
-    if rc != 0 {
-        return 0;
-    }
-    let ts = unsafe { ts.assume_init() };
-    (ts.tv_sec as i64)
-        .saturating_mul(1_000_000_000)
-        .saturating_add(ts.tv_nsec as i64)
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let origin = ORIGIN.get_or_init(std::time::Instant::now);
+    i64::try_from(origin.elapsed().as_nanos()).unwrap_or(i64::MAX)
 }
