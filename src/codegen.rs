@@ -455,6 +455,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("Mesh" | "mesh", "replay") => Some("MeshReplay".to_string()),
         ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
         ("crypto", "age_keygen") => Some("AgeKeypair".to_string()),
+        ("crypto", "generate_keypair") => Some("KeyPair".to_string()),
         ("crypto", "opaque_register_start") => Some("OpaqueRegistration".to_string()),
         ("crypto", "opaque_register_respond") => Some("OpaqueRegistrationResponse".to_string()),
         ("crypto", "opaque_register_finish") => Some("OpaqueRegistrationUpload".to_string()),
@@ -1730,6 +1731,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_age_keygen()\n");
         ir.push_str("declare ptr @tallow_age_encrypt(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_age_decrypt(ptr, ptr)\n");
+        ir.push_str("; KeyPair FFI — crypto.generate_keypair returns a KeyPair record\n");
+        ir.push_str("declare ptr @tallow_generate_keypair(ptr)\n");
         ir.push_str("; OPAQUE (RFC 9807) FFI — multi-value results are heap records\n");
         ir.push_str("declare ptr @tallow_opaque_suite()\n");
         ir.push_str("declare ptr @tallow_opaque_setup()\n");
@@ -2421,6 +2424,25 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.OpaqueLoginResult".to_string(),
+                }
+            });
+
+        // `KeyPair` — the return of `crypto.generate_keypair`. Field order
+        // mirrors `KeyPairRaw` in src/runtime/keypair_ffi.rs.
+        self.struct_layouts
+            .entry("KeyPair".to_string())
+            .or_insert_with(|| {
+                let names = ["algorithm", "public_key", "private_key"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.KeyPair".to_string(),
                 }
             });
 
@@ -12983,6 +13005,16 @@ void tallow_async_runtime_shutdown(void) {
                 elem_kind: self.array_literal_elem_kind(items)?,
             })),
             ExprKind::Ident(name) => {
+                // A whole struct value has no native display path: the string
+                // path would strlen the record pointer and print garbage (it did
+                // for `print(kp)`). Refuse and name the fix.
+                if let Some(struct_name) = self.variable_struct_types.get(name) {
+                    return Err(format!(
+                        "print() of a struct (`{name}`: {struct_name}) is not supported by the \
+                         native backend — the record would be read as a string. Print its fields \
+                         (`print({name}.<field>)`) or run with --interpret."
+                    ));
+                }
                 if self.variable_is_map.get(name).copied().unwrap_or(false) {
                     return Ok(Some(PrintCompositeRoute::Map {
                         keys_are_strings: self
@@ -14724,6 +14756,12 @@ void tallow_async_runtime_shutdown(void) {
                 // CDP `page.query_selector_all(...)` handles dispatch as
                 // "Element", so `for el in items { el.text() }` lowers too.
                 Some("ElementArray") => Some("Element".to_string()),
+                // `[]String` / `env.args()` / `fs.read_lines(...)`: the element is
+                // an owned string, so string methods on the loop variable must
+                // dispatch to the string lowering (without this, `for a in args
+                // { a.starts_with("-") }` fails with "unknown method for any
+                // statically-known kind" — argument parsing, i.e. every CLI).
+                Some("StringArray") => Some("String".to_string()),
                 _ => None,
             },
         );
@@ -14796,6 +14834,9 @@ void tallow_async_runtime_shutdown(void) {
                 .insert(binding.to_string(), (binding_ptr.clone(), LLType::I8Ptr));
             if let Some(kind) = &elem_browser_kind {
                 self.browser_variables.insert(binding.to_string(), kind.clone());
+                if kind == "String" {
+                    self.variable_is_string.insert(binding.to_string(), true);
+                }
             }
         } else {
             let binding_ptr = self.fresh_reg();
@@ -25081,6 +25122,40 @@ impl<'a> CodeGen<'a> {
                     &[
                         ("response", a0, LLType::I8Ptr),
                         ("state", a1, LLType::I8Ptr),
+                    ],
+                )?))
+            }
+            // `crypto.generate_keypair(algo?) -> KeyPair`
+            "generate_keypair" => {
+                let algo = match args.first() {
+                    Some(a) => {
+                        let v = self.emit_expr(&a.value)?;
+                        self.coerce_to_string(&v)?
+                    }
+                    None => self.intern_string(""),
+                };
+                let record = self.fresh_reg();
+                self.emit_line(&format!("{record} = call ptr @tallow_generate_keypair(ptr {algo})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load ptr, ptr {gep}"));
+                    cg.emit_line(&format!("call void @tallow_check_string(ptr {reg})"));
+                    reg
+                };
+                let alg = load(self, 0);
+                let pk = load(self, 8);
+                let sk = load(self, 16);
+                Ok(Some(self.build_plain_struct(
+                    "KeyPair",
+                    &[
+                        ("algorithm", alg, LLType::I8Ptr),
+                        ("public_key", pk, LLType::I8Ptr),
+                        ("private_key", sk, LLType::I8Ptr),
                     ],
                 )?))
             }
