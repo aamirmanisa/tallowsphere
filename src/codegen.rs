@@ -531,6 +531,11 @@ pub struct CodeGen<'a> {
 
     // Struct layouts: name → layout (BTreeMap for deterministic IR emission order)
     struct_layouts: BTreeMap<String, StructLayout>,
+    /// Declared function return KINDS (`[]String` -> `StringArray`, a struct
+    /// name -> itself). A call's result carries no shape of its own, so without
+    /// this `let pos = positional(argv)` binds an array with no kind: `.len`
+    /// strlen'd the length header (3 -> 1) and `pos[0]` printed an address.
+    fn_return_kinds: HashMap<String, String>,
 
     // Constants: name → (value_reg_or_literal, type)
     constants: HashMap<String, (String, LLType)>,
@@ -730,6 +735,7 @@ impl<'a> CodeGen<'a> {
                 .collect(),
             loop_stack: Vec::new(),
             struct_layouts: BTreeMap::new(),
+            fn_return_kinds: HashMap::new(),
             constants: HashMap::new(),
             enum_variants: HashMap::new(),
             enum_variant_fields: HashMap::new(),
@@ -782,7 +788,34 @@ impl<'a> CodeGen<'a> {
         // this, `fs.stat(...)`'s FileInfo has no `%struct.FileInfo` to build and
         // every field read on it fails to lower.
         cg.register_builtin_structs();
+        cg.collect_fn_return_kinds();
         cg
+    }
+
+    /// Record each function's declared return kind, unwrapping `Result<T>` /
+    /// `Option<T>`. This is what lets a CALL RESULT be typed: `let pos =
+    /// positional(argv)` has no annotation and no literal to inspect, so the
+    /// only source of truth is the callee's signature.
+    fn collect_fn_return_kinds(&mut self) {
+        for item in &self.program.items {
+            let Item::Fn(f) = item else { continue };
+            let Some(rt) = &f.return_type else { continue };
+            let mut ty = rt;
+            if let TypeExprKind::Generic { name, args } = &ty.kind {
+                if (name == "Result" || name == "Option") && args.len() == 1 {
+                    ty = &args[0];
+                }
+            }
+            if let Some(kind) = container_kind_of(ty) {
+                self.fn_return_kinds.insert(f.name.clone(), kind);
+                continue;
+            }
+            if let TypeExprKind::Named(n) = &ty.kind {
+                if n == "String" || n == "Bytes" || self.struct_layouts.contains_key(n.as_str()) {
+                    self.fn_return_kinds.insert(f.name.clone(), n.clone());
+                }
+            }
+        }
     }
 
     /// Register layouts for engine-provided structs, in declaration order from
@@ -802,6 +835,10 @@ impl<'a> CodeGen<'a> {
             ("is_dir", LLType::I1),
             ("modified", LLType::I64),
             ("created", LLType::I64),
+            // Alias kept by the interpreter's `do_stat` for programs written
+            // against the older runtime spelling. Declaring it here means the
+            // same source compiles on both planes instead of failing on one.
+            ("modified_at", LLType::I64),
         ]
         .into_iter()
         .enumerate()
@@ -4610,8 +4647,15 @@ void tallow_async_runtime_shutdown(void) {
         if sig.ret == LLType::Void {
             self.emit_line("ret void");
         } else if let Some(val) = result {
-            // Coerce implicit return to match function return type
-            if val.ty != sig.ret {
+            // A TAIL expression in a Result function is Ok(value), exactly like
+            // an explicit `return`: `Walk { .. }` as the last statement used to
+            // return the bare struct pointer, so the caller's `?` read the
+            // struct's first field as the tag and the next as the payload.
+            if sig.ret == LLType::ResultPtr && val.ty != LLType::ResultPtr {
+                let wrapped = self.wrap_ok_value(&val)?;
+                self.emit_line(&format!("ret ptr {}", wrapped.reg));
+            } else if val.ty != sig.ret {
+                // Coerce implicit return to match function return type
                 let coerced = self.coerce(&val, &sig.ret)?;
                 self.emit_line(&format!("ret {} {coerced}", sig.ret.to_ir()));
             } else {
@@ -4754,6 +4798,27 @@ void tallow_async_runtime_shutdown(void) {
                     if let TypeExprKind::Named(n) = &t.kind {
                         if self.struct_layouts.contains_key(n.as_str()) {
                             self.variable_struct_types.insert(name.clone(), n.clone());
+                        }
+                    }
+                }
+
+                // A plain call's result kind comes from the callee's DECLARATION:
+                // `let pos = positional(argv)` where positional returns []String.
+                // Without this the binding is an untyped pointer, so `.len()`
+                // strlen'd the length header (3 elements -> 1) and `pos[0]`
+                // printed the element address instead of the string.
+                if !self.variable_struct_types.contains_key(name)
+                    && !self.variable_is_array.contains_key(name)
+                {
+                    let mut expr: &Expr = value;
+                    while let ExprKind::Try(inner) = &expr.kind {
+                        expr = inner;
+                    }
+                    if let ExprKind::Call { callee, .. } = &expr.kind {
+                        if let ExprKind::Ident(fname) = &callee.kind {
+                            if let Some(kind) = self.fn_return_kinds.get(fname).cloned() {
+                                self.apply_binding_kind(name, &kind);
+                            }
                         }
                     }
                 }
@@ -5422,6 +5487,15 @@ void tallow_async_runtime_shutdown(void) {
                             self.emit_unhandled_result_exit1(&val);
                         }
                         self.emit_line("ret void");
+                    } else if *fn_ret == LLType::ResultPtr && val.ty != LLType::ResultPtr {
+                        // `fn f() -> Result<T> { return T { .. } }` used to
+                        // bitcast the value to a pointer and return it raw, so
+                        // the caller's `?` read the value's FIRST FIELD as the
+                        // tag and its SECOND as the payload — `job.root` then
+                        // pointed at a length prefix and strlen segfaulted.
+                        // A bare return in a Result function is Ok(value).
+                        let wrapped = self.wrap_ok_value(&val)?;
+                        self.emit_line(&format!("ret ptr {}", wrapped.reg));
                     } else if val.ty != *fn_ret {
                         let coerced = self.coerce(&val, fn_ret)?;
                         self.emit_line(&format!("ret {} {coerced}", fn_ret.to_ir()));
@@ -6524,6 +6598,40 @@ void tallow_async_runtime_shutdown(void) {
                         self.emit_line(&format!("store {} {store_val}, ptr {alloca}", ty.to_ir()));
                     }
                     Ok(val)
+                } else if let ExprKind::FieldAccess { object, field } = &target.kind {
+                    // `s.n = s.n + 1` used to fall into the discard branch below:
+                    // the value was computed and thrown away, so a counter field
+                    // stayed at its initial 0 while the program looked healthy.
+                    let obj = self.emit_expr(object)?;
+                    let val = self.emit_expr(value)?;
+                    let owner = if let ExprKind::Ident(n) = &object.kind {
+                        self.variable_struct_types.get(n).cloned()
+                    } else {
+                        self.infer_kind(object)
+                    };
+                    let layout = owner
+                        .and_then(|o| self.struct_layouts.get(&o).cloned())
+                        .ok_or_else(|| {
+                            format!(
+                                "field assignment `.{field}`: the receiver has no known struct \
+                                 layout on the native plane; annotate the binding with its \
+                                 struct type, or run with --interpret"
+                            )
+                        })?;
+                    let (idx, fty) = layout.field_map.get(field).cloned().ok_or_else(|| {
+                        format!(
+                            "field assignment `.{field}`: {} has no such field",
+                            layout.llvm_name
+                        )
+                    })?;
+                    let coerced = self.coerce(&val, &fty)?;
+                    let gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{gep} = getelementptr inbounds {}, ptr {}, i32 0, i32 {idx}",
+                        layout.llvm_name, obj.reg
+                    ));
+                    self.emit_line(&format!("store {} {coerced}, ptr {gep}", fty.to_ir()));
+                    Ok(val)
                 } else {
                     let val = self.emit_expr(value)?;
                     Ok(val)
@@ -6767,9 +6875,25 @@ void tallow_async_runtime_shutdown(void) {
                         "br i1 {is_err}, label %{err_label}, label %{ok_label}"
                     ));
 
-                    // Error path: propagate by returning the Result ptr
+                    // Error path: propagate by returning the Result ptr — except
+                    // in a non-Result function, where there is nothing to return
+                    // it to. There the `?` must fail loudly; `ret ptr` inside a
+                    // `define void` is an LLVM type error at link time.
                     self.body.push_str(&format!("{err_label}:\n"));
-                    self.emit_line(&format!("ret ptr {}", result.reg));
+                    if self.current_fn_ret == Some(LLType::Void) {
+                        let msg = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{msg} = getelementptr %struct.TallowResult, ptr {}, i64 0, i32 1",
+                            result.reg
+                        ));
+                        let payload = self.fresh_reg();
+                        self.emit_line(&format!("{payload} = load i64, ptr {msg}"));
+                        let as_ptr = self.fresh_reg();
+                        self.emit_line(&format!("{as_ptr} = inttoptr i64 {payload} to ptr"));
+                        self.emit_fatal_exit1("error: ", &as_ptr);
+                    } else {
+                        self.emit_line(&format!("ret ptr {}", result.reg));
+                    }
 
                     // Ok path: extract value
                     self.body.push_str(&format!("{ok_label}:\n"));
@@ -22257,6 +22381,70 @@ void tallow_async_runtime_shutdown(void) {
         Ok(LLValue::new(object, LLType::I8Ptr))
     }
 
+    /// Wrap a bare value as `Ok(value)` — a 24-byte TallowResult with tag 0.
+    ///
+    /// Used where a `Result<T>` function returns a plain `T`: `?` on the caller
+    /// side needs a tag to read, and without one it read the payload struct's own
+    /// fields as tag and value.
+    fn wrap_ok_value(&mut self, val: &LLValue) -> Result<LLValue, String> {
+        let p = self.fresh_reg();
+        self.emit_line(&format!("{p} = call ptr @malloc(i64 24)"));
+        let tag_g = self.fresh_reg();
+        self.emit_line(&format!(
+            "{tag_g} = getelementptr %struct.TallowResult, ptr {p}, i64 0, i32 0"
+        ));
+        self.emit_line(&format!("store i64 0, ptr {tag_g}"));
+        let payload = if val.ty == LLType::I8Ptr {
+            let i = self.fresh_reg();
+            self.emit_line(&format!("{i} = ptrtoint ptr {} to i64", val.reg));
+            i
+        } else {
+            self.coerce_to_i64(val)?
+        };
+        let val_g = self.fresh_reg();
+        self.emit_line(&format!(
+            "{val_g} = getelementptr %struct.TallowResult, ptr {p}, i64 0, i32 1"
+        ));
+        self.emit_line(&format!("store i64 {payload}, ptr {val_g}"));
+        let vt_g = self.fresh_reg();
+        self.emit_line(&format!(
+            "{vt_g} = getelementptr %struct.TallowResult, ptr {p}, i64 0, i32 2"
+        ));
+        let vtype = if val.ty == LLType::I8Ptr { 2 } else { 0 };
+        self.emit_line(&format!("store i64 {vtype}, ptr {vt_g}"));
+        Ok(LLValue::new(p, LLType::ResultPtr))
+    }
+
+    /// Apply a statically known result kind to a newly bound variable.
+    ///
+    /// One place for the three flag sets that make a binding behave: a
+    /// `StringArray` needs the array flag, the pointer-element flag and the
+    /// browser kind; a struct name feeds field access; `String` makes `if s`
+    /// test emptiness. Each of the three was previously set (or forgotten) in a
+    /// different arm — the reason `pos.len()` and `pos[i]` disagreed.
+    fn apply_binding_kind(&mut self, name: &str, kind: &str) {
+        match kind {
+            "StringArray" => {
+                self.browser_variables
+                    .insert(name.to_string(), "StringArray".to_string());
+                self.variable_array_elem_is_ptr.insert(name.to_string(), true);
+                self.variable_is_array.insert(name.to_string(), true);
+            }
+            "Bytes" => {
+                self.browser_variables
+                    .insert(name.to_string(), "Bytes".to_string());
+            }
+            "String" => {
+                self.variable_is_string.insert(name.to_string(), true);
+            }
+            other if self.struct_layouts.contains_key(other) => {
+                self.variable_struct_types
+                    .insert(name.to_string(), other.to_string());
+            }
+            _ => {}
+        }
+    }
+
     fn build_result_struct(
         &mut self,
         layout_name: &str,
@@ -24638,7 +24826,8 @@ impl<'a> CodeGen<'a> {
         let real_fail = self.fresh_reg();
         self.emit_line(&format!("{real_fail} = and i1 {failed}, {not_exists}"));
         self.emit_libc_fail(&real_fail, "fs.mkdir: ");
-        Ok(LLValue::new("0".to_string(), LLType::I64))
+        // Declared `-> Result<()>`: hand back Ok(nil) so `?` sees a real tag.
+        self.wrap_ok_value(&LLValue::new("null".to_string(), LLType::I8Ptr))
     }
 
     /// `fs.rename(from, to)` -> Nil via libc `rename()`.
@@ -24664,8 +24853,37 @@ impl<'a> CodeGen<'a> {
         let path_val = self.emit_expr(&args[0].value)?;
         let path_str = self.coerce_to_string(&path_val)?;
 
+        // The interpreter's fs.delete is RECURSIVE for directories
+        // (`remove_dir_all`). Plain `remove(3)` only unlinks an EMPTY directory,
+        // so `move` deleted every file and then failed to remove the tree it had
+        // just emptied — a copy-then-delete contract that quietly broke.
+        let is_dir = self.fresh_reg();
+        self.emit_line(&format!(
+            "{is_dir} = call i32 @tallow_fs_is_dir(ptr {path_str})"
+        ));
+        let dir_b = self.fresh_reg();
+        self.emit_line(&format!("{dir_b} = icmp sgt i32 {is_dir}, 0"));
+        let dir_label = self.fresh_label("del.dir");
+        let file_label = self.fresh_label("del.file");
+        let done_label = self.fresh_label("del.done");
+        self.emit_line(&format!(
+            "br i1 {dir_b}, label %{dir_label}, label %{file_label}"
+        ));
+        self.body.push_str(&format!("{dir_label}:\n"));
+        let rc_dir = self.fresh_reg();
+        self.emit_line(&format!(
+            "{rc_dir} = call i32 @tallow_fs_remove_dir_all(ptr {path_str})"
+        ));
+        self.emit_line(&format!("br label %{done_label}"));
+        self.body.push_str(&format!("{file_label}:\n"));
+        let rc_file = self.fresh_reg();
+        self.emit_line(&format!("{rc_file} = call i32 @remove(ptr {path_str})"));
+        self.emit_line(&format!("br label %{done_label}"));
+        self.body.push_str(&format!("{done_label}:\n"));
         let rc = self.fresh_reg();
-        self.emit_line(&format!("{rc} = call i32 @remove(ptr {path_str})"));
+        self.emit_line(&format!(
+            "{rc} = phi i32 [ {rc_dir}, %{dir_label} ], [ {rc_file}, %{file_label} ]"
+        ));
         let failed = self.fresh_reg();
         self.emit_line(&format!("{failed} = icmp slt i32 {rc}, 0"));
         self.emit_libc_fail(&failed, "fs.delete: ");
@@ -24775,6 +24993,7 @@ impl<'a> CodeGen<'a> {
             ("is_dir", is_dir_b, LLType::I1),
             ("modified", slots[3].clone(), LLType::I64),
             ("created", slots[4].clone(), LLType::I64),
+            ("modified_at", slots[3].clone(), LLType::I64),
         ];
         self.build_result_struct("FileInfo", &fields, "true")
     }
@@ -24804,7 +25023,11 @@ impl<'a> CodeGen<'a> {
         self.emit_line(&format!("{err_reg} = call ptr @tallow_last_error()"));
         self.emit_fatal_exit1("fs.list_dir: ", &err_reg);
         self.body.push_str(&format!("{ok_b}:\n"));
-        Ok(LLValue::new(arr, LLType::I8Ptr))
+        // Declared `-> Result<[]String>`: wrap, or the caller's `?` reads the
+        // array's LENGTH slot as a tag and its first element as the payload
+        // (`entries.len()` then answered 474214444641 — the bytes of a filename).
+        let ok_ptr = LLValue::new(arr, LLType::I8Ptr);
+        self.wrap_ok_value(&ok_ptr)
     }
 
     /// `fs.read_lines(path)` -> native string array, via `tallow_fs_read_lines`.
