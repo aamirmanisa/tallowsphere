@@ -23,11 +23,22 @@ fn workdir() -> PathBuf {
 }
 
 fn tallow_run(dir: &Path, body: &str, name: &str) -> (bool, Vec<String>, String) {
+    tallow_run_with(dir, body, name, true)
+}
+
+fn tallow_run_with(
+    dir: &Path,
+    body: &str,
+    name: &str,
+    interpret: bool,
+) -> (bool, Vec<String>, String) {
     let p = dir.join(name);
     let src = format!("fn main() {{\n{body}}}\n");
     std::fs::write(&p, src).expect("write program");
-    let out = Command::new(env!("CARGO_BIN_EXE_tallow"))
-        .args(["run", "--interpret"])
+    let mut c = Command::new(env!("CARGO_BIN_EXE_tallow"));
+    c.arg("run");
+    c.arg(if interpret { "--interpret" } else { "--require-native" });
+    let out = c
         .arg(&p)
         .output()
         .expect("run tallow");
@@ -205,4 +216,37 @@ fn each_part_is_a_real_age_container() {
     let whole = std::fs::read(&src).expect("src");
     assert_eq!(&out.stdout[..], &whole[..1_048_576]);
     let _ = sk;
+}
+
+#[test]
+fn the_native_plane_runs_the_chunked_transfer() {
+    let dir = workdir();
+    let (pk, sk) = keypair(&dir);
+    let src = source_file(&dir, 2_500_000);
+    let out_dir = dir.join("out_native");
+    let dst = dir.join("dst_native.bin");
+
+    let (ok, out, err) = tallow_run_with(
+        &dir,
+        &format!(
+            "    let e = crypto.age_encrypt_dir(\"{pk}\", \"{}\", \"{}\", 1048576)\n    print(e.parts)\n    let d = crypto.age_decrypt_dir(\"{sk}\", \"{}\", \"{}\")\n    print(d.parts)\n    print(d.total_len)\n",
+            src.display(),
+            out_dir.display(),
+            out_dir.display(),
+            dst.display()
+        ),
+        "native.tl",
+        false,
+    );
+    assert!(ok, "--require-native must run the transfer: {out:?}\n{err}");
+    assert!(
+        !err.contains("no native lowering"),
+        "the lowering must exist, not fall back: {err}"
+    );
+    assert_eq!(out, vec!["3", "3", "2500000"]);
+    assert_eq!(
+        std::fs::read(&src).expect("src"),
+        std::fs::read(&dst).expect("dst"),
+        "the native transfer must reassemble byte-identically"
+    );
 }

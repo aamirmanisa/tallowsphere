@@ -457,6 +457,8 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
         ("crypto", "age_keygen") => Some("AgeKeypair".to_string()),
         ("crypto", "generate_keypair") => Some("KeyPair".to_string()),
+        ("crypto", "age_encrypt_dir") => Some("AgeStreamEncrypted".to_string()),
+        ("crypto", "age_decrypt_dir") => Some("AgeStreamDecrypted".to_string()),
         ("crypto", "opaque_register_start") => Some("OpaqueRegistration".to_string()),
         ("crypto", "opaque_register_respond") => Some("OpaqueRegistrationResponse".to_string()),
         ("crypto", "opaque_register_finish") => Some("OpaqueRegistrationUpload".to_string()),
@@ -803,6 +805,30 @@ impl<'a> CodeGen<'a> {
         self.struct_layouts
             .entry("FileInfo".to_string())
             .or_insert(file_info);
+
+        // `FileCopy.copy_metadata` -> CopyResult (stdlib/transfer.tl:503)
+        let mut copy_result = StructLayout {
+            fields: Vec::new(),
+            field_map: HashMap::new(),
+            field_kinds: HashMap::new(),
+            llvm_name: "%struct.CopyResult".to_string(),
+        };
+        for (idx, (name, ty)) in [
+            ("bytes_copied", LLType::I64),
+            ("metadata_preserved", LLType::I1),
+            ("mtime_preserved", LLType::I1),
+            ("src", LLType::I8Ptr),
+            ("dst", LLType::I8Ptr),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            copy_result.fields.push(name.to_string());
+            copy_result.field_map.insert(name.to_string(), (idx, ty));
+        }
+        self.struct_layouts
+            .entry("CopyResult".to_string())
+            .or_insert(copy_result);
     }
 
     /// Set the source directory for resolving local imports.
@@ -1595,6 +1621,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_fs_read_lines(ptr)\n");
         ir.push_str("declare ptr @tallow_fs_list_dir(ptr)\n");
         ir.push_str("declare i32 @tallow_fs_stat(ptr, ptr)\n");
+        ir.push_str("declare i64 @tallow_filecopy_copy_metadata(ptr, ptr, ptr)\n");
+        ir.push_str("declare i64 @tallow_time_monotonic_ns()\n");
         ir.push_str("declare ptr @tallow_fs_read_bytes(ptr)\n");
         ir.push_str("declare i32 @tallow_fs_write_bytes(ptr, ptr)\n");
         // `Bytes` value surface (src/runtime/fs_ffi.rs, t_70cad4f2): a `Bytes`
@@ -1772,6 +1800,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_age_decrypt(ptr, ptr)\n");
         ir.push_str("; KeyPair FFI — crypto.generate_keypair returns a KeyPair record\n");
         ir.push_str("declare ptr @tallow_generate_keypair(ptr)\n");
+        ir.push_str("; age chunked transfer FFI\n");
+        ir.push_str("declare ptr @tallow_age_encrypt_dir(ptr, ptr, ptr, i64)\n");
+        ir.push_str("declare ptr @tallow_age_decrypt_dir(ptr, ptr, ptr)\n");
         ir.push_str("; OPAQUE (RFC 9807) FFI — multi-value results are heap records\n");
         ir.push_str("declare ptr @tallow_opaque_suite()\n");
         ir.push_str("declare ptr @tallow_opaque_setup()\n");
@@ -2463,6 +2494,41 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.OpaqueLoginResult".to_string(),
+                }
+            });
+
+        // Chunked transfer records — layouts mirror src/runtime/age_stream_ffi.rs.
+        self.struct_layouts
+            .entry("AgeStreamEncrypted".to_string())
+            .or_insert_with(|| {
+                let names = ["parts", "resumed_from", "digest"];
+                let types = [LLType::I64, LLType::I64, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.AgeStreamEncrypted".to_string(),
+                }
+            });
+
+        self.struct_layouts
+            .entry("AgeStreamDecrypted".to_string())
+            .or_insert_with(|| {
+                let names = ["parts", "total_len"];
+                let types = [LLType::I64, LLType::I64];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.AgeStreamDecrypted".to_string(),
                 }
             });
 
@@ -4376,6 +4442,14 @@ void tallow_async_runtime_shutdown(void) {
 
         // Track array and struct type info from function parameter type annotations
         for param in &func.params {
+            // A parameter declared with a struct type (`fn f(job: Job)`) carries
+            // that type for field reads; without it `job.root` has no layout.
+            if let TypeExprKind::Named(n) = &param.ty.kind {
+                if self.struct_layouts.contains_key(n.as_str()) {
+                    self.variable_struct_types
+                        .insert(param.name.clone(), n.clone());
+                }
+            }
             if let TypeExprKind::Slice(inner) = &param.ty.kind {
                 // []T parameter — mark as array
                 self.variable_is_array.insert(param.name.clone(), true);
@@ -4495,11 +4569,21 @@ void tallow_async_runtime_shutdown(void) {
                 // (`info.is_dir`) has no layout on the native plane.
                 if let ExprKind::Try(inner) = &value.kind {
                     if let ExprKind::MethodCall { object, method, .. } = &inner.kind {
-                        if method == "stat"
-                            && matches!(&object.kind, ExprKind::Ident(o) if o == "fs")
-                        {
-                            self.variable_struct_types
-                                .insert(name.clone(), "FileInfo".to_string());
+                        if matches!(&object.kind, ExprKind::Ident(o) if o == "fs") {
+                            match method.as_str() {
+                                "stat" => {
+                                    self.variable_struct_types
+                                        .insert(name.clone(), "FileInfo".to_string());
+                                }
+                                "list_dir" | "readdir" | "read_lines" => {
+                                    self.browser_variables
+                                        .insert(name.clone(), "StringArray".to_string());
+                                    self.variable_array_elem_is_ptr
+                                        .insert(name.clone(), true);
+                                    self.variable_is_array.insert(name.clone(), true);
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -4540,6 +4624,18 @@ void tallow_async_runtime_shutdown(void) {
                 {
                     self.variable_struct_types
                         .insert(name.clone(), struct_name.clone());
+                }
+
+                // `let x: Foo = ...` — an explicit annotation is the strongest
+                // signal there is, so it wins over inference. Without it a
+                // function's declared return type is lost at the binding site and
+                // `x.field` fails with "no known struct layout".
+                if let Some(t) = ty {
+                    if let TypeExprKind::Named(n) = &t.kind {
+                        if self.struct_layouts.contains_key(n.as_str()) {
+                            self.variable_struct_types.insert(name.clone(), n.clone());
+                        }
+                    }
                 }
 
                 // A call whose static result kind names a registered struct
@@ -6564,7 +6660,34 @@ void tallow_async_runtime_shutdown(void) {
                     ));
                     let val = self.fresh_reg();
                     self.emit_line(&format!("{val} = load i64, ptr {val_gep}"));
-                    Ok(LLValue::new(val, LLType::I64))
+                    // The payload slot is a bare i64, but a String / array /
+                    // handle / struct payload IS a pointer. Returning I64 there
+                    // made `fs.list_dir(p)?[0]` emit `getelementptr i64, ptr %i64`
+                    // — an LLVM type error at the very end of the build. Recover
+                    // the pointer from the statically known result kind.
+                    let payload_kind = self.infer_kind(inner);
+                    let wants_ptr = match payload_kind.as_deref() {
+                        Some(k) => {
+                            Self::is_handle_kind(k)
+                                || self.struct_layouts.contains_key(k)
+                                || matches!(
+                                    k,
+                                    "String"
+                                        | "Bytes"
+                                        | "StringArray"
+                                        | "BytesArray"
+                                        | "ResultArray"
+                                )
+                        }
+                        None => false,
+                    };
+                    if wants_ptr {
+                        let ptr = self.fresh_reg();
+                        self.emit_line(&format!("{ptr} = inttoptr i64 {val} to ptr"));
+                        Ok(LLValue::new(ptr, LLType::I8Ptr))
+                    } else {
+                        Ok(LLValue::new(val, LLType::I64))
+                    }
                 } else {
                     // Not a Result — just pass through
                     Ok(result)
@@ -8605,7 +8728,8 @@ void tallow_async_runtime_shutdown(void) {
             match module_name.as_str() {
                 "math" | "env" | "time" | "fs" | "json" | "crypto" | "http" | "net" | "db"
                 | "compress" | "regex" | "rand" | "log" | "process" | "url" | "provenance"
-                | "browser" | "Browser" | "llm" | "Llm" | "Mesh" | "mesh" => {
+                | "browser" | "Browser" | "llm" | "Llm" | "Mesh" | "mesh"
+                | "FileCopy" | "filecopy" => {
                     if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
                         return Ok(result);
                     }
@@ -12773,6 +12897,19 @@ void tallow_async_runtime_shutdown(void) {
             // compiled binary that answers `0` is silently wrong while looking
             // fine. Failing the native build makes `tallow run` fall back to the
             // interpreter, which is the reference semantics.
+            // `[]String` is a PLAIN native array ([len][slots]) that also carries
+            // the `StringArray` kind, so generic array mutations must run here —
+            // otherwise every `arr.push(x)` on a string array refuses the build
+            // even though native arrays support push.
+            ("StringArray", "push") => {
+                if let Some(arg) = args.first() {
+                    let val = self.emit_expr(&arg.value)?;
+                    let val_i64 = self.coerce_to_i64(&val)?;
+                    return self.emit_array_push(&obj, &val_i64);
+                }
+                Ok(obj.clone())
+            }
+            ("StringArray", "reverse") => return self.emit_array_reverse(&obj),
             (kind, method) if Self::is_handle_kind(kind) => Err(format!(
                 "native backend has no lowering for stdlib method '{kind}.{method}'; \
                  failing loudly so the interpreter runs it"
@@ -22180,6 +22317,7 @@ impl<'a> CodeGen<'a> {
             "log" => self.emit_stdlib_log(method, args),
             "provenance" => self.emit_stdlib_provenance(method, args),
             "Transfer" | "transfer" => self.emit_stdlib_transfer(method, args),
+            "FileCopy" | "filecopy" => self.emit_stdlib_transfer(method, args),
             "process" => self.emit_stdlib_process(method, args),
             "url" => self.emit_stdlib_url(method, args),
             "browser" | "Browser" => self.emit_stdlib_browser(method, args),
@@ -23960,6 +24098,13 @@ impl<'a> CodeGen<'a> {
         args: &[CallArg],
     ) -> Result<Option<LLValue>, String> {
         match method {
+            // time.monotonic() -> nanoseconds on CLOCK_MONOTONIC. Same unit as
+            // the interpreter (stdlib/time.tl declares u64 nanoseconds).
+            "monotonic" => {
+                let reg = self.fresh_reg();
+                self.emit_line(&format!("{reg} = call i64 @tallow_time_monotonic_ns()"));
+                Ok(Some(LLValue::new(reg, LLType::I64)))
+            }
             "now" => {
                 // time.now() -> milliseconds since the Unix epoch.
                 //
@@ -25094,6 +25239,55 @@ impl<'a> CodeGen<'a> {
                 self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
                 Ok(Some(LLValue::new(result, LLType::I8Ptr)))
             }
+            // `FileCopy.copy_metadata(src, dst)` -> CopyResult. Kernel copy plus
+            // mtime/permission preservation; the flags say which parts landed.
+            "copy_metadata" => {
+                let (Some(a0), Some(a1)) = (args.first(), args.get(1)) else {
+                    return Ok(None);
+                };
+                let v0 = self.emit_expr(&a0.value)?;
+                let src = self.coerce_to_string(&v0)?;
+                let v1 = self.emit_expr(&a1.value)?;
+                let dst = self.coerce_to_string(&v1)?;
+
+                let buf = self.fresh_reg();
+                self.emit_line(&format!("{buf} = alloca [2 x i64]"));
+                let bytes = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{bytes} = call i64 @tallow_filecopy_copy_metadata(ptr {src}, ptr {dst}, ptr {buf})"
+                ));
+                let failed = self.fresh_reg();
+                self.emit_line(&format!("{failed} = icmp slt i64 {bytes}, 0"));
+                let ok_b = self.fresh_label("copyok");
+                let fail_b = self.fresh_label("copyfail");
+                self.emit_line(&format!("br i1 {failed}, label %{fail_b}, label %{ok_b}"));
+                self.body.push_str(&format!("{fail_b}:\n"));
+                let err_reg = self.fresh_reg();
+                self.emit_line(&format!("{err_reg} = call ptr @tallow_last_error()"));
+                self.emit_fatal_exit1("FileCopy.copy_metadata: ", &err_reg);
+                self.body.push_str(&format!("{ok_b}:\n"));
+
+                let mut flags = Vec::new();
+                for slot in 0..2 {
+                    let p = self.fresh_reg();
+                    self.emit_line(&format!("{p} = getelementptr i64, ptr {buf}, i64 {slot}"));
+                    let raw = self.fresh_reg();
+                    self.emit_line(&format!("{raw} = load i64, ptr {p}"));
+                    let b = self.fresh_reg();
+                    self.emit_line(&format!("{b} = icmp ne i64 {raw}, 0"));
+                    flags.push(b);
+                }
+                Ok(Some(self.build_plain_struct(
+                    "CopyResult",
+                    &[
+                        ("bytes_copied", bytes, LLType::I64),
+                        ("metadata_preserved", flags[0].clone(), LLType::I1),
+                        ("mtime_preserved", flags[1].clone(), LLType::I1),
+                        ("src", src.clone(), LLType::I8Ptr),
+                        ("dst", dst.clone(), LLType::I8Ptr),
+                    ],
+                )?))
+            }
             // `Transfer.chunk(path, chunk_size = 262144)` -> []ChunkInfo.
             //
             // The runtime builds the array as `[count][ptrtoint(ChunkInfo)…]`
@@ -25333,6 +25527,71 @@ impl<'a> CodeGen<'a> {
                         ("state", a1, LLType::I8Ptr),
                     ],
                 )?))
+            }
+            // `crypto.age_encrypt_dir(recipient, src, out_dir, chunk?)`
+            "age_encrypt_dir" | "age_decrypt_dir" => {
+                let want = if method == "age_encrypt_dir" { 3 } else { 3 };
+                if args.len() < want {
+                    return Err(format!("crypto.{method} needs at least {want} arguments"));
+                }
+                let mut vals = Vec::new();
+                for a in args.iter().take(3) {
+                    let v = self.emit_expr(&a.value)?;
+                    vals.push(self.coerce_to_string(&v)?);
+                }
+                let record = self.fresh_reg();
+                if method == "age_encrypt_dir" {
+                    let chunk = match args.get(3) {
+                        Some(a) => {
+                            let v = self.emit_expr(&a.value)?;
+                            self.coerce_to_i64(&v)?
+                        }
+                        None => "0".to_string(),
+                    };
+                    self.emit_line(&format!(
+                        "{record} = call ptr @tallow_age_encrypt_dir(ptr {}, ptr {}, ptr {}, i64 {chunk})",
+                        vals[0], vals[1], vals[2]
+                    ));
+                } else {
+                    self.emit_line(&format!(
+                        "{record} = call ptr @tallow_age_decrypt_dir(ptr {}, ptr {}, ptr {})",
+                        vals[0], vals[1], vals[2]
+                    ));
+                }
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64, ty: &LLType| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+                    LLValue::new(reg, ty.clone())
+                };
+                if method == "age_encrypt_dir" {
+                    let parts = load(self, 0, &LLType::I64);
+                    let resumed = load(self, 8, &LLType::I64);
+                    let digest = load(self, 16, &LLType::I8Ptr);
+                    self.emit_line(&format!("call void @tallow_check_string(ptr {})", digest.reg));
+                    Ok(Some(self.build_plain_struct(
+                        "AgeStreamEncrypted",
+                        &[
+                            ("parts", parts.reg, LLType::I64),
+                            ("resumed_from", resumed.reg, LLType::I64),
+                            ("digest", digest.reg, LLType::I8Ptr),
+                        ],
+                    )?))
+                } else {
+                    let parts = load(self, 0, &LLType::I64);
+                    let total = load(self, 8, &LLType::I64);
+                    Ok(Some(self.build_plain_struct(
+                        "AgeStreamDecrypted",
+                        &[
+                            ("parts", parts.reg, LLType::I64),
+                            ("total_len", total.reg, LLType::I64),
+                        ],
+                    )?))
+                }
             }
             // `crypto.generate_keypair(algo?) -> KeyPair`
             "generate_keypair" => {

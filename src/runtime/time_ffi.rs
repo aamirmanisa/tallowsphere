@@ -79,3 +79,23 @@ mod tests {
         assert_eq!(tallow_time_parse_iso(s.as_ptr()), TIME_PARSE_FAILED);
     }
 }
+
+/// Monotonic clock in NANOSECONDS (`time.monotonic()`).
+///
+/// CLOCK_MONOTONIC: never jumps backwards on an NTP step, which is the whole
+/// point of using it for elapsed-time measurement. The interpreter returns the
+/// same unit (stdlib/time.tl: `-> u64`, "monotonic nanoseconds").
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_time_monotonic_ns() -> i64 {
+    let mut ts = std::mem::MaybeUninit::<libc::timespec>::uninit();
+    // SAFETY: clock_gettime writes both fields on success; the return code is
+    // checked before the value is read.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };
+    if rc != 0 {
+        return 0;
+    }
+    let ts = unsafe { ts.assume_init() };
+    (ts.tv_sec as i64)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(ts.tv_nsec as i64)
+}

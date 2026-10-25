@@ -100,6 +100,55 @@ pub extern "C" fn tallow_fs_read_lines(path: *const c_char) -> *mut c_void {
     }
 }
 
+/// `FileCopy.copy_metadata(src, dst)` -> bytes copied (or -1 with
+/// `tallow_last_error`), `out[0] = metadata_preserved`, `out[1] = mtime_preserved`.
+///
+/// Same steps as the interpreter's `copy_with_metadata`: kernel copy, then mtime
+/// via `File::set_times`, then the source's permission bits. The flags report
+/// what actually succeeded, so a caller can tell "copied" from "copied with
+/// metadata" instead of assuming.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_filecopy_copy_metadata(
+    src: *const c_char,
+    dst: *const c_char,
+    out: *mut i64,
+) -> i64 {
+    let (Some(src), Some(dst)) = (unsafe { cstr_to_str(src) }, unsafe { cstr_to_str(dst) }) else {
+        set_last_error("copy_metadata: expected string paths".to_string());
+        return -1;
+    };
+    let bytes = match std::fs::copy(src, dst) {
+        Ok(b) => b as i64,
+        Err(e) => {
+            set_last_error(format!("copy failed: {e}"));
+            return -1;
+        }
+    };
+    let mut mtime_preserved = false;
+    let mut perms_preserved = false;
+    if let Ok(meta) = std::fs::metadata(src) {
+        if let Ok(mtime) = meta.modified() {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(dst) {
+                let times = std::fs::FileTimes::new().set_modified(mtime);
+                if f.set_times(times).is_ok() {
+                    mtime_preserved = true;
+                }
+            }
+        }
+        #[cfg(unix)]
+        {
+            if std::fs::set_permissions(dst, meta.permissions()).is_ok() {
+                perms_preserved = true;
+            }
+        }
+    }
+    unsafe {
+        *out.add(0) = i64::from(mtime_preserved || perms_preserved);
+        *out.add(1) = i64::from(mtime_preserved);
+    }
+    bytes
+}
+
 /// `fs.stat(path)` -> fills `out[0..5] = [size, is_file, is_dir, modified, created]`
 /// (epoch seconds; `created` falls back to `modified`, as the interpreter does)
 /// and returns 0, or -1 with `tallow_last_error` set.
