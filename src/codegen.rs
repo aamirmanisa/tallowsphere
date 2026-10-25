@@ -3784,15 +3784,6 @@ void tallow_async_runtime_shutdown(void) {
                     if self.struct_layouts.contains_key(elem_name.as_str()) {
                         self.variable_array_element_type
                             .insert(param.name.clone(), elem_name.clone());
-                    } else if elem_name == "String" {
-                        // A `[]String` parameter holds pointer elements. Without
-                        // this flag `for a in args` binds `a` as a bare i64 and
-                        // any string method on it (`a.starts_with("-")`) has no
-                        // lowering — a very common shape in argument parsing.
-                        self.variable_array_elem_is_ptr
-                            .insert(param.name.clone(), true);
-                        self.browser_variables
-                            .insert(param.name.clone(), "StringArray".to_string());
                     }
                 }
             } else if let TypeExprKind::Named(type_name) = &param.ty.kind {
@@ -14756,12 +14747,6 @@ void tallow_async_runtime_shutdown(void) {
                 // CDP `page.query_selector_all(...)` handles dispatch as
                 // "Element", so `for el in items { el.text() }` lowers too.
                 Some("ElementArray") => Some("Element".to_string()),
-                // `[]String` / `env.args()` / `fs.read_lines(...)`: the element is
-                // an owned string, so string methods on the loop variable must
-                // dispatch to the string lowering (without this, `for a in args
-                // { a.starts_with("-") }` fails with "unknown method for any
-                // statically-known kind" — argument parsing, i.e. every CLI).
-                Some("StringArray") => Some("String".to_string()),
                 _ => None,
             },
         );
@@ -14834,9 +14819,6 @@ void tallow_async_runtime_shutdown(void) {
                 .insert(binding.to_string(), (binding_ptr.clone(), LLType::I8Ptr));
             if let Some(kind) = &elem_browser_kind {
                 self.browser_variables.insert(binding.to_string(), kind.clone());
-                if kind == "String" {
-                    self.variable_is_string.insert(binding.to_string(), true);
-                }
             }
         } else {
             let binding_ptr = self.fresh_reg();
