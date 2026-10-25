@@ -1,0 +1,32 @@
+# cargo-audit configuration — read by `cargo audit` and by the
+# rustsec/audit-check action in CI.
+#
+# This is the second half of a two-file record. `deny.toml` covers the
+# cargo-deny gate; this file covers `cargo audit`, which resolves the lockfile
+# including optional-feature crates that cargo-deny's feature resolution can miss.
+# The reason for every entry below lives in
+# docs/operations/dependency-exceptions-2026-10-25.md — read it before changing
+# anything here. Same expiry: 2027-01-31.
+[advisories]
+ignore = [
+    # crypto-bigint 0.5.5 — timing variability. Reached via elliptic-curve 0.13
+    # <- p256 <- hpke/age, and via opaque-ke/voprf. Our OPAQUE is Ristretto255;
+    # the P-256 use is HPKE with ephemeral keys. No upgrade exists: age 0.12.1
+    # and opaque-ke 4.0.1 both pin elliptic-curve 0.13.
+    "RUSTSEC-2026-0387",
+
+    # ── the libcrux set, all 0.0.7/0.0.8, all pinned by tfhe 1.8.2 ──────────
+    # These crates are compiled only for `--features fhe`. No shipped artifact
+    # enables FHE; the feature jobs build it to prove the bindings. They are
+    # patched upstream (libcrux-sha3 >= 0.0.10, libcrux-secrets >= 0.0.6,
+    # libcrux-aesgcm >= 0.0.9) but tfhe has not moved onto those lines.
+    # Delete every entry here in the commit that bumps tfhe past the pins.
+    "RUSTSEC-2026-0207",  # libcrux-sha3 0.0.8 — incremental SHAKE wrong output
+    "RUSTSEC-2026-0208",  # libcrux-sha3 0.0.8 — AVX2 SHAKE-256 panic
+    "RUSTSEC-2026-0209",  # libcrux-aesgcm 0.0.7 — AAD length not enforced
+    "RUSTSEC-2026-0211",  # libcrux-aesgcm 0.0.7 — non-constant-time tag check
+    "RUSTSEC-2026-0212",  # libcrux-secrets 0.0.5 — ct swap/select wrong on aarch64
+    "RUSTSEC-2026-0124",  # libcrux-chacha20poly1305 0.0.7 — panic on overlong buffer
+    "RUSTSEC-2026-0330",  # libcrux-kem 0.0.7 — panic on short seed
+    "RUSTSEC-2026-0331",  # libcrux-kem 0.0.7 — panic on short hybrid keys
+]
