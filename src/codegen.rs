@@ -820,13 +820,16 @@ impl<'a> CodeGen<'a> {
                     // interpreter printed `true` (tallowsphere#wave-3 defect).
                     match n.as_str() {
                         "bool" | "Bool" => {
-                            self.fn_return_kinds.insert(f.name.clone(), "bool".to_string());
+                            self.fn_return_kinds
+                                .insert(f.name.clone(), "bool".to_string());
                         }
                         "Int" | "int" | "i64" | "i32" => {
-                            self.fn_return_kinds.insert(f.name.clone(), "i64".to_string());
+                            self.fn_return_kinds
+                                .insert(f.name.clone(), "i64".to_string());
                         }
                         "Float" | "float" | "f64" => {
-                            self.fn_return_kinds.insert(f.name.clone(), "f64".to_string());
+                            self.fn_return_kinds
+                                .insert(f.name.clone(), "f64".to_string());
                         }
                         _ => {}
                     }
@@ -1077,12 +1080,20 @@ impl<'a> CodeGen<'a> {
                 // (FSEventStream*), SystemConfiguration. Without them the link
                 // ends in "Undefined symbols for architecture arm64".
                 cmd.args([
-                    "-lpthread", "-lm", "-lc++", "-lz",
-                    "-framework", "Security",
-                    "-framework", "CoreFoundation",
-                    "-framework", "CoreServices",
-                    "-framework", "SystemConfiguration",
-                    "-framework", "IOKit",
+                    "-lpthread",
+                    "-lm",
+                    "-lc++",
+                    "-lz",
+                    "-framework",
+                    "Security",
+                    "-framework",
+                    "CoreFoundation",
+                    "-framework",
+                    "CoreServices",
+                    "-framework",
+                    "SystemConfiguration",
+                    "-framework",
+                    "IOKit",
                 ]);
             } else if !cg.target.is_wasm {
                 // -lz: codegen emits zlib compress2/uncompress for compress.deflate/inflate.
@@ -1092,7 +1103,14 @@ impl<'a> CodeGen<'a> {
                 // -lstdc++: the staticlib carries BoringSSL/btls-sys C++ objects
                 // (stealth-http → wreq); their vtables/exceptions need libstdc++.
                 cmd.args([
-                    "-lpthread", "-ldl", "-lm", "-lssl", "-lcrypto", "-lz", "-llzma", "-lbz2",
+                    "-lpthread",
+                    "-ldl",
+                    "-lm",
+                    "-lssl",
+                    "-lcrypto",
+                    "-lz",
+                    "-llzma",
+                    "-lbz2",
                     "-lstdc++",
                 ]);
             }
@@ -1453,7 +1471,9 @@ void tallow_async_runtime_shutdown(void) {
             ("AntibotResolveReport", "steps", "AntibotStepArray"),
         ] {
             if let Some(layout) = self.struct_layouts.get_mut(record) {
-                layout.field_kinds.insert(field.to_string(), kind.to_string());
+                layout
+                    .field_kinds
+                    .insert(field.to_string(), kind.to_string());
             }
         }
         self.collect_enums();
@@ -1788,7 +1808,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_page_resolve_antibot(ptr, ptr)\n");
         ir.push_str("declare i64 @tallow_page_wait_for_timeout_ms(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_page_register_handler(ptr, ptr, ptr)\n");
-        ir.push_str("declare i32 @tallow_page_pump(ptr)\n");        ir.push_str("declare i32 @tallow_page_expose_binding(ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_page_pump(ptr)\n");
+        ir.push_str("declare i32 @tallow_page_expose_binding(ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_query_selector_all(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_page_scroll_by(ptr, double, double)\n");
@@ -2821,12 +2842,7 @@ void tallow_async_runtime_shutdown(void) {
             .entry("Output".to_string())
             .or_insert_with(|| {
                 let names = ["stdout", "stderr", "exit_code", "success"];
-                let types = [
-                    LLType::I8Ptr,
-                    LLType::I8Ptr,
-                    LLType::I32,
-                    LLType::I1,
-                ];
+                let types = [LLType::I8Ptr, LLType::I8Ptr, LLType::I32, LLType::I1];
                 let mut field_map = HashMap::new();
                 for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
                     field_map.insert((*name).to_string(), (i, ty.clone()));
@@ -2841,7 +2857,9 @@ void tallow_async_runtime_shutdown(void) {
 
         // `ExposedBinding` / `ExposedFunction` — the receipts of expose_*:
         // {name, handler, flag}. Same collection gap as EventListener.
-        for (struct_name, flag_field) in [("ExposedBinding", "bound"), ("ExposedFunction", "exposed")] {
+        for (struct_name, flag_field) in
+            [("ExposedBinding", "bound"), ("ExposedFunction", "exposed")]
+        {
             self.struct_layouts
                 .entry(struct_name.to_string())
                 .or_insert_with(|| {
@@ -2860,67 +2878,92 @@ void tallow_async_runtime_shutdown(void) {
                 });
         }
 
-    // Antibot report shapes; `steps` is a native array of step pointers.
-    for (struct_name, names, kinds, extra_kind) in [
-        (
-            "AntibotResolveStep",
-            vec!["engine", "available", "ran", "note"],
-            vec![LLType::I8Ptr, LLType::I1, LLType::I1, LLType::I8Ptr],
-            None,
-        ),
-        (
-            "AntibotResolveReport",
-            vec!["url", "resolved", "final_status", "attempts", "body_hint", "steps"],
-            vec![
-                LLType::I8Ptr, LLType::I1, LLType::I64,
-                LLType::I64, LLType::I8Ptr, LLType::I8Ptr,
-            ],
-            Some(("steps", "AntibotStepArray")),
-        ),
-    ] {
+        // Antibot report shapes; `steps` is a native array of step pointers.
+        for (struct_name, names, kinds, extra_kind) in [
+            (
+                "AntibotResolveStep",
+                vec!["engine", "available", "ran", "note"],
+                vec![LLType::I8Ptr, LLType::I1, LLType::I1, LLType::I8Ptr],
+                None,
+            ),
+            (
+                "AntibotResolveReport",
+                vec![
+                    "url",
+                    "resolved",
+                    "final_status",
+                    "attempts",
+                    "body_hint",
+                    "steps",
+                ],
+                vec![
+                    LLType::I8Ptr,
+                    LLType::I1,
+                    LLType::I64,
+                    LLType::I64,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                ],
+                Some(("steps", "AntibotStepArray")),
+            ),
+        ] {
+            self.struct_layouts
+                .entry(struct_name.to_string())
+                .or_insert_with(|| {
+                    let mut field_map = HashMap::new();
+                    for (i, name) in names.iter().enumerate() {
+                        field_map.insert((*name).to_string(), (i, kinds[i].clone()));
+                    }
+                    let mut field_kinds = HashMap::new();
+                    if let Some((field, kind)) = extra_kind {
+                        field_kinds.insert(field.to_string(), kind.to_string());
+                    }
+                    StructLayout {
+                        fields: names.iter().map(|n| (*n).to_string()).collect(),
+                        field_map,
+                        field_kinds,
+                        llvm_name: format!("%struct.{struct_name}"),
+                    }
+                });
+        }
+
+        // `CdpCookie` — the element struct of `get_cookies()`. The interpreter
+        // omits `expires` for session cookies; the native struct always has it
+        // (0.0), which is why a parity program prints only the stable fields.
         self.struct_layouts
-            .entry(struct_name.to_string())
+            .entry("CdpCookie".to_string())
             .or_insert_with(|| {
+                let names = [
+                    "name",
+                    "value",
+                    "domain",
+                    "path",
+                    "same_site",
+                    "expires",
+                    "http_only",
+                    "secure",
+                ];
+                let kinds = [
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::F64,
+                    LLType::I1,
+                    LLType::I1,
+                ];
                 let mut field_map = HashMap::new();
                 for (i, name) in names.iter().enumerate() {
                     field_map.insert((*name).to_string(), (i, kinds[i].clone()));
                 }
-                let mut field_kinds = HashMap::new();
-                if let Some((field, kind)) = extra_kind {
-                    field_kinds.insert(field.to_string(), kind.to_string());
-                }
                 StructLayout {
                     fields: names.iter().map(|n| (*n).to_string()).collect(),
                     field_map,
-                    field_kinds,
-                    llvm_name: format!("%struct.{struct_name}"),
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.CdpCookie".to_string(),
                 }
             });
-    }
-
-    // `CdpCookie` — the element struct of `get_cookies()`. The interpreter
-    // omits `expires` for session cookies; the native struct always has it
-    // (0.0), which is why a parity program prints only the stable fields.
-    self.struct_layouts
-        .entry("CdpCookie".to_string())
-        .or_insert_with(|| {
-            let names = ["name", "value", "domain", "path", "same_site", "expires", "http_only", "secure"];
-            let kinds = [
-                LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr, LLType::I8Ptr,
-                LLType::F64, LLType::I1, LLType::I1,
-            ];
-            let mut field_map = HashMap::new();
-            for (i, name) in names.iter().enumerate() {
-                field_map.insert((*name).to_string(), (i, kinds[i].clone()));
-            }
-            StructLayout {
-                fields: names.iter().map(|n| (*n).to_string()).collect(),
-                field_map,
-                field_kinds: HashMap::new(),
-                llvm_name: "%struct.CdpCookie".to_string(),
-            }
-        });
-
 
         // `EventListener` — the registration receipt (`kind`, `handler`, `active`).
         // Same collection gap as PageEvent: a program never names the type, but
@@ -3306,10 +3349,8 @@ void tallow_async_runtime_shutdown(void) {
                 }
                 Some(ConstEvalValue::Bool(b)) => {
                     folded.insert(name.clone(), ConstEvalValue::Bool(b));
-                    self.constants.insert(
-                        name,
-                        (if b { "1".into() } else { "0".into() }, LLType::I1),
-                    );
+                    self.constants
+                        .insert(name, (if b { "1".into() } else { "0".into() }, LLType::I1));
                 }
                 None => {
                     // Not a compile-time-foldable numeric expression.
@@ -3365,11 +3406,7 @@ void tallow_async_runtime_shutdown(void) {
     }
 
     /// Apply a binary operator to two constant values, promoting int↔float.
-    fn const_fold_value(
-        op: BinOp,
-        l: ConstEvalValue,
-        r: ConstEvalValue,
-    ) -> Option<ConstEvalValue> {
+    fn const_fold_value(op: BinOp, l: ConstEvalValue, r: ConstEvalValue) -> Option<ConstEvalValue> {
         // Boolean logic / equality.
         if let (ConstEvalValue::Bool(a), ConstEvalValue::Bool(b)) = (l, r) {
             return match op {
@@ -4073,7 +4110,10 @@ void tallow_async_runtime_shutdown(void) {
                         self.browser_variables
                             .insert(param.name.clone(), "StringArray".to_string());
                         if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
-                            eprintln!("[codegen] param {}: []String tracked as pointer elements", param.name);
+                            eprintln!(
+                                "[codegen] param {}: []String tracked as pointer elements",
+                                param.name
+                            );
                         }
                     }
                     if self.struct_layouts.contains_key(elem_name.as_str()) {
@@ -4208,7 +4248,7 @@ void tallow_async_runtime_shutdown(void) {
             _ => {
                 return Err("spawn: compiled mode supports `spawn <fn-name>(…)` only \
                             (computed callees are interpreter-only — run with `tallow run`)"
-                    .into())
+                    .into());
             }
         };
         let sig = match self.functions.get(&name).cloned() {
@@ -4217,7 +4257,7 @@ void tallow_async_runtime_shutdown(void) {
                 return Err(format!(
                     "spawn: unknown function `{name}` in compiled mode — interpreter-only \
                      (run with `tallow run`)"
-                ))
+                ));
             }
         };
         if sig.params.len() != args.len() {
@@ -4231,12 +4271,7 @@ void tallow_async_runtime_shutdown(void) {
         for (pname, ty) in &sig.params {
             if !matches!(
                 ty,
-                LLType::I64
-                    | LLType::I8Ptr
-                    | LLType::F64
-                    | LLType::I1
-                    | LLType::I8
-                    | LLType::I32
+                LLType::I64 | LLType::I8Ptr | LLType::F64 | LLType::I1 | LLType::I8 | LLType::I32
             ) {
                 return Err(format!(
                     "spawn: unsupported parameter type `{}` for `{pname}` in compiled mode \
@@ -4410,7 +4445,9 @@ void tallow_async_runtime_shutdown(void) {
 
         // ── Task entry: `define ptr @<name>.task(ptr %args)` ────────────────
         // ABI matches the C runtime's `void *(*)(void *)` task type.
-        out.push_str(&format!("define ptr @{task_mangled}(ptr %args) #0 {{\nentry:\n"));
+        out.push_str(&format!(
+            "define ptr @{task_mangled}(ptr %args) #0 {{\nentry:\n"
+        ));
         let mut call_args: Vec<String> = Vec::new();
         for (i, (pname, ty)) in sig.params.iter().enumerate() {
             let offset = i * 8;
@@ -4433,20 +4470,14 @@ void tallow_async_runtime_shutdown(void) {
                     let w = reg();
                     out.push_str(&format!("  {w} = load i64, ptr {gep}\n"));
                     let v = reg();
-                    out.push_str(&format!(
-                        "  {v} = trunc i64 {w} to {}\n",
-                        ty.to_ir()
-                    ));
+                    out.push_str(&format!("  {v} = trunc i64 {w} to {}\n", ty.to_ir()));
                     call_args.push(format!("{} {v}", ty.to_ir()));
                 }
                 _ => {
                     let w = reg();
                     out.push_str(&format!("  {w} = load i64, ptr {gep}\n"));
                     let v = reg();
-                    out.push_str(&format!(
-                        "  {v} = trunc i64 {w} to {}\n",
-                        ty.to_ir()
-                    ));
+                    out.push_str(&format!("  {v} = trunc i64 {w} to {}\n", ty.to_ir()));
                     call_args.push(format!("{} {v}", ty.to_ir()));
                 }
             }
@@ -4471,10 +4502,7 @@ void tallow_async_runtime_shutdown(void) {
                 LLType::I64 => (r, "0"),
                 LLType::I32 | LLType::I8 => {
                     let x = reg();
-                    out.push_str(&format!(
-                        "  {x} = sext {} {r} to i64\n",
-                        sig.ret.to_ir()
-                    ));
+                    out.push_str(&format!("  {x} = sext {} {r} to i64\n", sig.ret.to_ir()));
                     (x, "0")
                 }
                 LLType::I1 => {
@@ -4641,7 +4669,10 @@ void tallow_async_runtime_shutdown(void) {
                         self.browser_variables
                             .insert(param.name.clone(), "StringArray".to_string());
                         if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
-                            eprintln!("[codegen] param {}: []String tracked as pointer elements", param.name);
+                            eprintln!(
+                                "[codegen] param {}: []String tracked as pointer elements",
+                                param.name
+                            );
                         }
                     }
                     if self.struct_layouts.contains_key(elem_name.as_str()) {
@@ -4762,8 +4793,7 @@ void tallow_async_runtime_shutdown(void) {
                                 "list_dir" | "readdir" | "read_lines" => {
                                     self.browser_variables
                                         .insert(name.clone(), "StringArray".to_string());
-                                    self.variable_array_elem_is_ptr
-                                        .insert(name.clone(), true);
+                                    self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                     self.variable_is_array.insert(name.clone(), true);
                                 }
                                 _ => {}
@@ -4783,7 +4813,10 @@ void tallow_async_runtime_shutdown(void) {
                     None => match &value.kind {
                         ExprKind::Ident(f) => self.functions.get(f).cloned().map(|sig| {
                             (
-                                sig.params.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
+                                sig.params
+                                    .iter()
+                                    .map(|(_, t)| t.clone())
+                                    .collect::<Vec<_>>(),
                                 sig.ret.clone(),
                             )
                         }),
@@ -4971,9 +5004,7 @@ void tallow_async_runtime_shutdown(void) {
                             // without the kind, a field common to both
                             // (`provider`, `elapsed_ms`…) cannot be resolved and
                             // the call refuses by name.
-                            if matches!(obj_name.as_str(), "llm" | "Llm")
-                                && method == "complete"
-                            {
+                            if matches!(obj_name.as_str(), "llm" | "Llm") && method == "complete" {
                                 self.browser_variables
                                     .insert(name.clone(), "Completion".to_string());
                             }
@@ -4981,9 +5012,7 @@ void tallow_async_runtime_shutdown(void) {
                                 self.browser_variables
                                     .insert(name.clone(), "VerifyReport".to_string());
                             }
-                            if matches!(obj_name.as_str(), "llm" | "Llm")
-                                && method == "providers"
-                            {
+                            if matches!(obj_name.as_str(), "llm" | "Llm") && method == "providers" {
                                 self.variable_is_array.insert(name.clone(), true);
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_array_elem_struct
@@ -5037,36 +5066,35 @@ void tallow_async_runtime_shutdown(void) {
                                         self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                         self.variable_is_array.insert(name.clone(), true);
                                     }
-                                    ("Page", "query_selector")
-                                    | ("Page", "wait_for_selector") => {
+                                    ("Page", "query_selector") | ("Page", "wait_for_selector") => {
                                         self.browser_variables
                                             .insert(name.clone(), "Element".to_string());
-                                        self.variable_result_payload_kind
-                                            .insert(name.clone(), 4);
+                                        self.variable_result_payload_kind.insert(name.clone(), 4);
                                     }
                                     // Result<String> arms: record the payload kind
                                     // so a later `match { Ok(c) => .. }` binds a
                                     // string rather than the raw pointer value.
-                                    ("Page", "title") | ("Page", "url") | ("Page", "evaluate")
+                                    ("Page", "title")
+                                    | ("Page", "url")
+                                    | ("Page", "evaluate")
                                     | ("Page", "evaluate_expression") => {
-                                        self.variable_result_payload_kind
-                                            .insert(name.clone(), 2);
+                                        self.variable_result_payload_kind.insert(name.clone(), 2);
                                     }
-                                    ("Element", "text") | ("Element", "inner_html")
-                                    | ("Element", "attribute") | ("Element", "tag_name")
-                                    | ("Element", "outer_html") | ("Element", "computed_style") => {
-                                        self.variable_result_payload_kind
-                                            .insert(name.clone(), 2);
+                                    ("Element", "text")
+                                    | ("Element", "inner_html")
+                                    | ("Element", "attribute")
+                                    | ("Element", "tag_name")
+                                    | ("Element", "outer_html")
+                                    | ("Element", "computed_style") => {
+                                        self.variable_result_payload_kind.insert(name.clone(), 2);
                                     }
                                     // `page.drain_events(...)` — native array of
                                     // PageEvent struct POINTERS. The element
                                     // struct is recorded so `evs[0].kind` GEPs
                                     // into the struct instead of printing 0.
                                     ("Page", "drain_events") => {
-                                        self.browser_variables.insert(
-                                            name.clone(),
-                                            "PageEventArray".to_string(),
-                                        );
+                                        self.browser_variables
+                                            .insert(name.clone(), "PageEventArray".to_string());
                                         self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                         self.variable_is_array.insert(name.clone(), true);
                                         self.variable_array_elem_struct
@@ -5075,10 +5103,8 @@ void tallow_async_runtime_shutdown(void) {
                                     // `page.get_cookies()` — same array shape, element
                                     // struct `CdpCookie`.
                                     ("Page", "get_cookies") => {
-                                        self.browser_variables.insert(
-                                            name.clone(),
-                                            "CookieArray".to_string(),
-                                        );
+                                        self.browser_variables
+                                            .insert(name.clone(), "CookieArray".to_string());
                                         self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                         self.variable_is_array.insert(name.clone(), true);
                                         self.variable_array_elem_struct
@@ -5092,8 +5118,7 @@ void tallow_async_runtime_shutdown(void) {
                                         // runtime/browser.rs), so index/iteration
                                         // must inttoptr or elements print as
                                         // raw addresses.
-                                        self.variable_array_elem_is_ptr
-                                            .insert(name.clone(), true);
+                                        self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                         self.variable_is_array.insert(name.clone(), true);
                                     }
                                     // Parsed-HTML handles keep their own kinds so
@@ -5108,10 +5133,8 @@ void tallow_async_runtime_shutdown(void) {
                                             .insert(name.clone(), "HtmlElement".to_string());
                                     }
                                     ("HtmlDocument", "select") => {
-                                        self.browser_variables.insert(
-                                            name.clone(),
-                                            "HtmlElementArray".to_string(),
-                                        );
+                                        self.browser_variables
+                                            .insert(name.clone(), "HtmlElementArray".to_string());
                                         self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                         self.variable_is_array.insert(name.clone(), true);
                                     }
@@ -5132,10 +5155,8 @@ void tallow_async_runtime_shutdown(void) {
                                         self.variable_is_array.insert(name.clone(), true);
                                     }
                                     ("HtmlElement", "children") => {
-                                        self.browser_variables.insert(
-                                            name.clone(),
-                                            "HtmlElementArray".to_string(),
-                                        );
+                                        self.browser_variables
+                                            .insert(name.clone(), "HtmlElementArray".to_string());
                                         self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                         self.variable_is_array.insert(name.clone(), true);
                                     }
@@ -5173,10 +5194,7 @@ void tallow_async_runtime_shutdown(void) {
                             // bounded worker pool), so the bound result tracks as
                             // "ResultArray" exactly like `http.batch`.
                             if matches!(method.as_str(), "map" | "map_ratelimited" | "pool_map")
-                                && self
-                                    .variable_struct_types
-                                    .get(obj_name)
-                                    .map(|s| s.as_str())
+                                && self.variable_struct_types.get(obj_name).map(|s| s.as_str())
                                     == Some("IPPool")
                             {
                                 self.browser_variables
@@ -5325,8 +5343,7 @@ void tallow_async_runtime_shutdown(void) {
                                 .copied()
                                 .unwrap_or(false)
                             {
-                                self.variable_array_elem_is_ptr
-                                    .insert(name.clone(), true);
+                                self.variable_array_elem_is_ptr.insert(name.clone(), true);
                             }
                         }
                     }
@@ -5397,9 +5414,16 @@ void tallow_async_runtime_shutdown(void) {
                 // callable after the defining frame is gone (#127).
                 let rhs_is_closure = matches!(&value.kind, ExprKind::Closure { .. });
                 let rhs_is_fn_ident = matches!(&value.kind, ExprKind::Ident(n) if self.functions.contains_key(n.as_str()));
-                let annotated_fn = matches!(ty, Some(t) if matches!(&t.kind, TypeExprKind::Function { .. }));
-                let val = if val.reg.starts_with('@') && (rhs_is_closure || rhs_is_fn_ident || annotated_fn) {
-                    let key = val.reg.trim_start_matches('@').trim_matches('"').to_string();
+                let annotated_fn =
+                    matches!(ty, Some(t) if matches!(&t.kind, TypeExprKind::Function { .. }));
+                let val = if val.reg.starts_with('@')
+                    && (rhs_is_closure || rhs_is_fn_ident || annotated_fn)
+                {
+                    let key = val
+                        .reg
+                        .trim_start_matches('@')
+                        .trim_matches('"')
+                        .to_string();
                     let env = self
                         .variable_closure_env
                         .get(&key)
@@ -5881,14 +5905,13 @@ void tallow_async_runtime_shutdown(void) {
                 };
                 if let Some(name) = payload_binding {
                     let obj = self.emit_expr(object)?;
-                    let layout = self
-                        .struct_layouts
-                        .get(&name)
-                        .cloned()
-                        .ok_or_else(|| format!("no layout for `{name}`, the Result payload struct"))?;
-                    let (idx, field_ty) = layout.field_map.get(field).cloned().ok_or_else(|| {
-                        format!("`{name}` has no field `{field}` (read from a Result payload)")
+                    let layout = self.struct_layouts.get(&name).cloned().ok_or_else(|| {
+                        format!("no layout for `{name}`, the Result payload struct")
                     })?;
+                    let (idx, field_ty) =
+                        layout.field_map.get(field).cloned().ok_or_else(|| {
+                            format!("`{name}` has no field `{field}` (read from a Result payload)")
+                        })?;
                     let err_l = self.fresh_label("L.result.err");
                     let ok_l = self.fresh_label("L.result.ok");
                     let tag_gep = self.fresh_reg();
@@ -5964,10 +5987,7 @@ void tallow_async_runtime_shutdown(void) {
                                 "tallow_response_body"
                             };
                             let r = self.fresh_reg();
-                            self.emit_line(&format!(
-                                "{r} = call ptr @{ffi}(ptr {})",
-                                obj.reg
-                            ));
+                            self.emit_line(&format!("{r} = call ptr @{ffi}(ptr {})", obj.reg));
                             return Ok(LLValue::new(r, LLType::I8Ptr));
                         }
                         _ => {}
@@ -6022,11 +6042,7 @@ void tallow_async_runtime_shutdown(void) {
                 // known struct — `xs[0].size`. The receiver is an Index, so the
                 // Ident lookup above cannot type it, and the fallthrough below
                 // returns a literal 0: a silent wrong answer, not an error.
-                if let ExprKind::Index {
-                    object: arr,
-                    index,
-                } = &object.kind
-                {
+                if let ExprKind::Index { object: arr, index } = &object.kind {
                     // The array may be a variable or a struct field —
                     // `r.checkpoints[0].wave`. The Ident lookup only covers the
                     // first; for the second, resolve the element kind from the
@@ -6040,7 +6056,8 @@ void tallow_async_runtime_shutdown(void) {
                     if let Some(struct_name) = elem_struct_name {
                         {
                             if let Some(layout) = self.struct_layouts.get(&struct_name).cloned() {
-                                if let Some((idx, field_ty)) = layout.field_map.get(field).cloned() {
+                                if let Some((idx, field_ty)) = layout.field_map.get(field).cloned()
+                                {
                                     let base = self.emit_expr(arr)?;
                                     let idx_val = self.emit_expr(index)?;
                                     let idx_i64 = self.coerce_to_i64(&idx_val)?;
@@ -6171,7 +6188,10 @@ void tallow_async_runtime_shutdown(void) {
                                 obj.reg
                             ));
                             let loaded = self.fresh_reg();
-                            self.emit_line(&format!("{loaded} = load {}, ptr {gep}", field_ty.to_ir()));
+                            self.emit_line(&format!(
+                                "{loaded} = load {}, ptr {gep}",
+                                field_ty.to_ir()
+                            ));
                             return Ok(LLValue::new(loaded, field_ty));
                         }
                     }
@@ -7093,9 +7113,7 @@ void tallow_async_runtime_shutdown(void) {
                 if obj.ty == LLType::I8Ptr {
                     // Array index: skip length prefix (element 0), so actual index = idx + 1
                     let offset = self.fresh_reg();
-                    self.emit_line(&format!(
-                        "{offset} = add i64 {idx_i64}, 1"
-                    ));
+                    self.emit_line(&format!("{offset} = add i64 {idx_i64}, 1"));
                     // E3 bounds check: load the array length (element 0) and compare.
                     // If idx >= len, print a message-bearing error and abort instead
                     // of a silent segfault (mirrors the interpreter's "index N out
@@ -7552,7 +7570,9 @@ void tallow_async_runtime_shutdown(void) {
         ));
 
         self.body.push_str(&format!("{l_check}:\n"));
-        self.emit_line(&format!("br i1 {is_float}, label %{l_float}, label %{l_ok}"));
+        self.emit_line(&format!(
+            "br i1 {is_float}, label %{l_float}, label %{l_ok}"
+        ));
 
         // Same sentence the interpreter prints, write-for-write.
         self.body.push_str(&format!("{l_not_number}:\n"));
@@ -7569,9 +7589,8 @@ void tallow_async_runtime_shutdown(void) {
         // A float is a number the interpreter would have returned; say so
         // instead of rounding it into an integer.
         self.body.push_str(&format!("{l_float}:\n"));
-        let fpre = self.intern_string(
-            "runtime error: .parse() lowers to an integer on the native plane; '",
-        );
+        let fpre = self
+            .intern_string("runtime error: .parse() lowers to an integer on the native plane; '");
         self.emit_stderr_write(&fpre);
         self.emit_stderr_write(&obj.reg);
         let fpost = self.intern_string("' is a float — use .to_float()");
@@ -7670,9 +7689,7 @@ void tallow_async_runtime_shutdown(void) {
 
         let is_null = self.fresh_reg();
         self.emit_line(&format!("{is_null} = icmp eq ptr {}, null", val.reg));
-        self.emit_line(&format!(
-            "br i1 {is_null}, label %{nil_l}, label %{box_l}"
-        ));
+        self.emit_line(&format!("br i1 {is_null}, label %{nil_l}, label %{box_l}"));
         self.emit_line(&format!("{nil_l}:"));
         self.emit_line(&format!("br label %{end_l}"));
 
@@ -7693,9 +7710,7 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!("{pay} = load i64, ptr {pay_gep}"));
         let is_str = self.fresh_reg();
         self.emit_line(&format!("{is_str} = icmp eq i64 {kind}, 1"));
-        self.emit_line(&format!(
-            "br i1 {is_str}, label %{str_l}, label %{num_l}"
-        ));
+        self.emit_line(&format!("br i1 {is_str}, label %{str_l}, label %{num_l}"));
 
         self.emit_line(&format!("{str_l}:"));
         let pay_null = self.fresh_reg();
@@ -7709,9 +7724,7 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!("{num_l}:"));
         let is_flt = self.fresh_reg();
         self.emit_line(&format!("{is_flt} = icmp eq i64 {kind}, 2"));
-        self.emit_line(&format!(
-            "br i1 {is_flt}, label %{flt_l}, label %{int_l}"
-        ));
+        self.emit_line(&format!("br i1 {is_flt}, label %{flt_l}, label %{int_l}"));
         self.emit_line(&format!("{flt_l}:"));
         let dbl = self.fresh_reg();
         self.emit_line(&format!("{dbl} = bitcast i64 {pay} to double"));
@@ -7755,7 +7768,12 @@ void tallow_async_runtime_shutdown(void) {
     /// `nil` is a null box. Two present boxes compare by kind and payload, so
     /// `false == false` holds while `false == nil` does not — the distinction
     /// the previous `i64` encoding could not make.
-    fn emit_optional_eq(&mut self, eq: bool, lhs: &LLValue, rhs: &LLValue) -> Result<LLValue, String> {
+    fn emit_optional_eq(
+        &mut self,
+        eq: bool,
+        lhs: &LLValue,
+        rhs: &LLValue,
+    ) -> Result<LLValue, String> {
         // A nil literal arrives as `i64 0`; everything else that is not an
         // optional is boxed, which is what the interpreter's value comparison
         // sees (`Bool(false)` against `Bool(false)`).
@@ -7847,9 +7865,7 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!("{kinds_l}:"));
         let is_str = self.fresh_reg();
         self.emit_line(&format!("{is_str} = icmp eq i64 {lk}, 1"));
-        self.emit_line(&format!(
-            "br i1 {is_str}, label %{str_l}, label %{flt_l}"
-        ));
+        self.emit_line(&format!("br i1 {is_str}, label %{str_l}, label %{flt_l}"));
         self.emit_line(&format!("{str_l}:"));
         let ls = self.fresh_reg();
         self.emit_line(&format!("{ls} = inttoptr i64 {lp} to ptr"));
@@ -8202,10 +8218,7 @@ void tallow_async_runtime_shutdown(void) {
                         false,
                     )
                 } else {
-                    (
-                        "runtime error: assertion failed: expected Err, got ",
-                        true,
-                    )
+                    ("runtime error: assertion failed: expected Err, got ", true)
                 };
                 let head_r = self.intern_string(head);
                 let tail = self.intern_string("\n");
@@ -8359,7 +8372,7 @@ void tallow_async_runtime_shutdown(void) {
                         // consumes an implicit LLVM slot and desyncs the
                         // fresh_reg numbering (seen: "%39 = alloca" rejected
                         // when %40 was expected).
-                        let  _usleep_rc = self.fresh_reg();
+                        let _usleep_rc = self.fresh_reg();
                         self.emit_line(&format!("{_usleep_rc} = call i32 @usleep(i32 {usec32})"));
                     }
                     return Ok(LLValue::new("0".into(), LLType::I64));
@@ -8644,9 +8657,11 @@ void tallow_async_runtime_shutdown(void) {
                                     // Statically-known method (e.g. DotIdent .POST):
                                     // capture the literal so we can avoid emitting it.
                                     if let ExprKind::DotIdent(d) = &named.value.kind {
-                                        method_name = Some(d.trim_start_matches('.').to_uppercase());
+                                        method_name =
+                                            Some(d.trim_start_matches('.').to_uppercase());
                                     } else if let ExprKind::Ident(d) = &named.value.kind {
-                                        method_name = Some(d.trim_start_matches('.').to_uppercase());
+                                        method_name =
+                                            Some(d.trim_start_matches('.').to_uppercase());
                                     } else {
                                         let mv = self.emit_expr(&named.value)?;
                                         method_str = Some(self.coerce_to_string(&mv)?);
@@ -8797,7 +8812,11 @@ void tallow_async_runtime_shutdown(void) {
                     let val = if wants_pair.get(i).copied().unwrap_or(false)
                         && val.reg.starts_with('@')
                     {
-                        let key = val.reg.trim_start_matches('@').trim_matches('"').to_string();
+                        let key = val
+                            .reg
+                            .trim_start_matches('@')
+                            .trim_matches('"')
+                            .to_string();
                         let env = self
                             .variable_closure_env
                             .get(&key)
@@ -9022,8 +9041,8 @@ void tallow_async_runtime_shutdown(void) {
             match module_name.as_str() {
                 "math" | "env" | "time" | "fs" | "json" | "crypto" | "http" | "net" | "db"
                 | "compress" | "regex" | "rand" | "log" | "process" | "url" | "provenance"
-                | "browser" | "Browser" | "llm" | "Llm" | "Mesh" | "mesh"
-                | "FileCopy" | "filecopy" => {
+                | "browser" | "Browser" | "llm" | "Llm" | "Mesh" | "mesh" | "FileCopy"
+                | "filecopy" => {
                     if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
                         return Ok(result);
                     }
@@ -9156,10 +9175,7 @@ void tallow_async_runtime_shutdown(void) {
         // `html.parse(b).select_one("h1").text()` are resolved by `infer_kind`
         // too. Falling through instead silently emits `0` while the interpreter
         // returns the real value.
-        if let Some(browser_kind) = self
-            .infer_kind(object)
-            .filter(|k| Self::is_handle_kind(k))
-        {
+        if let Some(browser_kind) = self.infer_kind(object).filter(|k| Self::is_handle_kind(k)) {
             let obj = self.emit_expr(object)?;
             let obj = if Self::is_result_method(method) {
                 obj
@@ -9189,10 +9205,7 @@ void tallow_async_runtime_shutdown(void) {
 
         // Map disambiguation (for .len/.size routing — a map must not hit strlen)
         let obj_is_map = if let ExprKind::Ident(var_name) = &object.kind {
-            self.variable_is_map
-                .get(var_name)
-                .copied()
-                .unwrap_or(false)
+            self.variable_is_map.get(var_name).copied().unwrap_or(false)
         } else {
             false
         };
@@ -9424,7 +9437,10 @@ void tallow_async_runtime_shutdown(void) {
                     let is_null = self.fresh_reg();
                     self.emit_line(&format!("{is_null} = icmp eq ptr {}, null", obj.reg));
                     let safe = self.fresh_reg();
-                    self.emit_line(&format!("{safe} = select i1 {is_null}, ptr {empty}, ptr {}", obj.reg));
+                    self.emit_line(&format!(
+                        "{safe} = select i1 {is_null}, ptr {empty}, ptr {}",
+                        obj.reg
+                    ));
                     let reg = self.fresh_reg();
                     self.emit_line(&format!("{reg} = call i64 @strlen(ptr {safe})"));
                     return Ok(LLValue::new(reg, LLType::I64));
@@ -10849,9 +10865,7 @@ void tallow_async_runtime_shutdown(void) {
     /// fields: `Status.Pending(reason: "..")`.
     fn expr_is_data_enum(&self, expr: &Expr) -> bool {
         match &expr.kind {
-            ExprKind::MethodCall {
-                object, method, ..
-            } => matches!(
+            ExprKind::MethodCall { object, method, .. } => matches!(
                 &object.kind,
                 ExprKind::Ident(enum_name)
                     if self.enum_variant_fields.get(enum_name).is_some_and(|variants| {
@@ -10860,9 +10874,7 @@ void tallow_async_runtime_shutdown(void) {
                             .any(|(v, fields)| v == method && !fields.is_empty())
                     })
             ),
-            ExprKind::Ident(name) => {
-                self.variable_data_enum.get(name).copied().unwrap_or(false)
-            }
+            ExprKind::Ident(name) => self.variable_data_enum.get(name).copied().unwrap_or(false),
             _ => false,
         }
     }
@@ -11065,7 +11077,10 @@ void tallow_async_runtime_shutdown(void) {
                 .get(v)
                 .copied()
                 .unwrap_or(false),
-            ExprKind::Array(items) => items.first().map(|i| self.expr_is_string_like(i)).unwrap_or(false),
+            ExprKind::Array(items) => items
+                .first()
+                .map(|i| self.expr_is_string_like(i))
+                .unwrap_or(false),
             // `split` always yields strings; `map`/`filter`/`flatten` inherit the
             // element shape of whatever they were called on (recursive, so
             // `doc.select("a").filter(...)[0]` still reads as an element).
@@ -11153,7 +11168,9 @@ void tallow_async_runtime_shutdown(void) {
         let err_i = self.fresh_reg();
         self.emit_line(&format!("{err_i} = ptrtoint ptr {err_ptr} to i64"));
         let stored = self.fresh_reg();
-        self.emit_line(&format!("{stored} = select i1 {is_null}, i64 {err_i}, i64 {as_i64}"));
+        self.emit_line(&format!(
+            "{stored} = select i1 {is_null}, i64 {err_i}, i64 {as_i64}"
+        ));
         self.emit_line(&format!("store i64 {stored}, ptr {val_gep}"));
         let vtype_gep = self.fresh_reg();
         self.emit_line(&format!(
@@ -11330,9 +11347,7 @@ void tallow_async_runtime_shutdown(void) {
         let l_absent = self.fresh_label("box_nil.absent");
         let l_found = self.fresh_label("box_nil.found");
         let l_done = self.fresh_label("box_nil.done");
-        self.emit_line(&format!(
-            "br i1 {is_err}, label %{l_err}, label %{l_check}"
-        ));
+        self.emit_line(&format!("br i1 {is_err}, label %{l_err}, label %{l_check}"));
         self.body.push_str(&format!("{l_check}:\n"));
         let is_abs = self.fresh_reg();
         self.emit_line(&format!("{is_abs} = icmp eq i32 {rc_reg}, 1"));
@@ -11574,7 +11589,10 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_line(&format!("{nav} = call ptr @malloc(i64 {size_i64})"));
 
                 let url_ptr = self.fresh_reg();
-                self.emit_line(&format!("{url_ptr} = call ptr @tallow_page_url(ptr {})", obj.reg));
+                self.emit_line(&format!(
+                    "{url_ptr} = call ptr @tallow_page_url(ptr {})",
+                    obj.reg
+                ));
                 let frame_ptr = self.fresh_reg();
                 self.emit_line(&format!(
                     "{frame_ptr} = call ptr @tallow_page_frame_id(ptr {})",
@@ -11621,7 +11639,9 @@ void tallow_async_runtime_shutdown(void) {
                 let err_i = self.fresh_reg();
                 self.emit_line(&format!("{err_i} = ptrtoint ptr {err_ptr} to i64"));
                 let payload = self.fresh_reg();
-                self.emit_line(&format!("{payload} = select i1 {ok}, i64 {nav_i}, i64 {err_i}"));
+                self.emit_line(&format!(
+                    "{payload} = select i1 {ok}, i64 {nav_i}, i64 {err_i}"
+                ));
                 self.emit_line(&format!("store i64 {payload}, ptr {val_gep}"));
                 let vtype_gep = self.fresh_reg();
                 self.emit_line(&format!(
@@ -11648,10 +11668,14 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let ok = self.fresh_reg();
                 self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
-                Ok(self.build_result_struct("VisionEmulation", &[
-                    ("kind", arg.clone(), LLType::I8Ptr),
-                    ("applied", "1".to_string(), LLType::I1),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "VisionEmulation",
+                    &[
+                        ("kind", arg.clone(), LLType::I8Ptr),
+                        ("applied", "1".to_string(), LLType::I1),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "emulate_media") => {
                 // Three optional arguments; the stdlib declares defaults, so a
@@ -11676,12 +11700,16 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let ok = self.fresh_reg();
                 self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
-                Ok(self.build_result_struct("MediaEmulation", &[
-                    ("media_type", vals[0].clone(), LLType::I8Ptr),
-                    ("color_scheme", vals[1].clone(), LLType::I8Ptr),
-                    ("reduced_motion", vals[2].clone(), LLType::I8Ptr),
-                    ("applied", "1".to_string(), LLType::I1),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "MediaEmulation",
+                    &[
+                        ("media_type", vals[0].clone(), LLType::I8Ptr),
+                        ("color_scheme", vals[1].clone(), LLType::I8Ptr),
+                        ("reduced_motion", vals[2].clone(), LLType::I8Ptr),
+                        ("applied", "1".to_string(), LLType::I1),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "throttle_network") => {
                 // Out-parameter, not a struct return: a 40-byte struct return
@@ -11689,9 +11717,7 @@ void tallow_async_runtime_shutdown(void) {
                 let preset = self.emit_expr(&args[0].value)?;
                 let preset_c = self.coerce(&preset, &LLType::I8Ptr)?;
                 let out = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{out} = call ptr @malloc(i64 40)"
-                ));
+                self.emit_line(&format!("{out} = call ptr @malloc(i64 40)"));
                 let status = self.fresh_reg();
                 self.emit_line(&format!(
                     "{status} = call i32 @tallow_page_throttle_network_preset(ptr {}, ptr {preset_c}, ptr {out})",
@@ -11712,12 +11738,16 @@ void tallow_async_runtime_shutdown(void) {
                 let latency = load(self, 1, &LLType::I64);
                 let down = load(self, 2, &LLType::I64);
                 let up = load(self, 3, &LLType::I64);
-                Ok(self.build_result_struct("NetworkThrottle", &[
-                    ("preset", preset_out.reg.clone(), LLType::I8Ptr),
-                    ("latency_ms", latency.reg.clone(), LLType::I64),
-                    ("download_kbps", down.reg.clone(), LLType::I64),
-                    ("upload_kbps", up.reg.clone(), LLType::I64),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "NetworkThrottle",
+                    &[
+                        ("preset", preset_out.reg.clone(), LLType::I8Ptr),
+                        ("latency_ms", latency.reg.clone(), LLType::I64),
+                        ("download_kbps", down.reg.clone(), LLType::I64),
+                        ("upload_kbps", up.reg.clone(), LLType::I64),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "wait_for_request") => {
                 let pattern = self.emit_expr(&args[0].value)?;
@@ -11754,21 +11784,25 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let url = self.fresh_reg();
                 self.emit_line(&format!("{url} = load ptr, ptr {url_gep}"));
-                Ok(self.build_result_struct("WaitResult", &[
-                    ("result", found_i1.clone(), LLType::I1),
-                    ("matched", found_i1.clone(), LLType::I1),
-                    // The interpreter's wait_result_fields sets `received` to Nil
-                    // here and carries the matched URL in `url`; boxing the URL
-                    // into a `bool?` slot was a different field with the same
-                    // name, not the same value.
-                    ("received", "null".to_string(), LLType::Optional),
-                    ("elapsed_ms", elapsed.clone(), LLType::I64),
-                    ("waited_ms", timeout.clone(), LLType::I64),
-                    ("url", url.clone(), LLType::I8Ptr),
-                    ("method", "null".to_string(), LLType::Optional),
-                    ("status", "null".to_string(), LLType::Optional),
-                    ("event", "null".to_string(), LLType::Optional),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", found_i1.clone(), LLType::I1),
+                        ("matched", found_i1.clone(), LLType::I1),
+                        // The interpreter's wait_result_fields sets `received` to Nil
+                        // here and carries the matched URL in `url`; boxing the URL
+                        // into a `bool?` slot was a different field with the same
+                        // name, not the same value.
+                        ("received", "null".to_string(), LLType::Optional),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", timeout.clone(), LLType::I64),
+                        ("url", url.clone(), LLType::I8Ptr),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", "null".to_string(), LLType::Optional),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "wait_for_response") => {
                 let pattern = self.emit_expr(&args[0].value)?;
@@ -11805,20 +11839,24 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let url = self.fresh_reg();
                 self.emit_line(&format!("{url} = load ptr, ptr {url_gep}"));
-                Ok(self.build_result_struct("WaitResult", &[
-                    ("result", found_i1.clone(), LLType::I1),
-                    ("matched", found_i1.clone(), LLType::I1),
-                    // The interpreter sets `received` from the observed flag for
-                    // a response wait (wait_result_fields extra). It previously
-                    // received the URL string, boxed into a bool? slot.
-                    ("received", found_i1.clone(), LLType::I1),
-                    ("elapsed_ms", elapsed.clone(), LLType::I64),
-                    ("waited_ms", timeout.clone(), LLType::I64),
-                    ("url", url.clone(), LLType::I8Ptr),
-                    ("method", "null".to_string(), LLType::Optional),
-                    ("status", "null".to_string(), LLType::Optional),
-                    ("event", "null".to_string(), LLType::Optional),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", found_i1.clone(), LLType::I1),
+                        ("matched", found_i1.clone(), LLType::I1),
+                        // The interpreter sets `received` from the observed flag for
+                        // a response wait (wait_result_fields extra). It previously
+                        // received the URL string, boxed into a bool? slot.
+                        ("received", found_i1.clone(), LLType::I1),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", timeout.clone(), LLType::I64),
+                        ("url", url.clone(), LLType::I8Ptr),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", "null".to_string(), LLType::Optional),
+                    ],
+                    &ok,
+                )?)
             }
             // Out-parameter marshalling (#118 shape): the FFI fills a flat
             // {status, body} struct, and the Result box is built from it so
@@ -11849,16 +11887,23 @@ void tallow_async_runtime_shutdown(void) {
                     obj.reg
                 ));
                 let status_ptr = self.fresh_reg();
-                self.emit_line(&format!("{status_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 0"));
+                self.emit_line(&format!(
+                    "{status_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 0"
+                ));
                 let status = self.fresh_reg();
                 self.emit_line(&format!("{status} = load i64, ptr {status_ptr}"));
                 let body_ptr = self.fresh_reg();
-                self.emit_line(&format!("{body_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 1"));
+                self.emit_line(&format!(
+                    "{body_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 1"
+                ));
                 let body_reg = self.fresh_reg();
                 self.emit_line(&format!("{body_reg} = load ptr, ptr {body_ptr}"));
                 self.build_result_struct(
                     "AuthenticatedResponse",
-                    &[("status", status, LLType::I64), ("body", body_reg, LLType::I8Ptr)],
+                    &[
+                        ("status", status, LLType::I64),
+                        ("body", body_reg, LLType::I8Ptr),
+                    ],
                     "true",
                 )
             }
@@ -11875,16 +11920,23 @@ void tallow_async_runtime_shutdown(void) {
                     obj.reg
                 ));
                 let status_ptr = self.fresh_reg();
-                self.emit_line(&format!("{status_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 0"));
+                self.emit_line(&format!(
+                    "{status_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 0"
+                ));
                 let status = self.fresh_reg();
                 self.emit_line(&format!("{status} = load i64, ptr {status_ptr}"));
                 let body_ptr = self.fresh_reg();
-                self.emit_line(&format!("{body_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 1"));
+                self.emit_line(&format!(
+                    "{body_ptr} = getelementptr %struct.AuthenticatedRaw, ptr {out}, i32 0, i32 1"
+                ));
                 let body_reg = self.fresh_reg();
                 self.emit_line(&format!("{body_reg} = load ptr, ptr {body_ptr}"));
                 self.build_result_struct(
                     "AuthenticatedResponse",
-                    &[("status", status, LLType::I64), ("body", body_reg, LLType::I8Ptr)],
+                    &[
+                        ("status", status, LLType::I64),
+                        ("body", body_reg, LLType::I8Ptr),
+                    ],
                     "true",
                 )
             }
@@ -11980,7 +12032,9 @@ void tallow_async_runtime_shutdown(void) {
                 let missing = self.fresh_reg();
                 self.emit_line(&format!("{missing} = icmp eq ptr {el}, null"));
                 let clicked = self.fresh_reg();
-                self.emit_line(&format!("{clicked} = call i32 @tallow_element_click(ptr {el})"));
+                self.emit_line(&format!(
+                    "{clicked} = call i32 @tallow_element_click(ptr {el})"
+                ));
                 // -1 when the selector matched nothing, so a silent no-op cannot
                 // look like success.
                 let status = self.fresh_reg();
@@ -12026,20 +12080,24 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let method = self.fresh_reg();
                 self.emit_line(&format!("{method} = load ptr, ptr {method_gep}"));
-                Ok(self.build_result_struct("WaitResult", &[
-                    ("result", found_i1.clone(), LLType::I1),
-                    ("matched", found_i1.clone(), LLType::I1),
-                    // wait_result_fields puts the observed event *name* in
-                    // `event`, leaves `method` Nil, and never fills `received`
-                    // for an event wait. It previously landed in all three.
-                    ("received", "null".to_string(), LLType::Optional),
-                    ("elapsed_ms", elapsed.clone(), LLType::I64),
-                    ("waited_ms", timeout.clone(), LLType::I64),
-                    ("url", "null".to_string(), LLType::Optional),
-                    ("method", "null".to_string(), LLType::Optional),
-                    ("status", "null".to_string(), LLType::Optional),
-                    ("event", method.clone(), LLType::I8Ptr),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", found_i1.clone(), LLType::I1),
+                        ("matched", found_i1.clone(), LLType::I1),
+                        // wait_result_fields puts the observed event *name* in
+                        // `event`, leaves `method` Nil, and never fills `received`
+                        // for an event wait. It previously landed in all three.
+                        ("received", "null".to_string(), LLType::Optional),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", timeout.clone(), LLType::I64),
+                        ("url", "null".to_string(), LLType::Optional),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", method.clone(), LLType::I8Ptr),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "wait_for_function") => {
                 let js = self.emit_expr(&args[0].value)?;
@@ -12070,17 +12128,21 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let elapsed = self.fresh_reg();
                 self.emit_line(&format!("{elapsed} = load i64, ptr {elapsed_gep}"));
-                Ok(self.build_result_struct("WaitResult", &[
-                    ("result", found_i1.clone(), LLType::I1),
-                    ("matched", found_i1.clone(), LLType::I1),
-                    ("received", "null".to_string(), LLType::Optional),
-                    ("elapsed_ms", elapsed.clone(), LLType::I64),
-                    ("waited_ms", timeout.clone(), LLType::I64),
-                    ("url", "null".to_string(), LLType::Optional),
-                    ("method", "null".to_string(), LLType::Optional),
-                    ("status", "null".to_string(), LLType::Optional),
-                    ("event", "null".to_string(), LLType::Optional),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", found_i1.clone(), LLType::I1),
+                        ("matched", found_i1.clone(), LLType::I1),
+                        ("received", "null".to_string(), LLType::Optional),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", timeout.clone(), LLType::I64),
+                        ("url", "null".to_string(), LLType::Optional),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", "null".to_string(), LLType::Optional),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "wait_for_url") => {
                 let pattern = self.emit_expr(&args[0].value)?;
@@ -12117,17 +12179,21 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let url = self.fresh_reg();
                 self.emit_line(&format!("{url} = load ptr, ptr {url_gep}"));
-                Ok(self.build_result_struct("WaitResult", &[
-                    ("result", found_i1.clone(), LLType::I1),
-                    ("matched", found_i1.clone(), LLType::I1),
-                    ("received", "null".to_string(), LLType::Optional),
-                    ("elapsed_ms", elapsed.clone(), LLType::I64),
-                    ("waited_ms", timeout.clone(), LLType::I64),
-                    ("url", url.clone(), LLType::I8Ptr),
-                    ("method", "null".to_string(), LLType::Optional),
-                    ("status", "null".to_string(), LLType::Optional),
-                    ("event", "null".to_string(), LLType::Optional),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", found_i1.clone(), LLType::I1),
+                        ("matched", found_i1.clone(), LLType::I1),
+                        ("received", "null".to_string(), LLType::Optional),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", timeout.clone(), LLType::I64),
+                        ("url", url.clone(), LLType::I8Ptr),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", "null".to_string(), LLType::Optional),
+                    ],
+                    &ok,
+                )?)
             }
             // Callback registration. The API registers a handler NAME; the
             // compiled world has no function table to look a runtime string up
@@ -12227,20 +12293,24 @@ void tallow_async_runtime_shutdown(void) {
             // JS bindings. Same wrapper machinery as on_*, but the runtime picks
             // the handler by the binding name carried in the event payload.
             ("Page", m @ ("expose_binding" | "expose_function")) => {
-                let (js_name, handler_name) = match (&args[0].value.kind, args.get(1).map(|a| &a.value.kind)) {
-                    (ExprKind::StringLit(n), Some(ExprKind::StringLit(h))) => (n.clone(), h.clone()),
-                    _ => {
-                        return Err(
-                            "expose_binding/expose_function require literal name and handler \
+                let (js_name, handler_name) =
+                    match (&args[0].value.kind, args.get(1).map(|a| &a.value.kind)) {
+                        (ExprKind::StringLit(n), Some(ExprKind::StringLit(h))) => {
+                            (n.clone(), h.clone())
+                        }
+                        _ => {
+                            return Err(
+                                "expose_binding/expose_function require literal name and handler \
                              arguments on the native plane: the compiled world cannot look a \
                              function up by runtime string"
-                                .to_string(),
-                        )
-                    }
-                };
+                                    .to_string(),
+                            );
+                        }
+                    };
                 let symbol = format!("tallow_cb_{}", mangle_name(&handler_name));
                 if !self.callback_wrappers.iter().any(|(sym, _)| *sym == symbol) {
-                    self.callback_wrappers.push((symbol.clone(), handler_name.clone()));
+                    self.callback_wrappers
+                        .push((symbol.clone(), handler_name.clone()));
                 }
                 let name_c = self.intern_string(&js_name);
                 let handler_c = self.intern_string(&handler_name);
@@ -12256,32 +12326,35 @@ void tallow_async_runtime_shutdown(void) {
                 } else {
                     ("ExposedFunction", "exposed")
                 };
-                Ok(self.build_result_struct(struct_name, &[
-                    ("name", name_c.clone(), LLType::I8Ptr),
-                    ("handler", handler_c, LLType::I8Ptr),
-                    (flag_name, "1".to_string(), LLType::I1),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    struct_name,
+                    &[
+                        ("name", name_c.clone(), LLType::I8Ptr),
+                        ("handler", handler_c, LLType::I8Ptr),
+                        (flag_name, "1".to_string(), LLType::I1),
+                    ],
+                    &ok,
+                )?)
             }
-            ("Page", m @ ("on_console"
-                    | "on_error"
-                    | "on_request"
-                    | "on_response"
-                    | "on_filechooser"
-                    | "on_download")) => {
-                let handler_name = match &args[0].value.kind {
-                    ExprKind::StringLit(n) => n.clone(),
-                    _ => {
-                        return Err(
+            (
+                "Page",
+                m @ ("on_console" | "on_error" | "on_request" | "on_response" | "on_filechooser"
+                | "on_download"),
+            ) => {
+                let handler_name =
+                    match &args[0].value.kind {
+                        ExprKind::StringLit(n) => n.clone(),
+                        _ => return Err(
                             "on_console requires a handler function name literal on the native \
                              plane: the compiled world cannot look a function up by runtime string"
                                 .to_string(),
-                        )
-                    }
-                };
+                        ),
+                    };
                 let kind = m.trim_start_matches("on_");
                 let symbol = format!("tallow_cb_{}", mangle_name(&handler_name));
                 if !self.callback_wrappers.iter().any(|(sym, _)| *sym == symbol) {
-                    self.callback_wrappers.push((symbol.clone(), handler_name.clone()));
+                    self.callback_wrappers
+                        .push((symbol.clone(), handler_name.clone()));
                 }
                 let kind_c = self.intern_string(kind);
                 let name_c = self.intern_string(&handler_name);
@@ -12292,11 +12365,15 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let ok = self.fresh_reg();
                 self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
-                Ok(self.build_result_struct("EventListener", &[
-                    ("kind", kind_c.clone(), LLType::I8Ptr),
-                    ("handler", name_c, LLType::I8Ptr),
-                    ("active", "1".to_string(), LLType::I1),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "EventListener",
+                    &[
+                        ("kind", kind_c.clone(), LLType::I8Ptr),
+                        ("handler", name_c, LLType::I8Ptr),
+                        ("active", "1".to_string(), LLType::I1),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "capture_console") => {
                 let status = self.fresh_reg();
@@ -12318,10 +12395,14 @@ void tallow_async_runtime_shutdown(void) {
                 ));
                 let ok = self.fresh_reg();
                 self.emit_line(&format!("{ok} = icmp eq i32 {status}, 0"));
-                Ok(self.build_result_struct("CpuThrottle", &[
-                    ("rate", rate_f, LLType::F64),
-                    ("applied", "1".to_string(), LLType::I1),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "CpuThrottle",
+                    &[
+                        ("rate", rate_f, LLType::F64),
+                        ("applied", "1".to_string(), LLType::I1),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "add_style_tag") => {
                 let arg = self.emit_expr(&args[0].value)?;
@@ -12334,10 +12415,14 @@ void tallow_async_runtime_shutdown(void) {
                 let ok = self.fresh_reg();
                 self.emit_line(&format!("{ok} = icmp ne ptr {tag}, null"));
                 let kind_c = self.intern_string("style");
-                Ok(self.build_result_struct("StyleTag", &[
-                    ("tag_id", tag, LLType::I8Ptr),
-                    ("kind", kind_c, LLType::I8Ptr),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "StyleTag",
+                    &[
+                        ("tag_id", tag, LLType::I8Ptr),
+                        ("kind", kind_c, LLType::I8Ptr),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "add_script_tag") | ("Page", "add_init_script") => {
                 let is_init = method == "add_init_script";
@@ -12357,12 +12442,16 @@ void tallow_async_runtime_shutdown(void) {
                 let ok = self.fresh_reg();
                 self.emit_line(&format!("{ok} = icmp ne ptr {tag}, null"));
                 let kind_c = self.intern_string(kind);
-                Ok(self.build_result_struct("ScriptTag", &[
-                    ("script_hash", format!("null"), LLType::I8Ptr),
-                    ("tag_id", tag, LLType::I8Ptr),
-                    ("injected", "0".to_string(), LLType::I1),
-                    ("kind", kind_c, LLType::I8Ptr),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "ScriptTag",
+                    &[
+                        ("script_hash", format!("null"), LLType::I8Ptr),
+                        ("tag_id", tag, LLType::I8Ptr),
+                        ("injected", "0".to_string(), LLType::I1),
+                        ("kind", kind_c, LLType::I8Ptr),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "content") => {
                 let reg = self.fresh_reg();
@@ -12626,17 +12715,21 @@ void tallow_async_runtime_shutdown(void) {
                 // `result`/`matched` stay nil: a plain sleep matched nothing, and
                 // the interpreter's wait_result_fields(None, ..) sets both to nil.
                 // Returning `true` here was a divergence the parity probe caught.
-                Ok(self.build_result_struct("WaitResult", &[
-                    ("result", "null".to_string(), LLType::Optional),
-                    ("matched", "null".to_string(), LLType::Optional),
-                    ("received", "null".to_string(), LLType::Optional),
-                    ("elapsed_ms", elapsed.clone(), LLType::I64),
-                    ("waited_ms", ms.clone(), LLType::I64),
-                    ("url", "null".to_string(), LLType::Optional),
-                    ("method", "null".to_string(), LLType::Optional),
-                    ("status", "null".to_string(), LLType::Optional),
-                    ("event", "null".to_string(), LLType::Optional),
-                ], &ok)?)
+                Ok(self.build_result_struct(
+                    "WaitResult",
+                    &[
+                        ("result", "null".to_string(), LLType::Optional),
+                        ("matched", "null".to_string(), LLType::Optional),
+                        ("received", "null".to_string(), LLType::Optional),
+                        ("elapsed_ms", elapsed.clone(), LLType::I64),
+                        ("waited_ms", ms.clone(), LLType::I64),
+                        ("url", "null".to_string(), LLType::Optional),
+                        ("method", "null".to_string(), LLType::Optional),
+                        ("status", "null".to_string(), LLType::Optional),
+                        ("event", "null".to_string(), LLType::Optional),
+                    ],
+                    &ok,
+                )?)
             }
             ("Page", "scroll_to_bottom") => {
                 let status = self.fresh_reg();
@@ -12783,9 +12876,7 @@ void tallow_async_runtime_shutdown(void) {
             // `visible` is an ALIAS of `is_visible` in the interpreter
             // (`("Element","visible") | ("Element","is_visible")`), so the alias must
             // lower too or it alone sends the program to the interpreter.
-            ("Element", "is_enabled")
-            | ("Element", "is_visible")
-            | ("Element", "visible") => {
+            ("Element", "is_enabled") | ("Element", "is_visible") | ("Element", "visible") => {
                 let ffi = if method == "is_enabled" {
                     "tallow_element_is_enabled"
                 } else {
@@ -13243,8 +13334,7 @@ void tallow_async_runtime_shutdown(void) {
                 "not a string; read its fields instead, or run without --require-native ",
                 "(the interpreter prints `Variant(payload)`)"
             )
-            .into(),
-            );
+            .into());
         }
 
         // ── Privacy enforcement: intercept print of private/secret values ──
@@ -13598,11 +13688,13 @@ void tallow_async_runtime_shutdown(void) {
                 };
                 match kind.as_str() {
                     "StringArray" | "HtmlElementArray" | "ElementArray" => {
-                        Ok(Some(PrintCompositeRoute::Array { elem_kind: ELEM_STR }))
+                        Ok(Some(PrintCompositeRoute::Array {
+                            elem_kind: ELEM_STR,
+                        }))
                     }
-                    "I64Array" | "IntArray" => {
-                        Ok(Some(PrintCompositeRoute::Array { elem_kind: ELEM_INT }))
-                    }
+                    "I64Array" | "IntArray" => Ok(Some(PrintCompositeRoute::Array {
+                        elem_kind: ELEM_INT,
+                    })),
                     _ => Ok(None),
                 }
             }
@@ -14040,12 +14132,10 @@ void tallow_async_runtime_shutdown(void) {
             if self.expr_is_ffi_handle(subject)
                 && self.result_payload_kind_of_expr(subject).is_none()
             {
-                return Err(
-                    "cannot Ok/Err-match a fetch/http/browser result natively: \
+                return Err("cannot Ok/Err-match a fetch/http/browser result natively: \
                      it is an opaque handle, not a Result (unsupported in both \
                      runtimes); use direct field access (resp.body / resp.text)"
-                        .into(),
-                );
+                    .into());
             }
             let payload_kind = self.result_payload_kind_of_expr(subject);
             return self.emit_result_match(&subj, arms, payload_kind);
@@ -14175,9 +14265,9 @@ void tallow_async_runtime_shutdown(void) {
         arms: &[MatchArm],
         inner: LLType,
     ) -> Result<LLValue, String> {
-        let some_arm = arms.iter().find(|a| {
-            matches!(&a.pattern, Pattern::Variant { name, .. } if name == "Some")
-        });
+        let some_arm = arms
+            .iter()
+            .find(|a| matches!(&a.pattern, Pattern::Variant { name, .. } if name == "Some"));
         let none_arm = arms.iter().find(|a| {
             matches!(&a.pattern, Pattern::Variant { name, .. } if name == "None")
                 || matches!(&a.pattern, Pattern::Ident(n) if n == "None")
@@ -14197,22 +14287,15 @@ void tallow_async_runtime_shutdown(void) {
         let slot = self.fresh_reg();
         self.emit_line(&format!("{slot} = alloca i64"));
         let is_nil = self.fresh_reg();
-        self.emit_line(&format!(
-            "{is_nil} = icmp eq ptr {}, null",
-            subject.reg
-        ));
+        self.emit_line(&format!("{is_nil} = icmp eq ptr {}, null", subject.reg));
         let l_some = self.fresh_label("opt.some");
         let l_none = self.fresh_label("opt.none");
         let l_done = self.fresh_label("opt.done");
 
         if none_arm.is_some() || wildcard.is_some() {
-            self.emit_line(&format!(
-                "br i1 {is_nil}, label %{l_none}, label %{l_some}"
-            ));
+            self.emit_line(&format!("br i1 {is_nil}, label %{l_none}, label %{l_some}"));
         } else {
-            self.emit_line(&format!(
-                "br i1 {is_nil}, label %{l_none}, label %{l_some}"
-            ));
+            self.emit_line(&format!("br i1 {is_nil}, label %{l_none}, label %{l_some}"));
         }
 
         // ── Some arm: load the payload and bind it ──────────────────────────
@@ -14241,8 +14324,7 @@ void tallow_async_runtime_shutdown(void) {
                                 "store {} {payload}, ptr {alloca}",
                                 inner.to_ir()
                             ));
-                            self.variables
-                                .insert(bind.clone(), (alloca, inner.clone()));
+                            self.variables.insert(bind.clone(), (alloca, inner.clone()));
                             Some((bind.clone(), prev))
                         }
                         _ => None,
@@ -14337,7 +14419,7 @@ void tallow_async_runtime_shutdown(void) {
             other => {
                 return Err(format!(
                     "cannot use a `{other:?}` as the value of an optional match arm"
-                ))
+                ));
             }
         })
     }
@@ -14641,33 +14723,32 @@ void tallow_async_runtime_shutdown(void) {
                                     ));
                                     let alloca = self.fresh_reg();
                                     self.emit_line(&format!("{alloca} = alloca ptr"));
-                                    self.emit_line(&format!(
-                                        "store ptr {str_ptr}, ptr {alloca}"
-                                    ));
-                                    self.variables
-                                        .insert(n.clone(), (alloca, LLType::I8Ptr));
+                                    self.emit_line(&format!("store ptr {str_ptr}, ptr {alloca}"));
+                                    self.variables.insert(n.clone(), (alloca, LLType::I8Ptr));
                                 } else {
                                     // Ok payload kind is recorded in the TallowResult `value_type` field
-                                     // Payload binding is type-directed where the codegen knows the kind
-                                     // (string 2 / browser handle 4) and keeps the long-standing i64 shape
-                                     // otherwise — the shape the codegen tests pin. See `result_payload_kind_of_expr`.
-                                     if matches!(payload_kind, Some(2) | Some(4)) {
-                                         let str_ptr = self.fresh_reg();
-                                         self.emit_line(&format!("{str_ptr} = inttoptr i64 {inner_val} to ptr"));
-                                         let alloca = self.fresh_reg();
-                                         self.emit_line(&format!("{alloca} = alloca ptr"));
-                                         self.emit_line(&format!("store ptr {str_ptr}, ptr {alloca}"));
-                                         self.variables
-                                             .insert(n.clone(), (alloca, LLType::I8Ptr));
-                                     } else {
-                                         let alloca = self.fresh_reg();
-                                         self.emit_line(&format!("{alloca} = alloca i64"));
-                                         self.emit_line(&format!(
-                                             "store i64 {inner_val}, ptr {alloca}"
-                                         ));
-                                         self.variables
-                                             .insert(n.clone(), (alloca, LLType::I64));
-                                     }
+                                    // Payload binding is type-directed where the codegen knows the kind
+                                    // (string 2 / browser handle 4) and keeps the long-standing i64 shape
+                                    // otherwise — the shape the codegen tests pin. See `result_payload_kind_of_expr`.
+                                    if matches!(payload_kind, Some(2) | Some(4)) {
+                                        let str_ptr = self.fresh_reg();
+                                        self.emit_line(&format!(
+                                            "{str_ptr} = inttoptr i64 {inner_val} to ptr"
+                                        ));
+                                        let alloca = self.fresh_reg();
+                                        self.emit_line(&format!("{alloca} = alloca ptr"));
+                                        self.emit_line(&format!(
+                                            "store ptr {str_ptr}, ptr {alloca}"
+                                        ));
+                                        self.variables.insert(n.clone(), (alloca, LLType::I8Ptr));
+                                    } else {
+                                        let alloca = self.fresh_reg();
+                                        self.emit_line(&format!("{alloca} = alloca i64"));
+                                        self.emit_line(&format!(
+                                            "store i64 {inner_val}, ptr {alloca}"
+                                        ));
+                                        self.variables.insert(n.clone(), (alloca, LLType::I64));
+                                    }
                                 }
                             }
                             Pattern::Variant { .. } => {
@@ -14693,26 +14774,30 @@ void tallow_async_runtime_shutdown(void) {
                                                 .insert(fname.clone(), (alloca, LLType::I8Ptr));
                                         } else {
                                             // Ok payload kind is recorded in the TallowResult `value_type` field
-                                             // Payload binding is type-directed where the codegen knows the kind
-                                             // (string 2 / browser handle 4) and keeps the long-standing i64 shape
-                                             // otherwise — the shape the codegen tests pin. See `result_payload_kind_of_expr`.
-                                             if matches!(payload_kind, Some(2) | Some(4)) {
-                                                 let str_ptr = self.fresh_reg();
-                                                 self.emit_line(&format!("{str_ptr} = inttoptr i64 {inner_val} to ptr"));
-                                                 let alloca = self.fresh_reg();
-                                                 self.emit_line(&format!("{alloca} = alloca ptr"));
-                                                 self.emit_line(&format!("store ptr {str_ptr}, ptr {alloca}"));
-                                                 self.variables
-                                                     .insert(fname.clone(), (alloca, LLType::I8Ptr));
-                                             } else {
-                                                 let alloca = self.fresh_reg();
-                                                 self.emit_line(&format!("{alloca} = alloca i64"));
-                                                 self.emit_line(&format!(
-                                                     "store i64 {inner_val}, ptr {alloca}"
-                                                 ));
-                                                 self.variables
-                                                     .insert(fname.clone(), (alloca, LLType::I64));
-                                             }
+                                            // Payload binding is type-directed where the codegen knows the kind
+                                            // (string 2 / browser handle 4) and keeps the long-standing i64 shape
+                                            // otherwise — the shape the codegen tests pin. See `result_payload_kind_of_expr`.
+                                            if matches!(payload_kind, Some(2) | Some(4)) {
+                                                let str_ptr = self.fresh_reg();
+                                                self.emit_line(&format!(
+                                                    "{str_ptr} = inttoptr i64 {inner_val} to ptr"
+                                                ));
+                                                let alloca = self.fresh_reg();
+                                                self.emit_line(&format!("{alloca} = alloca ptr"));
+                                                self.emit_line(&format!(
+                                                    "store ptr {str_ptr}, ptr {alloca}"
+                                                ));
+                                                self.variables
+                                                    .insert(fname.clone(), (alloca, LLType::I8Ptr));
+                                            } else {
+                                                let alloca = self.fresh_reg();
+                                                self.emit_line(&format!("{alloca} = alloca i64"));
+                                                self.emit_line(&format!(
+                                                    "store i64 {inner_val}, ptr {alloca}"
+                                                ));
+                                                self.variables
+                                                    .insert(fname.clone(), (alloca, LLType::I64));
+                                            }
                                         }
                                     }
                                 }
@@ -15366,7 +15451,8 @@ void tallow_async_runtime_shutdown(void) {
             self.variables
                 .insert(binding.to_string(), (binding_ptr.clone(), LLType::I8Ptr));
             if let Some(kind) = &elem_browser_kind {
-                self.browser_variables.insert(binding.to_string(), kind.clone());
+                self.browser_variables
+                    .insert(binding.to_string(), kind.clone());
                 if kind == "String" {
                     self.variable_is_string.insert(binding.to_string(), true);
                 }
@@ -17241,7 +17327,9 @@ void tallow_async_runtime_shutdown(void) {
         self.body.push_str(&format!("{fail_b}:\n"));
         let msg = self.intern_string("division by zero (native error)\n");
         let _m = self.fresh_reg();
-        self.emit_line(&format!("{_m} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {msg})"));
+        self.emit_line(&format!(
+            "{_m} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {msg})"
+        ));
         self.emit_line("call void @exit(i32 1)");
         self.emit_line("unreachable");
         self.body.push_str(&format!("{ok_b}:\n"));
@@ -19861,7 +19949,9 @@ void tallow_async_runtime_shutdown(void) {
         let do_l = self.fresh_label("nested.do");
         let skip_l = self.fresh_label("nested.skip");
         let end_l = self.fresh_label("nested.end");
-        self.emit_line(&format!("br i1 {do_search}, label %{do_l}, label %{skip_l}"));
+        self.emit_line(&format!(
+            "br i1 {do_search}, label %{do_l}, label %{skip_l}"
+        ));
 
         // ── map search on the unwrapped payload ──
         self.body.push_str(&format!("{do_l}:\n"));
@@ -19901,7 +19991,9 @@ void tallow_async_runtime_shutdown(void) {
             let kv_ptr = self.fresh_reg();
             self.emit_line(&format!("{kv_ptr} = inttoptr i64 {key_val} to ptr"));
             let cmp_result = self.fresh_reg();
-            self.emit_line(&format!("{cmp_result} = call i32 @strcmp(ptr {sk_ptr}, ptr {kv_ptr})"));
+            self.emit_line(&format!(
+                "{cmp_result} = call i32 @strcmp(ptr {sk_ptr}, ptr {kv_ptr})"
+            ));
             let eq = self.fresh_reg();
             self.emit_line(&format!("{eq} = icmp eq i32 {cmp_result}, 0"));
             eq
@@ -21513,7 +21605,7 @@ void tallow_async_runtime_shutdown(void) {
             other => {
                 return Err(format!(
                     "cannot box {other:?} into an optional (see docs/optional-representation.md)"
-                ))
+                ));
             }
         };
         let kind = val.ty.type_tag();
@@ -22104,7 +22196,10 @@ void tallow_async_runtime_shutdown(void) {
             json_escape_min(&purpose)
         );
         if let Some(retain_for) = &retain_for {
-            details.push_str(&format!(",\"retain_for\":\"{}\"", json_escape_min(retain_for)));
+            details.push_str(&format!(
+                ",\"retain_for\":\"{}\"",
+                json_escape_min(retain_for)
+            ));
         }
         details.push('}');
 
@@ -22198,7 +22293,11 @@ void tallow_async_runtime_shutdown(void) {
             ExprKind::Closure { .. } => true,
             // A block-wrapped closure value (its final/tail expression is a closure).
             ExprKind::Block(inner) => {
-                if let Some(Stmt { kind: StmtKind::Expr { expr: e }, .. }) = inner.stmts.last() {
+                if let Some(Stmt {
+                    kind: StmtKind::Expr { expr: e },
+                    ..
+                }) = inner.stmts.last()
+                {
                     Self::expr_is_closure(e)
                 } else {
                     false
@@ -22317,7 +22416,13 @@ void tallow_async_runtime_shutdown(void) {
     /// True when the instruction most recently emitted in the current block is a
     /// terminator. A label line ends with ':' and starts a fresh block.
     fn block_already_terminated(&self) -> bool {
-        let last = self.body.trim_end().rsplit('\n').next().unwrap_or("").trim();
+        let last = self
+            .body
+            .trim_end()
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .trim();
         if last.is_empty() || last.ends_with(':') {
             return false;
         }
@@ -22477,7 +22582,8 @@ void tallow_async_runtime_shutdown(void) {
             "StringArray" => {
                 self.browser_variables
                     .insert(name.to_string(), "StringArray".to_string());
-                self.variable_array_elem_is_ptr.insert(name.to_string(), true);
+                self.variable_array_elem_is_ptr
+                    .insert(name.to_string(), true);
                 self.variable_is_array.insert(name.to_string(), true);
             }
             "Bytes" => {
@@ -22508,7 +22614,9 @@ void tallow_async_runtime_shutdown(void) {
             .ok_or_else(|| format!("{layout_name} has no native layout"))?;
         let struct_ty = layout.llvm_name.clone();
         let size_ptr = self.fresh_reg();
-        self.emit_line(&format!("{size_ptr} = getelementptr {struct_ty}, ptr null, i32 1"));
+        self.emit_line(&format!(
+            "{size_ptr} = getelementptr {struct_ty}, ptr null, i32 1"
+        ));
         let size_i64 = self.fresh_reg();
         self.emit_line(&format!("{size_i64} = ptrtoint ptr {size_ptr} to i64"));
         let object = self.fresh_reg();
@@ -22557,7 +22665,9 @@ void tallow_async_runtime_shutdown(void) {
         let err_i = self.fresh_reg();
         self.emit_line(&format!("{err_i} = ptrtoint ptr {err_ptr} to i64"));
         let payload = self.fresh_reg();
-        self.emit_line(&format!("{payload} = select i1 {ok}, i64 {obj_i}, i64 {err_i}"));
+        self.emit_line(&format!(
+            "{payload} = select i1 {ok}, i64 {obj_i}, i64 {err_i}"
+        ));
         self.emit_line(&format!("store i64 {payload}, ptr {val_gep}"));
         let vtype_gep = self.fresh_reg();
         self.emit_line(&format!(
@@ -22746,7 +22856,9 @@ impl<'a> CodeGen<'a> {
         match method {
             "page_content" => {
                 let reg = self.fresh_reg();
-                self.emit_line(&format!("{reg} = call ptr @tallow_page_content(ptr {page})"));
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_page_content(ptr {page})"
+                ));
                 Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
             }
             "page_text_redacted" => {
@@ -22960,7 +23072,9 @@ impl<'a> CodeGen<'a> {
                         self.coerce(&v, &LLType::I8Ptr)?
                     }
                     None => {
-                        return Err("browser.page_wait_for_function requires a predicate".to_string())
+                        return Err(
+                            "browser.page_wait_for_function requires a predicate".to_string()
+                        );
                     }
                 };
                 let timeout = match args.get(1) {
@@ -23041,7 +23155,9 @@ impl<'a> CodeGen<'a> {
                         let v = self.emit_expr(&arg.value)?;
                         self.coerce_to_string(&v)?
                     }
-                    None => return Err("browser.page_set_content requires an HTML string".to_string()),
+                    None => {
+                        return Err("browser.page_set_content requires an HTML string".to_string());
+                    }
                 };
                 let status = self.fresh_reg();
                 self.emit_line(&format!(
@@ -23355,9 +23471,7 @@ impl<'a> CodeGen<'a> {
                             self.emit_line(&format!("{i} = load i64, ptr {idx}"));
                             let cmp = self.fresh_reg();
                             self.emit_line(&format!("{cmp} = icmp ult i64 {i}, {n64}"));
-                            self.emit_line(&format!(
-                                "br i1 {cmp}, label %{body}, label %{done}"
-                            ));
+                            self.emit_line(&format!("br i1 {cmp}, label %{body}, label %{done}"));
                             self.body.push_str(&format!("{body}:\n"));
                             // slot address = arr + 8 + i*8
                             let off = self.fresh_reg();
@@ -23498,7 +23612,8 @@ impl<'a> CodeGen<'a> {
         self.emit_line(&format!(
             "{hash_reg} = call ptr @tallow_fingerprint_from_text(ptr {text}, ptr {wc_slot}, ptr {tl_slot})"
         ));
-        let hash = self.emit_runtime_string_null_check(hash_reg, "ContentFingerprint.from_text: ")?;
+        let hash =
+            self.emit_runtime_string_null_check(hash_reg, "ContentFingerprint.from_text: ")?;
 
         // sizeof via the emitted type, so the arm never hardcodes a byte count.
         let size_ptr = self.fresh_reg();
@@ -23976,14 +24091,9 @@ impl<'a> CodeGen<'a> {
         self.emit_line(&format!("{strategy} = load ptr, ptr {strategy_slot}"));
         self.emit_store_ptr_field(&struct_ptr, &layout, "strategy", &strategy)?;
 
-        for (i, field) in [
-            "max_depth",
-            "max_pages",
-            "pages_crawled",
-            "rate_limit_ms",
-        ]
-        .iter()
-        .enumerate()
+        for (i, field) in ["max_depth", "max_pages", "pages_crawled", "rate_limit_ms"]
+            .iter()
+            .enumerate()
         {
             let slot = self.fresh_reg();
             self.emit_line(&format!(
@@ -24269,9 +24379,7 @@ impl<'a> CodeGen<'a> {
                 let cmp = self.fresh_reg();
                 self.emit_line(&format!("{cmp} = icmp slt i64 {xi}, 0"));
                 let reg = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{reg} = select i1 {cmp}, i64 {neg}, i64 {xi}"
-                ));
+                self.emit_line(&format!("{reg} = select i1 {cmp}, i64 {neg}, i64 {xi}"));
                 Ok(Some(LLValue::new(reg, LLType::I64)))
             }
             "min_i" | "max_i" => {
@@ -24281,12 +24389,14 @@ impl<'a> CodeGen<'a> {
                 let y = self.emit_expr(&args[1].value)?;
                 let yi = self.coerce_to_i64(&y)?;
                 let cmp = self.fresh_reg();
-                let pred = if method_owned == "min_i" { "slt" } else { "sgt" };
+                let pred = if method_owned == "min_i" {
+                    "slt"
+                } else {
+                    "sgt"
+                };
                 self.emit_line(&format!("{cmp} = icmp {pred} i64 {xi}, {yi}"));
                 let reg = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{reg} = select i1 {cmp}, i64 {xi}, i64 {yi}"
-                ));
+                self.emit_line(&format!("{reg} = select i1 {cmp}, i64 {xi}, i64 {yi}"));
                 Ok(Some(LLValue::new(reg, LLType::I64)))
             }
             "clamp_i" => {
@@ -24496,9 +24606,7 @@ impl<'a> CodeGen<'a> {
                 let val = self.emit_expr(&arg.value)?;
                 let s = self.coerce_to_string(&val)?;
                 let reg = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{reg} = call i64 @tallow_time_parse_iso(ptr {s})"
-                ));
+                self.emit_line(&format!("{reg} = call i64 @tallow_time_parse_iso(ptr {s})"));
                 // Fail-closed: the runtime returns i64::MIN for a malformed
                 // timestamp (with tallow_last_error set). Branch to a
                 // message-bearing exit(1) rather than hand back a bogus
@@ -24824,9 +24932,7 @@ impl<'a> CodeGen<'a> {
     fn emit_libc_fail(&mut self, failed: &str, prefix: &str) {
         let ok_b = self.fresh_label("libcok");
         let fail_b = self.fresh_label("libcfail");
-        self.emit_line(&format!(
-            "br i1 {failed}, label %{fail_b}, label %{ok_b}"
-        ));
+        self.emit_line(&format!("br i1 {failed}, label %{fail_b}, label %{ok_b}"));
         self.body.push_str(&format!("{fail_b}:\n"));
 
         let errno_loc = self.fresh_reg();
@@ -25263,12 +25369,30 @@ impl<'a> CodeGen<'a> {
             _ => None,
         };
         if let Some(feature) = feature {
-            return Err(format!(
-                "{module}.{method}() has no native lowering in a build without \
-                 `--features {feature}`: rebuild with it. The interpreter refuses \
-                 too — this surface is compiled out of both planes, so there is \
-                 no fallback that would implement it."
-            ));
+            // Two different truths depending on how this binary was built. The
+            // first version assumed the feature was absent and said so even in a
+            // feature build, where the real reason is that no lowering exists
+            // for this surface at all.
+            let compiled_in = match feature {
+                "mls" => cfg!(feature = "mls"),
+                "zk" => cfg!(feature = "zk"),
+                "fhe" => cfg!(feature = "fhe"),
+                _ => false,
+            };
+            return Err(if compiled_in {
+                format!(
+                    "{module}.{method}() has no native lowering in this build: it \
+                     was compiled with --features {feature}, but the compiled \
+                     plane does not implement this call yet. Run with --interpret."
+                )
+            } else {
+                format!(
+                    "{module}.{method}() has no native lowering in a build without \
+                     `--features {feature}`: rebuild with it. The interpreter refuses \
+                     too — this surface is compiled out of both planes, so there is \
+                     no fallback that would implement it."
+                )
+            });
         }
         Err(format!(
             "{module}.{method}() has no native lowering — refusing to emit a \
@@ -25423,7 +25547,9 @@ impl<'a> CodeGen<'a> {
         // pointer- or i64-sized (8 bytes) in this backend.
         const CONTRACT: [&str; 5] = ["id", "func", "deps", "class", "idempotency_key"];
         if decl.fields.len() != CONTRACT.len()
-            || !CONTRACT.iter().all(|f| decl.fields.iter().any(|d| d.name == *f))
+            || !CONTRACT
+                .iter()
+                .all(|f| decl.fields.iter().any(|d| d.name == *f))
         {
             return Err(format!(
                 "Mesh.plan: `{elem_struct}` must declare exactly {} to lower natively",
@@ -25879,8 +26005,7 @@ impl<'a> CodeGen<'a> {
                 self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
                 Ok(Some(LLValue::new(result, LLType::I8Ptr)))
             }
-            "opaque_register_respond" | "opaque_register_store"
-            | "opaque_login_server_finish" => {
+            "opaque_register_respond" | "opaque_register_store" | "opaque_login_server_finish" => {
                 let want = match method {
                     "opaque_register_respond" => 3,
                     "opaque_register_store" => 1,
@@ -26186,7 +26311,10 @@ impl<'a> CodeGen<'a> {
                     let parts = load(self, 0, &LLType::I64);
                     let resumed = load(self, 8, &LLType::I64);
                     let digest = load(self, 16, &LLType::I8Ptr);
-                    self.emit_line(&format!("call void @tallow_check_string(ptr {})", digest.reg));
+                    self.emit_line(&format!(
+                        "call void @tallow_check_string(ptr {})",
+                        digest.reg
+                    ));
                     Ok(Some(self.build_plain_struct(
                         "AgeStreamEncrypted",
                         &[
@@ -26217,7 +26345,9 @@ impl<'a> CodeGen<'a> {
                     None => self.intern_string(""),
                 };
                 let record = self.fresh_reg();
-                self.emit_line(&format!("{record} = call ptr @tallow_generate_keypair(ptr {algo})"));
+                self.emit_line(&format!(
+                    "{record} = call ptr @tallow_generate_keypair(ptr {algo})"
+                ));
                 self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
                 let mut load = |cg: &mut Self, offset: i64| {
                     let gep = cg.fresh_reg();
@@ -26950,7 +27080,11 @@ impl<'a> CodeGen<'a> {
     /// `tallow_last_error` after `prefix` and `exit(1)` (fail-closed — the
     /// interpreter raises in the same situations, so a null must never read as
     /// an empty string). Returns the checked pointer as an `I8Ptr` value.
-    fn emit_runtime_string_null_check(&mut self, reg: String, prefix: &str) -> Result<LLValue, String> {
+    fn emit_runtime_string_null_check(
+        &mut self,
+        reg: String,
+        prefix: &str,
+    ) -> Result<LLValue, String> {
         let is_null = self.fresh_reg();
         self.emit_line(&format!("{is_null} = icmp eq ptr {reg}, null"));
         let ok_b = self.fresh_label("czok");
@@ -27645,9 +27779,9 @@ fn clang_unavailable_reason() -> String {
     let hint = clang_install_hint();
     match probe_clang() {
         ClangProbe::Usable(path) => format!("clang available at {path}"),
-        ClangProbe::FoundUnusable(path) => format!(
-            "`{path} --version` failed (broken install or non-clang wrapper); {hint}"
-        ),
+        ClangProbe::FoundUnusable(path) => {
+            format!("`{path} --version` failed (broken install or non-clang wrapper); {hint}")
+        }
         ClangProbe::NotFound => format!("clang not found on PATH; {hint}"),
     }
 }
@@ -27726,7 +27860,10 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
                 }
                 // 2. lib/ subdirectory
                 if legacy.is_none() {
-                    for candidate in [dir.join("lib").join(primary), dir.join("lib").join(fallback)] {
+                    for candidate in [
+                        dir.join("lib").join(primary),
+                        dir.join("lib").join(fallback),
+                    ] {
                         if candidate.exists() {
                             legacy = Some(candidate);
                             break;
@@ -27780,7 +27917,11 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
         }
         // 5b. Relative to CWD (development mode)
         for profile in ["target/release", "target/debug"] {
-            collect_deps_archives(&Path::new(profile).join("deps"), fallback, &mut deps_candidates);
+            collect_deps_archives(
+                &Path::new(profile).join("deps"),
+                fallback,
+                &mut deps_candidates,
+            );
         }
     }
     pick_runtime_archive(legacy, deps_candidates).map(|p| p.display().to_string())
@@ -28133,7 +28274,6 @@ mod tests {
         cg.emit_module().expect("codegen error")
     }
 
-
     /// The invariant behind the `open_graph` fix, checked against the real stdlib surface.
     ///
     /// `declared_map_kind` routes `.len`, indexing and `keys` on a Map-typed FIELD through
@@ -28218,9 +28358,10 @@ mod tests {
              .tl field syntax change?)"
         );
         assert!(
-            cg.struct_layouts
-                .get("StructuredData")
-                .is_some_and(|l| l.field_kinds.get("open_graph").is_some_and(|k| is_map_kind(k))),
+            cg.struct_layouts.get("StructuredData").is_some_and(|l| l
+                .field_kinds
+                .get("open_graph")
+                .is_some_and(|k| is_map_kind(k))),
             "StructuredData.open_graph must keep its Map kind: it is the field whose routing \
              this invariant was derived from"
         );
@@ -35813,7 +35954,9 @@ mod tests {
         let program = parser::Parser::parse(tokens).expect("parse error");
         let (env, _) = TypeChecker::new(&program).check();
         let mut cg = CodeGen::new(&program, &env);
-        let ir = cg.emit_module().expect("goto must lower now that the struct has a layout");
+        let ir = cg
+            .emit_module()
+            .expect("goto must lower now that the struct has a layout");
         assert!(
             ir.contains("%struct.NavigationResult = type { ptr, ptr, i64 }"),
             "NavigationResult layout is not emitted:\n{ir}"
@@ -40301,7 +40444,11 @@ fn main() {
     #[test]
     fn f3_compiled_panic_and_assert_run_fail_loud() {
         let cases = [
-            ("f3_panic", "fn main() {\n    panic(\"boom-e2e\")\n}\n", "boom-e2e"),
+            (
+                "f3_panic",
+                "fn main() {\n    panic(\"boom-e2e\")\n}\n",
+                "boom-e2e",
+            ),
             (
                 "f3_assert",
                 "fn main() {\n    assert(false, \"boom-assert-e2e\")\n}\n",
@@ -40389,10 +40536,36 @@ fn main() {
         // and clang rejects the module. Hand-written prelude helpers use named
         // values only, so they have no numbered space to desynchronize.
         let result_ops = [
-            "call", "load", "getelementptr", "icmp", "fcmp", "select", "add", "sub", "mul",
-            "sdiv", "srem", "and", "or", "xor", "shl", "lshr", "ashr", "fadd", "fsub", "fmul",
-            "fdiv", "zext", "sext", "trunc", "bitcast", "ptrtoint", "inttoptr", "sitofp",
-            "fptosi", "phi",
+            "call",
+            "load",
+            "getelementptr",
+            "icmp",
+            "fcmp",
+            "select",
+            "add",
+            "sub",
+            "mul",
+            "sdiv",
+            "srem",
+            "and",
+            "or",
+            "xor",
+            "shl",
+            "lshr",
+            "ashr",
+            "fadd",
+            "fsub",
+            "fmul",
+            "fdiv",
+            "zext",
+            "sext",
+            "trunc",
+            "bitcast",
+            "ptrtoint",
+            "inttoptr",
+            "sitofp",
+            "fptosi",
+            "phi",
         ];
         let mut cur: Vec<&str> = Vec::new();
         let mut bodies: Vec<Vec<&str>> = Vec::new();
@@ -40895,10 +41068,19 @@ fn main() {
             ir.contains("declare ptr @tallow_async_spawn(ptr, ptr)"),
             "spawn must declare the async runtime FFI"
         );
-        assert!(ir.contains("declare void @tallow_async_runtime_init()"), "{ir}");
-        assert!(ir.contains("call void @tallow_async_runtime_shutdown()"), "{ir}");
+        assert!(
+            ir.contains("declare void @tallow_async_runtime_init()"),
+            "{ir}"
+        );
+        assert!(
+            ir.contains("call void @tallow_async_runtime_shutdown()"),
+            "{ir}"
+        );
         // Packing thunk + `ptr(ptr)` task entry for the target.
-        assert!(ir.contains("@tallow.worker.spawn_thunk"), "packing thunk missing");
+        assert!(
+            ir.contains("@tallow.worker.spawn_thunk"),
+            "packing thunk missing"
+        );
         assert!(ir.contains("@tallow.worker.task"), "task entry missing");
         assert!(
             ir.contains("call ptr @tallow.worker.spawn_thunk(i64 "),
@@ -40919,9 +41101,18 @@ fn main() {
             .nth(1)
             .expect("task definition missing");
         let task = task.split("define ").next().unwrap_or(task);
-        assert!(task.contains("load i64, ptr %"), "task must load the packed slot");
-        assert!(task.contains("call i64 @tallow.worker(i64 "), "task must call the target");
-        assert!(task.contains("ret ptr %"), "task must return the Ok result pointer");
+        assert!(
+            task.contains("load i64, ptr %"),
+            "task must load the packed slot"
+        );
+        assert!(
+            task.contains("call i64 @tallow.worker(i64 "),
+            "task must call the target"
+        );
+        assert!(
+            task.contains("ret ptr %"),
+            "task must return the Ok result pointer"
+        );
         // Ok shape: tag=0, value=<payload>, value_type=0 (int).
         assert!(task.contains("store i64 0, ptr %"), "Ok tag missing");
     }
@@ -40967,7 +41158,10 @@ fn main() {
         let err = cg.emit_module().expect_err("select must not compile");
         assert!(err.starts_with("select:"), "{err}");
         assert!(err.contains("interpreter-only"), "{err}");
-        assert!(!err.contains("pending Plan 03"), "placeholder wording must be gone: {err}");
+        assert!(
+            !err.contains("pending Plan 03"),
+            "placeholder wording must be gone: {err}"
+        );
     }
 
     #[test]
@@ -40985,7 +41179,9 @@ fn main() {
         let program = parser::Parser::parse(tokens).expect("parse error");
         let (env, _) = TypeChecker::new(&program).check();
         let mut cg = CodeGen::new(&program, &env);
-        let err = cg.emit_module().expect_err("aggregate-param spawn must not compile");
+        let err = cg
+            .emit_module()
+            .expect_err("aggregate-param spawn must not compile");
         assert!(err.contains("unsupported parameter type"), "{err}");
         assert!(err.contains("tallow run"), "{err}");
     }
@@ -40997,11 +41193,20 @@ fn main() {
             !stub.contains("abort()"),
             "the async stub must refuse a spawn with a NULL handle, never abort()"
         );
-        assert!(stub.contains("spawn refused (NULL handle)"), "refusal warning missing");
+        assert!(
+            stub.contains("spawn refused (NULL handle)"),
+            "refusal warning missing"
+        );
         // Back-pressure cap stays documented in the stub.
-        assert!(stub.contains("#define TL_MAX_LIVE_TASKS 4096"), "cap missing");
+        assert!(
+            stub.contains("#define TL_MAX_LIVE_TASKS 4096"),
+            "cap missing"
+        );
         // await(NULL) must stay a NULL result → Err arm, not a crash.
-        assert!(stub.contains("if (!handle) return NULL;"), "await NULL guard missing");
+        assert!(
+            stub.contains("if (!handle) return NULL;"),
+            "await NULL guard missing"
+        );
     }
 
     /// E-3-04 end-to-end: compile the spawn fixture's IR + the async stub with
@@ -41062,14 +41267,23 @@ fn main() {
             .output()
             .expect("failed to run compiled spawn fixture");
         let stdout = String::from_utf8_lossy(&run.stdout).to_string();
-        assert!(run.status.success(), "compiled spawn fixture failed: {stdout}");
+        assert!(
+            run.status.success(),
+            "compiled spawn fixture failed: {stdout}"
+        );
         assert!(stdout.contains("m:start"), "main did not run: {stdout:?}");
-        assert!(stdout.contains("m:spawned"), "spawn did not return a handle: {stdout:?}");
+        assert!(
+            stdout.contains("m:spawned"),
+            "spawn did not return a handle: {stdout:?}"
+        );
         assert!(
             stdout.contains("Ok(50)"),
             "spawn_await must yield Ok(50) (worker(5) * 10): {stdout:?}"
         );
-        assert!(stdout.contains("m:end"), "program did not finish: {stdout:?}");
+        assert!(
+            stdout.contains("m:end"),
+            "program did not finish: {stdout:?}"
+        );
     }
 
     // ── E-3-04: compiled `pool.map` / `pool_map` / `map_ratelimited` ────────
@@ -41261,10 +41475,8 @@ mod runtime_archive_selection {
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "tallow-archive-pick-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tallow-archive-pick-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -41340,9 +41552,7 @@ fn optional_let_value<'a>(block: &'a Block, name: &str) -> Option<&'a Expr> {
         match &stmt.kind {
             StmtKind::Let { name: n, value, .. } if n == name => return Some(value),
             StmtKind::Var { name: n, value, .. } if n == name => return Some(value),
-            StmtKind::For { body, .. }
-            | StmtKind::While { body, .. }
-            | StmtKind::Loop { body } => {
+            StmtKind::For { body, .. } | StmtKind::While { body, .. } | StmtKind::Loop { body } => {
                 if let Some(v) = optional_let_value(body, name) {
                     return Some(v);
                 }

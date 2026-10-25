@@ -117,7 +117,8 @@ jobs:
             --test opaque_native_parity \
             --test keypair_native_parity \
             --test kats \
-            --test zeroize_adoption 2>&1 | tee integration.log
+            --test zeroize_adoption \
+            --test result_payload_typing 2>&1 | tee integration.log
 
       - name: Write this run's measured numbers
         # The release body's Verified section is generated from these logs, not

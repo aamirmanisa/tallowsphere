@@ -336,6 +336,7 @@ jobs:
           --test optional_parity
           --test process_exec_parity
           --test result_truthiness_parity
+          --test result_payload_typing
           --test fuzz_safety
           --test enum_semantics_parity
           --test match_exhaustiveness_parity
