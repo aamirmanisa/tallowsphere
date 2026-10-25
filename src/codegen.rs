@@ -1661,6 +1661,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare void @tallow_no_match(i32, i32)\n");
         ir.push_str("declare i32 @tallow_process_execv(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_append_file(ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_fs_copy_range(ptr, ptr, i64, i64)\n");
+        ir.push_str("declare i32 @tallow_fs_set_mtime(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_fs_remove_dir_all(ptr)\n");
         ir.push_str("declare ptr @tallow_fs_read_lines(ptr)\n");
         ir.push_str("declare ptr @tallow_fs_list_dir(ptr)\n");
@@ -1821,6 +1823,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push('\n');
         ir.push_str("; Transfer FFI\n");
         ir.push_str("declare ptr @tallow_file_hash(ptr)\n");
+        ir.push_str("declare ptr @tallow_hash_prefix(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_encrypt_file(ptr, ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_decrypt_file(ptr, ptr, ptr)\n");
         ir.push_str("declare i64 @tallow_copy_file(ptr, ptr)\n");
@@ -24489,6 +24492,8 @@ impl<'a> CodeGen<'a> {
             "mkdir" => Ok(Some(self.emit_fs_mkdir(args)?)),
             "remove" => Ok(Some(self.emit_fs_remove(args)?)),
             "append_file" => Ok(Some(self.emit_fs_append_file(args)?)),
+            "copy_range" => Ok(Some(self.emit_fs_copy_range(args)?)),
+            "set_mtime" => Ok(Some(self.emit_fs_set_mtime(args)?)),
             "remove_dir_all" => Ok(Some(self.emit_fs_remove_dir_all(args)?)),
             "read_lines" => Ok(Some(self.emit_fs_read_lines(args)?)),
             "list_dir" | "readdir" => Ok(Some(self.emit_fs_list_dir(args)?)),
@@ -24930,6 +24935,50 @@ impl<'a> CodeGen<'a> {
             "{rc} = call i32 @tallow_fs_append_file(ptr {path}, ptr {content})"
         ));
         Ok(self.emit_fs_check_rc(&rc, "fs.append_file: "))
+    }
+
+    /// `fs.set_mtime(path, epoch_secs)` -> Nil, via `tallow_fs_set_mtime`.
+    ///
+    /// A resumed copy writes bytes with `copy_range` and then restores the
+    /// source's mtime with this, so the next run's size+mtime skip test agrees
+    /// that the file is current.
+    fn emit_fs_set_mtime(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        if args.len() < 2 {
+            return Err("fs.set_mtime requires (path, epoch_secs)".into());
+        }
+        let path_val = self.emit_expr(&args[0].value)?;
+        let path = self.coerce_to_string(&path_val)?;
+        let secs_val = self.emit_expr(&args[1].value)?;
+        let secs = self.coerce_to_i64(&secs_val)?;
+        let rc = self.fresh_reg();
+        self.emit_line(&format!(
+            "{rc} = call i32 @tallow_fs_set_mtime(ptr {path}, i64 {secs})"
+        ));
+        Ok(self.emit_fs_check_rc(&rc, "fs.set_mtime: "))
+    }
+
+    /// `fs.copy_range(src, dst, offset, len)` -> Nil, via `tallow_fs_copy_range`.
+    ///
+    /// Appends `len` bytes of `src` from `offset` to `dst`. The runtime fails on
+    /// a short read, so a resumed transfer cannot claim a truncated file is
+    /// complete; the caller still verifies the whole file afterwards.
+    fn emit_fs_copy_range(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        if args.len() < 4 {
+            return Err("fs.copy_range requires (src, dst, offset, len)".into());
+        }
+        let src_val = self.emit_expr(&args[0].value)?;
+        let src = self.coerce_to_string(&src_val)?;
+        let dst_val = self.emit_expr(&args[1].value)?;
+        let dst = self.coerce_to_string(&dst_val)?;
+        let off_val = self.emit_expr(&args[2].value)?;
+        let off = self.coerce_to_i64(&off_val)?;
+        let len_val = self.emit_expr(&args[3].value)?;
+        let len = self.coerce_to_i64(&len_val)?;
+        let rc = self.fresh_reg();
+        self.emit_line(&format!(
+            "{rc} = call i32 @tallow_fs_copy_range(ptr {src}, ptr {dst}, i64 {off}, i64 {len})"
+        ));
+        Ok(self.emit_fs_check_rc(&rc, "fs.copy_range: "))
     }
 
     /// `fs.remove_dir_all(path)` -> Nil, via `tallow_fs_remove_dir_all`.
@@ -25598,6 +25647,23 @@ impl<'a> CodeGen<'a> {
                 let result = self.fresh_reg();
                 self.emit_line(&format!(
                     "{result} = call ptr @tallow_file_hash(ptr {path})"
+                ));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+            }
+            // `Transfer.hash_prefix(path, len)` -> hex of the first len bytes.
+            // Same failure contract as `hash`: a null result fails loudly.
+            "hash_prefix" => {
+                let (Some(a0), Some(a1)) = (args.first(), args.get(1)) else {
+                    return Ok(None);
+                };
+                let v0 = self.emit_expr(&a0.value)?;
+                let path = self.coerce_to_string(&v0)?;
+                let v1 = self.emit_expr(&a1.value)?;
+                let len = self.coerce_to_i64(&v1)?;
+                let result = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{result} = call ptr @tallow_hash_prefix(ptr {path}, i64 {len})"
                 ));
                 self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
                 Ok(Some(LLValue::new(result, LLType::I8Ptr)))

@@ -281,6 +281,112 @@ pub extern "C" fn tallow_fs_write_bytes(path: *const c_char, data: *const c_char
     }
 }
 
+/// Copy `len` bytes of `src` from `offset` to the end of `dst` (created if
+/// absent). Returns 0 on success, -1 on error with `tallow_last_error` set.
+/// Mirrors the interpreter's `fs.copy_range`: a short read is an error, not a
+/// silent partial append.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_fs_copy_range(
+    src: *const c_char,
+    dst: *const c_char,
+    offset: i64,
+    len: i64,
+) -> i32 {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let (Some(src), Some(dst)) = (unsafe { cstr_to_str(src) }, unsafe { cstr_to_str(dst) }) else {
+        set_last_error("copy_range: expected string paths".to_string());
+        return -1;
+    };
+    if offset < 0 || len < 0 {
+        set_last_error(format!("copy_range: negative offset/len ({offset}, {len})"));
+        return -1;
+    }
+    let mut f = match std::fs::File::open(src) {
+        Ok(f) => f,
+        Err(e) => {
+            set_last_error(format!("copy_range: cannot open '{src}': {e}"));
+            return -1;
+        }
+    };
+    if let Err(e) = f.seek(SeekFrom::Start(offset as u64)) {
+        set_last_error(format!("copy_range: cannot seek '{src}' to {offset}: {e}"));
+        return -1;
+    }
+    let mut out = match std::fs::OpenOptions::new().create(true).append(true).open(dst) {
+        Ok(o) => o,
+        Err(e) => {
+            set_last_error(format!("copy_range: cannot open '{dst}' for append: {e}"));
+            return -1;
+        }
+    };
+    let mut remaining = len as u64;
+    let mut buf = vec![0u8; 1 << 20];
+    while remaining > 0 {
+        let want = std::cmp::min(remaining, buf.len() as u64) as usize;
+        let n = match f.read(&mut buf[..want]) {
+            Ok(0) => {
+                set_last_error(format!(
+                    "copy_range: short read on '{src}' at offset {} (wanted {remaining} more bytes)",
+                    offset + (len as u64 - remaining) as i64
+                ));
+                return -1;
+            }
+            Ok(n) => n,
+            Err(e) => {
+                set_last_error(format!("copy_range: read error on '{src}': {e}"));
+                return -1;
+            }
+        };
+        if let Err(e) = out.write_all(&buf[..n]) {
+            set_last_error(format!("copy_range: write error on '{dst}': {e}"));
+            return -1;
+        }
+        remaining -= n as u64;
+    }
+    // Carry the source's mtime, as the interpreter does: a resumed file must not
+    // look newer than its source or the next run re-copies it.
+    if let Ok(meta) = std::fs::metadata(src) {
+        if let Ok(modified) = meta.modified() {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(dst) {
+                let _ = f.set_times(std::fs::FileTimes::new().set_modified(modified));
+            }
+        }
+    }
+    0
+}
+
+/// `fs.set_mtime(path, epoch_secs)` — 0 on success, -1 with
+/// `tallow_last_error` set. A resumed copy needs this: `copy_range` writes
+/// bytes only, so the mtime has to be restored explicitly or the next run
+/// re-copies a file it already has.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_fs_set_mtime(path: *const c_char, secs: i64) -> i32 {
+    let Some(p) = (unsafe { cstr_to_str(path) }) else {
+        set_last_error("set_mtime: null path".to_string());
+        return -1;
+    };
+    if secs < 0 {
+        set_last_error(format!("set_mtime: negative timestamp {secs}"));
+        return -1;
+    }
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+    let f = match std::fs::OpenOptions::new().write(true).open(p) {
+        Ok(f) => f,
+        Err(e) => {
+            set_last_error(format!("set_mtime: cannot open '{p}': {e}"));
+            return -1;
+        }
+    };
+    match f.set_times(std::fs::FileTimes::new().set_modified(t)) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_last_error(format!("set_mtime: cannot set mtime on '{p}': {e}"));
+            -1
+        }
+    }
+}
+
 // ── `Bytes` value surface (t_70cad4f2) ──────────────────────────────────────
 //
 // A `Bytes` value crosses the **compiled value ABI** as the base64 text

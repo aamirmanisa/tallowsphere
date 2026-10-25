@@ -9359,6 +9359,7 @@ impl Interpreter {
             // ── Phase 55: TallowTransfer sentinels ──
             // ══════════════════════════════════════════════════════════════════
             "Transfer.hash"
+            | "Transfer.hash_prefix"
             | "Transfer.chunk"
             | "Transfer.tree_hash"
             | "Transfer.manifest"
@@ -28782,6 +28783,17 @@ fn call_transfer_sentinel(name: &str, positional: Vec<Value>) -> Result<Value, R
                 Some(Ok(v)) => Ok(v),
                 Some(Err(e)) => Err(RuntimeError::Error(e)),
                 None => Err(RuntimeError::Error("Transfer.hash: dispatch failed".into())),
+            }
+        }
+        // ── Transfer.hash_prefix(path, len) ──
+        "Transfer.hash_prefix" => {
+            let result = crate::stdlib::transfer::dispatch("hash_prefix", positional);
+            match result {
+                Some(Ok(v)) => Ok(v),
+                Some(Err(e)) => Err(RuntimeError::Error(e)),
+                None => Err(RuntimeError::Error(
+                    "Transfer.hash_prefix: dispatch failed".into(),
+                )),
             }
         }
         // ── Transfer.chunk(path, chunk_size?) ──

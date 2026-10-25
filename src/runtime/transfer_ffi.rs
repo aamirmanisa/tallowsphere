@@ -30,6 +30,55 @@ pub extern "C" fn tallow_file_hash(path: *const c_char) -> *mut c_char {
     }
 }
 
+/// `transfer.hash_prefix(path, len)` — BLAKE3 of the first `len` bytes.
+/// Returns a hex string, or null with `tallow_last_error` set (a file shorter
+/// than `len` is an error, so a partial destination cannot masquerade as a
+/// complete prefix).
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_hash_prefix(path: *const c_char, len: i64) -> *mut c_char {
+    use std::io::Read;
+    let p = match unsafe { cstr_to_str(path) } {
+        Some(s) => s,
+        None => {
+            set_last_error("hash_prefix: null path".into());
+            return std::ptr::null_mut();
+        }
+    };
+    if len < 0 {
+        set_last_error("hash_prefix: negative length".into());
+        return std::ptr::null_mut();
+    }
+    let file = match std::fs::File::open(p) {
+        Ok(f) => f,
+        Err(e) => {
+            set_last_error(format!("hash_prefix: cannot open '{p}': {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let mut reader = std::io::BufReader::with_capacity(65536, file);
+    let mut hasher = blake3::Hasher::new();
+    let mut remaining = len as u64;
+    let mut buf = [0u8; 65536];
+    while remaining > 0 {
+        let want = std::cmp::min(remaining, buf.len() as u64) as usize;
+        match reader.read(&mut buf[..want]) {
+            Ok(0) => {
+                set_last_error(format!("hash_prefix: '{p}' is shorter than {len} bytes"));
+                return std::ptr::null_mut();
+            }
+            Ok(n) => {
+                hasher.update(&buf[..n]);
+                remaining -= n as u64;
+            }
+            Err(e) => {
+                set_last_error(format!("hash_prefix: read error on '{p}': {e}"));
+                return std::ptr::null_mut();
+            }
+        }
+    }
+    string_to_cstr(&hasher.finalize().to_hex().to_string())
+}
+
 // ── File Encryption ────────────────────────────────────────────────────────
 
 /// Encrypt a file with AES-256-GCM using an Argon2id-derived key.

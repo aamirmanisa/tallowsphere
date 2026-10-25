@@ -70,6 +70,8 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         // Declared in stdlib/fs.tl with empty `// native:` bodies and previously
         // absent from every dispatcher — therefore uncallable. Implemented 2026-10-12.
         "append_file" => Some(do_append_file(args)),
+        "copy_range" => Some(do_copy_range(args)),
+        "set_mtime" => Some(do_set_mtime(args)),
         "remove_dir_all" => Some(do_remove_dir_all(args)),
         "read_lines" => Some(do_read_lines(args)),
 
@@ -297,6 +299,88 @@ fn do_delete_file(args: Vec<Value>) -> StdlibResult {
         _ => return Err("fs.delete_file: expected string path argument".into()),
     };
     std::fs::remove_file(&path).map(|_| Value::Nil).map_err(|e| format!("fs.delete_file: {e}"))
+}
+
+/// `fs.set_mtime(path, epoch_secs)` — set a file's modification time.
+///
+/// Needed because a resumed copy writes bytes through `copy_range`, which does
+/// not carry metadata the way a whole-file copy does. Without this, a resumed
+/// file would be byte-correct but would claim a newer mtime than its source,
+/// and the next run would re-copy it.
+fn do_set_mtime(args: Vec<Value>) -> StdlibResult {
+    let (path, secs) = match (args.first(), args.get(1)) {
+        (Some(Value::String(p)), Some(Value::Int(s))) => (p.clone(), *s),
+        _ => return Err("fs.set_mtime: expected (path, epoch_secs)".into()),
+    };
+    if secs < 0 {
+        return Err(format!("fs.set_mtime: negative timestamp {secs}"));
+    }
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("fs.set_mtime: cannot open '{path}': {e}"))?;
+    let times = std::fs::FileTimes::new().set_modified(t);
+    f.set_times(times)
+        .map_err(|e| format!("fs.set_mtime: cannot set mtime on '{path}': {e}"))?;
+    Ok(Value::Nil)
+}
+
+/// `fs.copy_range(src, dst, offset, len)` — append `len` bytes of `src`,
+/// starting at `offset`, to `dst` (created if absent).
+///
+/// This is the primitive a resumed transfer needs: the caller keeps the bytes it
+/// already has and asks for the remainder only. Returns nil and fails loudly:
+/// a short read (source shrank under us) is an error, not a silent partial
+/// append, because the caller's next step is to claim the file is complete.
+fn do_copy_range(args: Vec<Value>) -> StdlibResult {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let (src, dst, offset, len) = match (args.first(), args.get(1), args.get(2), args.get(3)) {
+        (Some(Value::String(a)), Some(Value::String(b)), Some(Value::Int(o)), Some(Value::Int(l))) => {
+            (a.clone(), b.clone(), *o, *l)
+        }
+        _ => return Err("fs.copy_range: expected (src, dst, offset, len)".into()),
+    };
+    if offset < 0 || len < 0 {
+        return Err(format!("fs.copy_range: negative offset/len ({offset}, {len})"));
+    }
+    let mut f = std::fs::File::open(&src)
+        .map_err(|e| format!("fs.copy_range: cannot open '{src}': {e}"))?;
+    f.seek(SeekFrom::Start(offset as u64))
+        .map_err(|e| format!("fs.copy_range: cannot seek '{src}' to {offset}: {e}"))?;
+    let mut out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&dst)
+        .map_err(|e| format!("fs.copy_range: cannot open '{dst}' for append: {e}"))?;
+    let mut remaining = len as u64;
+    let mut buf = vec![0u8; 1 << 20];
+    while remaining > 0 {
+        let want = std::cmp::min(remaining, buf.len() as u64) as usize;
+        let n = f.read(&mut buf[..want])
+            .map_err(|e| format!("fs.copy_range: read error on '{src}': {e}"))?;
+        if n == 0 {
+            return Err(format!(
+                "fs.copy_range: short read on '{src}' at offset {} (wanted {remaining} more bytes)",
+                (offset + ((len as u64 - remaining) as i128))
+            ));
+        }
+        out.write_all(&buf[..n])
+            .map_err(|e| format!("fs.copy_range: write error on '{dst}': {e}"))?;
+        remaining -= n as u64;
+    }
+    // Carry the source's mtime: a resumed file is then indistinguishable from a
+    // whole-file copy, so the next run's size+mtime skip test agrees it is
+    // current. Without this, resuming leaves a file that looks newer than its
+    // source and gets copied again.
+    if let Ok(meta) = std::fs::metadata(&src) {
+        if let Ok(modified) = meta.modified() {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&dst) {
+                let _ = f.set_times(std::fs::FileTimes::new().set_modified(modified));
+            }
+        }
+    }
+    Ok(Value::Nil)
 }
 
 fn do_stat(args: Vec<Value>) -> StdlibResult {

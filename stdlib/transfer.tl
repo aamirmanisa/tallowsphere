@@ -79,6 +79,10 @@ struct ManifestInfo {
 // native: BLAKE3 file hash → hex string
 native fn Transfer.hash(path: String) -> String
 
+/// BLAKE3 of the first `len` bytes of a file — proves a partial file is a
+/// genuine prefix before the remainder is appended.
+native fn Transfer.hash_prefix(path: String, len: i64) -> String
+
 /// Split file into chunks and compute per-chunk BLAKE3 hashes
 // native: chunk file, return array of ChunkInfo
 native fn Transfer.chunk(path: String, chunk_size: i64 = 262144) -> []ChunkInfo

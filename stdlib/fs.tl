@@ -30,6 +30,14 @@ native fn write_bytes(path: String, data: Bytes) -> Result<()>
 // native: appends content to end of file
 native fn append_file(path: String, content: String) -> Result<()>
 
+/// Copy a byte range of one file onto the end of another
+// native: appends len bytes of src from offset to dst; a short read is an error
+native fn copy_range(src: String, dst: String, offset: i64, len: i64) -> Result<()>
+
+/// Set a file's modification time
+// native: epoch seconds; fails on a missing file
+native fn set_mtime(path: String, epoch_secs: i64) -> Result<()>
+
 /// Create a new file (error if exists)
 // native: creates empty file
 native fn create_file(path: String) -> Result<()>

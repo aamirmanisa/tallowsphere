@@ -37,6 +37,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "chunk_file" => Some(chunk_file(&args)),
         "verify_chunk" => Some(verify_chunk(&args)),
         "file_hash" => Some(file_hash(&args)),
+        "hash_prefix" => Some(file_hash_prefix(&args)),
         "tree_hash" => Some(tree_hash(&args)),
         "delta_scan" => Some(delta_scan(&args)),
         "delta_diff" => Some(delta_diff(&args)),
@@ -290,6 +291,42 @@ fn file_hash(args: &[Value]) -> StdlibResult {
             .map_err(|e| format!("transfer.file_hash: read error: {}", e))?;
         if n == 0 { break; }
         hasher.update(&buf[..n]);
+    }
+    Ok(Value::String(hasher.finalize().to_hex().to_string()))
+}
+
+/// `transfer.hash_prefix(path, len)` — BLAKE3 of the first `len` bytes.
+///
+/// Used to prove that a partial destination really is a prefix of the source
+/// before appending the remainder. Reads no further than `len`.
+fn file_hash_prefix(args: &[Value]) -> StdlibResult {
+    use std::io::Read;
+    let path = match get_string_arg(args, 0) {
+        Some(p) => p,
+        None => return Err("transfer.hash_prefix: requires path argument".into()),
+    };
+    let len = match get_int_arg(args, 1) {
+        Some(l) if l >= 0 => l as u64,
+        _ => return Err("transfer.hash_prefix: requires non-negative length".into()),
+    };
+    let file = std::fs::File::open(&path)
+        .map_err(|e| format!("transfer.hash_prefix: cannot open '{path}': {e}"))?;
+    let mut reader = std::io::BufReader::with_capacity(65536, file);
+    let mut hasher = blake3::Hasher::new();
+    let mut remaining = len;
+    let mut buf = [0u8; 65536];
+    while remaining > 0 {
+        let want = std::cmp::min(remaining, buf.len() as u64) as usize;
+        let n = reader
+            .read(&mut buf[..want])
+            .map_err(|e| format!("transfer.hash_prefix: read error on '{path}': {e}"))?;
+        if n == 0 {
+            return Err(format!(
+                "transfer.hash_prefix: '{path}' is shorter than {len} bytes"
+            ));
+        }
+        hasher.update(&buf[..n]);
+        remaining -= n as u64;
     }
     Ok(Value::String(hasher.finalize().to_hex().to_string()))
 }
