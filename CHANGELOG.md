@@ -11,6 +11,14 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 ## [v1.5.6] — 2026-10-25 — `?` keeps the payload's kind
 
+### Added
+
+- `tests/result_payload_typing.rs` pins the `?` payload kind on both planes
+  (`Result<bool>`, `Result<String>` printed and `.len()`'d, `Result<i64>`), and
+  the target is registered in CI's contract suites and in the release gate's
+  integration list. It was written for this fix and had to be wired into the
+  gates before the ledger would accept it: an unrun test is debt, not a proof.
+
 ### What was wrong
 
 - **A value unwrapped with `?` lost its type on the native plane, and printed
