@@ -9,6 +9,47 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.5] — 2026-10-25 — Windows builds again
+
+### Added
+
+- Nothing user-facing.
+
+### Fixed
+
+- **The Windows build could not compile the library.** `tallow_time_monotonic_ns`
+  called `libc::clock_gettime(CLOCK_MONOTONIC)`, which `libc` does not provide on
+  Windows — the job failed with E0425 on both the function and the constant, so
+  the 1.5.4 tag shipped without a windows-x86_64 asset (macOS was still building
+  when the tag was cut). The clock now measures against a process-wide `Instant`,
+  which is monotonic on every supported target and needs no platform binding.
+- **SBOM drift after the version bump**: the snapshot is regenerated in the same
+  change as the bump, which is what the byte-comparing gate requires.
+
+### Verified
+
+- `cargo check --lib` clean; the Linux and macOS release builds of 1.5.4 were
+  green, so this is the only platform that changed for 1.5.5.
+
+### Known red, not hidden
+
+- **Security Audit / Dependency Check**, after the upgrade pass:
+  * `sha3` 0.10.8 -> **0.10.9**, clearing RUSTSEC-2026-0374 (incremental SHAKE).
+  * `crypto-bigint` RUSTSEC-2026-0387 **cannot be cleared from this tree yet**:
+    the vulnerable 0.5.5 comes in through `elliptic-curve` 0.13 <- `p256` 0.13
+    (via `age` 0.12.1 and `hpke`) and `opaque-ke` 4.0.1. The fix is 0.7.6, which
+    `elliptic-curve` 0.14 requires — and no released `age` (0.12.1 is current)
+    or `opaque-ke` (4.1 is a pre-release) pulls 0.14 yet. Upgrading means either
+    waiting for those releases or vendoring/patching them here.
+  * `basic-toml` (unmaintained, no vulnerability) arrives with `age`'s i18n
+    stack; it goes away with the same age upgrade.
+  * `proc-macro-error2` and `libcrux-aesgcm` appear only in the --all-features
+    graph (`tfhe`, `openmls`) and are likewise upstream-pinned.
+
+  So the audit job stays red until `age`/`opaque-ke` move. That is a measured
+  blocker, not an unexamined one; clearing it needs a fork or a documented
+  exception, and neither is in this release.
+
 ## [v1.5.4] — 2026-10-25 — the gates that judged 1.5.3 are green
 
 ### Added
