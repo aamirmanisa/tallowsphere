@@ -63,15 +63,34 @@ fn encrypt_then_decrypt_round_trips_through_the_language() {
 
 #[test]
 fn a_tampered_container_is_refused() {
-    // Flip the last hex nibble of the ciphertext: the AEAD tag must reject it.
-    let src = r#"fn main() {
+    // Two steps on purpose. The earlier version did the tamper inside the .tl
+    // program by replacing the last nibble with "0" — which is a no-op whenever
+    // that nibble already IS "0" (1 in 16 runs), so the "tampered" container
+    // was sometimes the original and the test asserted on something it had not
+    // changed. The mutation now happens in Rust and is guaranteed to differ.
+    let producer = r#"fn main() {
     let kp = crypto.age_keygen()
     let ct = crypto.age_encrypt(kp.recipient, "01")
-    let bad = ct.slice(0, ct.len - 1) + "0"
-    print(crypto.age_decrypt(kp.identity, bad))
+    print(kp.identity)
+    print(ct)
 }
 "#;
-    let (ok, stdout, stderr) = run_program(src, "tamper.tl");
+    let (ok, stdout, _) = run_program(producer, "tamper_produce.tl");
+    assert!(ok, "producing the container must succeed");
+    let l = lines(&stdout);
+    let (identity, ct) = (l[0].clone(), l[1].clone());
+
+    let mut chars: Vec<char> = ct.chars().collect();
+    let mid = chars.len() / 2;
+    let original = chars[mid];
+    chars[mid] = if original == '0' { '1' } else { '0' };
+    let tampered: String = chars.into_iter().collect();
+    assert_ne!(tampered, ct, "the tamper must change the container");
+
+    let consumer = format!(
+        "fn main() {{\n    print(crypto.age_decrypt(\"{identity}\", \"{tampered}\"))\n}}\n"
+    );
+    let (ok, stdout, stderr) = run_program(&consumer, "tamper_decrypt.tl");
     assert!(!ok, "a tampered container must not decrypt; stdout={stdout}");
     assert!(
         stderr.contains("age_decrypt"),

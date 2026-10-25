@@ -242,6 +242,15 @@ jobs:
           # 7 GB of the repository's 10 GB budget and evicting the release
           # compiler archives that actually deliver the speedup.
           shared-key: tallow-ci
+      - name: Install age(1) for the interop suites
+        # age_container and age_native_parity decrypt with the reference
+        # implementation and encrypt with ours in both directions. Without the
+        # binary they panic with "install age to run this test" — which is a
+        # missing dependency reported as a test failure.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+          age --version
       - name: Install the native link dependencies (clang, liblzma, libbz2)
         # First, before any test runs: the native plane links generated programs
         # through clang and the runtime archive references -llzma and -lbz2.
@@ -654,10 +663,13 @@ jobs:
         run: |
           cargo build --locked --bin tallow
           printf 'fn main() {\n    let p = crypto.zk_range_prove(1, 8, "00")\n    print(p.proof)\n}\n' > /tmp/zk_refuse.tl
-          if ./target/debug/tallow run --require-native /tmp/zk_refuse.tl; then
+          # --interpret, not --require-native: there is no ZK native lowering, so
+          # --require-native fails on THAT first and the feature message never
+          # appears. The assertion is about the feature gate.
+          if ./target/debug/tallow run --interpret /tmp/zk_refuse.tl; then
             echo "default build must refuse crypto.zk_*"; exit 1
           fi
-          ./target/debug/tallow run --require-native /tmp/zk_refuse.tl 2>&1 | grep -q "features zk"
+          ./target/debug/tallow run --interpret /tmp/zk_refuse.tl 2>&1 | grep -q "features zk"
 
   fhe-feature:
     name: FHE feature build

@@ -80,6 +80,14 @@ jobs:
           cargo build --locked --bin tallow
           python3 conformance/run.py --tallow target/debug/tallow 2>&1 | tee conformance.log
 
+      - name: Install age(1) for the interop suites
+        # age_native_parity and age_container compare against the reference
+        # implementation in BOTH directions; without the binary the suites fail
+        # with "install age to run this test" rather than testing anything.
+        run: |
+          sudo -S -p '' apt-get update -qq
+          sudo -S -p '' apt-get install -y age
+          age --version
       - name: Integration suites (the proofs CI's contract job owns)
         # The release gate must run what the artefact is judged by. On 1.5.1 the
         # lib suite and the conformance corpus were green while two integration

@@ -4,8 +4,19 @@
 //!
 //! cargo run --example mls_probe --features mls
 
+// The example uses the feature-gated module, and `cargo check --all-targets`
+// (CI's Check and Clippy jobs) compiles every example. Without the feature this
+// builds a stub that says so rather than failing on an unresolved import.
+#[cfg(feature = "mls")]
 use tallow::mls;
 
+#[cfg(not(feature = "mls"))]
+fn main() {
+    eprintln!("mls_probe needs --features mls");
+    std::process::exit(1);
+}
+
+#[cfg(feature = "mls")]
 fn main() {
     let (alice, _alice_kp) = mls::create_group("alice").expect("create group");
     let (bob_pending, bob_kp) = mls::key_package_new("bob").expect("bob key package");

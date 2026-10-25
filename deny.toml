@@ -70,6 +70,11 @@ allow = [
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    # tfhe (Zama) and its tfhe-* helper crates ship under BSD-3-Clause-Clear:
+    # BSD-3-Clause with an explicit patent grant withdrawn. It is a permissive
+    # licence and the only FHE implementation with bootstrapping in Rust; it is
+    # opt-in (`--features fhe`) and never part of the default build.
+    "BSD-3-Clause-Clear",
     "ISC",
     "Unicode-DFS-2016",
     # Unicode-3.0 — ICU4X data crates + unicode-ident (data license; required
