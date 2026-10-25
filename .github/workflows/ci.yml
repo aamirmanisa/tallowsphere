@@ -635,6 +635,46 @@ jobs:
           fi
           ./target/debug/tallow run --require-native /tmp/mls_refuse.tl 2>&1 | grep -q "features mls"
 
+  zk-feature:
+    name: ZK feature build
+    runs-on: ubuntu-latest
+    # `zk` is opt-in: the default build does not link curve arithmetic. Without
+    # this job the range-proof module and its surface arms are never compiled.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: tallow-zk
+      - run: cargo test --locked --features zk --test zk_proof
+      - run: "cargo test --locked --features zk --lib zk:: -- --nocapture"
+      - name: The default build refuses by name
+        run: |
+          cargo build --locked --bin tallow
+          printf 'fn main() {\n    let p = crypto.zk_range_prove(1, 8, "00")\n    print(p.proof)\n}\n' > /tmp/zk_refuse.tl
+          if ./target/debug/tallow run --require-native /tmp/zk_refuse.tl; then
+            echo "default build must refuse crypto.zk_*"; exit 1
+          fi
+          ./target/debug/tallow run --require-native /tmp/zk_refuse.tl 2>&1 | grep -q "features zk"
+
+  fhe-feature:
+    name: FHE feature build
+    runs-on: ubuntu-latest
+    # tfhe is a large dependency; key generation measured 1.4 s on the dev box,
+    # so the tests run normally rather than being excluded from the default run.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: tallow-fhe
+      - run: "cargo test --locked --features fhe --lib fhe:: -- --nocapture"
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest

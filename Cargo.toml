@@ -243,6 +243,15 @@ openmls = { version = "0.7.4", optional = true }
 openmls_basic_credential = { version = "0.4.1", optional = true }
 openmls_rust_crypto = { version = "0.4.4", optional = true }
 openmls_traits = { version = "0.4", optional = true }
+# P6 — opt-in. The default build must not link curve arithmetic it never uses.
+# P6 FHE — opt-in. tfhe's `integer` API is behind a non-default feature in 1.8,
+# which is exactly the kind of thing that silently fails to build on ARM if it
+# is assumed rather than measured (keygen 1.4 s on this box, add 174 ms).
+tfhe = { version = "1.8.2", features = ["integer"], optional = true }
+# Ciphertext transport for the fhe surface (tfhe types are serde-serializable).
+bincode = { version = "1.3", optional = true }
+bulletproofs = { version = "5.0.0", features = ["rand"], optional = true }
+merlin = { version = "3.0", optional = true }
 tls_codec = { version = "0.4", optional = true }
 
 [features]
@@ -256,6 +265,12 @@ default = ["stealth-http"]
 # with the tree's pinned ml-kem 0.2 / kem 0.3.0-pre.0 stack; enabling this
 # requires migrating the ML-KEM arms first. See docs/security/crypto-*.md.
 mls = ["dep:openmls", "dep:openmls_basic_credential", "dep:openmls_rust_crypto", "dep:openmls_traits", "dep:tls_codec"]
+# Zero-knowledge range proofs (P6). Separate from `mls` on purpose: a build that
+# wants MLS should not be forced to link curve arithmetic.
+zk = ["dep:bulletproofs", "dep:merlin"]
+# Fully homomorphic encryption (P6). Large dependency; separate from zk so a
+# build that wants one does not pay for the other.
+fhe = ["dep:tfhe", "dep:bincode"]
 packet-capture = ["dep:pcap"]
 # Wired gate (T-113): when enabled, the QUIC transfer client in
 # src/stdlib/transfer_net.rs skips server-cert verification (self-signed
@@ -414,3 +429,6 @@ members = [
     "crates/tallow-locator",
     "crates/tallow-advisory",
 ]
+# `fuzz/` is a detached crate: cargo-fuzz builds it with nightly and a
+# sanitizer, which must never be part of a normal workspace build.
+exclude = ["fuzz"]

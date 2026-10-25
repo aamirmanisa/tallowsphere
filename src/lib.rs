@@ -76,6 +76,14 @@ pub mod age_stream;
 pub mod frost;
 #[cfg(feature = "mls")]
 pub mod mls;
+/// Zero-knowledge range proofs. Off by default: the default build does not link
+/// curve arithmetic it never uses, and the surface refuses by name.
+#[cfg(feature = "zk")]
+pub mod zk;
+/// Fully homomorphic encryption over 8-bit integers. Off by default: `tfhe` is a
+/// large dependency and key generation costs seconds.
+#[cfg(feature = "fhe")]
+pub mod fhe;
 pub mod opaque;
 pub mod secret_fields;
 pub mod hpke;

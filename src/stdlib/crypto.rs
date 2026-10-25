@@ -86,6 +86,25 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "mls_process" => Some(crypto_mls_process(&args)),
         #[cfg(feature = "mls")]
         "mls_info" => Some(crypto_mls_info(&args)),
+        // Zero-knowledge range proofs — only with `--features zk`; the arms
+        // below refuse by name when the feature is off.
+        #[cfg(not(feature = "zk"))]
+        "zk_range_prove" | "zk_range_verify" => Some(crypto_zk_unavailable()),
+        #[cfg(feature = "zk")]
+        "zk_range_prove" => Some(crypto_zk_range_prove(&args)),
+        #[cfg(feature = "zk")]
+        "zk_range_verify" => Some(crypto_zk_range_verify(&args)),
+        // FHE — only with `--features fhe`.
+        #[cfg(not(feature = "fhe"))]
+        "fhe_keygen" | "fhe_encrypt" | "fhe_add" | "fhe_decrypt" => Some(crypto_fhe_unavailable()),
+        #[cfg(feature = "fhe")]
+        "fhe_keygen" => Some(crypto_fhe_keygen(&args)),
+        #[cfg(feature = "fhe")]
+        "fhe_encrypt" => Some(crypto_fhe_encrypt(&args)),
+        #[cfg(feature = "fhe")]
+        "fhe_add" => Some(crypto_fhe_add(&args)),
+        #[cfg(feature = "fhe")]
+        "fhe_decrypt" => Some(crypto_fhe_decrypt(&args)),
         "opaque_suite" => Some(crypto_opaque_suite(&args)),
         "opaque_setup" => Some(crypto_opaque_setup(&args)),
         "opaque_register_start" => Some(crypto_opaque_register_start(&args)),
@@ -2394,6 +2413,84 @@ fn crypto_mls_unavailable() -> StdlibResult {
 // ── MLS (RFC 9420) ──────────────────────────────────────────────────────────
 // Group state lives in `crate::mls`'s in-process registry; these shims only
 // marshal hex strings and structs. Only compiled with `--features mls`.
+
+#[cfg(not(feature = "fhe"))]
+fn crypto_fhe_unavailable() -> StdlibResult {
+    Err("crypto.fhe_* has no implementation in a build without `--features fhe`: \
+         the feature links tfhe; rebuild with it or run --interpret"
+        .to_string())
+}
+
+#[cfg(feature = "fhe")]
+fn crypto_fhe_keygen(_args: &[Value]) -> StdlibResult {
+    let handle = crate::fhe::keygen()?;
+    Ok(Value::Struct {
+        name: "FheSession".into(),
+        fields: vec![("handle".into(), Value::String(handle))],
+    })
+}
+
+#[cfg(feature = "fhe")]
+fn crypto_fhe_encrypt(args: &[Value]) -> StdlibResult {
+    let handle = sarg(args, 0, "fhe_encrypt")?;
+    let value = get_int_arg(args, 1)
+        .ok_or_else(|| "crypto.fhe_encrypt: missing argument 1 (value)".to_string())?;
+    if !(0..=255).contains(&value) {
+        return Err(format!("crypto.fhe_encrypt: value {value} does not fit in FheUint8 (0..=255)"));
+    }
+    Ok(Value::String(crate::fhe::encrypt(&handle, value as u8)?))
+}
+
+#[cfg(feature = "fhe")]
+fn crypto_fhe_add(args: &[Value]) -> StdlibResult {
+    let handle = sarg(args, 0, "fhe_add")?;
+    let a = sarg(args, 1, "fhe_add")?;
+    let b = sarg(args, 2, "fhe_add")?;
+    Ok(Value::String(crate::fhe::add(&handle, &a, &b)?))
+}
+
+#[cfg(feature = "fhe")]
+fn crypto_fhe_decrypt(args: &[Value]) -> StdlibResult {
+    let handle = sarg(args, 0, "fhe_decrypt")?;
+    let ct = sarg(args, 1, "fhe_decrypt")?;
+    Ok(Value::Int(crate::fhe::decrypt(&handle, &ct)? as i128))
+}
+
+#[cfg(not(feature = "zk"))]
+fn crypto_zk_unavailable() -> StdlibResult {
+    Err("crypto.zk_* has no implementation in a build without `--features zk`: \
+         the feature links curve25519 arithmetic; rebuild with it or run --interpret"
+        .to_string())
+}
+
+#[cfg(feature = "zk")]
+fn crypto_zk_range_prove(args: &[Value]) -> StdlibResult {
+    let value = get_int_arg(args, 0)
+        .ok_or_else(|| "crypto.zk_range_prove: missing argument 0 (value)".to_string())?
+        as u64;
+    let bits = get_int_arg(args, 1)
+        .ok_or_else(|| "crypto.zk_range_prove: missing argument 1 (bits)".to_string())?
+        as u32;
+    let blinding = sarg(args, 2, "zk_range_prove")?;
+    let out = crate::zk::range_prove(value, bits, &blinding)?;
+    Ok(Value::Struct {
+        name: "ZkRangeProof".into(),
+        fields: vec![
+            ("proof".into(), Value::String(out.proof)),
+            ("commitment".into(), Value::String(out.commitment)),
+        ],
+    })
+}
+
+#[cfg(feature = "zk")]
+fn crypto_zk_range_verify(args: &[Value]) -> StdlibResult {
+    let proof = sarg(args, 0, "zk_range_verify")?;
+    let commitment = sarg(args, 1, "zk_range_verify")?;
+    let bits = get_int_arg(args, 2)
+        .ok_or_else(|| "crypto.zk_range_verify: missing argument 2 (bits)".to_string())?
+        as u32;
+    Ok(Value::Bool(crate::zk::range_verify(&proof, &commitment, bits)?))
+}
 
 #[cfg(feature = "mls")]
 fn crypto_mls_key_package(args: &[Value]) -> StdlibResult {

@@ -58,9 +58,13 @@ fn crypto_record() -> serde_json::Value {
 #[test]
 fn every_declared_function_is_reported_exactly_once() {
     let declared = declared_functions();
+    // 54 before P6; +6 for zk_range_{prove,verify} and fhe_{keygen,encrypt,add,
+    // decrypt}, authorized by
+    // the operator's "let's do the 4 items" (P6 is the FHE/ZK phase). The count
+    // lives here so a surface change cannot land without a deliberate edit.
     assert_eq!(
         declared.len(),
-        52,
+        60,
         "the declared crypto surface changed size ({}) — update this gate deliberately",
         declared.len()
     );

@@ -1099,6 +1099,21 @@ fn mls_encrypt(handle: String, plaintext_hex: String) -> MlsMessage
 fn mls_process(handle: String, message: String) -> MlsIncoming
 fn mls_info(handle: String) -> MlsGroupInfo
 
+// Zero-knowledge range proofs (P6) — requires a build with --features zk;
+// otherwise each call refuses by name. `blinding` is 32 bytes of hex and is the
+// caller's secret: reuse links proofs, so generate a fresh one per proof.
+fn zk_range_prove(value: Int, bits: Int, blinding: String) -> ZkRangeProof
+fn zk_range_verify(proof: String, commitment: String, bits: Int) -> Bool
+
+// Fully homomorphic encryption over 8-bit integers (P6) — requires a build with
+// --features fhe; otherwise each call refuses by name. The client key lives in
+// this process: `handle` does not survive the run. Arithmetic is modular:
+// 200 + 100 = 44, which is what an unsigned byte means, not saturation.
+fn fhe_keygen() -> FheSession
+fn fhe_encrypt(handle: String, value: Int) -> String
+fn fhe_add(handle: String, a: String, b: String) -> String
+fn fhe_decrypt(handle: String, ciphertext: String) -> Int
+
 // Chunked, resumable transfer: a directory of ordinary age containers plus a
 // manifest. Resume re-encrypts only the parts that are missing.
 fn age_encrypt_dir(recipient: String, src: String, out_dir: String, chunk_bytes: Int) -> AgeStreamEncrypted

@@ -1,0 +1,34 @@
+[package]
+name = "tallow-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Detached from the root workspace: cargo-fuzz builds with nightly and a
+# sanitizer, which must never leak into a normal `cargo build`.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+# Fuzzing the monolithic engine crate under ASAN needs ~6 GB per rustc for a
+# single codegen unit and was OOM-killed on this 15 GB box. The crypto core is
+# its own crate; that is what these targets drive, and it builds in about a
+# minute under the sanitizer.
+[dependencies]
+libfuzzer-sys = "0.4"
+tallow-crypto = { path = "../crates/tallow-crypto" }
+
+[[bin]]
+name = "aead_decrypt"
+path = "fuzz_targets/aead_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sealed_object"
+path = "fuzz_targets/sealed_object.rs"
+test = false
+doc = false
+bench = false
