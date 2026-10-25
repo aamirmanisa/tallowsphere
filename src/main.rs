@@ -2656,6 +2656,20 @@ fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
+    // Thread stack for spawned Tallow tasks. `spawn`/`async fn` run the same
+    // recursive evaluator as the main thread, which gets 64 MB below; std's
+    // default 2 MB overflows on realistic call depth (measured: a copy worker
+    // calling copy_one -> mkdir_p -> dirname -> FFI aborted with "has
+    // overflowed its stack"). RUST_MIN_STACK must be set before any thread is
+    // created, so it is set here, and an operator-set value always wins.
+    if std::env::var_os("RUST_MIN_STACK").is_none() {
+        // SAFETY: single-threaded at this point in startup (no thread has been
+        // spawned yet); the variable only affects threads created afterwards.
+        unsafe {
+            std::env::set_var("RUST_MIN_STACK", (16 * 1024 * 1024).to_string());
+        }
+    }
+
     // TLS provider: install only when the operator opted into the PQ hybrid
     // (TALLOW_TLS_PQ). Default stays ring with classical groups, so today's
     // handshake bytes and fingerprints are unchanged. Installing here — before
