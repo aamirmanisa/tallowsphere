@@ -484,8 +484,13 @@ jobs:
           # requiring exactly '## ' here failed every release after the body was
           # generated from a section. Accept 2+ hashes; the headings are what
           # matter, not their depth.
+          # The CHANGELOG's stated convention is "What was wrong / What was
+          # fixed", so a section that follows the rule the file documents was
+          # rejected by a grep that only accepted a bare "### Fixed". v1.5.6
+          # built all five targets twice and then failed here. Accept the
+          # documented heading and the bare one; the heading is what matters.
           grep -qE '^#{2,3} Added' release_body.md
-          grep -qE '^#{2,3} Fixed' release_body.md
+          grep -qiE '^#{2,3} (What was )?fixed' release_body.md
           grep -qE '^#{2,3} Verified' release_body.md
 
       - name: Draft release
