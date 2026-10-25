@@ -35,6 +35,13 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 ### What was fixed
 
+- **`?` kept the payload's kind.** `fn flag() -> Result<bool>` unwrapped with
+  `?` came back as a bare `i64` on the native plane, so `b.to_string()` printed
+  `1` where the interpreter printed `true`, and a `Result<String>` payload
+  printed the pointer as a decimal. `collect_fn_return_kinds` now records
+  primitive return kinds and the `?` lowering consults the callee's signature
+  when inference is silent. Pinned by `tests/result_payload_typing.rs` on both
+  planes. (Prepared as 1.5.6; that tag never published, so the fix ships here.)
 - `cargo update`: 248 semver-compatible upgrades (lockfile 852 insertions /
   987 deletions), SBOM snapshot regenerated in the same change.
 - Stub register normalised to five columns per row (surplus `|` → `│`, omitted
