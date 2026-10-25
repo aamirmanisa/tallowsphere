@@ -116,7 +116,6 @@ walkdir = "2"
 arrow = { version = "59", optional = true }
 parquet = { version = "59", optional = true }
 object_store = { version = "0.14", features = ["aws"], optional = true }
-
 # Post-Quantum Crypto — real PQClean C implementations.
 # W5 decision C (2026-09-26): the legacy family (SLH-DSA/SPHINCS+, Falcon,
 # FrodoKEM, Classic McEliece) is optional behind the non-default `pq-legacy`
@@ -240,6 +239,11 @@ cranelift-module = { version = "0.111", optional = true }
 target-lexicon = { version = "0.12", optional = true }
 age = "0.12.1"
 opaque-ke = { version = "4.0.1", features = ["argon2", "std"] }
+openmls = { version = "0.7.4", optional = true }
+openmls_basic_credential = { version = "0.4.1", optional = true }
+openmls_rust_crypto = { version = "0.4.4", optional = true }
+openmls_traits = { version = "0.4", optional = true }
+tls_codec = { version = "0.4", optional = true }
 
 [features]
 # `stealth-http` is enabled BY DEFAULT so a stock build uses the real
@@ -248,6 +252,10 @@ opaque-ke = { version = "4.0.1", features = ["argon2", "std"] }
 # To force the pure-rustls fallback, build with --no-default-features.
 # NOTE: enabling this requires `cmake` (BoringSSL via boring-sys2).
 default = ["stealth-http"]
+# MLS (RFC 9420) via openmls — opt-in. It pulls ml-kem 0.3, which conflicts
+# with the tree's pinned ml-kem 0.2 / kem 0.3.0-pre.0 stack; enabling this
+# requires migrating the ML-KEM arms first. See docs/security/crypto-*.md.
+mls = ["dep:openmls", "dep:openmls_basic_credential", "dep:openmls_rust_crypto", "dep:openmls_traits", "dep:tls_codec"]
 packet-capture = ["dep:pcap"]
 # Wired gate (T-113): when enabled, the QUIC transfer client in
 # src/stdlib/transfer_net.rs skips server-cert verification (self-signed

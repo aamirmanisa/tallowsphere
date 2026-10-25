@@ -73,6 +73,8 @@ pub mod foresight_adapter;
 pub mod format_policy;
 pub mod age;
 pub mod frost;
+#[cfg(feature = "mls")]
+pub mod mls;
 pub mod opaque;
 pub mod secret_fields;
 pub mod hpke;

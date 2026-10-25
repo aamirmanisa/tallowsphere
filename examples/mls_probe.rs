@@ -1,0 +1,30 @@
+//! Runs the MLS core loop and prints what actually happened, so the protocol can
+//! be verified even when an unrelated `#[cfg(test)]` block in the tree does not
+//! compile.
+//!
+//! cargo run --example mls_probe --features mls
+
+use tallow::mls;
+
+fn main() {
+    let (alice, _alice_kp) = mls::create_group("alice").expect("create group");
+    let (bob_pending, bob_kp) = mls::key_package_new("bob").expect("bob key package");
+
+    let (welcome, epoch_add) = mls::add_member(&alice, &bob_kp).expect("add bob");
+    println!("epoch_after_add={epoch_add}");
+
+    let (bob, bob_epoch) = mls::join_from_welcome(&bob_pending, &welcome).expect("bob joins");
+    println!("bob_epoch={bob_epoch}");
+
+    let (ct, _) = mls::encrypt(&alice, "68656c6c6f206d6c73").expect("encrypt");
+    let (kind, pt, _) = mls::process(&bob, &ct).expect("decrypt");
+    println!("kind={kind} plaintext={pt}");
+
+    let (members, epoch) = mls::group_info(&bob).expect("group info");
+    println!("members={members} epoch={epoch}");
+
+    // An outsider must not read the group.
+    let (mallory, _) = mls::create_group("mallory").expect("mallory");
+    let outsider = mls::process(&mallory, &ct);
+    println!("outsider_open={}", if outsider.is_ok() { "LEAK" } else { "refused" });
+}

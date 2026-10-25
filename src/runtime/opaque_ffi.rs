@@ -264,10 +264,11 @@ mod tests {
         let cred = CString::new("alice").unwrap();
         let setup_c = CString::new(setup.clone()).unwrap();
         let req_c = CString::new(request).unwrap();
-        let response = unsafe {
+        let response_rec = unsafe {
             tallow_opaque_register_respond(setup_c.as_ptr(), req_c.as_ptr(), cred.as_ptr())
         };
-        let response = unsafe { s(response) };
+        assert!(!response_rec.is_null(), "register_respond returned null");
+        let response = unsafe { s((*response_rec).a) };
 
         let state_c = CString::new(state).unwrap();
         let resp_c = CString::new(response).unwrap();
