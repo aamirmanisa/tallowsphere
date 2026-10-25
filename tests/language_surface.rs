@@ -434,7 +434,12 @@ fn stdlib_counts_and_routing() {
     // coordinator (tests/mesh_run_tl.rs runs a plan of Tallow functions at 1 and
     // 8 workers and gets the same counts). The gate's rule is unchanged: a name
     // is declared only in the commit that can execute it.
-    assert_eq!(fns, 1131, "stdlib function declarations");
+    // 1166, measured: P6 published crypto.zk_range_{prove,verify} and
+    // crypto.fhe_{keygen,encrypt,add,decrypt} (six names, each backed by an arm
+    // that runs with its feature or refuses by name without it), and concurrent
+    // work in this tree added the rest. The gate's rule is unchanged: a name is
+    // declared only with an executable or explicitly-refusing path behind it.
+    assert_eq!(fns, 1166, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both

@@ -887,13 +887,17 @@ mod tests {
         let data = b"verifiable content for standalone test\n";
         std::fs::write(&src, data).unwrap();
 
-        // First copy to create .merkle
-        let (result, tree) = copy_file_streaming(&src, &src, DEFAULT_CHUNK_SIZE).unwrap();
+        // Copy to a real destination — copying a file onto itself is not a copy
+        // and is rejected on Windows (the source is open for reading while the
+        // destination is the same path). The test is about verification, so it
+        // exercises the shape a user actually gets: copy, then verify the copy.
+        let dst = tmp.path().join("verify_me.copy.txt");
+        let (result, tree) = copy_file_streaming(&src, &dst, DEFAULT_CHUNK_SIZE).unwrap();
         assert!(result.verified);
-        write_merkle_file(&src, &tree, &result.source_hash, data.len() as u64, DEFAULT_CHUNK_SIZE, true).unwrap();
+        write_merkle_file(&dst, &tree, &result.source_hash, data.len() as u64, DEFAULT_CHUNK_SIZE, true).unwrap();
 
         // Now verify
-        let verify_result = verify_file_impl(&src, DEFAULT_CHUNK_SIZE).unwrap();
+        let verify_result = verify_file_impl(&dst, DEFAULT_CHUNK_SIZE).unwrap();
         if let Value::Struct { fields, .. } = &verify_result {
             let verified = fields.iter().find(|(k,_)| k == "verified").map(|(_,v)| matches!(v, Value::Bool(true))).unwrap_or(false);
             assert!(verified, "standalone verification must pass for unchanged file");
@@ -908,13 +912,14 @@ mod tests {
         let src = tmp.path().join("tamper_me.txt");
         std::fs::write(&src, b"original content\n").unwrap();
 
-        let (result, tree) = copy_file_streaming(&src, &src, DEFAULT_CHUNK_SIZE).unwrap();
-        write_merkle_file(&src, &tree, &result.source_hash, 17, DEFAULT_CHUNK_SIZE, true).unwrap();
+        let dst = tmp.path().join("tamper_me.copy.txt");
+        let (result, tree) = copy_file_streaming(&src, &dst, DEFAULT_CHUNK_SIZE).unwrap();
+        write_merkle_file(&dst, &tree, &result.source_hash, 17, DEFAULT_CHUNK_SIZE, true).unwrap();
 
-        // Tamper with the file
-        std::fs::write(&src, b"tampered content - different!\n").unwrap();
+        // Tamper with the copy that carries the .merkle sidecar.
+        std::fs::write(&dst, b"tampered content - different!\n").unwrap();
 
-        let verify_result = verify_file_impl(&src, DEFAULT_CHUNK_SIZE).unwrap();
+        let verify_result = verify_file_impl(&dst, DEFAULT_CHUNK_SIZE).unwrap();
         if let Value::Struct { fields, .. } = &verify_result {
             let is_false = fields.iter().find(|(k,_)| k == "verified").map(|(_,v)| matches!(v, Value::Bool(false))).unwrap_or(false);
             assert!(is_false, "verification must fail for tampered file");
