@@ -698,7 +698,7 @@ impl<'a> CodeGen<'a> {
 
     /// Create a new CodeGen with a specific target configuration.
     pub fn new_with_target(program: &'a Program, env: &'a TypeEnv, target: TargetConfig) -> Self {
-        Self {
+        let mut cg = Self {
             program,
             env,
             target,
@@ -767,7 +767,42 @@ impl<'a> CodeGen<'a> {
             variable_trait_type: HashMap::new(),
             const_init_fns: Vec::new(),
             agent_task_request_limits: HashMap::new(),
+        };
+        // Layouts for structs the ENGINE returns (stdlib .tl declares them, but
+        // only user structs reach struct_layouts through the parser). Without
+        // this, `fs.stat(...)`'s FileInfo has no `%struct.FileInfo` to build and
+        // every field read on it fails to lower.
+        cg.register_builtin_structs();
+        cg
+    }
+
+    /// Register layouts for engine-provided structs, in declaration order from
+    /// `stdlib/*.tl`. Keep these in lockstep with the `.tl` declarations: a
+    /// field added there must be added here, or native field reads of it fail.
+    fn register_builtin_structs(&mut self) {
+        let mut file_info = StructLayout {
+            fields: Vec::new(),
+            field_map: HashMap::new(),
+            field_kinds: HashMap::new(),
+            llvm_name: "%struct.FileInfo".to_string(),
+        };
+        for (idx, (name, ty)) in [
+            ("path", LLType::I8Ptr),
+            ("size", LLType::I64),
+            ("is_file", LLType::I1),
+            ("is_dir", LLType::I1),
+            ("modified", LLType::I64),
+            ("created", LLType::I64),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            file_info.fields.push(name.to_string());
+            file_info.field_map.insert(name.to_string(), (idx, ty));
         }
+        self.struct_layouts
+            .entry("FileInfo".to_string())
+            .or_insert(file_info);
     }
 
     /// Set the source directory for resolving local imports.
@@ -4455,6 +4490,19 @@ void tallow_async_runtime_shutdown(void) {
                         ExprKind::StringLit(_) | ExprKind::Interpolation { .. }
                     ),
                 };
+                // `let info = fs.stat(p)?` — the `?` unwraps a Result<FileInfo>,
+                // so the binding is still a FileInfo; without this a field read
+                // (`info.is_dir`) has no layout on the native plane.
+                if let ExprKind::Try(inner) = &value.kind {
+                    if let ExprKind::MethodCall { object, method, .. } = &inner.kind {
+                        if method == "stat"
+                            && matches!(&object.kind, ExprKind::Ident(o) if o == "fs")
+                        {
+                            self.variable_struct_types
+                                .insert(name.clone(), "FileInfo".to_string());
+                        }
+                    }
+                }
                 if is_string {
                     self.variable_is_string.insert(name.clone(), true);
                 } else {
@@ -4580,6 +4628,10 @@ void tallow_async_runtime_shutdown(void) {
                             // read the count slot. Without these flags `.len`
                             // falls back to `strlen` on the buffer — right for
                             // 0/1 lines, wrong from 2 up.
+                            if obj_name == "fs" && method == "stat" {
+                                self.variable_struct_types
+                                    .insert(name.clone(), "FileInfo".to_string());
+                            }
                             if obj_name == "fs"
                                 && (method == "read_lines"
                                     || method == "list_dir"
@@ -24394,23 +24446,17 @@ impl<'a> CodeGen<'a> {
         Ok(self.emit_fs_check_rc(&rc, "fs.remove_dir_all: "))
     }
 
-    /// `fs.stat(path)` -> `%struct.FileInfo`, filled from `tallow_fs_stat`.
+    /// `fs.stat(path)` -> `Result<FileInfo>` from `tallow_fs_stat`.
     ///
     /// The FFI writes five plain integers into a stack buffer (size, is_file,
-    /// is_dir, modified, created); this allocates the struct with the same
-    /// GEP-from-null size trick struct literals use and stores each field at its
-    /// declared index, so the layout stays the declaration's, not a hand-counted
-    /// offset. Any failure (ENOENT, EACCES) fails closed with the OS message.
+    /// is_dir, modified, created) and fails closed with the OS message. The
+    /// struct is built through `build_result_struct`, so the layout comes from
+    /// the registered FileInfo declaration rather than hand-counted offsets, and
+    /// the caller's `?` sees a real `TallowResult`.
     fn emit_fs_stat(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
         let Some(arg) = args.first() else {
             return Err("fs.stat requires a path".into());
         };
-        let layout = self
-            .struct_layouts
-            .get("FileInfo")
-            .cloned()
-            .ok_or_else(|| "fs.stat: FileInfo layout is not registered".to_string())?;
-
         let path_val = self.emit_expr(&arg.value)?;
         let path = self.coerce_to_string(&path_val)?;
 
@@ -24431,50 +24477,31 @@ impl<'a> CodeGen<'a> {
         self.emit_fatal_exit1("fs.stat: ", &err_reg);
         self.body.push_str(&format!("{ok_b}:\n"));
 
-        // Allocate %struct.FileInfo (padding-correct size via GEP-from-null).
-        let struct_ty = layout.llvm_name.clone();
-        let size_ptr = self.fresh_reg();
-        self.emit_line(&format!(
-            "{size_ptr} = getelementptr {struct_ty}, ptr null, i32 1"
-        ));
-        let size_i64 = self.fresh_reg();
-        self.emit_line(&format!("{size_i64} = ptrtoint ptr {size_ptr} to i64"));
-        let obj = self.fresh_reg();
-        self.emit_line(&format!("{obj} = call ptr @malloc(i64 {size_i64})"));
-
-        // path: String field
-        if let Some((idx, ty)) = layout.field_map.get("path").cloned() {
-            let gep = self.fresh_reg();
+        // Load the five integer slots.
+        let mut slots: Vec<String> = Vec::new();
+        for i in 0..5 {
+            let slot_ptr = self.fresh_reg();
             self.emit_line(&format!(
-                "{gep} = getelementptr inbounds {struct_ty}, ptr {obj}, i32 0, i32 {idx}"
+                "{slot_ptr} = getelementptr i64, ptr {buf}, i64 {i}"
             ));
-            let coerced = self.coerce(&LLValue::new(path.clone(), LLType::I8Ptr), &ty)?;
-            self.emit_line(&format!("store {} {coerced}, ptr {gep}", ty.to_ir()));
+            let raw = self.fresh_reg();
+            self.emit_line(&format!("{raw} = load i64, ptr {slot_ptr}"));
+            slots.push(raw);
         }
-        // size, is_file, is_dir, modified, created — buffer slots 0..4
-        for (field, slot) in [
-            ("size", 0usize),
-            ("is_file", 1),
-            ("is_dir", 2),
-            ("modified", 3),
-            ("created", 4),
-        ] {
-            if let Some((idx, ty)) = layout.field_map.get(field).cloned() {
-                let gep = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{gep} = getelementptr inbounds {struct_ty}, ptr {obj}, i32 0, i32 {idx}"
-                ));
-                let slot_ptr = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{slot_ptr} = getelementptr i64, ptr {buf}, i64 {slot}"
-                ));
-                let raw = self.fresh_reg();
-                self.emit_line(&format!("{raw} = load i64, ptr {slot_ptr}"));
-                let coerced = self.coerce(&LLValue::new(raw, LLType::I64), &ty)?;
-                self.emit_line(&format!("store {} {coerced}, ptr {gep}", ty.to_ir()));
-            }
-        }
-        Ok(LLValue::new(obj, LLType::I8Ptr))
+        let is_file_b = self.fresh_reg();
+        self.emit_line(&format!("{is_file_b} = icmp ne i64 {}, 0", slots[1]));
+        let is_dir_b = self.fresh_reg();
+        self.emit_line(&format!("{is_dir_b} = icmp ne i64 {}, 0", slots[2]));
+
+        let fields: Vec<(&str, String, LLType)> = vec![
+            ("path", path.clone(), LLType::I8Ptr),
+            ("size", slots[0].clone(), LLType::I64),
+            ("is_file", is_file_b, LLType::I1),
+            ("is_dir", is_dir_b, LLType::I1),
+            ("modified", slots[3].clone(), LLType::I64),
+            ("created", slots[4].clone(), LLType::I64),
+        ];
+        self.build_result_struct("FileInfo", &fields, "true")
     }
 
     /// `fs.list_dir(path)` -> native string array of entry names, via

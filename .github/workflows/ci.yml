@@ -299,6 +299,7 @@ jobs:
           --test keypair_native_parity
           --test kats
           --test age_stream
+          --test mutation_robustness
           --test zeroize_adoption
           --test mesh_plan_parity
           --test stdlib_method_refusals
