@@ -300,6 +300,7 @@ jobs:
           --test kats
           --test age_stream
           --test mutation_robustness
+          --test rotation_drill
           --test zeroize_adoption
           --test mesh_plan_parity
           --test stdlib_method_refusals
@@ -598,6 +599,41 @@ jobs:
           # compiler archives that actually deliver the speedup.
           shared-key: tallow-ci
       - run: cargo clippy --locked --all-targets -- -W clippy::all
+
+  mls-feature:
+    name: MLS feature build
+    runs-on: ubuntu-latest
+    # The default build refuses crypto.mls_* by name (openmls is opt-in because
+    # its dependency tree conflicts with the pinned ml-kem stack), so the whole
+    # MLS path — FFI, native lowering, group flow — is invisible to every other
+    # job here. This job is the only thing that compiles it.
+    #
+    # Cost, stated: it recompiles the crate with a different feature set, so it
+    # cannot share the default build's artifacts. It is a full build.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: tallow-mls
+      - name: Build with the mls feature
+        run: cargo build --locked --features mls --bin tallow
+      - name: Run the MLS group flow on the native plane
+        # examples/mls_probe.rs drives create -> add -> join -> encrypt -> process
+        # through the same registry the language surface uses.
+        run: cargo run --locked --quiet --features mls --example mls_probe
+      - name: Assert the default build still refuses by name
+        # The complement of the above: without the feature the surface must fail
+        # with a message naming it, not link-error or silently do nothing.
+        run: |
+          cargo build --locked --bin tallow
+          printf 'fn main() {\n    let k = crypto.mls_create_group("a")\n    print(k.handle)\n}\n' > /tmp/mls_refuse.tl
+          if ./target/debug/tallow run --require-native /tmp/mls_refuse.tl; then
+            echo "default build must refuse crypto.mls_*"; exit 1
+          fi
+          ./target/debug/tallow run --require-native /tmp/mls_refuse.tl 2>&1 | grep -q "features mls"
 
   audit:
     name: Security Audit
