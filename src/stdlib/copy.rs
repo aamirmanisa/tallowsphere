@@ -114,14 +114,25 @@ fn copy_file_streaming(
             .map_err(|e| format!("copy: cannot create parent dir '{}': {}", parent.display(), e))?;
     }
 
-    std::fs::copy(src, dst).map_err(|e| {
-        format!(
-            "copy: cannot copy '{}' -> '{}': {}",
-            src.display(),
-            dst.display(),
-            e
-        )
-    })?;
+    // Copying a file onto itself is a no-op, not a failure — and the platform
+    // decides which unless we say what we mean. Linux tolerates it; Windows
+    // refuses with a sharing violation (os error 32), which is how CI's Windows
+    // job caught this on 2026-10-25. Hash-only callers (the verify path) lean on
+    // it, so the semantics are stated here rather than left to the OS.
+    let same_file = match (src.canonicalize(), dst.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if !same_file {
+        std::fs::copy(src, dst).map_err(|e| {
+            format!(
+                "copy: cannot copy '{}' -> '{}': {}",
+                src.display(),
+                dst.display(),
+                e
+            )
+        })?;
+    }
 
     let file_size = std::fs::metadata(dst).map(|m| m.len()).map_err(|e| {
         format!("copy: cannot stat written destination '{}': {e}", dst.display())
@@ -935,6 +946,23 @@ mod tests {
         let result = verify_file_impl(&f, DEFAULT_CHUNK_SIZE);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("no .merkle file found"));
+    }
+
+    #[test]
+    fn test_copy_file_onto_itself_is_a_noop() {
+        // Windows opens the destination for writing and the source for reading,
+        // which collides (os error 32); Linux lets it through. Stating the
+        // semantics in the implementation makes both behave the same, and this
+        // test is the Windows-side guard so the regression cannot come back.
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("self.txt");
+        std::fs::write(&f, b"same bytes\n").unwrap();
+
+        let (r, _t) = copy_file_streaming(&f, &f, DEFAULT_CHUNK_SIZE)
+            .expect("copying a file onto itself must not fail");
+        assert!(r.verified, "same-file copy must report verified");
+        assert_eq!(r.source_hash, r.destination_hash);
+        assert_eq!(std::fs::read(&f).unwrap(), b"same bytes\n");
     }
 
     #[test]
