@@ -45,6 +45,9 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         | "delete" | "remove" | "list_dir" | "readdir" => None,
 
         "read_file" => Some(do_read_file(args)),
+        // Declared in stdlib/fs.tl as `native fn delete_file(path)`, with no arm
+        // in any dispatcher, so every call died as "undefined function".
+        "delete_file" => Some(do_delete_file(args)),
         "write_file" => Some(do_write_file(args)),
         "rename" => Some(do_rename(args)),
         "stat" => Some(do_stat(args)),
@@ -288,6 +291,14 @@ fn do_rename(args: Vec<Value>) -> StdlibResult {
     std::fs::rename(&src, &dst).map(|_| Value::Nil).map_err(|e| format!("fs.rename: {e}"))
 }
 
+fn do_delete_file(args: Vec<Value>) -> StdlibResult {
+    let path = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("fs.delete_file: expected string path argument".into()),
+    };
+    std::fs::remove_file(&path).map(|_| Value::Nil).map_err(|e| format!("fs.delete_file: {e}"))
+}
+
 fn do_stat(args: Vec<Value>) -> StdlibResult {
     let path = match args.first() {
         Some(Value::String(s)) => s.clone(),
@@ -304,13 +315,28 @@ fn do_stat(args: Vec<Value>) -> StdlibResult {
     let is_file = meta.is_file();
     let is_dir = meta.is_dir();
 
+    let created = meta
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i128)
+        .unwrap_or(modified_at);
+
+    // Field names here must match the declaration in stdlib/fs.tl
+    // (`path, size, is_file, is_dir, modified, created`). The runtime used to
+    // emit `modified_at` and no `path`/`created`, so a declared field read as
+    // undefined unless the caller guessed the runtime spelling.
+    // `modified_at` is kept as an alias for programs already doing that.
     Ok(Value::Struct {
         name: "FileInfo".to_string(),
         fields: vec![
+            ("path".to_string(), Value::String(path.clone())),
             ("size".to_string(), Value::Int(size)),
-            ("modified_at".to_string(), Value::Int(modified_at)),
             ("is_file".to_string(), Value::Bool(is_file)),
             ("is_dir".to_string(), Value::Bool(is_dir)),
+            ("modified".to_string(), Value::Int(modified_at)),
+            ("modified_at".to_string(), Value::Int(modified_at)),
+            ("created".to_string(), Value::Int(created)),
         ],
     })
 }
@@ -659,5 +685,40 @@ mod tests {
             vec!["YmluYXJ5AHBheWxvYWT//g==".to_string()],
             "a Bytes value must print as its base64 encoding, not a summary"
         );
+    }
+
+    /// The runtime must emit exactly the fields `stdlib/fs.tl` declares for
+    /// FileInfo, or a declared field reads as undefined at runtime.
+    #[test]
+    fn stat_emits_the_declared_fileinfo_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("stat.bin");
+        std::fs::write(&f, b"12345").unwrap();
+
+        let v = do_stat(vec![Value::String(f.to_string_lossy().to_string())]).unwrap();
+        let Value::Struct { name, fields } = v else { panic!("stat must return a struct") };
+        assert_eq!(name, "FileInfo");
+        let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+        for declared in ["path", "size", "is_file", "is_dir", "modified", "created"] {
+            assert!(keys.contains(&declared), "FileInfo is missing declared field {declared}: {keys:?}");
+        }
+        let get = |k: &str| fields.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert!(matches!(get("size"), Some(Value::Int(5))), "size must be 5: {:?}", get("size"));
+        assert!(matches!(get("is_file"), Some(Value::Bool(true))), "is_file must be true");
+        assert!(matches!(get("is_dir"), Some(Value::Bool(false))), "is_dir must be false");
+    }
+
+    /// `fs.delete_file` is declared in stdlib/fs.tl; it used to have no dispatch
+    /// arm at all, so every call failed as an undefined function.
+    #[test]
+    fn delete_file_removes_the_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("gone.txt");
+        std::fs::write(&f, b"x").unwrap();
+        do_delete_file(vec![Value::String(f.to_string_lossy().to_string())]).unwrap();
+        assert!(!f.exists(), "delete_file must remove the file");
+
+        let err = do_delete_file(vec![Value::String(f.to_string_lossy().to_string())]).unwrap_err();
+        assert!(err.to_string().contains("fs.delete_file"), "missing-file error must name the function: {err}");
     }
 }

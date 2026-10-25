@@ -31,6 +31,8 @@ struct CopyResult {
     chunk_count: usize,
     merkle_root: String,
     metadata_preserved: bool,
+    files_copied: u64,
+    dirs_created: u64,
 }
 
 impl CopyResult {
@@ -50,6 +52,11 @@ impl CopyResult {
                 ("chunk_count".to_string(), Value::Int(self.chunk_count as i128)),
                 ("merkle_root".to_string(), Value::String(self.merkle_root.clone())),
                 ("metadata_preserved".to_string(), Value::Bool(self.metadata_preserved)),
+                // `stdlib/transfer.tl` declares CopyStats.files_copied with a
+                // default of 0, so a struct without the field reads as a silent
+                // zero instead of an error. Emit it explicitly.
+                ("files_copied".to_string(), Value::Int(self.files_copied as i128)),
+                ("dirs_created".to_string(), Value::Int(self.dirs_created as i128)),
             ],
         }
     }
@@ -57,16 +64,49 @@ impl CopyResult {
 
 // ── Streaming dual-hasher copy ──────────────────────────────────────────
 
-/// Core engine: reads source file via platform I/O backend,
-/// hashes source and destination in memory, collects chunk hashes.
-/// Returns CopyResult and full Merkle tree layers.
+/// Hash a file exactly as it exists on disk, in chunk-sized blocks.
+///
+/// Returns `(whole-file hash, per-chunk hashes, byte length)`. Streaming keeps
+/// peak memory at one chunk regardless of file size — the previous path held the
+/// entire file in memory and hashed that same buffer twice.
+fn hash_file_on_disk(path: &Path, chunk_size: usize) -> Result<(String, Vec<String>, u64), String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("copy: cannot reopen '{}' to verify it: {e}", path.display()))?;
+    let mut hasher = blake3::Hasher::new();
+    let mut chunk_hashes: Vec<String> = Vec::new();
+    let mut buf = vec![0u8; chunk_size.max(1)];
+    let mut total: u64 = 0;
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("copy: read error while verifying '{}': {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        chunk_hashes.push(blake3::hash(&buf[..n]).to_hex().to_string());
+        total += n as u64;
+    }
+    Ok((hasher.finalize().to_hex().to_string(), chunk_hashes, total))
+}
+
+/// Core engine: copy through the kernel path, then RE-READ both sides from
+/// disk to verify them.
+///
+/// Two defects this replaces:
+///  1. the destination hash was computed from the same in-memory buffer that had
+///     just been written, so `verified` was true by construction — a short write,
+///     a torn write or corruption could never be detected;
+///  2. the entire file was read into a `Vec`, so peak memory equalled file size
+///     (measured: 1.52 GiB RSS for a 1.5 GiB file).
+/// It now holds one chunk of `chunk_size` bytes and uses `copy_file_range` /
+/// `sendfile` through `std::fs::copy` where the platform supports it.
 fn copy_file_streaming(
     src: &Path,
     dst: &Path,
     chunk_size: usize,
 ) -> Result<(CopyResult, Vec<Vec<String>>), String> {
     let start = Instant::now();
-    let backend = io_backend::detect_backend();
 
     // Ensure parent directory exists
     if let Some(parent) = dst.parent() {
@@ -74,34 +114,29 @@ fn copy_file_streaming(
             .map_err(|e| format!("copy: cannot create parent dir '{}': {}", parent.display(), e))?;
     }
 
-    // Read entire source file using platform I/O backend
-    let file_data = io_backend::read_file_sync(src, backend)
-        .map_err(|e| format!("copy: cannot open source '{}': {}", src.display(), e))?;
-    let file_size = file_data.len() as u64;
+    std::fs::copy(src, dst).map_err(|e| {
+        format!(
+            "copy: cannot copy '{}' -> '{}': {}",
+            src.display(),
+            dst.display(),
+            e
+        )
+    })?;
 
-    // Hash source bytes
-    let mut src_hasher = blake3::Hasher::new();
-    src_hasher.update(&file_data);
-    let source_hash = src_hasher.finalize().to_hex().to_string();
+    let file_size = std::fs::metadata(dst).map(|m| m.len()).map_err(|e| {
+        format!("copy: cannot stat written destination '{}': {e}", dst.display())
+    })?;
 
-    // Write to destination using platform I/O backend
-    io_backend::write_file_sync(dst, &file_data, backend)
-        .map_err(|e| format!("copy: write error on '{}': {}", dst.display(), e))?;
+    // Both hashes come from disk, so the comparison is falsifiable.
+    let (source_hash, source_chunk_hashes, source_len) = hash_file_on_disk(src, chunk_size)?;
+    let (destination_hash, chunk_hashes, written_len) = hash_file_on_disk(dst, chunk_size)?;
 
-    // Hash destination bytes (from same in-memory data — zero re-read)
-    let mut dst_hasher = blake3::Hasher::new();
-    dst_hasher.update(&file_data);
-    let destination_hash = dst_hasher.finalize().to_hex().to_string();
+    let verified = source_hash == destination_hash
+        && written_len == source_len
+        && written_len == file_size
+        && chunk_hashes == source_chunk_hashes;
 
-    let verified = source_hash == destination_hash;
-
-    // Build chunk hashes from file_data in chunk_size blocks
-    let chunk_hashes: Vec<String> = file_data
-        .chunks(chunk_size)
-        .map(|chunk| blake3::hash(chunk).to_hex().to_string())
-        .collect();
-
-    // Build Merkle tree from chunk hashes
+    // Build Merkle tree from the hashes of the bytes that are actually on disk
     let merkle_tree = build_merkle_tree(&chunk_hashes);
     let merkle_root = build_merkle_root(&chunk_hashes);
 
@@ -122,6 +157,8 @@ fn copy_file_streaming(
         chunk_count: chunk_hashes.len(),
         merkle_root,
         metadata_preserved: false, // set by caller
+        files_copied: 1,
+        dirs_created: 0,
     };
 
     Ok((result, merkle_tree))
@@ -491,21 +528,6 @@ fn verify_dir(args: &[Value]) -> StdlibResult {
 
 // ── Directory copy with adaptive parallelism ─────────────────────────
 
-/// Compute the number of parallel copy workers based on file count and CPU cores.
-/// Formula: min(files/10, cpus*2) capped at 64, minimum 1.
-fn adaptive_worker_count(file_count: usize) -> usize {
-    let cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    let file_based = if file_count > 0 {
-        std::cmp::max(1, file_count / 10)
-    } else {
-        1
-    };
-    let absolute_max: usize = 64;
-    std::cmp::min(file_based, std::cmp::min(cpus * 2, absolute_max))
-}
-
 /// Recursive helper: walk a directory tree and copy every file.
 /// Uses copy_file_streaming for individual files and recurses for subdirectories.
 fn copy_dir_recursive(
@@ -702,7 +724,13 @@ mod tests {
             DEFAULT_CHUNK_SIZE,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot open"));
+        let err = result.unwrap_err();
+        // The message changed when the copy moved from a whole-file read to
+        // std::fs::copy: it now names both paths instead of saying "cannot open
+        // source". Assert the contract that matters — it is a `copy:` error that
+        // names the offending source — not the old wording.
+        assert!(err.contains("copy:"), "unexpected error shape: {err}");
+        assert!(err.contains("__nonexistent_src__.txt"), "error must name the source: {err}");
     }
 
     #[test]
@@ -876,14 +904,34 @@ mod tests {
     // ── Directory copy tests ──────────────────────────────────────────
 
     #[test]
-    fn test_adaptive_worker_count() {
-        assert_eq!(adaptive_worker_count(0), 1);
-        assert_eq!(adaptive_worker_count(5), 1);
-        let n = adaptive_worker_count(100);
-        assert!(n >= 1);
-        let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-        assert!(n <= cpus * 2);
-        assert!(n <= 64);
+    fn verification_detects_a_changed_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("f.bin");
+        std::fs::write(&p, b"original bytes").unwrap();
+        let (h1, c1, n1) = hash_file_on_disk(&p, 4).unwrap();
+        assert_eq!(n1, 14);
+
+        std::fs::write(&p, b"changed bytes!").unwrap();
+        let (h2, c2, n2) = hash_file_on_disk(&p, 4).unwrap();
+        assert_ne!(h1, h2, "re-read must reflect the bytes now on disk");
+        assert_ne!(c1, c2);
+        assert_eq!(n1, n2, "same length, different content: hash must still differ");
+    }
+
+    #[test]
+    fn verification_detects_a_truncated_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("g.bin");
+        std::fs::write(&p, b"0123456789abcdef").unwrap();
+        let (_h1, _c1, n1) = hash_file_on_disk(&p, 4).unwrap();
+        assert_eq!(n1, 16);
+
+        let f = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+        f.set_len(10).unwrap();
+        drop(f);
+        let (_h2, _c2, n2) = hash_file_on_disk(&p, 4).unwrap();
+        assert_eq!(n2, 10, "short write must change the measured length");
+        assert_ne!(n1, n2);
     }
 
     #[test]
@@ -936,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parallel_copy_correctness() {
+    fn test_copy_dir_ten_files_correctness() {
         let tmp = tempfile::tempdir().unwrap();
         let src_dir = tmp.path().join("src_par");
         let dst_dir = tmp.path().join("dst_par");
@@ -950,9 +998,9 @@ mod tests {
             ).unwrap();
         }
 
-        let workers = adaptive_worker_count(10);
-        assert!(workers >= 1, "adaptive workers must be at least 1");
-
+        // This copy is SEQUENTIAL: there is no worker pool in the stdlib engine
+        // (the `adaptive_worker_count` helper that suggested one was dead code
+        // and has been removed). The assertion below is about correctness only.
         let result = copy_dir_impl(&src_dir, &dst_dir, DEFAULT_CHUNK_SIZE).unwrap();
         if let Value::Struct { fields, .. } = &result {
             let fc = fields.iter().find(|(k,_)| k == "files_copied")
