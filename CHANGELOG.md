@@ -9,6 +9,42 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.6] — 2026-10-25 — `?` keeps the payload's kind
+
+### What was wrong
+
+- **A value unwrapped with `?` lost its type on the native plane, and printed
+  the wrong thing.** `fn flag() -> Result<bool>` then `let b = flag()?;
+  b.to_string()` printed `1` natively and `true` interpreted; a `Result<String>`
+  payload printed the pointer as a decimal integer (`str=201890135739400`). Every
+  exit code stayed 0 — the failure mode is a wrong value, not a crash, which is
+  the worse of the two.
+
+  Two gaps, both in `src/codegen.rs`. `collect_fn_return_kinds` recorded a
+  callee's return kind only for `String`, `Bytes`, containers and registered
+  structs, so a primitive payload had no kind at all. And the `?` lowering asked
+  `infer_kind` for the payload kind, which has **no `Call` arm** — so for
+  `let x = f()?` it always answered `None` and fell back to `LLType::I64`. The
+  earlier inttoptr repair could therefore never fire for a call result.
+
+### What was fixed
+
+- `collect_fn_return_kinds` now also records `bool`, `i64` and `f64` return
+  kinds.
+- The `?` lowering falls back to the callee's signature when `infer_kind` is
+  silent, and returns `i1` for a bool payload (`trunc i64 → i1`) and a pointer for
+  handle payloads, instead of a bare i64.
+
+### Verified
+
+- New `tests/result_payload_typing.rs`: `Result<bool>` (printed), `Result<String>`
+  (printed and `.len()`'d) and `Result<i64>` through `?`, asserted byte-identical
+  between `--interpret` and `--require-native`, with the native leg required to
+  have compiled rather than fallen back.
+- The parity suites re-run green on this tree: `interp_codegen_parity`,
+  `result_truthiness_parity` (4), `data_enum_print_parity` (4), `optional_parity`
+  (2), `truthiness_parity`, `native_fn_decl` — 13 tests, 0 failed.
+
 ## [v1.5.5] — 2026-10-25 — Windows builds again
 
 ### Added
