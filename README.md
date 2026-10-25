@@ -4,7 +4,7 @@
 
 **A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
-![status](https://img.shields.io/badge/status-1.5.5-informational?style=flat-square)
+![status](https://img.shields.io/badge/status-1.5.7-informational?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&logo=rust&logoColor=white)
 ![backend](https://img.shields.io/badge/backend-LLVM%20%C2%B7%20clang%2018-2d2d2d?style=flat-square)
@@ -42,7 +42,9 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-25 · release `v1.5.5` · `schema check` exit 0; `extract` exit 0 with one row]
+[measured 2026-10-25 · release `v1.5.7` · `schema check` exit 0; `extract` exit 0
+with one row — and, against a page that does not carry the expected fields, two
+`unknown:` lines naming the selectors that yielded nothing rather than a guessed row]
 
 Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
 
@@ -88,15 +90,15 @@ $ curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/ins
 The installer resolves the newest release, verifies the checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before reporting success:
 
 ```console
-fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.5/tallow-linux-aarch64-1.5.5.tar.gz
-tallow-linux-aarch64-1.5.5.tar.gz: OK
-installed tallow 1.5.5 into /root/.local/bin
+fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.7/tallow-linux-aarch64-1.5.7.tar.gz
+tallow-linux-aarch64-1.5.7.tar.gz: OK
+installed tallow 1.5.7 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
-[measured 2026-10-25 · release `v1.5.5` · the published linux-aarch64 tarball is
-173,699,963 B, sha256 `4f89ca68…a0406fda` matches its sidecar, and the extracted
-binary prints `1.5.5` and runs a program]
+[measured 2026-10-25 · release `v1.5.7` · the published linux-aarch64 tarball is
+174,665,207 B, sha256 `51b44074…5ec6` matches its sidecar, and the extracted
+binary prints `tallow 1.5.7` (git `447e7da1e1`) and runs a program]
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
