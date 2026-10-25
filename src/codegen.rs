@@ -813,6 +813,23 @@ impl<'a> CodeGen<'a> {
             if let TypeExprKind::Named(n) = &ty.kind {
                 if n == "String" || n == "Bytes" || self.struct_layouts.contains_key(n.as_str()) {
                     self.fn_return_kinds.insert(f.name.clone(), n.clone());
+                } else {
+                    // Primitives matter as much as strings here: `?` on a
+                    // `Result<bool>` used to fall through to "no known kind" and
+                    // hand back an i64, so `b.to_string()` printed `1` where the
+                    // interpreter printed `true` (tallowsphere#wave-3 defect).
+                    match n.as_str() {
+                        "bool" | "Bool" => {
+                            self.fn_return_kinds.insert(f.name.clone(), "bool".to_string());
+                        }
+                        "Int" | "int" | "i64" | "i32" => {
+                            self.fn_return_kinds.insert(f.name.clone(), "i64".to_string());
+                        }
+                        "Float" | "float" | "f64" => {
+                            self.fn_return_kinds.insert(f.name.clone(), "f64".to_string());
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -6912,7 +6929,30 @@ void tallow_async_runtime_shutdown(void) {
                     // made `fs.list_dir(p)?[0]` emit `getelementptr i64, ptr %i64`
                     // — an LLVM type error at the very end of the build. Recover
                     // the pointer from the statically known result kind.
-                    let payload_kind = self.infer_kind(inner);
+                    let payload_kind = {
+                        let direct = self.infer_kind(inner);
+                        if direct.is_some() {
+                            direct
+                        } else {
+                            // No shape to infer from: `name()` carries its type
+                            // only in its signature. `collect_fn_return_kinds`
+                            // already stores the unwrapped payload kind, so the
+                            // `?` can use it instead of defaulting to i64 —
+                            // which is what printed a String payload as the
+                            // pointer's decimal value.
+                            let mut e: &Expr = inner;
+                            while let ExprKind::Try(x) = &e.kind {
+                                e = x;
+                            }
+                            let mut found = None;
+                            if let ExprKind::Call { callee, .. } = &e.kind {
+                                if let ExprKind::Ident(fname) = &callee.kind {
+                                    found = self.fn_return_kinds.get(fname).cloned();
+                                }
+                            }
+                            found
+                        }
+                    };
                     let wants_ptr = match payload_kind.as_deref() {
                         Some(k) => {
                             Self::is_handle_kind(k)
@@ -6932,6 +6972,13 @@ void tallow_async_runtime_shutdown(void) {
                         let ptr = self.fresh_reg();
                         self.emit_line(&format!("{ptr} = inttoptr i64 {val} to ptr"));
                         Ok(LLValue::new(ptr, LLType::I8Ptr))
+                    } else if payload_kind.as_deref() == Some("bool") {
+                        // The payload slot is i64 0/1; a bool is i1, and the
+                        // method table answers `true`/`false` for i1 and
+                        // `1`/`0` for i64 — the difference this fixes.
+                        let b = self.fresh_reg();
+                        self.emit_line(&format!("{b} = trunc i64 {val} to i1"));
+                        Ok(LLValue::new(b, LLType::I1))
                     } else {
                         Ok(LLValue::new(val, LLType::I64))
                     }
@@ -25204,6 +25251,25 @@ impl<'a> CodeGen<'a> {
         // hard-crashing on unimplemented paths"). That trade is rejected now:
         // a silent truthy value is exactly how the crypto hazard shipped, and
         // a compile-time refusal is strictly more honest.
+        // Feature-gated surfaces need a different message: telling the reader
+        // "the interpreter implements it" is false here — the stdlib module is
+        // compiled out of both planes without the feature, so the fallback also
+        // refuses. Measured: the two planes gave different diagnostics for the
+        // same call, which is exactly the kind of drift a spec cannot describe.
+        let feature = match (module, method) {
+            ("crypto", m) if m.starts_with("mls_") => Some("mls"),
+            ("crypto", m) if m.starts_with("zk_") => Some("zk"),
+            ("crypto", m) if m.starts_with("fhe_") => Some("fhe"),
+            _ => None,
+        };
+        if let Some(feature) = feature {
+            return Err(format!(
+                "{module}.{method}() has no native lowering in a build without \
+                 `--features {feature}`: rebuild with it. The interpreter refuses \
+                 too — this surface is compiled out of both planes, so there is \
+                 no fallback that would implement it."
+            ));
+        }
         Err(format!(
             "{module}.{method}() has no native lowering — refusing to emit a \
              silently-truthy stub for it (fail-closed). `tallow run` falls back \
