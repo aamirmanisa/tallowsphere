@@ -459,6 +459,13 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("crypto", "generate_keypair") => Some("KeyPair".to_string()),
         ("crypto", "age_encrypt_dir") => Some("AgeStreamEncrypted".to_string()),
         ("crypto", "age_decrypt_dir") => Some("AgeStreamDecrypted".to_string()),
+        ("crypto", "mls_key_package") => Some("MlsKeyPackage".to_string()),
+        ("crypto", "mls_create_group") => Some("MlsKeyPackage".to_string()),
+        ("crypto", "mls_add_member") => Some("MlsWelcome".to_string()),
+        ("crypto", "mls_join") => Some("MlsJoined".to_string()),
+        ("crypto", "mls_encrypt") => Some("MlsMessage".to_string()),
+        ("crypto", "mls_process") => Some("MlsIncoming".to_string()),
+        ("crypto", "mls_info") => Some("MlsGroupInfo".to_string()),
         ("crypto", "opaque_register_start") => Some("OpaqueRegistration".to_string()),
         ("crypto", "opaque_register_respond") => Some("OpaqueRegistrationResponse".to_string()),
         ("crypto", "opaque_register_finish") => Some("OpaqueRegistrationUpload".to_string()),
@@ -1803,6 +1810,16 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("; age chunked transfer FFI\n");
         ir.push_str("declare ptr @tallow_age_encrypt_dir(ptr, ptr, ptr, i64)\n");
         ir.push_str("declare ptr @tallow_age_decrypt_dir(ptr, ptr, ptr)\n");
+        if cfg!(feature = "mls") {
+            ir.push_str("; MLS FFI (feature-gated)\n");
+            ir.push_str("declare ptr @tallow_mls_key_package(ptr)\n");
+            ir.push_str("declare ptr @tallow_mls_create_group(ptr)\n");
+            ir.push_str("declare ptr @tallow_mls_add_member(ptr, ptr)\n");
+            ir.push_str("declare ptr @tallow_mls_join(ptr, ptr)\n");
+            ir.push_str("declare ptr @tallow_mls_encrypt(ptr, ptr)\n");
+            ir.push_str("declare ptr @tallow_mls_process(ptr, ptr)\n");
+            ir.push_str("declare ptr @tallow_mls_info(ptr)\n");
+        }
         ir.push_str("; OPAQUE (RFC 9807) FFI — multi-value results are heap records\n");
         ir.push_str("declare ptr @tallow_opaque_suite()\n");
         ir.push_str("declare ptr @tallow_opaque_setup()\n");
@@ -2494,6 +2511,109 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.OpaqueLoginResult".to_string(),
+                }
+            });
+
+        // MLS records — layouts mirror src/runtime/mls_ffi.rs.
+        self.struct_layouts
+            .entry("MlsKeyPackage".to_string())
+            .or_insert_with(|| {
+                let names = ["handle", "key_package"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MlsKeyPackage".to_string(),
+                }
+            });
+
+        self.struct_layouts
+            .entry("MlsWelcome".to_string())
+            .or_insert_with(|| {
+                let names = ["welcome", "epoch"];
+                let types = [LLType::I8Ptr, LLType::I64];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MlsWelcome".to_string(),
+                }
+            });
+
+        self.struct_layouts
+            .entry("MlsJoined".to_string())
+            .or_insert_with(|| {
+                let names = ["handle", "epoch"];
+                let types = [LLType::I8Ptr, LLType::I64];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MlsJoined".to_string(),
+                }
+            });
+
+        self.struct_layouts
+            .entry("MlsMessage".to_string())
+            .or_insert_with(|| {
+                let names = ["message", "epoch"];
+                let types = [LLType::I8Ptr, LLType::I64];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MlsMessage".to_string(),
+                }
+            });
+
+        self.struct_layouts
+            .entry("MlsIncoming".to_string())
+            .or_insert_with(|| {
+                let names = ["kind", "plaintext", "epoch"];
+                let types = [LLType::I8Ptr, LLType::I8Ptr, LLType::I64];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MlsIncoming".to_string(),
+                }
+            });
+
+        self.struct_layouts
+            .entry("MlsGroupInfo".to_string())
+            .or_insert_with(|| {
+                let names = ["members", "epoch"];
+                let types = [LLType::I64, LLType::I64];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.MlsGroupInfo".to_string(),
                 }
             });
 
@@ -10422,6 +10542,16 @@ void tallow_async_runtime_shutdown(void) {
             }
             ExprKind::Index { object, .. } => array_elem_kind(self.infer_kind(object).as_deref()),
             ExprKind::MethodCall { object, method, .. } => {
+                // A MODULE receiver (`fs.list_dir(...)`, `FileCopy.…`) has no
+                // variable kind, so `infer_kind(object)` is None and every
+                // module result lost its kind — which made `fs.list_dir(p)?`
+                // hand back an i64 where the caller indexes a pointer. Use the
+                // module name as the receiver kind first.
+                if let ExprKind::Ident(m) = &object.kind {
+                    if let Some(k) = method_result_kind(Some(m.as_str()), method) {
+                        return Some(k);
+                    }
+                }
                 method_result_kind(self.infer_kind(object).as_deref(), method)
             }
             // Struct field read. Resolve the struct exactly like the field-read
@@ -25528,6 +25658,125 @@ impl<'a> CodeGen<'a> {
                     ],
                 )?))
             }
+            // ── MLS (feature-gated, same gate as the stdlib arms) ──────────
+            #[cfg(feature = "mls")]
+            "mls_key_package" | "mls_create_group" => {
+                let Some(a) = args.first() else {
+                    return Err(format!("crypto.{method} needs 1 argument"));
+                };
+                let v = self.emit_expr(&a.value)?;
+                let id = self.coerce_to_string(&v)?;
+                let ffi = format!("tallow_{method}");
+                let record = self.fresh_reg();
+                self.emit_line(&format!("{record} = call ptr @{ffi}(ptr {id})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load ptr, ptr {gep}"));
+                    cg.emit_line(&format!("call void @tallow_check_string(ptr {reg})"));
+                    reg
+                };
+                let handle = load(self, 0);
+                let kp = load(self, 8);
+                Ok(Some(self.build_plain_struct(
+                    "MlsKeyPackage",
+                    &[
+                        ("handle", handle, LLType::I8Ptr),
+                        ("key_package", kp, LLType::I8Ptr),
+                    ],
+                )?))
+            }
+            #[cfg(feature = "mls")]
+            "mls_add_member" | "mls_join" | "mls_encrypt" | "mls_process" => {
+                if args.len() < 2 {
+                    return Err(format!("crypto.{method} needs 2 arguments"));
+                }
+                let a = self.emit_expr(&args[0].value)?;
+                let b = self.emit_expr(&args[1].value)?;
+                let a = self.coerce_to_string(&a)?;
+                let b = self.coerce_to_string(&b)?;
+                let ffi = format!("tallow_{method}");
+                let record = self.fresh_reg();
+                self.emit_line(&format!("{record} = call ptr @{ffi}(ptr {a}, ptr {b})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64, ty: &LLType| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load {}, ptr {gep}", ty.to_ir()));
+                    if matches!(ty, LLType::I8Ptr) {
+                        cg.emit_line(&format!("call void @tallow_check_string(ptr {reg})"));
+                    }
+                    reg
+                };
+                if method == "mls_process" {
+                    let kind = load(self, 0, &LLType::I8Ptr);
+                    let plain = load(self, 8, &LLType::I8Ptr);
+                    let epoch = load(self, 16, &LLType::I64);
+                    Ok(Some(self.build_plain_struct(
+                        "MlsIncoming",
+                        &[
+                            ("kind", kind, LLType::I8Ptr),
+                            ("plaintext", plain, LLType::I8Ptr),
+                            ("epoch", epoch, LLType::I64),
+                        ],
+                    )?))
+                } else {
+                    let text = load(self, 0, &LLType::I8Ptr);
+                    let epoch = load(self, 8, &LLType::I64);
+                    let (name, field) = match method {
+                        "mls_add_member" => ("MlsWelcome", "welcome"),
+                        "mls_join" => ("MlsJoined", "handle"),
+                        _ => ("MlsMessage", "message"),
+                    };
+                    Ok(Some(self.build_plain_struct(
+                        name,
+                        &[(field, text, LLType::I8Ptr), ("epoch", epoch, LLType::I64)],
+                    )?))
+                }
+            }
+            #[cfg(feature = "mls")]
+            "mls_info" => {
+                let Some(a) = args.first() else {
+                    return Err("crypto.mls_info needs 1 argument".into());
+                };
+                let v = self.emit_expr(&a.value)?;
+                let h = self.coerce_to_string(&v)?;
+                let record = self.fresh_reg();
+                self.emit_line(&format!("{record} = call ptr @tallow_mls_info(ptr {h})"));
+                self.emit_line(&format!("call void @tallow_check_string(ptr {record})"));
+                let mut load = |cg: &mut Self, offset: i64| {
+                    let gep = cg.fresh_reg();
+                    cg.emit_line(&format!(
+                        "{gep} = getelementptr inbounds i8, ptr {record}, i64 {offset}"
+                    ));
+                    let reg = cg.fresh_reg();
+                    cg.emit_line(&format!("{reg} = load i64, ptr {gep}"));
+                    reg
+                };
+                let members = load(self, 0);
+                let epoch = load(self, 8);
+                Ok(Some(self.build_plain_struct(
+                    "MlsGroupInfo",
+                    &[
+                        ("members", members, LLType::I64),
+                        ("epoch", epoch, LLType::I64),
+                    ],
+                )?))
+            }
+            #[cfg(not(feature = "mls"))]
+            "mls_key_package" | "mls_create_group" | "mls_add_member" | "mls_join"
+            | "mls_encrypt" | "mls_process" | "mls_info" => Err(
+                "crypto.mls_* has no native lowering in a build without `--features mls`; \
+                 rebuild with the feature or run with --interpret"
+                    .to_string(),
+            ),
             // `crypto.age_encrypt_dir(recipient, src, out_dir, chunk?)`
             "age_encrypt_dir" | "age_decrypt_dir" => {
                 let want = if method == "age_encrypt_dir" { 3 } else { 3 };

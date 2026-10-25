@@ -14,6 +14,8 @@ use std::sync::OnceLock;
 
 pub mod age_ffi;
 pub mod age_stream_ffi;
+#[cfg(feature = "mls")]
+pub mod mls_ffi;
 pub mod keypair_ffi;
 pub mod opaque_ffi;
 pub mod browser;
