@@ -48,6 +48,11 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
   columns padded with `—` and the header states what `—` means), the two gap ids
   recorded as gaps rather than renumbered, and the guard now derives N from the
   file.
+- **`copy` treated "file onto itself" as whatever the OS thought.** Linux
+  allows it, Windows returns a sharing violation (os error 32), and the verify
+  path does exactly that to hash a file — so the Windows job failed on a green
+  Linux tree. `copy_file_streaming` now canonicalises both sides and skips the
+  write when they are the same file; a regression test pins the behaviour.
 - Every advisory is now an explicit entry with a reachability argument:
   `crypto-bigint 0.5.5` (RUSTSEC-2026-0387) is reached only through HPKE's
   **ephemeral** P-256 keys and never through our OPAQUE, which is Ristretto255;
