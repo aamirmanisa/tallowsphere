@@ -9,6 +9,49 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.5.4] — 2026-10-25 — the gates that judged 1.5.3 are green
+
+### Added
+
+- Nothing user-facing. This release exists because v1.5.3's own workflows failed
+  and a tag is immutable, so the fix goes forward rather than into history.
+
+### Fixed
+
+- **The Release gate could not pass on any runner without `age(1)`**:
+  `age_native_parity` and `age_container` decrypt with the reference
+  implementation in both directions and panicked with `install age to run this
+  test`. The workflows now install `age` before the suites. A missing dependency
+  was being reported as a test failure.
+- **`cargo check --all-targets` could not compile the tree**: `examples/mls_probe.rs`
+  imported `tallow::mls` unconditionally, so Check and Clippy failed without the
+  feature. The example now builds a stub that says which feature it needs.
+- **The ZK CI job tested the wrong refusal**: it used `--require-native`, which
+  fails on "no native lowering" before the feature message is reachable. It now
+  uses `--interpret`, which is the path that exercises the gate.
+- **Dependency Check rejected tfhe's licence** (`BSD-3-Clause-Clear`); allowed
+  with the rationale in `deny.toml`.
+- **SBOM and CBOM drift**: both artifacts regenerated for the new dependencies and
+  the new crypto surface; both `--check` gates pass.
+- **`a_tampered_container_is_refused` was flaky by construction**: it replaced the
+  last hex nibble with `"0"`, a no-op whenever that nibble already was `"0"` (1 in
+  16 runs). The mutation moved into Rust and is proven to differ.
+
+### Verified
+
+- 19 release-gate suites: 18 green, 1 (the flaky tamper test) now fixed and
+  passing 3/3 on its own.
+- `sbom-gen --check` and `crypto-inventory --check` pass; `cargo deny check
+  licenses` passes.
+- Default and `--features mls` builds both compile the example.
+
+### Known red, not hidden
+
+- **Security Audit**: 9 advisories, including `crypto-bigint` RUSTSEC-2026-0387
+  (published 2026-10-23) and `libcrux-aesgcm` RUSTSEC-2026-0209. Both transitive
+  and newer than the previous release. Clearing them is a dependency arc, and the
+  repository's policy requires a documented exception for any ignore.
+
 ## [v1.5.3] — 2026-10-25 — crypto that does the thing, and says so when it cannot
 
 ### Added

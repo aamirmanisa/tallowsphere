@@ -4,7 +4,7 @@
 
 **A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
-![status](https://img.shields.io/badge/status-1.5.3-informational?style=flat-square)
+![status](https://img.shields.io/badge/status-1.5.4-informational?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&logo=rust&logoColor=white)
 ![backend](https://img.shields.io/badge/backend-LLVM%20%C2%B7%20clang%2018-2d2d2d?style=flat-square)
