@@ -24857,12 +24857,22 @@ impl<'a> CodeGen<'a> {
         // (`remove_dir_all`). Plain `remove(3)` only unlinks an EMPTY directory,
         // so `move` deleted every file and then failed to remove the tree it had
         // just emptied — a copy-then-delete contract that quietly broke.
-        let is_dir = self.fresh_reg();
+        // Ask the stat FFI (slot 2 = is_dir); there is no standalone is_dir
+        // extern, and inventing one would link-fail at clang time.
+        let stat_buf = self.fresh_reg();
+        self.emit_line(&format!("{stat_buf} = alloca [5 x i64]"));
+        let stat_rc = self.fresh_reg();
         self.emit_line(&format!(
-            "{is_dir} = call i32 @tallow_fs_is_dir(ptr {path_str})"
+            "{stat_rc} = call i32 @tallow_fs_stat(ptr {path_str}, ptr {stat_buf})"
         ));
+        let dir_slot = self.fresh_reg();
+        self.emit_line(&format!(
+            "{dir_slot} = getelementptr i64, ptr {stat_buf}, i64 2"
+        ));
+        let dir_raw = self.fresh_reg();
+        self.emit_line(&format!("{dir_raw} = load i64, ptr {dir_slot}"));
         let dir_b = self.fresh_reg();
-        self.emit_line(&format!("{dir_b} = icmp sgt i32 {is_dir}, 0"));
+        self.emit_line(&format!("{dir_b} = icmp ne i64 {dir_raw}, 0"));
         let dir_label = self.fresh_label("del.dir");
         let file_label = self.fresh_label("del.file");
         let done_label = self.fresh_label("del.done");
