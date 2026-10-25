@@ -440,6 +440,7 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         ("Extract" | "extract", "pattern") => Some("StringArray".to_string()),
         ("env", "args") => Some("StringArray".to_string()),
         ("fs", "read_lines") => Some("StringArray".to_string()),
+        ("fs", "list_dir") | ("fs", "readdir") => Some("StringArray".to_string()),
         // `fs.read_bytes(...)` → "Bytes" (t_70cad4f2). The native VALUE is the
         // base64 text the FFI returns, but a `Bytes` is not a `String`: the
         // kind is what routes `.len` to the decoded byte count and
@@ -1557,6 +1558,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_fs_append_file(ptr, ptr)\n");
         ir.push_str("declare i32 @tallow_fs_remove_dir_all(ptr)\n");
         ir.push_str("declare ptr @tallow_fs_read_lines(ptr)\n");
+        ir.push_str("declare ptr @tallow_fs_list_dir(ptr)\n");
+        ir.push_str("declare i32 @tallow_fs_stat(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_fs_read_bytes(ptr)\n");
         ir.push_str("declare i32 @tallow_fs_write_bytes(ptr, ptr)\n");
         // `Bytes` value surface (src/runtime/fs_ffi.rs, t_70cad4f2): a `Bytes`
@@ -1598,6 +1601,7 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @access(ptr, i32)\n");
         ir.push_str("declare i32 @remove(ptr)\n");
         ir.push_str("declare i32 @rename(ptr, ptr)\n");
+        ir.push_str("declare i32 @mkdir(ptr, i32)\n");
         ir.push_str("declare ptr @calloc(i64, i64)\n");
         ir.push_str("declare i32 @stat(ptr, ptr)\n");
         ir.push('\n');
@@ -3781,6 +3785,19 @@ void tallow_async_runtime_shutdown(void) {
             if let TypeExprKind::Slice(inner) = &param.ty.kind {
                 self.variable_is_array.insert(param.name.clone(), true);
                 if let TypeExprKind::Named(elem_name) = &inner.kind {
+                    if elem_name == "String" {
+                        // `[]String` holds pointer elements. Without this the
+                        // `for x in arr` binding is a bare i64 and every string
+                        // method on x ("starts_with", "contains", ...) misses the
+                        // I8Ptr-only string table and fails the build.
+                        self.variable_array_elem_is_ptr
+                            .insert(param.name.clone(), true);
+                        self.browser_variables
+                            .insert(param.name.clone(), "StringArray".to_string());
+                        if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
+                            eprintln!("[codegen] param {}: []String tracked as pointer elements", param.name);
+                        }
+                    }
                     if self.struct_layouts.contains_key(elem_name.as_str()) {
                         self.variable_array_element_type
                             .insert(param.name.clone(), elem_name.clone());
@@ -4328,6 +4345,19 @@ void tallow_async_runtime_shutdown(void) {
                 // []T parameter — mark as array
                 self.variable_is_array.insert(param.name.clone(), true);
                 if let TypeExprKind::Named(elem_name) = &inner.kind {
+                    if elem_name == "String" {
+                        // `[]String` holds POINTER elements. Without this the
+                        // `for x in arr` binding is a bare i64, so every string
+                        // method on x (`starts_with`, `contains`, ...) misses the
+                        // I8Ptr-only string table and fails the native build.
+                        self.variable_array_elem_is_ptr
+                            .insert(param.name.clone(), true);
+                        self.browser_variables
+                            .insert(param.name.clone(), "StringArray".to_string());
+                        if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
+                            eprintln!("[codegen] param {}: []String tracked as pointer elements", param.name);
+                        }
+                    }
                     if self.struct_layouts.contains_key(elem_name.as_str()) {
                         self.variable_array_element_type
                             .insert(param.name.clone(), elem_name.clone());
@@ -4550,7 +4580,11 @@ void tallow_async_runtime_shutdown(void) {
                             // read the count slot. Without these flags `.len`
                             // falls back to `strlen` on the buffer — right for
                             // 0/1 lines, wrong from 2 up.
-                            if obj_name == "fs" && method == "read_lines" {
+                            if obj_name == "fs"
+                                && (method == "read_lines"
+                                    || method == "list_dir"
+                                    || method == "readdir")
+                            {
                                 self.browser_variables
                                     .insert(name.clone(), "StringArray".to_string());
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
@@ -10133,6 +10167,17 @@ void tallow_async_runtime_shutdown(void) {
         // string). Fail the native build by name instead, so `tallow run` re-runs
         // in the interpreter — the error, or the value of a method this backend
         // simply lacks, then matches the interpreter exactly.
+        if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
+            eprintln!(
+                "[codegen] fallback method={} offset={} obj_ty={:?} inferred_kind={:?} is_array={} is_map={}",
+                method,
+                object.span.start,
+                obj.ty,
+                self.infer_kind(object),
+                obj_is_array,
+                obj_is_map
+            );
+        }
         Err(format!(
             "native backend has no lowering for method '{method}' at byte offset {} on this \
              receiver (unknown method for any statically-known kind); failing loudly so the \
@@ -14747,10 +14792,20 @@ void tallow_async_runtime_shutdown(void) {
                 // CDP `page.query_selector_all(...)` handles dispatch as
                 // "Element", so `for el in items { el.text() }` lowers too.
                 Some("ElementArray") => Some("Element".to_string()),
+                Some("StringArray") => Some("String".to_string()),
                 _ => None,
             },
         );
 
+        if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
+            eprintln!(
+                "[codegen] for {} in <.> : elem_is_ptr={} kind={:?} iter_kind={:?}",
+                binding,
+                elem_is_ptr,
+                elem_browser_kind,
+                self.infer_kind(iter)
+            );
+        }
         let iter_val = self.emit_expr(iter)?;
         let arr_ptr = iter_val.reg.clone();
 
@@ -14819,6 +14874,9 @@ void tallow_async_runtime_shutdown(void) {
                 .insert(binding.to_string(), (binding_ptr.clone(), LLType::I8Ptr));
             if let Some(kind) = &elem_browser_kind {
                 self.browser_variables.insert(binding.to_string(), kind.clone());
+                if kind == "String" {
+                    self.variable_is_string.insert(binding.to_string(), true);
+                }
             }
         } else {
             let binding_ptr = self.fresh_reg();
@@ -23913,10 +23971,13 @@ impl<'a> CodeGen<'a> {
             "is_dir" => Ok(Some(self.emit_fs_is_dir(args)?)),
             "delete" | "delete_file" => Ok(Some(self.emit_fs_delete(args)?)),
             "rename" => Ok(Some(self.emit_fs_rename(args)?)),
+            "mkdir" => Ok(Some(self.emit_fs_mkdir(args)?)),
             "remove" => Ok(Some(self.emit_fs_remove(args)?)),
             "append_file" => Ok(Some(self.emit_fs_append_file(args)?)),
             "remove_dir_all" => Ok(Some(self.emit_fs_remove_dir_all(args)?)),
             "read_lines" => Ok(Some(self.emit_fs_read_lines(args)?)),
+            "list_dir" | "readdir" => Ok(Some(self.emit_fs_list_dir(args)?)),
+            "stat" => Ok(Some(self.emit_fs_stat(args)?)),
             "read_bytes" => Ok(Some(self.emit_fs_read_bytes(args)?)),
             "write_bytes" => Ok(Some(self.emit_fs_write_bytes(args)?)),
             _ => Ok(None),
@@ -24225,6 +24286,34 @@ impl<'a> CodeGen<'a> {
         self.body.push_str(&format!("{ok_b}:\n"));
     }
 
+    /// `fs.mkdir(path)` -> Nil via libc `mkdir()`, mode 0777 (umask applies).
+    ///
+    /// A `mkdir -p` style caller (`for part in path.split("/") { fs.mkdir(cur) }`)
+    /// calls this on directories that already exist, so EEXIST (17) counts as
+    /// success. Any other failure stops loudly, matching `rename`/`delete`.
+    fn emit_fs_mkdir(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        let path_val = self.emit_expr(&args[0].value)?;
+        let path_str = self.coerce_to_string(&path_val)?;
+
+        let rc = self.fresh_reg();
+        self.emit_line(&format!("{rc} = call i32 @mkdir(ptr {path_str}, i32 511)"));
+        let failed = self.fresh_reg();
+        self.emit_line(&format!("{failed} = icmp slt i32 {rc}, 0"));
+
+        let errno_loc = self.fresh_reg();
+        self.emit_line(&format!("{errno_loc} = call ptr @__errno_location()"));
+        let errno_val = self.fresh_reg();
+        self.emit_line(&format!("{errno_val} = load i32, ptr {errno_loc}"));
+        let exists = self.fresh_reg();
+        self.emit_line(&format!("{exists} = icmp eq i32 {errno_val}, 17"));
+        let not_exists = self.fresh_reg();
+        self.emit_line(&format!("{not_exists} = xor i1 {exists}, true"));
+        let real_fail = self.fresh_reg();
+        self.emit_line(&format!("{real_fail} = and i1 {failed}, {not_exists}"));
+        self.emit_libc_fail(&real_fail, "fs.mkdir: ");
+        Ok(LLValue::new("0".to_string(), LLType::I64))
+    }
+
     /// `fs.rename(from, to)` -> Nil via libc `rename()`.
     fn emit_fs_rename(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
         if args.len() < 2 {
@@ -24303,6 +24392,117 @@ impl<'a> CodeGen<'a> {
             "{rc} = call i32 @tallow_fs_remove_dir_all(ptr {path})"
         ));
         Ok(self.emit_fs_check_rc(&rc, "fs.remove_dir_all: "))
+    }
+
+    /// `fs.stat(path)` -> `%struct.FileInfo`, filled from `tallow_fs_stat`.
+    ///
+    /// The FFI writes five plain integers into a stack buffer (size, is_file,
+    /// is_dir, modified, created); this allocates the struct with the same
+    /// GEP-from-null size trick struct literals use and stores each field at its
+    /// declared index, so the layout stays the declaration's, not a hand-counted
+    /// offset. Any failure (ENOENT, EACCES) fails closed with the OS message.
+    fn emit_fs_stat(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        let Some(arg) = args.first() else {
+            return Err("fs.stat requires a path".into());
+        };
+        let layout = self
+            .struct_layouts
+            .get("FileInfo")
+            .cloned()
+            .ok_or_else(|| "fs.stat: FileInfo layout is not registered".to_string())?;
+
+        let path_val = self.emit_expr(&arg.value)?;
+        let path = self.coerce_to_string(&path_val)?;
+
+        let buf = self.fresh_reg();
+        self.emit_line(&format!("{buf} = alloca [5 x i64]"));
+        let rc = self.fresh_reg();
+        self.emit_line(&format!(
+            "{rc} = call i32 @tallow_fs_stat(ptr {path}, ptr {buf})"
+        ));
+        let failed = self.fresh_reg();
+        self.emit_line(&format!("{failed} = icmp slt i32 {rc}, 0"));
+        let ok_b = self.fresh_label("statok");
+        let fail_b = self.fresh_label("statfail");
+        self.emit_line(&format!("br i1 {failed}, label %{fail_b}, label %{ok_b}"));
+        self.body.push_str(&format!("{fail_b}:\n"));
+        let err_reg = self.fresh_reg();
+        self.emit_line(&format!("{err_reg} = call ptr @tallow_last_error()"));
+        self.emit_fatal_exit1("fs.stat: ", &err_reg);
+        self.body.push_str(&format!("{ok_b}:\n"));
+
+        // Allocate %struct.FileInfo (padding-correct size via GEP-from-null).
+        let struct_ty = layout.llvm_name.clone();
+        let size_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{size_ptr} = getelementptr {struct_ty}, ptr null, i32 1"
+        ));
+        let size_i64 = self.fresh_reg();
+        self.emit_line(&format!("{size_i64} = ptrtoint ptr {size_ptr} to i64"));
+        let obj = self.fresh_reg();
+        self.emit_line(&format!("{obj} = call ptr @malloc(i64 {size_i64})"));
+
+        // path: String field
+        if let Some((idx, ty)) = layout.field_map.get("path").cloned() {
+            let gep = self.fresh_reg();
+            self.emit_line(&format!(
+                "{gep} = getelementptr inbounds {struct_ty}, ptr {obj}, i32 0, i32 {idx}"
+            ));
+            let coerced = self.coerce(&LLValue::new(path.clone(), LLType::I8Ptr), &ty)?;
+            self.emit_line(&format!("store {} {coerced}, ptr {gep}", ty.to_ir()));
+        }
+        // size, is_file, is_dir, modified, created — buffer slots 0..4
+        for (field, slot) in [
+            ("size", 0usize),
+            ("is_file", 1),
+            ("is_dir", 2),
+            ("modified", 3),
+            ("created", 4),
+        ] {
+            if let Some((idx, ty)) = layout.field_map.get(field).cloned() {
+                let gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{gep} = getelementptr inbounds {struct_ty}, ptr {obj}, i32 0, i32 {idx}"
+                ));
+                let slot_ptr = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{slot_ptr} = getelementptr i64, ptr {buf}, i64 {slot}"
+                ));
+                let raw = self.fresh_reg();
+                self.emit_line(&format!("{raw} = load i64, ptr {slot_ptr}"));
+                let coerced = self.coerce(&LLValue::new(raw, LLType::I64), &ty)?;
+                self.emit_line(&format!("store {} {coerced}, ptr {gep}", ty.to_ir()));
+            }
+        }
+        Ok(LLValue::new(obj, LLType::I8Ptr))
+    }
+
+    /// `fs.list_dir(path)` -> native string array of entry names, via
+    /// `tallow_fs_list_dir`.
+    ///
+    /// The interpreter returns entry NAMES (`file_name()` per dirent), so the
+    /// result must be tracked as `StringArray` for `.len`, `arr[i]` and
+    /// `for e in arr` to work in compiled code — see `method_result_kind` and the
+    /// let-tracking block. Null is a failure and fails closed.
+    fn emit_fs_list_dir(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
+        let Some(arg) = args.first() else {
+            return Err("fs.list_dir requires a path".into());
+        };
+        let path_val = self.emit_expr(&arg.value)?;
+        let path = self.coerce_to_string(&path_val)?;
+        let arr = self.fresh_reg();
+        self.emit_line(&format!("{arr} = call ptr @tallow_fs_list_dir(ptr {path})"));
+        let is_null = self.fresh_reg();
+        self.emit_line(&format!("{is_null} = icmp eq ptr {arr}, null"));
+        let ok_b = self.fresh_label("listdirok");
+        let fail_b = self.fresh_label("listdirfail");
+        self.emit_line(&format!("br i1 {is_null}, label %{fail_b}, label %{ok_b}"));
+        self.body.push_str(&format!("{fail_b}:\n"));
+        let err_reg = self.fresh_reg();
+        self.emit_line(&format!("{err_reg} = call ptr @tallow_last_error()"));
+        self.emit_fatal_exit1("fs.list_dir: ", &err_reg);
+        self.body.push_str(&format!("{ok_b}:\n"));
+        Ok(LLValue::new(arr, LLType::I8Ptr))
     }
 
     /// `fs.read_lines(path)` -> native string array, via `tallow_fs_read_lines`.

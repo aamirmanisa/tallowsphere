@@ -72,6 +72,7 @@ pub mod forecast;
 pub mod foresight_adapter;
 pub mod format_policy;
 pub mod age;
+pub mod age_stream;
 pub mod frost;
 #[cfg(feature = "mls")]
 pub mod mls;

@@ -1098,3 +1098,8 @@ fn mls_join(pending_handle: String, welcome: String) -> MlsJoined
 fn mls_encrypt(handle: String, plaintext_hex: String) -> MlsMessage
 fn mls_process(handle: String, message: String) -> MlsIncoming
 fn mls_info(handle: String) -> MlsGroupInfo
+
+// Chunked, resumable transfer: a directory of ordinary age containers plus a
+// manifest. Resume re-encrypts only the parts that are missing.
+fn age_encrypt_dir(recipient: String, src: String, out_dir: String, chunk_bytes: Int) -> AgeStreamEncrypted
+fn age_decrypt_dir(identity: String, in_dir: String, dst: String) -> AgeStreamDecrypted

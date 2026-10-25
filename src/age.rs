@@ -46,10 +46,17 @@ pub fn keygen() -> (String, String) {
 }
 
 pub fn encrypt(recipient: &str, plaintext_hex: &str) -> Result<String, String> {
+    let pt: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(hex_decode(plaintext_hex)?);
+    encrypt_bytes(recipient, &pt)
+}
+
+/// Encrypt raw bytes; used by the chunked transfer path, which never has a hex
+/// intermediate for the payload.
+pub fn encrypt_bytes(recipient: &str, plaintext: &[u8]) -> Result<String, String> {
     let recipient: age::x25519::Recipient = recipient
         .parse()
         .map_err(|e| format!("crypto.age_encrypt: invalid recipient: {e}"))?;
-    let mut pt: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(hex_decode(plaintext_hex)?);
+    let pt: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(plaintext.to_vec());
 
     let encryptor = age::Encryptor::with_recipients(std::iter::once(&recipient as _))
         .map_err(|e| format!("crypto.age_encrypt: {e}"))?;
@@ -68,12 +75,22 @@ pub fn encrypt(recipient: &str, plaintext_hex: &str) -> Result<String, String> {
     Ok(hex_encode(&out))
 }
 
-pub fn decrypt(identity: &str, ciphertext_hex: &str) -> Result<String, String> {
+/// Encrypt raw bytes and return the container as hex.
+pub fn encrypt_hex(recipient: &str, plaintext: &[u8]) -> Result<String, String> {
+    encrypt_bytes(recipient, plaintext)
+}
+
+/// Decrypt a hex container to raw bytes.
+pub fn decrypt_hex(identity: &str, ciphertext_hex: &str) -> Result<Vec<u8>, String> {
+    let ct: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(hex_decode(ciphertext_hex)?);
+    decrypt_bytes(identity, &ct)
+}
+
+pub fn decrypt_bytes(identity: &str, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     let identity: age::x25519::Identity = identity
         .parse()
         .map_err(|e| format!("crypto.age_decrypt: invalid identity: {e}"))?;
-    let ct: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(hex_decode(ciphertext_hex)?);
-
+    let ct: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(ciphertext.to_vec());
     let decryptor =
         age::Decryptor::new(&ct[..]).map_err(|e| format!("crypto.age_decrypt: {e}"))?;
     let mut reader = decryptor
@@ -83,7 +100,11 @@ pub fn decrypt(identity: &str, ciphertext_hex: &str) -> Result<String, String> {
     reader
         .read_to_end(&mut pt)
         .map_err(|e| format!("crypto.age_decrypt: {e}"))?;
-    Ok(hex_encode(&pt))
+    Ok(pt.to_vec())
+}
+
+pub fn decrypt(identity: &str, ciphertext_hex: &str) -> Result<String, String> {
+    decrypt_bytes(identity, &hex_decode(ciphertext_hex)?).map(|b| hex_encode(&b))
 }
 
 #[cfg(test)]

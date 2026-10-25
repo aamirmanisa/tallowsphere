@@ -100,6 +100,79 @@ pub extern "C" fn tallow_fs_read_lines(path: *const c_char) -> *mut c_void {
     }
 }
 
+/// `fs.stat(path)` -> fills `out[0..5] = [size, is_file, is_dir, modified, created]`
+/// (epoch seconds; `created` falls back to `modified`, as the interpreter does)
+/// and returns 0, or -1 with `tallow_last_error` set.
+///
+/// Slots rather than a struct pointer: the layout of `%struct.FileInfo` is the
+/// code generator's business, so it allocates and fills the struct itself from
+/// these plain integers.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_fs_stat(path: *const c_char, out: *mut i64) -> i32 {
+    let Some(path) = (unsafe { cstr_to_str(path) }) else {
+        set_last_error("expected string path argument".to_string());
+        return -1;
+    };
+    match std::fs::metadata(path) {
+        Ok(md) => {
+            let epoch_secs = |t: std::io::Result<std::time::SystemTime>| {
+                t.ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0)
+            };
+            let modified = epoch_secs(md.modified());
+            let created = match md.created() {
+                Ok(t) => t
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(modified),
+                Err(_) => modified,
+            };
+            unsafe {
+                *out.add(0) = md.len() as i64;
+                *out.add(1) = i64::from(md.is_file());
+                *out.add(2) = i64::from(md.is_dir());
+                *out.add(3) = modified;
+                *out.add(4) = created;
+            }
+            0
+        }
+        Err(e) => {
+            set_last_error(e.to_string());
+            -1
+        }
+    }
+}
+
+/// `fs.list_dir(path)` -> a native array of entry NAMES (not full paths), or
+/// null with `tallow_last_error` set.
+///
+/// Mirrors the interpreter exactly: `std::fs::read_dir`, `file_name()` per
+/// entry, no sort, "." and ".." absent, error surfaces rather than an empty
+/// array. Returning names (not joined paths) is what callers assume —
+/// tallowx's walker does `rel + "/" + entry`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_fs_list_dir(path: *const c_char) -> *mut c_void {
+    let Some(path) = (unsafe { cstr_to_str(path) }) else {
+        set_last_error("expected string path argument".to_string());
+        return std::ptr::null_mut();
+    };
+    match std::fs::read_dir(path) {
+        Ok(entries) => {
+            let slots: Vec<i64> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| string_to_cstr(&e.file_name().to_string_lossy()) as i64)
+                .collect();
+            native_array(slots)
+        }
+        Err(e) => {
+            set_last_error(e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// `fs.read_bytes(path)` -> the file's raw bytes **base64-encoded** as a string,
 /// or null (with `tallow_last_error` set) when the file cannot be read.
 ///

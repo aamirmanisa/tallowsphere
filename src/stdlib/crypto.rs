@@ -96,6 +96,9 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "opaque_login_respond" => Some(crypto_opaque_login_respond(&args)),
         "opaque_login_finish" => Some(crypto_opaque_login_finish(&args)),
         "opaque_login_server_finish" => Some(crypto_opaque_login_server_finish(&args)),
+        // Chunked, resumable age transfer (directory of ordinary age containers).
+        "age_encrypt_dir" => Some(crypto_age_encrypt_dir(&args)),
+        "age_decrypt_dir" => Some(crypto_age_decrypt_dir(&args)),
         "age_keygen" => Some(crypto_age_keygen(&args)),
         "age_encrypt" => Some(crypto_age_encrypt(&args)),
         "age_decrypt" => Some(crypto_age_decrypt(&args)),
@@ -2595,6 +2598,47 @@ fn crypto_opaque_login_server_finish(args: &[Value]) -> StdlibResult {
     let state = sarg(args, 0, "opaque_login_server_finish")?;
     let finalization = sarg(args, 1, "opaque_login_server_finish")?;
     crate::opaque::login_server_finish(&state, &finalization).map(Value::String)
+}
+
+
+// ── Chunked, resumable age transfer ─────────────────────────────────────────
+// One ordinary age container per part plus a manifest; resumability is "how many
+// parts already exist". Each part is independently decryptable by age(1).
+
+fn crypto_age_encrypt_dir(args: &[Value]) -> StdlibResult {
+    let recipient = get_string_arg(args, 0)
+        .ok_or_else(|| "crypto.age_encrypt_dir expects (recipient, src, out_dir, chunk_bytes?)".to_string())?;
+    let src = get_string_arg(args, 1)
+        .ok_or_else(|| "crypto.age_encrypt_dir: src path is required".to_string())?;
+    let out_dir = get_string_arg(args, 2)
+        .ok_or_else(|| "crypto.age_encrypt_dir: out_dir is required".to_string())?;
+    let chunk = get_int_arg(args, 3).map(|n| n as usize);
+    let (parts, resumed_from, digest) = crate::age_stream::encrypt_file(&recipient, &src, &out_dir, chunk)?;
+    Ok(Value::Struct {
+        name: "AgeStreamEncrypted".into(),
+        fields: vec![
+            ("parts".into(), Value::Int(parts as i128)),
+            ("resumed_from".into(), Value::Int(resumed_from as i128)),
+            ("digest".into(), Value::String(digest)),
+        ],
+    })
+}
+
+fn crypto_age_decrypt_dir(args: &[Value]) -> StdlibResult {
+    let identity = get_string_arg(args, 0)
+        .ok_or_else(|| "crypto.age_decrypt_dir expects (identity, in_dir, dst)".to_string())?;
+    let in_dir = get_string_arg(args, 1)
+        .ok_or_else(|| "crypto.age_decrypt_dir: in_dir is required".to_string())?;
+    let dst = get_string_arg(args, 2)
+        .ok_or_else(|| "crypto.age_decrypt_dir: dst is required".to_string())?;
+    let (parts, total) = crate::age_stream::decrypt_file(&identity, &in_dir, &dst)?;
+    Ok(Value::Struct {
+        name: "AgeStreamDecrypted".into(),
+        fields: vec![
+            ("parts".into(), Value::Int(parts as i128)),
+            ("total_len".into(), Value::Int(total as i128)),
+        ],
+    })
 }
 
 fn crypto_age_keygen(_args: &[Value]) -> StdlibResult {
