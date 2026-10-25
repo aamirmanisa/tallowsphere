@@ -39,7 +39,16 @@ Fix: the mock tracks the last navigated URL, returns a number for `performance.t
 `JSON.stringify(...)` probes. No engine change. Result: `5 passed; 0 failed` locally
 (previously 2/5).
 
-## 3. Six browser suites that do not pass on the pinned CfT build
+## 3. Six browser suites that do not pass on the pinned CfT build — RESOLVED
+
+**Status at 2026-10-25: none of these six is excluded any more.** All six run in
+the `browser` CI job; `ci-excluded-suites.txt` holds 2 entries, both `perf`
+(`compiler_bench`, `timing_aead`), expiring 2027-01-31. Measured:
+`scripts/check_test_coverage.py` → 136 targets, 134 in CI, 2 registered debt,
+0 unaccounted. The 2026-11-06 expiry below is history, not a live deadline.
+
+What follows is the state as recorded on 2026-10-23, kept because it names the
+failure mode each suite had:
 
 Registered in `ci-excluded-suites.txt` as `triage` with the failing assertion named:
 

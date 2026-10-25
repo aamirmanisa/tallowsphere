@@ -62,6 +62,38 @@ ignore = [
     # mach 0.3.2 ... reachable only through the optional JIT feature:
     # cranelift-jit -> region -> mach. No safe upgrade (region pins mach 0.3).
     "RUSTSEC-2020-0168",
+    # ── 2026-10-25 dependency audit ──────────────────────────────────────────
+    # Full record, scope and fix path: docs/operations/dependency-exceptions-2026-10-25.md
+    # Every entry below expires 2027-01-31; the gate fails again on that date so
+    # the decision is re-made rather than inherited.
+    #
+    # crypto-bigint 0.5.5 — timing variability in operations meant to be
+    # constant-time. Reached via elliptic-curve 0.13 <- p256 <- hpke/age, and via
+    # opaque-ke/voprf. Our OPAQUE is Ristretto255, not P-256; the P-256 use is
+    # HPKE with EPHEMERAL keys only. No upgrade exists: age 0.12.1 and opaque-ke
+    # 4.0.1 pin elliptic-curve 0.13. Re-check on age > 0.12.1 or opaque-ke >= 5.
+    "RUSTSEC-2026-0387",
+    # basic-toml 0.1.10 (unmaintained, no vulnerability) — i18n-config <- age,
+    # build-time codegen only.
+    "RUSTSEC-2026-0374",
+    # libcrux-sha3 < 0.0.10, two advisories (incremental SHAKE output, AVX2
+    # panic) and libcrux-secrets < 0.0.6. All three are pinned by tfhe 1.8.2,
+    # which is the current release; they exist ONLY in the --features fhe graph,
+    # never in a shipped artifact. Delete these three in the commit that bumps
+    # tfhe past the 0.0.9 / 0.0.5 pins.
+    "RUSTSEC-2026-0207",
+    "RUSTSEC-2026-0208",
+    "RUSTSEC-2026-0212",
+    # clear_on_drop (unmaintained, no vulnerability) — openmls chain, all-features
+    # graph only.
+    "RUSTSEC-2026-0283",
+    # proc-macro-error2 (unmaintained, no vulnerability) — build-time macro in the
+    # all-features graph.
+    "RUSTSEC-2026-0173",
+    # paste (unmaintained, no vulnerability) — back in the all-features graph after
+    # the 2026-10-25 refresh. It had been deleted as genuinely absent on
+    # 2026-10-23; the crate the refresh pulled in reintroduced it.
+    "RUSTSEC-2024-0436",
 ]
 
 [licenses]
