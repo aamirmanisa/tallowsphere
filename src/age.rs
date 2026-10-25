@@ -49,7 +49,7 @@ pub fn encrypt(recipient: &str, plaintext_hex: &str) -> Result<String, String> {
     let recipient: age::x25519::Recipient = recipient
         .parse()
         .map_err(|e| format!("crypto.age_encrypt: invalid recipient: {e}"))?;
-    let pt = hex_decode(plaintext_hex)?;
+    let mut pt: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(hex_decode(plaintext_hex)?);
 
     let encryptor = age::Encryptor::with_recipients(std::iter::once(&recipient as _))
         .map_err(|e| format!("crypto.age_encrypt: {e}"))?;
@@ -72,14 +72,14 @@ pub fn decrypt(identity: &str, ciphertext_hex: &str) -> Result<String, String> {
     let identity: age::x25519::Identity = identity
         .parse()
         .map_err(|e| format!("crypto.age_decrypt: invalid identity: {e}"))?;
-    let ct = hex_decode(ciphertext_hex)?;
+    let ct: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(hex_decode(ciphertext_hex)?);
 
     let decryptor =
         age::Decryptor::new(&ct[..]).map_err(|e| format!("crypto.age_decrypt: {e}"))?;
     let mut reader = decryptor
         .decrypt(std::iter::once(&identity as _))
         .map_err(|e| format!("crypto.age_decrypt: {e}"))?;
-    let mut pt = Vec::new();
+    let mut pt: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(Vec::new());
     reader
         .read_to_end(&mut pt)
         .map_err(|e| format!("crypto.age_decrypt: {e}"))?;

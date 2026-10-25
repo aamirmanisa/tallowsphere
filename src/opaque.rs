@@ -43,14 +43,22 @@ impl CipherSuite for Cs {
 }
 
 fn enc<T: Serialize>(v: &T, what: &str) -> Result<String, String> {
-    serde_json::to_vec(v)
-        .map(|b| hex(&b))
-        .map_err(|e| format!("opaque: serializing {what}: {e}"))
+    // The serialized form of a client/server state contains the OPRF blind and
+    // other protocol secrets; wipe the buffer once it has been hex-encoded.
+    let mut buf: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(
+        serde_json::to_vec(v).map_err(|e| format!("opaque: serializing {what}: {e}"))?,
+    );
+    let out = hex(&buf);
+    zeroize::Zeroize::zeroize(&mut *buf);
+    Ok(out)
 }
 
 fn dec<T: DeserializeOwned>(s: &str, what: &str) -> Result<T, String> {
-    let bytes = unhex(s)?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("opaque: parsing {what}: {e}"))
+    let mut bytes: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(unhex(s)?);
+    let out = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("opaque: parsing {what}: {e}"));
+    zeroize::Zeroize::zeroize(&mut *bytes);
+    out
 }
 
 pub fn hex(bytes: &[u8]) -> String {
