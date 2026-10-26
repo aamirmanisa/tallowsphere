@@ -11333,11 +11333,19 @@ fn resolve_imports_recursive(
                                         loaded,
                                         out,
                                     );
-                                    // Then add the imported file's own non-import items
-                                    for imp_item in imported.items {
-                                        if !matches!(imp_item, tallow::ast::Item::Import(_)) {
-                                            out.push(imp_item);
+                                    // Then add the imported file's own non-import items.
+                                    // `is_imported` is set here, at the one place that
+                                    // knows the item came from another file: the trust
+                                    // root (`main`) is anchored to the entry file, so a
+                                    // library function spelled `main` is not one.
+                                    for mut imp_item in imported.items {
+                                        if matches!(imp_item, tallow::ast::Item::Import(_)) {
+                                            continue;
                                         }
+                                        if let tallow::ast::Item::Fn(f) = &mut imp_item {
+                                            f.is_imported = true;
+                                        }
+                                        out.push(imp_item);
                                     }
                                 }
                                 Err(err) => {

@@ -540,6 +540,7 @@ impl Parser {
             annotations,
             is_async,
             is_native,
+            is_imported: false,
             name,
             type_params,
             params,

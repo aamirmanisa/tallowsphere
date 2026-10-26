@@ -287,6 +287,16 @@ pub struct EnumInfo {
 pub struct VarInfo {
     pub ty: Type,
     pub mutable: bool,
+    /// Declared effect row of the function this local was initialised from
+    /// (`let f = scan`), if any (G01, audit F-8).
+    ///
+    /// A row is a property of the *function*, not of the syntax that calls it.
+    /// Storing a row-carrying function in a value used to launder the row away:
+    /// `f(g, h)` matched no name in the effect table, so the caller inherited
+    /// nothing. Recording the row on the binding keeps the requirement attached
+    /// to the value, and [`TypeChecker::check_call`] forwards it at every call
+    /// through a local.
+    pub effects: Vec<EffectReq>,
 }
 
 // ── Type Environment ─────────────────────────────────────────────────────────
@@ -458,9 +468,20 @@ pub struct TypeChecker<'a> {
     /// [`Self::enforce_grant_origin`], because the rule depends on the *name*
     /// of the enclosing body — only `main` may originate authority.
     body_grant_sites: Vec<(String, Span)>,
-    /// Name of the body whose statements are being walked. `main` is the trust
-    /// root (see `enforce_effect_row`); an `impl` method is never one.
-    current_body_name: Option<String>,
+    /// Whether the body being walked is *the* entry point — spelled `main` and
+    /// declared in the file the compiler was invoked on (G01, audit F-11).
+    ///
+    /// The trust-root exemption is a property of an item, not of a spelling: a
+    /// library function called `main` is an ordinary function and must take its
+    /// capability as a parameter like any other. `check_trust_root` rejects the
+    /// imported case outright (E0147); this flag is the second lock, and it is
+    /// what `enforce_effect_row` / `enforce_grant_origin` consult.
+    current_body_is_entry_main: bool,
+    /// Whether the body being walked is an imported function spelled `main`.
+    /// Such a body is already refused as a library item by
+    /// [`Self::check_trust_root`] (E0147), so the E0144 authority-origin rule is
+    /// not applied to it a second time: one defect, one diagnostic.
+    current_body_is_imported_main: bool,
     /// Declared return type of the body being walked, when it is not `Void`
     /// (G01 P0.2). `return <expr>` and the tail expression are compared to it,
     /// so the return position cannot manufacture a capability any more than a
@@ -481,7 +502,8 @@ impl<'a> TypeChecker<'a> {
             declared_effects: Vec::new(),
             body_effect_reqs: Vec::new(),
             body_grant_sites: Vec::new(),
-            current_body_name: None,
+            current_body_is_entry_main: false,
+            current_body_is_imported_main: false,
             current_return_type: None,
             closure_depth: 0,
         }
@@ -491,6 +513,9 @@ impl<'a> TypeChecker<'a> {
     pub fn check(mut self) -> (TypeEnv, Diagnostics) {
         // Pass 1: Register all type aliases and function signatures
         self.register_declarations();
+
+        // Pass 1a: exactly one trust root, in the entry file (G01, audit F-11)
+        self.check_trust_root();
 
         // Pass 1b: Register traits and validate trait impls
         self.register_traits();
@@ -1014,7 +1039,14 @@ impl<'a> TypeChecker<'a> {
         let mut locals: HashMap<String, VarInfo> = HashMap::new();
         for p in &f.params {
             let ty = self.resolve_param_type(p);
-            locals.insert(p.name.clone(), VarInfo { ty, mutable: false });
+            locals.insert(
+                p.name.clone(),
+                VarInfo {
+                    ty,
+                    mutable: false,
+                    effects: Vec::new(),
+                },
+            );
         }
 
         // Check if function touches network
@@ -1091,7 +1123,8 @@ impl<'a> TypeChecker<'a> {
         // (recorded in `check_expr`); the row is enforced right after it, so a
         // socket-opening call without `with Net(op)` is reported at the call.
         self.declared_effects = f.effects.clone();
-        self.current_body_name = Some(f.name.clone());
+        self.current_body_is_entry_main = f.name == "main" && !f.is_imported;
+        self.current_body_is_imported_main = f.name == "main" && f.is_imported;
         self.current_return_type = (declared_return != Type::Void).then(|| declared_return.clone());
         self.closure_depth = 0;
         self.body_effect_reqs = Vec::new();
@@ -1099,9 +1132,10 @@ impl<'a> TypeChecker<'a> {
         for stmt in &f.body.stmts {
             self.check_stmt(stmt, &mut locals);
         }
-        self.enforce_grant_origin(Some(&f.name), false);
+        self.enforce_grant_origin(false);
         self.enforce_effect_row();
-        self.current_body_name = None;
+        self.current_body_is_entry_main = false;
+        self.current_body_is_imported_main = false;
 
         // G01 P0.2: the tail expression is the implicit return; it is compared
         // to the declared type exactly like an explicit `return`.
@@ -1129,12 +1163,20 @@ impl<'a> TypeChecker<'a> {
             VarInfo {
                 ty: Type::Named(target.to_string()),
                 mutable: false,
+                effects: Vec::new(),
             },
         );
         for p in &method.params {
             if p.name != "self" {
                 let ty = self.resolve_param_type(p);
-                locals.insert(p.name.clone(), VarInfo { ty, mutable: false });
+                locals.insert(
+                    p.name.clone(),
+                    VarInfo {
+                        ty,
+                        mutable: false,
+                        effects: Vec::new(),
+                    },
+                );
             }
         }
         // G01 P0.2: an `impl` method's parameter and return types are
@@ -1148,7 +1190,8 @@ impl<'a> TypeChecker<'a> {
         // G01: same effect-row enforcement for impl methods — the row on an
         // `impl` method is checked exactly like a free function's.
         self.declared_effects = method.effects.clone();
-        self.current_body_name = None;
+        self.current_body_is_entry_main = false;
+        self.current_body_is_imported_main = false;
         let declared_return = method
             .return_type
             .as_ref()
@@ -1170,7 +1213,7 @@ impl<'a> TypeChecker<'a> {
         }
         // An `impl` method is never `main`: it has no path to the trust root,
         // so it must take the capability as a parameter (E0144).
-        self.enforce_grant_origin(None, true);
+        self.enforce_grant_origin(true);
         self.enforce_effect_row();
         // G01 P0.2: the tail expression is the implicit return.
         if let Some(declared) = self.current_return_type.clone() {
@@ -1181,6 +1224,62 @@ impl<'a> TypeChecker<'a> {
             }
         }
         self.current_return_type = None;
+    }
+
+    // ── Trust root (G01, audit F-11) ─────────────────────────────────────
+
+    /// The trust root is an *item*, not a spelling: exactly one `fn main`, and
+    /// it must be the item declared in the file the compiler was invoked on.
+    ///
+    /// `scope.grant` is exempt from E0144 only inside `main` (see
+    /// [`Self::enforce_grant_origin`]), because `main` is the one body whose
+    /// authority comes from the runtime scope registry rather than from a
+    /// caller. Import resolution merges imported files into the same program
+    /// before type checking, so before this pass any library function spelled
+    /// `main` inherited that exemption — a helper could mint itself a
+    /// `Grant<Net>` and reach a socket with no authority handed to it at all.
+    ///
+    /// Both holes are closed here: an imported `main` is refused (E0147)
+    /// because a program's entry point is never a library item, and a second
+    /// `main` in the entry file is refused because a program has exactly one
+    /// entry point — the duplicate would otherwise shadow the first at codegen
+    /// time while both were still checked as trust roots.
+    fn check_trust_root(&mut self) {
+        let mut entry_main: Option<Span> = None;
+        for item in &self.program.items {
+            let Item::Fn(f) = item else {
+                continue;
+            };
+            if f.name != "main" {
+                continue;
+            }
+            if f.is_imported {
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0147",
+                        "main is the entry point of the program, not a library item".to_string(),
+                        f.span,
+                    )
+                    .with_help(
+                        "rename this function: authority is originated only by the `main` of the file compiled",
+                    ),
+                );
+                continue;
+            }
+            if entry_main.is_some() {
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0147",
+                        "a program has exactly one `main`; this is a duplicate entry point"
+                            .to_string(),
+                        f.span,
+                    )
+                    .with_help("merge the bodies, or give one of them a name that is not `main`"),
+                );
+                continue;
+            }
+            entry_main = Some(f.span);
+        }
     }
 
     // ── Effect rows (G01) ───────────────────────────────────────────────
@@ -1232,6 +1331,42 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// The declared row of the function a binding initialises from, if the
+    /// initialiser is a function value (G01, audit F-8).
+    ///
+    /// Only a bare identifier can carry a row: a name that is a local inherits
+    /// that local's row (`let g = f`), and a name that is a declared function
+    /// carries its own. Anything else is not a function value, so it has no row
+    /// to forward and a call through it stays an ordinary (rowless) call.
+    fn fn_value_effects(&self, value: &Expr, locals: &HashMap<String, VarInfo>) -> Vec<EffectReq> {
+        // `let f = net.connect` captures a module member by its dotted path:
+        // the path is exactly what the effect table reads, so the row it names
+        // is recorded on the binding and forwarded at `f(..)` like any other.
+        if let Some(path) = callee_path(value) {
+            if let Some(effect) = effect_for_callee(&path) {
+                let op = effect_op(&path);
+                if !op.is_empty() {
+                    return vec![EffectReq {
+                        name: effect.to_string(),
+                        ops: vec![op.to_string()],
+                        span: value.span,
+                    }];
+                }
+            }
+        }
+        let ExprKind::Ident(name) = &value.kind else {
+            return Vec::new();
+        };
+        if let Some(info) = locals.get(name) {
+            return info.effects.clone();
+        }
+        self.env
+            .functions
+            .get(name)
+            .map(|sig| sig.effects.clone())
+            .unwrap_or_default()
+    }
+
     /// Is a `Grant<effect>` value lexically in scope at this point in the body?
     ///
     /// The local map *is* the lexical scope, so this is exact: a grant taken as
@@ -1281,7 +1416,7 @@ impl<'a> TypeChecker<'a> {
         // `@fingerprint_policy` for any stealth or fingerprint use (E5100-
         // E5104) — so the one place authority can originate is also the most
         // heavily annotated one.
-        let trust_root = self.current_body_name.as_deref() == Some("main");
+        let trust_root = self.current_body_is_entry_main;
         for (effect, op, span, grant_ok) in reqs {
             // An empty `op` is a whole-effect requirement (a bare `with Net`
             // forwarded from a callee): only a bare entry satisfies it.
@@ -1348,10 +1483,13 @@ impl<'a> TypeChecker<'a> {
     ///
     /// Every other body must take a `Grant<E>` parameter and pass it on. An
     /// `impl` method is never `main`, so it always needs the parameter; that is
-    /// said in the help text rather than assumed.
-    fn enforce_grant_origin(&mut self, body_name: Option<&str>, is_impl: bool) {
+    /// said in the help text rather than assumed. A *body* is never judged by
+    /// its name either: `current_body_is_entry_main` is set from the item that
+    /// declares it (see [`Self::check_trust_root`]), so `main` in an imported
+    /// module does not reach this exemption.
+    fn enforce_grant_origin(&mut self, is_impl: bool) {
         let sites = std::mem::take(&mut self.body_grant_sites);
-        if body_name == Some("main") {
+        if self.current_body_is_entry_main || self.current_body_is_imported_main {
             return;
         }
         for (effect, span) in sites {
@@ -1734,11 +1872,15 @@ impl<'a> TypeChecker<'a> {
                     self.check_grant_binding(&resolved, value, locals, value.span);
                 }
                 self.check_expr(value, locals);
+                // G01 (audit F-8): a local may hold a function. The row then
+                // travels with the value, not with the callee's spelling.
+                let effects = self.fn_value_effects(value, locals);
                 locals.insert(
                     name.clone(),
                     VarInfo {
                         ty: resolved,
                         mutable: false,
+                        effects,
                     },
                 );
             }
@@ -1755,11 +1897,13 @@ impl<'a> TypeChecker<'a> {
                     self.check_grant_binding(&resolved, value, locals, value.span);
                 }
                 self.check_expr(value, locals);
+                let effects = self.fn_value_effects(value, locals);
                 locals.insert(
                     name.clone(),
                     VarInfo {
                         ty: resolved,
                         mutable: true,
+                        effects,
                     },
                 );
             }
@@ -1772,6 +1916,7 @@ impl<'a> TypeChecker<'a> {
                         VarInfo {
                             ty: Type::Unknown,
                             mutable: false,
+                            effects: Vec::new(),
                         },
                     );
                 }
@@ -1809,6 +1954,7 @@ impl<'a> TypeChecker<'a> {
                     VarInfo {
                         ty: elem_ty,
                         mutable: false,
+                        effects: Vec::new(),
                     },
                 );
                 for s in &body.stmts {
@@ -2060,10 +2206,152 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Check one call site — `f(args)` and `spawn f(args)` both land here
+    /// (G01, audit F-8/F-9/F-10), so no call form can escape the walk.
+    ///
+    /// The callee's row is a requirement of the *caller*, whichever way the
+    /// callee is spelled: a direct name is looked up in `env.functions`, and a
+    /// local holding a function value carries the row it was initialised with
+    /// (`VarInfo::effects`).
+    fn check_call(
+        &mut self,
+        callee: &Expr,
+        args: &[CallArg],
+        span: Span,
+        locals: &HashMap<String, VarInfo>,
+    ) {
+        // G01: a call to a socket-opening primitive is an effect the
+        // body requires; the signature's row is enforced after the walk.
+        let mut row_forwarded = false;
+        if let Some(path) = callee_path(callee) {
+            self.note_effect_call(&path, span, locals);
+            // G01, interprocedural: a call to a user function reaches
+            // whatever that function's declared row says it reaches —
+            // recorded at *this* call site, so the diagnostic names the
+            // call in the caller rather than the callee's declaration.
+            if let Some(effects) = self.env.functions.get(&path).map(|s| s.effects.clone()) {
+                self.note_callee_row(&effects, span, locals);
+                row_forwarded = true;
+            }
+        }
+        // G01 (audit F-8): the row of a function held in a *value*. `let f =
+        // scan; f(g, h)` matched nothing in the effect table, because the table
+        // keys on dotted callee paths and `f` is an ordinary local. The row is
+        // recorded on the binding (see `fn_value_effects`), so the requirement
+        // is forwarded here exactly as a direct call forwards it.
+        if !row_forwarded {
+            if let ExprKind::Ident(name) = &callee.kind {
+                if let Some(effects) = locals.get(name).map(|v| v.effects.clone()) {
+                    if !effects.is_empty() {
+                        self.note_callee_row(&effects, span, locals);
+                    }
+                }
+            }
+        }
+        self.check_expr_inner(callee, locals, true);
+        for arg in args {
+            self.check_expr(&arg.value, locals);
+        }
+        // Check argument count for known functions. A trailing run of
+        // defaulted parameters may be omitted: the callee binds them.
+        if let ExprKind::Ident(name) = &callee.kind {
+            let got = args.len();
+            let arity = self.env.functions.get(name).map(|sig| {
+                (
+                    sig.params.len(),
+                    sig.required_params(),
+                    sig.accepts_arity(got),
+                )
+            });
+            if let Some((expected, required, accepted)) = arity {
+                if !accepted {
+                    let message = if got > expected {
+                        format!(
+                            "function `{name}` expects at most {expected} argument(s), got {got}"
+                        )
+                    } else if required == expected {
+                        format!("function `{name}` expects {expected} argument(s), got {got}")
+                    } else {
+                        format!(
+                            "function `{name}` expects at least {required} argument(s), got {got}"
+                        )
+                    };
+                    self.diags.error("E0103", message, span);
+                }
+            }
+            // G01 P0.2: a parameter is a slot. A `Grant<E>` argument
+            // may only be the same `Grant<E>`, and only a `Grant<E>`
+            // may fill a `Grant<E>` parameter — the call position used
+            // to be entirely unchecked (audit F-7).
+            if let Some(params) = self.env.functions.get(name).map(|s| s.params.clone()) {
+                self.check_capability_args(&params, args, locals, "pass as an argument");
+            }
+            // Check privacy: print/log with private/secret arg
+            if name == "print" || name == "log" {
+                for arg in args {
+                    let arg_ty = self.infer_expr_type(&arg.value, locals);
+                    if arg_ty.is_secret() {
+                        self.diags.error(
+                            "E0201",
+                            "cannot pass secret type to print/log -- secret types must never be logged",
+                            arg.span,
+                        );
+                    } else if arg_ty.is_private() {
+                        self.diags.error(
+                            "E0200",
+                            "cannot pass private type to print/log without .redact() or .hash()",
+                            arg.span,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn check_expr(&mut self, expr: &Expr, locals: &HashMap<String, VarInfo>) {
+        self.check_expr_inner(expr, locals, false);
+    }
+
+    /// The expression walk.
+    ///
+    /// `callee_position` says the expression is the callee of a call or the
+    /// receiver of a method call. Those are the two positions where a module
+    /// namespace is legal (it names a dispatch path, not a value), and the only
+    /// place a name that [`Self::is_module_namespace`] recognises is exempt from
+    /// E0146.
+    fn check_expr_inner(
+        &mut self,
+        expr: &Expr,
+        locals: &HashMap<String, VarInfo>,
+        callee_position: bool,
+    ) {
         match &expr.kind {
             // ── Identifiers: check variable is defined ──────────────────
             ExprKind::Ident(name) => {
+                // G01 (audit F-1): a module namespace is a dispatch path, not a
+                // value. `let n = net; n.connect(h)` compiled and *ran*, because
+                // the effect table matches the syntax of a dotted callee while
+                // the interpreter dispatches on the name the value carries —
+                // binding the namespace made the row and the grant both vanish.
+                // A namespace may therefore appear only as the receiver of a
+                // method call (or the callee of a call), which is what
+                // `callee_position` says; everywhere else it is E0146.
+                if !callee_position && !locals.contains_key(name) && self.is_module_namespace(name)
+                {
+                    self.diags.push(
+                        crate::error::Diagnostic::error(
+                            "E0146",
+                            format!(
+                                "module namespace is not a first-class value: `{name}` may only be the receiver of a method call"
+                            ),
+                            expr.span,
+                        )
+                        .with_help(format!(
+                            "call the function directly (`{name}.<method>(..)`) instead of storing or passing the module"
+                        )),
+                    );
+                    return;
+                }
                 // Skip well-known globals and builtins
                 if !locals.contains_key(name)
                     && !self.env.functions.contains_key(name)
@@ -2082,79 +2370,7 @@ impl<'a> TypeChecker<'a> {
 
             // ── Calls: check argument count ─────────────────────────────
             ExprKind::Call { callee, args, .. } => {
-                // G01: a call to a socket-opening primitive is an effect the
-                // body requires; the signature's row is enforced after the walk.
-                if let Some(path) = callee_path(callee) {
-                    self.note_effect_call(&path, expr.span, locals);
-                    // G01, interprocedural: a call to a user function reaches
-                    // whatever that function's declared row says it reaches —
-                    // recorded at *this* call site, so the diagnostic names the
-                    // call in the caller rather than the callee's declaration.
-                    if let Some(effects) = self.env.functions.get(&path).map(|s| s.effects.clone())
-                    {
-                        self.note_callee_row(&effects, expr.span, locals);
-                    }
-                }
-                self.check_expr(callee, locals);
-                for arg in args {
-                    self.check_expr(&arg.value, locals);
-                }
-                // Check argument count for known functions. A trailing run of
-                // defaulted parameters may be omitted: the callee binds them.
-                if let ExprKind::Ident(name) = &callee.kind {
-                    let got = args.len();
-                    let arity = self.env.functions.get(name).map(|sig| {
-                        (
-                            sig.params.len(),
-                            sig.required_params(),
-                            sig.accepts_arity(got),
-                        )
-                    });
-                    if let Some((expected, required, accepted)) = arity {
-                        if !accepted {
-                            let message = if got > expected {
-                                format!(
-                                    "function `{name}` expects at most {expected} argument(s), got {got}"
-                                )
-                            } else if required == expected {
-                                format!(
-                                    "function `{name}` expects {expected} argument(s), got {got}"
-                                )
-                            } else {
-                                format!(
-                                    "function `{name}` expects at least {required} argument(s), got {got}"
-                                )
-                            };
-                            self.diags.error("E0103", message, expr.span);
-                        }
-                    }
-                    // G01 P0.2: a parameter is a slot. A `Grant<E>` argument
-                    // may only be the same `Grant<E>`, and only a `Grant<E>`
-                    // may fill a `Grant<E>` parameter — the call position used
-                    // to be entirely unchecked (audit F-7).
-                    if let Some(params) = self.env.functions.get(name).map(|s| s.params.clone()) {
-                        self.check_capability_args(&params, args, locals, "pass as an argument");
-                    }
-                    // Check privacy: print/log with private/secret arg
-                    if name == "print" || name == "log" {
-                        for arg in args {
-                            let arg_ty = self.infer_expr_type(&arg.value, locals);
-                            if arg_ty.is_secret() {
-                                self.diags.error(
-                                    "E0201",
-                                    "cannot pass secret type to print/log -- secret types must never be logged",
-                                    arg.span,
-                                );
-                            } else if arg_ty.is_private() {
-                                self.diags.error(
-                                    "E0200",
-                                    "cannot pass private type to print/log without .redact() or .hash()",
-                                    arg.span,
-                                );
-                            }
-                        }
-                    }
-                }
+                self.check_call(callee, args, expr.span, locals);
             }
 
             // ── Method calls: verify method exists, check arg count ─────
@@ -2194,7 +2410,9 @@ impl<'a> TypeChecker<'a> {
                             )
                 );
                 if !static_namespace {
-                    self.check_expr(object, locals);
+                    // A module namespace is legal exactly here: as the receiver
+                    // of a method call (E0146's one exemption).
+                    self.check_expr_inner(object, locals, true);
                 }
                 for arg in args {
                     self.check_expr(&arg.value, locals);
@@ -2420,7 +2638,12 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(inner, locals);
             }
             ExprKind::FieldAccess { object, field } => {
-                self.check_expr(object, locals);
+                // `math.pi`, `net.connect`: the name before the dot is a
+                // receiver — a namespace-qualified constant or a member path —
+                // not a value being stored. E0146 is about binding the
+                // namespace itself (`let n = net`), which is what made a
+                // dispatch path behave like a value.
+                self.check_expr_inner(object, locals, true);
                 // Check field exists on known struct types
                 let obj_ty = self.infer_expr_type(object, locals);
                 if let Some(tname) = self.type_to_name(&obj_ty) {
@@ -2553,7 +2776,14 @@ impl<'a> TypeChecker<'a> {
                         .as_ref()
                         .map(|t| self.resolve_type_expr(t))
                         .unwrap_or(Type::Unknown);
-                    inner_locals.insert(cp.name.clone(), VarInfo { ty, mutable: false });
+                    inner_locals.insert(
+                        cp.name.clone(),
+                        VarInfo {
+                            ty,
+                            mutable: false,
+                            effects: Vec::new(),
+                        },
+                    );
                 }
                 // A `return` inside the closure returns from the closure, not
                 // from the enclosing body: the return-slot check is suspended
@@ -2567,8 +2797,51 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Bail(e) => {
                 self.check_expr(e, locals);
             }
-            // ── Concurrency (Phase 1) — nothing to check yet ─────────────
-            ExprKind::Spawn { .. } | ExprKind::Select { .. } => {}
+            // ── Concurrency (Phase 1) ───────────────────────────────────
+            //
+            // G01 (audit F-9/F-10): these arms used to be `{}`, so the task
+            // expression of a `spawn` was never walked — its effects never
+            // reached the enclosing row and its arguments were never checked.
+            // A `spawn` is a call: it goes through the same `check_call` as
+            // `f(args)`, so a task body that reaches a socket with no row in the
+            // *caller* is refused there.
+            ExprKind::Spawn { func, args } => {
+                let call_args: Vec<CallArg> = args
+                    .iter()
+                    .map(|a| CallArg {
+                        name: None,
+                        value: a.clone(),
+                        span: a.span,
+                    })
+                    .collect();
+                self.check_call(func, &call_args, expr.span, locals);
+            }
+            ExprKind::Select { cases, default } => {
+                for case in cases {
+                    let mut case_locals = locals.clone();
+                    match &case.op {
+                        SelectOp::Recv(ch) => self.check_expr(ch, locals),
+                        SelectOp::Send { ch, val } => {
+                            self.check_expr(ch, locals);
+                            self.check_expr(val, locals);
+                        }
+                    }
+                    if let Some(var) = &case.variable {
+                        case_locals.insert(
+                            var.clone(),
+                            VarInfo {
+                                ty: Type::Unknown,
+                                mutable: false,
+                                effects: Vec::new(),
+                            },
+                        );
+                    }
+                    self.check_expr(&case.body, &case_locals);
+                }
+                if let Some(default) = default {
+                    self.check_expr(default, locals);
+                }
+            }
             // Leaf nodes — nothing to check
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
@@ -2741,6 +3014,25 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Is `name` a stdlib module namespace rather than a value (E0146)?
+    ///
+    /// A namespace is a dispatch path, not a value: the interpreter resolves
+    /// `net.connect` by the *name*, so a namespace that could be bound would be
+    /// a value the effect table cannot see. The module list is the one
+    /// identifier resolution already uses (`stdlib::is_registered_module`,
+    /// which `is_builtin_name` consults too), plus the three type-scoped
+    /// namespaces whose methods open sockets.
+    ///
+    /// A local of the same name shadows the module: `let db = db.memory()` binds
+    /// a value, and every later `db` is that value — so the caller checks
+    /// `locals` before asking this.
+    fn is_module_namespace(&self, name: &str) -> bool {
+        if matches!(name, "Tcp" | "Udp" | "TLSConn") {
+            return true;
+        }
+        crate::stdlib::is_registered_module(&name.to_ascii_lowercase())
+    }
+
     /// Check if a name is a builtin (not requiring declaration).
     fn is_builtin_name(&self, name: &str) -> bool {
         matches!(
@@ -2904,6 +3196,7 @@ impl<'a> TypeChecker<'a> {
                         VarInfo {
                             ty: Type::Unknown,
                             mutable: false,
+                            effects: Vec::new(),
                         },
                     );
                 }

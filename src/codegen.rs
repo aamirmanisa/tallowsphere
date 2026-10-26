@@ -3997,6 +3997,7 @@ void tallow_async_runtime_shutdown(void) {
             annotations: generic_fn.annotations.clone(),
             is_async: generic_fn.is_async,
             is_native: generic_fn.is_native,
+            is_imported: generic_fn.is_imported,
             name: mangled,
             type_params: vec![], // specialized — no longer generic
             params: specialized_params,

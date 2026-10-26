@@ -397,3 +397,160 @@ fn grant_passed_as_argument_compiles() {
     assert!(!stderr.contains("E0142"), "no E0142 expected:\n{stderr}");
     assert!(!stderr.contains("E0144"), "no E0144 expected:\n{stderr}");
 }
+
+// ── G01 P0.3 — the syntax escapes (audit F-1, F-8, F-9/F-10, F-11) ──────────
+//
+// The four remaining ways to satisfy the *syntax* of the rule while breaking it:
+// a module namespace bound to a value (the dispatcher matches a name, not a
+// path), a row-carrying function stored in a value (the table matches a dotted
+// callee), a `spawn` whose task was never walked, and a `main` in an imported
+// module inheriting the trust-root exemption. Each fixture is the audit's
+// reproduction, and each has a positive twin so the refusal is known to be the
+// new rule rather than a blanket ban.
+
+#[test]
+fn namespace_alias_is_refused() {
+    // F-1: `let n = net; n.connect(h)` — no row, no grant, and a live runtime
+    // path. The module namespace is not a value at all.
+    let (ok, stderr) = check("namespace_alias_rejected.tl");
+    assert!(
+        !ok,
+        "binding a module namespace to a value must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0146"),
+        "the refusal must carry code E0146:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("module namespace is not a first-class value"),
+        "the refusal must name the rule:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`net`"),
+        "the refusal must name the namespace:\n{stderr}"
+    );
+    // The finding is the alias, not the row: the aliased call matches no effect
+    // path, so E0141 has nothing to fire on here.
+    assert!(
+        !stderr.contains("E0141"),
+        "the alias is the finding, so E0141 must not fire:\n{stderr}"
+    );
+
+    // The exemption: the same namespace as a method receiver still compiles,
+    // with the row and the capability it always needed.
+    let (ok, stderr) = check("namespace_direct_call_ok.tl");
+    assert!(
+        ok,
+        "a direct `net.connect` under a declared row must compile:\n{stderr}"
+    );
+    assert!(!stderr.contains("E0146"), "no E0146 expected:\n{stderr}");
+}
+
+#[test]
+fn fn_value_row_propagates() {
+    // F-8: `let f = scan; f(g, h)` in a rowless caller. The row travels with
+    // the value, so the refusal lands on the call in `outer`.
+    let (ok, stderr) = check("fn_value_row_propagates.tl");
+    assert!(
+        !ok,
+        "a call through a function value must inherit the callee's row:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0141"),
+        "the refusal must carry code E0141:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "function body requires effect Net(connect) but the signature does not declare it"
+        ),
+        "the refusal must name the effect and the operation:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("help: add: with Net(connect)"),
+        "the refusal must say how to fix it:\n{stderr}"
+    );
+    // The span is the call in `outer`, not `scan`'s declaration.
+    assert!(
+        stderr.contains("fn_value_row_propagates.tl:15:"),
+        "the refusal must be reported at the indirect call (line 15):\n{stderr}"
+    );
+
+    let (ok, stderr) = check("fn_value_with_row_ok.tl");
+    assert!(
+        ok,
+        "indirection with the row declared on the caller must compile:\n{stderr}"
+    );
+    assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
+}
+
+#[test]
+fn spawn_row_propagates() {
+    // F-9/F-10: the `Spawn` arm of the expression walk was empty, so the task
+    // was never checked. A `spawn` is a call made by this body.
+    let (ok, stderr) = check("spawn_row_propagates.tl");
+    assert!(
+        !ok,
+        "spawning a row-carrying task from a rowless body must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0141"),
+        "the refusal must carry code E0141:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "function body requires effect Net(connect) but the signature does not declare it"
+        ),
+        "the refusal must name the effect and the operation:\n{stderr}"
+    );
+
+    let (ok, stderr) = check("spawn_with_row_ok.tl");
+    assert!(
+        ok,
+        "a spawn whose caller declares the row must compile:\n{stderr}"
+    );
+    assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
+}
+
+#[test]
+fn imported_main_is_refused() {
+    // F-11: the only `main` in this program that originates authority lives in
+    // an imported module. Imported items are merged into the program, so the
+    // trust-root exemption used to follow the *name*.
+    let (ok, stderr) = check("imported_main_rejected.tl");
+    assert!(
+        !ok,
+        "a `main` in an imported module must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0147"),
+        "the refusal must carry code E0147:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("main is the entry point of the program, not a library item"),
+        "the refusal must name the rule:\n{stderr}"
+    );
+    // The library item is the finding, not a missing annotation on it.
+    assert!(
+        !stderr.contains("E0144"),
+        "the imported `main` is not judged as an ordinary body, so no E0144:\n{stderr}"
+    );
+}
+
+#[test]
+fn two_mains_are_refused() {
+    // F-12: two trust roots in one file. Both were exempt from E0144 and both
+    // were walked as the entry point; codegen keeps one.
+    let (ok, stderr) = check("two_mains_rejected.tl");
+    assert!(
+        !ok,
+        "a second `main` in the same file must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0147"),
+        "the refusal must carry code E0147:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("a program has exactly one `main`"),
+        "the refusal must name the rule:\n{stderr}"
+    );
+}

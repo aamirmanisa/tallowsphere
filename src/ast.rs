@@ -46,6 +46,12 @@ pub struct FnDecl {
     /// `native fn name(...) -> T` — a declaration with no body, implemented by a
     /// symbol of the same name at link time (register #129).
     pub is_native: bool,
+    /// True when this item was parsed out of an imported module rather than the
+    /// file the compiler was invoked on (`resolve_imports`). The item is merged
+    /// into the program before type checking, and this flag is what keeps the
+    /// trust root (`main`, see `typeck::TypeChecker::check_trust_root`) anchored
+    /// to an entry-point file rather than to a spelling.
+    pub is_imported: bool,
     pub name: String,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
