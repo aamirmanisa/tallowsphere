@@ -11,6 +11,14 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 ## [v1.5.8] — 2026-10-26 — UTF-8 literals, and two names the checker called undefined
 
+### Added
+
+- `TypeEnv.constants`, the set of top-level `const` names the checker now
+  consults — the missing half of the name resolution described below.
+- Regression tests: `lexer::tests::lex_string_keeps_multibyte_utf8`,
+  `typeck::tests::const_use_does_not_warn_w0102`,
+  `typeck::tests::filecopy_namespace_does_not_warn_w0102`.
+
 ### What was wrong
 
 - **Every non-ASCII string literal was double-encoded.** The lexer decoded each
