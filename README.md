@@ -10,7 +10,7 @@
 
 <sub><a href="#extraction-in-five-minutes">Extraction</a> &nbsp;·&nbsp; <a href="#install">Install</a> &nbsp;·&nbsp; <a href="#the-language-underneath">The language</a> &nbsp;·&nbsp; <a href="#architecture">Architecture</a> &nbsp;·&nbsp; <a href="#building-from-source">Build</a> &nbsp;·&nbsp; <a href="#hosting-and-deployment">Deploy</a> &nbsp;·&nbsp; <a href="#what-it-does-not-do-yet">Limits</a></sub>
 
-![release 1.5.7](https://img.shields.io/badge/release-1.5.7-E39B3E?style=flat-square&labelColor=171513)
+![release 1.5.8](https://img.shields.io/badge/release-1.5.8-E39B3E?style=flat-square&labelColor=171513)
 ![rust 1.98.1](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&labelColor=171513&logo=rust&logoColor=white)
 ![linux-aarch64](https://img.shields.io/badge/linux--aarch64-published-2F7A53?style=flat-square&labelColor=171513)
 ![extraction local · no egress](https://img.shields.io/badge/extraction-local%20%C2%B7%20no%20egress-E39B3E?style=flat-square&labelColor=171513)
@@ -55,7 +55,7 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-25 · release `v1.5.7` · `schema check` exit 0; `extract` exit 0 with one row and an empty quarantine file against a three-field fixture — and, against a page that does not carry the expected fields, `unknown:` lines naming the selectors that yielded nothing rather than a guessed row]
+[measured 2026-10-26 · release `v1.5.8` · `schema check` exit 0; `extract` exit 0 with one row and an empty quarantine file against a three-field fixture — and, against a page that does not carry the expected fields, `unknown:` lines naming the selectors that yielded nothing rather than a guessed row]
 
 Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
 
@@ -117,13 +117,13 @@ $ curl -fsSL https://raw.githubusercontent.com/aamirmanisa/tallowsphere/main/ins
 The installer resolves the newest release, verifies the checksum, unpacks **both** `tallow` and `libtallow.a`, then compiles and runs a probe program before reporting success:
 
 ```console
-fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.7/tallow-linux-aarch64-1.5.7.tar.gz
-tallow-linux-aarch64-1.5.7.tar.gz: OK
-installed tallow 1.5.7 into /root/.local/bin
+fetching https://github.com/aamirmanisa/tallowsphere/releases/download/v1.5.8/tallow-linux-aarch64-1.5.8.tar.gz
+tallow-linux-aarch64-1.5.8.tar.gz: OK
+installed tallow 1.5.8 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
-[measured 2026-10-25 · release `v1.5.7` · the published linux-aarch64 tarball is 174,665,207 B, sha256 `51b44074…5ec6` matches its sidecar, and the extracted binary prints `tallow 1.5.7` (git `447e7da1e1`) and runs a program]
+[measured 2026-10-26 · release `v1.5.8` · the published linux-aarch64 tarball is 174,378,929 B, sha256 `a9739bb4…459c` matches its sidecar, and the extracted binary prints `tallow 1.5.8` (git `6aa9fcfb14`) and runs a program]
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
@@ -145,14 +145,14 @@ $ ./install.sh --from ./tallow-linux-aarch64-<version>.tar.gz    # air-gapped
 
 ```console
 $ tallow --version
-tallow 1.5.7
+tallow 1.5.8
   platform: linux
   arch: aarch64
-  build: 2026-10-25T22:42:24Z
-  git: 447e7da1e1
+  build: 2026-10-26T02:01:30Z
+  git: 6aa9fcfb14
 ```
 
-[measured 2026-10-25 · the binary installed by the one-line installer on this host]
+[measured 2026-10-26 · the binary installed by the one-line installer on this host]
 
 The `git:` line is provenance: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so the two are distinguishable.
 
@@ -371,15 +371,15 @@ The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)
 
 | Gate | Result | Revision |
 |---|---|---|
-| Conformance | **21 cases · 19 run · 2 skipped · 0 failures**, both planes, against the installed binary | `447e7da1e1`, 2026-10-25 [measured] |
-| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, empty quarantine, no egress | v1.5.7, 2026-10-25 [measured] |
-| Tests, library suite | **9,250 passed · 0 failed · 33 ignored** | `0fdd5797ee`, 2026-10-24 [measured] |
-| Examples & tutorial | **10 of 10 programs** byte-identical on both planes | `447e7da1e1`, 2026-10-25 [measured] |
-| Install probe | compiles and runs a program from the installed archive | v1.5.7, 2026-10-25 [measured] |
+| Conformance | **22 cases · 20 run · 2 skipped · 0 failures**, both planes, against the installed binary | v1.5.8, 2026-10-26 [measured] |
+| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, empty quarantine, no egress | v1.5.8, 2026-10-26 [measured] |
+| Tests, library suite | **9,271 passed · 0 failed · 33 ignored** | `6aa9fcf`, 2026-10-26 [measured] |
+| Examples & tutorial | **10 of 10 programs** byte-identical on both planes | v1.5.8, 2026-10-26 [measured] |
+| Install probe | compiles and runs a program from the installed archive | v1.5.8, 2026-10-26 [measured] |
 
 ```console
-$ python3 conformance/run.py --tallow $(command -v tallow)   # 19 run, 2 skipped (zk, fhe)
-$ python3 conformance/run.py --tallow … --features zk,fhe    # all 21
+$ python3 conformance/run.py --tallow $(command -v tallow)   # 20 run, 2 skipped (zk, fhe)
+$ python3 conformance/run.py --tallow … --features zk,fhe    # all 22
 $ cargo test --lib -- --test-threads=2
 ```
 
