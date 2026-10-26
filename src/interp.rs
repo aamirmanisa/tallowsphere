@@ -156,6 +156,19 @@ pub enum Value {
     Int(i128),
     Float(f64),
     String(String),
+    /// A module namespace (`net`, `math`, `Random`, `tallow.http`).
+    ///
+    /// Deliberately **not** a `String`. A module is a capability-bearing
+    /// namespace, not data: dispatch keys on this variant and on nothing else,
+    /// so `"__module_net__".connect(h)` is a method call on a string and
+    /// refuses (lattice audit round 2, N-1/N-2/F-14).
+    ///
+    /// `&'static str` rather than `String` is the whole point — the type makes
+    /// the invariant structural: no value built at run time can be coerced into
+    /// one, so concatenation, interpolation, struct fields, parameters and
+    /// `const` initialisers can never yield a namespace.
+    Module(&'static str),
+
     Array(Vec<Value>),
     Map(Vec<(Value, Value)>),
 
@@ -259,6 +272,32 @@ pub enum Value {
     Channel(ChannelHandle),
 }
 
+/// Intern the name of a *syntactically named* module.
+///
+/// `Value::Module` holds a `&'static str` so that nothing built at run time can
+/// become a namespace. This is the single place a non-literal spelling (the
+/// `tallow.<field>` proxy and `Module.field` reads) is turned into one, and its
+/// input is always an identifier from the AST — never a runtime `String`.
+/// Memoised so a field read inside a loop does not leak per iteration; the set
+/// of interned names is bounded by the program text.
+fn intern_module_name(name: &str) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static INTERNED: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let table = INTERNED.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = match table.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(interned) = guard.get(name) {
+        return interned;
+    }
+    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+    guard.insert(name.to_string(), leaked);
+    leaked
+}
+
 /// Shared channel state for `Value::Channel`.
 /// Now backed by crossbeam MPMC channels — thread-safe across spawned goroutines.
 #[derive(Clone)]
@@ -326,6 +365,7 @@ fn validate_send(value: &Value) -> Result<(), String> {
         | Value::Int(_)
         | Value::Float(_)
         | Value::String(_)
+        | Value::Module(_)
         | Value::Bytes(_)
         | Value::Array(_)
         | Value::Map(_)
@@ -586,6 +626,10 @@ impl Value {
             Value::Int(n) => n.to_string(),
             Value::Float(n) => format_float_c(*n),
             Value::String(s) => s.clone(),
+            // A module prints as a namespace, never as an internal tag: there
+            // is no spelling of this output a program can hand back to reach
+            // dispatch, because dispatch accepts only `Value::Module`.
+            Value::Module(name) => format!("<module {name}>"),
             Value::Array(items) => {
                 let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
                 format!("[{}]", inner.join(", "))
@@ -1695,6 +1739,19 @@ impl Interpreter {
                     // Evaluate const in an empty env
                     let mut env = Env::new();
                     let val = self.eval_expr(&c.value, &mut env)?;
+                    // A const binds a *value*; a module namespace is not one
+                    // (E0146 refuses it in every other first-class position).
+                    // Without this, `const N: string = net` followed by
+                    // `N.connect(h)` reached a socket with no row, because the
+                    // effect pass never walks const initialisers (lattice N-2).
+                    // The namespace becomes its printed form — a String, which
+                    // never dispatches — on both the typed and the inferred
+                    // spelling, matching what the checker already enforces
+                    // everywhere else.
+                    let val = match val {
+                        Value::Module(name) => Value::String(format!("<module {name}>")),
+                        other => other,
+                    };
                     self.constants.insert(c.name.clone(), val);
                 }
                 Item::Struct(s) => {
@@ -2461,8 +2518,8 @@ impl Interpreter {
             ExprKind::Ident(name) => {
                 // A bound variable shadows a module name. Without this, adding a
                 // lowercase module (`llm`) silently broke `let llm = h.llm_calls`:
-                // the sentinel match won and the variable read back as
-                // "__module_llm__". Modules are a fallback, not a reserved word.
+                // the namespace match won and the variable read back as
+                // `<module llm>`. Modules are a fallback, not a reserved word.
                 if let Some(v) = env.get(name) {
                     return Ok(v.clone());
                 }
@@ -2476,278 +2533,276 @@ impl Interpreter {
                     "true" => Ok(Value::Bool(true)),
                     "false" => Ok(Value::Bool(false)),
                     // Capitalized namespace modules (never clash with user vars)
-                    "Random" => Ok(Value::String("__module_Random__".to_string())),
-                    "PhoneNumber" => Ok(Value::String("__module_PhoneNumber__".to_string())),
-                    "Chan" => Ok(Value::String("__module_Chan__".to_string())),
-                    "KeyPair" => Ok(Value::String("__module_KeyPair__".to_string())),
-                    "SymKey" => Ok(Value::String("__module_SymKey__".to_string())),
-                    "IPPool" => Ok(Value::String("__module_IPPool__".to_string())),
-                    "TorPool" => Ok(Value::String("__module_TorPool__".to_string())),
-                    "TLSConn" => Ok(Value::String("__module_TLSConn__".to_string())),
-                    "Browser" => Ok(Value::String("__module_Browser__".to_string())),
-                    "Extract" => Ok(Value::String("__module_Extract__".to_string())),
+                    "Random" => Ok(Value::Module("Random")),
+                    "PhoneNumber" => Ok(Value::Module("PhoneNumber")),
+                    "Chan" => Ok(Value::Module("Chan")),
+                    "KeyPair" => Ok(Value::Module("KeyPair")),
+                    "SymKey" => Ok(Value::Module("SymKey")),
+                    "IPPool" => Ok(Value::Module("IPPool")),
+                    "TorPool" => Ok(Value::Module("TorPool")),
+                    "TLSConn" => Ok(Value::Module("TLSConn")),
+                    "Browser" => Ok(Value::Module("Browser")),
+                    "Extract" => Ok(Value::Module("Extract")),
                     // Research / roadmap modules (FIX12-era): registered in the
                     // stdlib router but historically missing from this list, so
                     // `<Module>.fn()` died with `undefined variable`.
-                    "Geocode" => Ok(Value::String("__module_Geocode__".to_string())),
-                    "Entity" => Ok(Value::String("__module_Entity__".to_string())),
-                    "Recordlink" => Ok(Value::String("__module_Recordlink__".to_string())),
-                    "Sourcegrade" => Ok(Value::String("__module_Sourcegrade__".to_string())),
-                    "Provenance" => Ok(Value::String("__module_Provenance__".to_string())),
-                    "Jobs" => Ok(Value::String("__module_Jobs__".to_string())),
-                    "Advisory" => Ok(Value::String("__module_Advisory__".to_string())),
+                    "Geocode" => Ok(Value::Module("Geocode")),
+                    "Entity" => Ok(Value::Module("Entity")),
+                    "Recordlink" => Ok(Value::Module("Recordlink")),
+                    "Sourcegrade" => Ok(Value::Module("Sourcegrade")),
+                    "Provenance" => Ok(Value::Module("Provenance")),
+                    "Jobs" => Ok(Value::Module("Jobs")),
+                    "Advisory" => Ok(Value::Module("Advisory")),
                     // Stage 3 / Slice 2: RelayRoom sessions on the SendTallow product relay (WS wire)
-                    "RelayRoom" => Ok(Value::String("__module_RelayRoom__".to_string())),
-                    "Target" => Ok(Value::String("__module_Target__".to_string())),
-                    "TechStack" => Ok(Value::String("__module_TechStack__".to_string())),
-                    "DomainIntel" => Ok(Value::String("__module_DomainIntel__".to_string())),
-                    "ASNIntel" => Ok(Value::String("__module_ASNIntel__".to_string())),
-                    "EmailIntel" => Ok(Value::String("__module_EmailIntel__".to_string())),
-                    "ZkCircuit" => Ok(Value::String("__module_ZkCircuit__".to_string())),
-                    "MeshNode" => Ok(Value::String("__module_MeshNode__".to_string())),
+                    "RelayRoom" => Ok(Value::Module("RelayRoom")),
+                    "Target" => Ok(Value::Module("Target")),
+                    "TechStack" => Ok(Value::Module("TechStack")),
+                    "DomainIntel" => Ok(Value::Module("DomainIntel")),
+                    "ASNIntel" => Ok(Value::Module("ASNIntel")),
+                    "EmailIntel" => Ok(Value::Module("EmailIntel")),
+                    "ZkCircuit" => Ok(Value::Module("ZkCircuit")),
+                    "MeshNode" => Ok(Value::Module("MeshNode")),
                     // Execution surface: plan/replay (see src/stdlib/mesh_exec.rs).
                     // Without this sentinel, `Mesh.plan(...)` is an undefined
                     // variable long before the stdlib router sees it.
-                    "Mesh" => Ok(Value::String("__module_Mesh__".to_string())),
-                    "llm" => Ok(Value::String("__module_llm__".to_string())),
-                    "Enclave" => Ok(Value::String("__module_Enclave__".to_string())),
-                    "FheKey" => Ok(Value::String("__module_FheKey__".to_string())),
-                    "MpcSession" => Ok(Value::String("__module_MpcSession__".to_string())),
+                    "Mesh" => Ok(Value::Module("Mesh")),
+                    "llm" => Ok(Value::Module("llm")),
+                    "Enclave" => Ok(Value::Module("Enclave")),
+                    "FheKey" => Ok(Value::Module("FheKey")),
+                    "MpcSession" => Ok(Value::Module("MpcSession")),
                     "DoraCitIncident" => {
-                        Ok(Value::String("__module_DoraCitIncident__".to_string()))
+                        Ok(Value::Module("DoraCitIncident"))
                     }
-                    "AiInferenceLog" => Ok(Value::String("__module_AiInferenceLog__".to_string())),
-                    "HumanApproval" => Ok(Value::String("__module_HumanApproval__".to_string())),
+                    "AiInferenceLog" => Ok(Value::Module("AiInferenceLog")),
+                    "HumanApproval" => Ok(Value::Module("HumanApproval")),
                     "ModelProvenance" => {
-                        Ok(Value::String("__module_ModelProvenance__".to_string()))
+                        Ok(Value::Module("ModelProvenance"))
                     }
-                    "Vrf" => Ok(Value::String("__module_Vrf__".to_string())),
-                    "SecretSharing" => Ok(Value::String("__module_SecretSharing__".to_string())),
-                    "Fpe" => Ok(Value::String("__module_Fpe__".to_string())),
-                    "Bls" => Ok(Value::String("__module_Bls__".to_string())),
-                    "Oprf" => Ok(Value::String("__module_Oprf__".to_string())),
-                    "DoubleRatchet" => Ok(Value::String("__module_DoubleRatchet__".to_string())),
+                    "Vrf" => Ok(Value::Module("Vrf")),
+                    "SecretSharing" => Ok(Value::Module("SecretSharing")),
+                    "Fpe" => Ok(Value::Module("Fpe")),
+                    "Bls" => Ok(Value::Module("Bls")),
+                    "Oprf" => Ok(Value::Module("Oprf")),
+                    "DoubleRatchet" => Ok(Value::Module("DoubleRatchet")),
                     // Phase 38: Digital Forensics & STIX Types sentinels
-                    "EvidenceChain" => Ok(Value::String("__module_EvidenceChain__".to_string())),
-                    "MemoryDump" => Ok(Value::String("__module_MemoryDump__".to_string())),
-                    "DiskImage" => Ok(Value::String("__module_DiskImage__".to_string())),
-                    "FileCarver" => Ok(Value::String("__module_FileCarver__".to_string())),
-                    "NetworkCapture" => Ok(Value::String("__module_NetworkCapture__".to_string())),
-                    "VolatileData" => Ok(Value::String("__module_VolatileData__".to_string())),
-                    "StixBundle" => Ok(Value::String("__module_StixBundle__".to_string())),
+                    "EvidenceChain" => Ok(Value::Module("EvidenceChain")),
+                    "MemoryDump" => Ok(Value::Module("MemoryDump")),
+                    "DiskImage" => Ok(Value::Module("DiskImage")),
+                    "FileCarver" => Ok(Value::Module("FileCarver")),
+                    "NetworkCapture" => Ok(Value::Module("NetworkCapture")),
+                    "VolatileData" => Ok(Value::Module("VolatileData")),
+                    "StixBundle" => Ok(Value::Module("StixBundle")),
                     "AttackTechnique" => {
-                        Ok(Value::String("__module_AttackTechnique__".to_string()))
+                        Ok(Value::Module("AttackTechnique"))
                     }
                     // Phase 39: Threat Hunting & Detection Engineering sentinels
-                    "YaraRule" => Ok(Value::String("__module_YaraRule__".to_string())),
-                    "SigmaRule" => Ok(Value::String("__module_SigmaRule__".to_string())),
-                    "HuntHypothesis" => Ok(Value::String("__module_HuntHypothesis__".to_string())),
-                    "LogQuery" => Ok(Value::String("__module_LogQuery__".to_string())),
+                    "YaraRule" => Ok(Value::Module("YaraRule")),
+                    "SigmaRule" => Ok(Value::Module("SigmaRule")),
+                    "HuntHypothesis" => Ok(Value::Module("HuntHypothesis")),
+                    "LogQuery" => Ok(Value::Module("LogQuery")),
                     "AnomalyDetector" => {
-                        Ok(Value::String("__module_AnomalyDetector__".to_string()))
+                        Ok(Value::Module("AnomalyDetector"))
                     }
-                    "BehaviorChain" => Ok(Value::String("__module_BehaviorChain__".to_string())),
-                    "ThreatModel" => Ok(Value::String("__module_ThreatModel__".to_string())),
-                    "HuntNotebook" => Ok(Value::String("__module_HuntNotebook__".to_string())),
+                    "BehaviorChain" => Ok(Value::Module("BehaviorChain")),
+                    "ThreatModel" => Ok(Value::Module("ThreatModel")),
+                    "HuntNotebook" => Ok(Value::Module("HuntNotebook")),
                     // Phase 40: Incident Response & SOAR sentinels
-                    "Playbook" => Ok(Value::String("__module_Playbook__".to_string())),
-                    "Alert" => Ok(Value::String("__module_Alert__".to_string())),
-                    "IOCScanner" => Ok(Value::String("__module_IOCScanner__".to_string())),
+                    "Playbook" => Ok(Value::Module("Playbook")),
+                    "Alert" => Ok(Value::Module("Alert")),
+                    "IOCScanner" => Ok(Value::Module("IOCScanner")),
                     "ContainmentAction" => {
-                        Ok(Value::String("__module_ContainmentAction__".to_string()))
+                        Ok(Value::Module("ContainmentAction"))
                     }
                     "IncidentTimeline" => {
-                        Ok(Value::String("__module_IncidentTimeline__".to_string()))
+                        Ok(Value::Module("IncidentTimeline"))
                     }
-                    "ThreatHunt" => Ok(Value::String("__module_ThreatHunt__".to_string())),
+                    "ThreatHunt" => Ok(Value::Module("ThreatHunt")),
                     // Phase 43: Hardware Security & Identity sentinels
-                    "Tpm" => Ok(Value::String("__module_Tpm__".to_string())),
-                    "Fido2" => Ok(Value::String("__module_Fido2__".to_string())),
-                    "Hsm" => Ok(Value::String("__module_Hsm__".to_string())),
-                    "SecureBoot" => Ok(Value::String("__module_SecureBoot__".to_string())),
-                    "SideChannel" => Ok(Value::String("__module_SideChannel__".to_string())),
+                    "Tpm" => Ok(Value::Module("Tpm")),
+                    "Fido2" => Ok(Value::Module("Fido2")),
+                    "Hsm" => Ok(Value::Module("Hsm")),
+                    "SecureBoot" => Ok(Value::Module("SecureBoot")),
+                    "SideChannel" => Ok(Value::Module("SideChannel")),
                     // Phase 69: NIST Cryptography Standards sentinels
-                    "NistCrypto" => Ok(Value::String("__module_NistCrypto__".to_string())),
-                    "Cnsa2" => Ok(Value::String("__module_Cnsa2__".to_string())),
+                    "NistCrypto" => Ok(Value::Module("NistCrypto")),
+                    "Cnsa2" => Ok(Value::Module("Cnsa2")),
                     // Phase 41: Observability & Telemetry sentinels
-                    "Span" => Ok(Value::String("__module_Span__".to_string())),
-                    "Metric" => Ok(Value::String("__module_Metric__".to_string())),
-                    "OtelExporter" => Ok(Value::String("__module_OtelExporter__".to_string())),
-                    "TraceSampler" => Ok(Value::String("__module_TraceSampler__".to_string())),
+                    "Span" => Ok(Value::Module("Span")),
+                    "Metric" => Ok(Value::Module("Metric")),
+                    "OtelExporter" => Ok(Value::Module("OtelExporter")),
+                    "TraceSampler" => Ok(Value::Module("TraceSampler")),
                     "CorrelationEngine" => {
-                        Ok(Value::String("__module_CorrelationEngine__".to_string()))
+                        Ok(Value::Module("CorrelationEngine"))
                     }
-                    "SLI" => Ok(Value::String("__module_SLI__".to_string())),
-                    "SLO" => Ok(Value::String("__module_SLO__".to_string())),
-                    "AlertRule" => Ok(Value::String("__module_AlertRule__".to_string())),
-                    "HealthCheck" => Ok(Value::String("__module_HealthCheck__".to_string())),
+                    "SLI" => Ok(Value::Module("SLI")),
+                    "SLO" => Ok(Value::Module("SLO")),
+                    "AlertRule" => Ok(Value::Module("AlertRule")),
+                    "HealthCheck" => Ok(Value::Module("HealthCheck")),
                     // Phase 44: Safety-Critical Systems & IoT Security sentinels
-                    "Redundancy" => Ok(Value::String("__module_Redundancy__".to_string())),
-                    "Watchdog" => Ok(Value::String("__module_Watchdog__".to_string())),
-                    "StateMachine" => Ok(Value::String("__module_StateMachine__".to_string())),
-                    "FailSafe" => Ok(Value::String("__module_FailSafe__".to_string())),
-                    "Modbus" => Ok(Value::String("__module_Modbus__".to_string())),
-                    "Dnp3" => Ok(Value::String("__module_Dnp3__".to_string())),
-                    "OpcUa" => Ok(Value::String("__module_OpcUa__".to_string())),
-                    "FirmwareSigner" => Ok(Value::String("__module_FirmwareSigner__".to_string())),
-                    "SecureOta" => Ok(Value::String("__module_SecureOta__".to_string())),
-                    "DeviceIdentity" => Ok(Value::String("__module_DeviceIdentity__".to_string())),
+                    "Redundancy" => Ok(Value::Module("Redundancy")),
+                    "Watchdog" => Ok(Value::Module("Watchdog")),
+                    "StateMachine" => Ok(Value::Module("StateMachine")),
+                    "FailSafe" => Ok(Value::Module("FailSafe")),
+                    "Modbus" => Ok(Value::Module("Modbus")),
+                    "Dnp3" => Ok(Value::Module("Dnp3")),
+                    "OpcUa" => Ok(Value::Module("OpcUa")),
+                    "FirmwareSigner" => Ok(Value::Module("FirmwareSigner")),
+                    "SecureOta" => Ok(Value::Module("SecureOta")),
+                    "DeviceIdentity" => Ok(Value::Module("DeviceIdentity")),
                     "LightweightCrypto" => {
-                        Ok(Value::String("__module_LightweightCrypto__".to_string()))
+                        Ok(Value::Module("LightweightCrypto"))
                     }
                     // Phase 45: Quantum-Safe Infrastructure sentinels
-                    "SealedData" => Ok(Value::String("__module_SealedData__".to_string())),
-                    "CryptoAgility" => Ok(Value::String("__module_CryptoAgility__".to_string())),
-                    "HybridCert" => Ok(Value::String("__module_HybridCert__".to_string())),
-                    "KeyRotation" => Ok(Value::String("__module_KeyRotation__".to_string())),
-                    "HarvestGuard" => Ok(Value::String("__module_HarvestGuard__".to_string())),
-                    "QuantumKeyDistribution" => Ok(Value::String(
-                        "__module_QuantumKeyDistribution__".to_string(),
-                    )),
-                    "PqcMigration" => Ok(Value::String("__module_PqcMigration__".to_string())),
+                    "SealedData" => Ok(Value::Module("SealedData")),
+                    "CryptoAgility" => Ok(Value::Module("CryptoAgility")),
+                    "HybridCert" => Ok(Value::Module("HybridCert")),
+                    "KeyRotation" => Ok(Value::Module("KeyRotation")),
+                    "HarvestGuard" => Ok(Value::Module("HarvestGuard")),
+                    "QuantumKeyDistribution" => Ok(Value::Module("QuantumKeyDistribution")),
+                    "PqcMigration" => Ok(Value::Module("PqcMigration")),
                     // Phase 46: Privacy-Enhancing Computation sentinels
-                    "MixChannel" => Ok(Value::String("__module_MixChannel__".to_string())),
-                    "Rosenpass" => Ok(Value::String("__module_Rosenpass__".to_string())),
-                    "MlsGroup" => Ok(Value::String("__module_MlsGroup__".to_string())),
+                    "MixChannel" => Ok(Value::Module("MixChannel")),
+                    "Rosenpass" => Ok(Value::Module("Rosenpass")),
+                    "MlsGroup" => Ok(Value::Module("MlsGroup")),
                     // Phase 48: Browser v2 — Performance & Privacy sentinels
-                    "BrowserContext" => Ok(Value::String("__module_BrowserContext__".to_string())),
-                    "Crawler" => Ok(Value::String("__module_Crawler__".to_string())),
-                    "PageCache" => Ok(Value::String("__module_PageCache__".to_string())),
+                    "BrowserContext" => Ok(Value::Module("BrowserContext")),
+                    "Crawler" => Ok(Value::Module("Crawler")),
+                    "PageCache" => Ok(Value::Module("PageCache")),
                     "ContentFingerprint" => {
-                        Ok(Value::String("__module_ContentFingerprint__".to_string()))
+                        Ok(Value::Module("ContentFingerprint"))
                     }
-                    "StructuredData" => Ok(Value::String("__module_StructuredData__".to_string())),
+                    "StructuredData" => Ok(Value::Module("StructuredData")),
                     // Phase 49: Browser v2 — Full method wiring sentinels
-                    "Screenshot" => Ok(Value::String("__module_Screenshot__".to_string())),
-                    "HarRecorder" => Ok(Value::String("__module_HarRecorder__".to_string())),
-                    "BrowserPool" => Ok(Value::String("__module_BrowserPool__".to_string())),
+                    "Screenshot" => Ok(Value::Module("Screenshot")),
+                    "HarRecorder" => Ok(Value::Module("HarRecorder")),
+                    "BrowserPool" => Ok(Value::Module("BrowserPool")),
                     "NetworkInterceptor" => {
-                        Ok(Value::String("__module_NetworkInterceptor__".to_string()))
+                        Ok(Value::Module("NetworkInterceptor"))
                     }
-                    "TraceRecorder" => Ok(Value::String("__module_TraceRecorder__".to_string())),
-                    "SessionManager" => Ok(Value::String("__module_SessionManager__".to_string())),
+                    "TraceRecorder" => Ok(Value::Module("TraceRecorder")),
+                    "SessionManager" => Ok(Value::Module("SessionManager")),
                     "AccessibilityAudit" => {
-                        Ok(Value::String("__module_AccessibilityAudit__".to_string()))
+                        Ok(Value::Module("AccessibilityAudit"))
                     }
-                    "DeviceEmulator" => Ok(Value::String("__module_DeviceEmulator__".to_string())),
+                    "DeviceEmulator" => Ok(Value::Module("DeviceEmulator")),
                     "CaptchaDetector" => {
-                        Ok(Value::String("__module_CaptchaDetector__".to_string()))
+                        Ok(Value::Module("CaptchaDetector"))
                     }
-                    "RobotsChecker" => Ok(Value::String("__module_RobotsChecker__".to_string())),
-                    "RetryPolicy" => Ok(Value::String("__module_RetryPolicy__".to_string())),
+                    "RobotsChecker" => Ok(Value::Module("RobotsChecker")),
+                    "RetryPolicy" => Ok(Value::Module("RetryPolicy")),
                     // Phase 50: Playwright features — Dialog, Keyboard, Mouse, Page sentinels
-                    "Dialog" => Ok(Value::String("__module_Dialog__".to_string())),
-                    "Keyboard" => Ok(Value::String("__module_Keyboard__".to_string())),
-                    "Mouse" => Ok(Value::String("__module_Mouse__".to_string())),
-                    "Page" => Ok(Value::String("__module_Page__".to_string())),
+                    "Dialog" => Ok(Value::Module("Dialog")),
+                    "Keyboard" => Ok(Value::Module("Keyboard")),
+                    "Mouse" => Ok(Value::Module("Mouse")),
+                    "Page" => Ok(Value::Module("Page")),
                     // Phase 51: Browser Performance Stack sentinels
-                    "HtmlParser" => Ok(Value::String("__module_HtmlParser__".to_string())),
-                    "PerfConfig" => Ok(Value::String("__module_PerfConfig__".to_string())),
-                    "BrowserDaemon" => Ok(Value::String("__module_BrowserDaemon__".to_string())),
+                    "HtmlParser" => Ok(Value::Module("HtmlParser")),
+                    "PerfConfig" => Ok(Value::Module("PerfConfig")),
+                    "BrowserDaemon" => Ok(Value::Module("BrowserDaemon")),
                     // Phase 52: Device Profiles & Anti-Detection Suite sentinels
-                    "Device" => Ok(Value::String("__module_Device__".to_string())),
-                    "StealthProfile" => Ok(Value::String("__module_StealthProfile__".to_string())),
-                    "AntiDetect" => Ok(Value::String("__module_AntiDetect__".to_string())),
+                    "Device" => Ok(Value::Module("Device")),
+                    "StealthProfile" => Ok(Value::Module("StealthProfile")),
+                    "AntiDetect" => Ok(Value::Module("AntiDetect")),
                     // Phase 55: TallowTransfer sentinels
-                    "Transfer" => Ok(Value::String("__module_Transfer__".to_string())),
-                    "FileCopy" => Ok(Value::String("__module_FileCopy__".to_string())),
-                    "FileVault" => Ok(Value::String("__module_FileVault__".to_string())),
-                    "DeltaSync" => Ok(Value::String("__module_DeltaSync__".to_string())),
-                    "Compress" => Ok(Value::String("__module_Compress__".to_string())),
+                    "Transfer" => Ok(Value::Module("Transfer")),
+                    "FileCopy" => Ok(Value::Module("FileCopy")),
+                    "FileVault" => Ok(Value::Module("FileVault")),
+                    "DeltaSync" => Ok(Value::Module("DeltaSync")),
+                    "Compress" => Ok(Value::Module("Compress")),
                     // Phase 56: TallowTransfer Network sentinels
                     "TransferSession" => {
-                        Ok(Value::String("__module_TransferSession__".to_string()))
+                        Ok(Value::Module("TransferSession"))
                     }
-                    "TransferStream" => Ok(Value::String("__module_TransferStream__".to_string())),
-                    "ErasureCode" => Ok(Value::String("__module_ErasureCode__".to_string())),
-                    "NetworkPath" => Ok(Value::String("__module_NetworkPath__".to_string())),
+                    "TransferStream" => Ok(Value::Module("TransferStream")),
+                    "ErasureCode" => Ok(Value::Module("ErasureCode")),
+                    "NetworkPath" => Ok(Value::Module("NetworkPath")),
                     // Phase 57: TallowTransfer Advanced sentinels
-                    "Peer" => Ok(Value::String("__module_Peer__".to_string())),
-                    "Swarm" => Ok(Value::String("__module_Swarm__".to_string())),
-                    "Dht" => Ok(Value::String("__module_Dht__".to_string())),
-                    "Manifest" => Ok(Value::String("__module_Manifest__".to_string())),
+                    "Peer" => Ok(Value::Module("Peer")),
+                    "Swarm" => Ok(Value::Module("Swarm")),
+                    "Dht" => Ok(Value::Module("Dht")),
+                    "Manifest" => Ok(Value::Module("Manifest")),
                     // Phase 58: Progress, Checkpoint, Bandwidth, LAN, DirVault sentinels
                     "ProgressTracker" => {
-                        Ok(Value::String("__module_ProgressTracker__".to_string()))
+                        Ok(Value::Module("ProgressTracker"))
                     }
-                    "Checkpoint" => Ok(Value::String("__module_Checkpoint__".to_string())),
-                    "BandwidthLimit" => Ok(Value::String("__module_BandwidthLimit__".to_string())),
-                    "LanDiscovery" => Ok(Value::String("__module_LanDiscovery__".to_string())),
-                    "FileVaultDir" => Ok(Value::String("__module_FileVaultDir__".to_string())),
-                    "Mmap" => Ok(Value::String("__module_Mmap__".to_string())),
-                    "Lz4" => Ok(Value::String("__module_Lz4__".to_string())),
+                    "Checkpoint" => Ok(Value::Module("Checkpoint")),
+                    "BandwidthLimit" => Ok(Value::Module("BandwidthLimit")),
+                    "LanDiscovery" => Ok(Value::Module("LanDiscovery")),
+                    "FileVaultDir" => Ok(Value::Module("FileVaultDir")),
+                    "Mmap" => Ok(Value::Module("Mmap")),
+                    "Lz4" => Ok(Value::Module("Lz4")),
                     // Phase 59: QuicTransfer QUIC network transfer
-                    "QuicTransfer" => Ok(Value::String("__module_QuicTransfer__".to_string())),
+                    "QuicTransfer" => Ok(Value::Module("QuicTransfer")),
                     // Phase 60: Code phrase pairing + relay server
-                    "TransferCode" => Ok(Value::String("__module_TransferCode__".to_string())),
-                    "Relay" => Ok(Value::String("__module_Relay__".to_string())),
+                    "TransferCode" => Ok(Value::Module("TransferCode")),
+                    "Relay" => Ok(Value::Module("Relay")),
                     // Phase 63: Chat, GroupChat, ProxyConfig, QrCode, Stun, TextTransfer sentinels
-                    "Chat" => Ok(Value::String("__module_Chat__".to_string())),
-                    "GroupChat" => Ok(Value::String("__module_GroupChat__".to_string())),
-                    "ProxyConfig" => Ok(Value::String("__module_ProxyConfig__".to_string())),
-                    "QrCode" => Ok(Value::String("__module_QrCode__".to_string())),
-                    "Stun" => Ok(Value::String("__module_Stun__".to_string())),
-                    "TextTransfer" => Ok(Value::String("__module_TextTransfer__".to_string())),
+                    "Chat" => Ok(Value::Module("Chat")),
+                    "GroupChat" => Ok(Value::Module("GroupChat")),
+                    "ProxyConfig" => Ok(Value::Module("ProxyConfig")),
+                    "QrCode" => Ok(Value::Module("QrCode")),
+                    "Stun" => Ok(Value::Module("Stun")),
+                    "TextTransfer" => Ok(Value::Module("TextTransfer")),
                     // Phase 61: Multi-file, folder, compression, parallel, bandwidth, watch
-                    "MultiTransfer" => Ok(Value::String("__module_MultiTransfer__".to_string())),
+                    "MultiTransfer" => Ok(Value::Module("MultiTransfer")),
                     // Streaming, content-type, E2E encryption, broadcast, speed test
                     "TransferStream2" => {
-                        Ok(Value::String("__module_TransferStream2__".to_string()))
+                        Ok(Value::Module("TransferStream2"))
                     }
-                    "ContentType" => Ok(Value::String("__module_ContentType__".to_string())),
+                    "ContentType" => Ok(Value::Module("ContentType")),
                     "TransferEncrypt" => {
-                        Ok(Value::String("__module_TransferEncrypt__".to_string()))
+                        Ok(Value::Module("TransferEncrypt"))
                     }
-                    "Broadcast" => Ok(Value::String("__module_Broadcast__".to_string())),
-                    "SpeedTest" => Ok(Value::String("__module_SpeedTest__".to_string())),
+                    "Broadcast" => Ok(Value::Module("Broadcast")),
+                    "SpeedTest" => Ok(Value::Module("SpeedTest")),
                     "TransferCompress" => {
-                        Ok(Value::String("__module_TransferCompress__".to_string()))
+                        Ok(Value::Module("TransferCompress"))
                     }
-                    "ParallelConfig" => Ok(Value::String("__module_ParallelConfig__".to_string())),
+                    "ParallelConfig" => Ok(Value::Module("ParallelConfig")),
                     "BandwidthConfig" => {
-                        Ok(Value::String("__module_BandwidthConfig__".to_string()))
+                        Ok(Value::Module("BandwidthConfig"))
                     }
-                    "WatchSession" => Ok(Value::String("__module_WatchSession__".to_string())),
+                    "WatchSession" => Ok(Value::Module("WatchSession")),
                     // Phase 62: Signed manifests, audit log, expiring transfers, retention, file validation, crypto config
-                    "SignedManifest" => Ok(Value::String("__module_SignedManifest__".to_string())),
+                    "SignedManifest" => Ok(Value::Module("SignedManifest")),
                     "TransferReceipt" => {
-                        Ok(Value::String("__module_TransferReceipt__".to_string()))
+                        Ok(Value::Module("TransferReceipt"))
                     }
-                    "AuditLog" => Ok(Value::String("__module_AuditLog__".to_string())),
+                    "AuditLog" => Ok(Value::Module("AuditLog")),
                     "ExpiringTransfer" => {
-                        Ok(Value::String("__module_ExpiringTransfer__".to_string()))
+                        Ok(Value::Module("ExpiringTransfer"))
                     }
                     "RetentionPolicy" => {
-                        Ok(Value::String("__module_RetentionPolicy__".to_string()))
+                        Ok(Value::Module("RetentionPolicy"))
                     }
-                    "FileValidator" => Ok(Value::String("__module_FileValidator__".to_string())),
-                    "CryptoConfig" => Ok(Value::String("__module_CryptoConfig__".to_string())),
+                    "FileValidator" => Ok(Value::Module("FileValidator")),
+                    "CryptoConfig" => Ok(Value::Module("CryptoConfig")),
                     // Phase 42: Container & Cloud Security sentinels
-                    "IacScanner" => Ok(Value::String("__module_IacScanner__".to_string())),
-                    "CloudPolicy" => Ok(Value::String("__module_CloudPolicy__".to_string())),
-                    "IdentityAudit" => Ok(Value::String("__module_IdentityAudit__".to_string())),
-                    "StorageScan" => Ok(Value::String("__module_StorageScan__".to_string())),
-                    "ServiceMesh" => Ok(Value::String("__module_ServiceMesh__".to_string())),
-                    "CloudTrail" => Ok(Value::String("__module_CloudTrail__".to_string())),
-                    "SeccompProfile" => Ok(Value::String("__module_SeccompProfile__".to_string())),
-                    "ContainerImage" => Ok(Value::String("__module_ContainerImage__".to_string())),
-                    "EbpfPolicy" => Ok(Value::String("__module_EbpfPolicy__".to_string())),
+                    "IacScanner" => Ok(Value::Module("IacScanner")),
+                    "CloudPolicy" => Ok(Value::Module("CloudPolicy")),
+                    "IdentityAudit" => Ok(Value::Module("IdentityAudit")),
+                    "StorageScan" => Ok(Value::Module("StorageScan")),
+                    "ServiceMesh" => Ok(Value::Module("ServiceMesh")),
+                    "CloudTrail" => Ok(Value::Module("CloudTrail")),
+                    "SeccompProfile" => Ok(Value::Module("SeccompProfile")),
+                    "ContainerImage" => Ok(Value::Module("ContainerImage")),
+                    "EbpfPolicy" => Ok(Value::Module("EbpfPolicy")),
                     // Phase 64: Enterprise browser features sentinels
-                    "BrowserAudit" => Ok(Value::String("__module_BrowserAudit__".to_string())),
+                    "BrowserAudit" => Ok(Value::Module("BrowserAudit")),
                     "DomainRateLimiter" => {
-                        Ok(Value::String("__module_DomainRateLimiter__".to_string()))
+                        Ok(Value::Module("DomainRateLimiter"))
                     }
-                    "StickySession" => Ok(Value::String("__module_StickySession__".to_string())),
+                    "StickySession" => Ok(Value::Module("StickySession")),
                     "BrowserIsolation" => {
-                        Ok(Value::String("__module_BrowserIsolation__".to_string()))
+                        Ok(Value::Module("BrowserIsolation"))
                     }
-                    "BrowserWebhook" => Ok(Value::String("__module_BrowserWebhook__".to_string())),
+                    "BrowserWebhook" => Ok(Value::Module("BrowserWebhook")),
                     "ScreenshotArchive" => {
-                        Ok(Value::String("__module_ScreenshotArchive__".to_string()))
+                        Ok(Value::Module("ScreenshotArchive"))
                     }
-                    "RobotsTxtAudit" => Ok(Value::String("__module_RobotsTxtAudit__".to_string())),
-                    "ContentDedup" => Ok(Value::String("__module_ContentDedup__".to_string())),
-                    "MemoryScrub" => Ok(Value::String("__module_MemoryScrub__".to_string())),
+                    "RobotsTxtAudit" => Ok(Value::Module("RobotsTxtAudit")),
+                    "ContentDedup" => Ok(Value::Module("ContentDedup")),
+                    "MemoryScrub" => Ok(Value::Module("MemoryScrub")),
                     // Phase 66: Enterprise CLI sentinels
                     "ExitCode" => {
                         return Ok(Value::Struct {
@@ -2780,34 +2835,34 @@ impl Interpreter {
                         });
                     }
                     // Phase 65: Enterprise browser features batch 2 sentinels
-                    "PiiClassifier" => Ok(Value::String("__module_PiiClassifier__".to_string())),
-                    "TosMonitor" => Ok(Value::String("__module_TosMonitor__".to_string())),
-                    "DpaGenerator" => Ok(Value::String("__module_DpaGenerator__".to_string())),
-                    "DataQuality" => Ok(Value::String("__module_DataQuality__".to_string())),
+                    "PiiClassifier" => Ok(Value::Module("PiiClassifier")),
+                    "TosMonitor" => Ok(Value::Module("TosMonitor")),
+                    "DpaGenerator" => Ok(Value::Module("DpaGenerator")),
+                    "DataQuality" => Ok(Value::Module("DataQuality")),
                     "CredentialVault" => {
-                        Ok(Value::String("__module_CredentialVault__".to_string()))
+                        Ok(Value::Module("CredentialVault"))
                     }
-                    "GeoProxy" => Ok(Value::String("__module_GeoProxy__".to_string())),
+                    "GeoProxy" => Ok(Value::Module("GeoProxy")),
                     "BrowserJobQueue" => {
-                        Ok(Value::String("__module_BrowserJobQueue__".to_string()))
+                        Ok(Value::Module("BrowserJobQueue"))
                     }
                     "BrowserHealthMetrics" => {
-                        Ok(Value::String("__module_BrowserHealthMetrics__".to_string()))
+                        Ok(Value::Module("BrowserHealthMetrics"))
                     }
                     // HTTP share + live browser session
-                    "ShareLink" => Ok(Value::String("__module_ShareLink__".to_string())),
-                    "BrowserLive" => Ok(Value::String("__module_BrowserLive__".to_string())),
+                    "ShareLink" => Ok(Value::Module("ShareLink")),
+                    "BrowserLive" => Ok(Value::Module("BrowserLive")),
                     // P1-fix (2026-09-16): single-file stdlib class namespaces —
                     // cookie_jar/rate_limit/tls_profile/ws/email/captcha carried
                     // .tl declarations but no sentinel, so class-style calls
                     // (`CookieJar.new()`, `Inbox.connect_imap(...)`) failed with
                     // "undefined variable" (stdlib-drift showed them unreachable).
-                    "CookieJar" => Ok(Value::String("__module_CookieJar__".to_string())),
-                    "RateLimiter" => Ok(Value::String("__module_RateLimiter__".to_string())),
-                    "TLSProfile" => Ok(Value::String("__module_TLSProfile__".to_string())),
-                    "WS" => Ok(Value::String("__module_WS__".to_string())),
-                    "Inbox" => Ok(Value::String("__module_Inbox__".to_string())),
-                    "CAPTCHA" => Ok(Value::String("__module_CAPTCHA__".to_string())),
+                    "CookieJar" => Ok(Value::Module("CookieJar")),
+                    "RateLimiter" => Ok(Value::Module("RateLimiter")),
+                    "TLSProfile" => Ok(Value::Module("TLSProfile")),
+                    "WS" => Ok(Value::Module("WS")),
+                    "Inbox" => Ok(Value::Module("Inbox")),
+                    "CAPTCHA" => Ok(Value::Module("CAPTCHA")),
                     _ => {
                         // Check local env first (before module namespaces, since
                         // lowercase names like "url", "log" can be user variables)
@@ -2828,76 +2883,78 @@ impl Interpreter {
                         } else {
                             // Fallback: lowercase module namespaces (only if not a user var)
                             match name.as_str() {
-                                "tallow" => Ok(Value::String("__namespace_tallow__".to_string())),
-                                "log" => Ok(Value::String("__module_log__".to_string())),
-                                "http" => Ok(Value::String("__module_http__".to_string())),
-                                "json" => Ok(Value::String("__module_json__".to_string())),
-                                "url" => Ok(Value::String("__module_url__".to_string())),
-                                "math" => Ok(Value::String("__module_math__".to_string())),
-                                "time" => Ok(Value::String("__module_time__".to_string())),
-                                "env" => Ok(Value::String("__module_env__".to_string())),
-                                "fs" => Ok(Value::String("__module_fs__".to_string())),
-                                "regex" => Ok(Value::String("__module_regex__".to_string())),
-                                "html" => Ok(Value::String("__module_html__".to_string())),
-                                "extract" => Ok(Value::String("__module_extract__".to_string())),
-                                "geocode" => Ok(Value::String("__module_geocode__".to_string())),
-                                "entity" => Ok(Value::String("__module_entity__".to_string())),
-                                "recordlink" => Ok(Value::String("__module_recordlink__".to_string())),
-                                "sourcegrade" => Ok(Value::String("__module_sourcegrade__".to_string())),
-                                "provenance" => Ok(Value::String("__module_provenance__".to_string())),
-                                "jobs" => Ok(Value::String("__module_jobs__".to_string())),
+                                "tallow" => Ok(Value::Module("tallow")),
+                                "log" => Ok(Value::Module("log")),
+                                "http" => Ok(Value::Module("http")),
+                                "json" => Ok(Value::Module("json")),
+                                "url" => Ok(Value::Module("url")),
+                                "math" => Ok(Value::Module("math")),
+                                "time" => Ok(Value::Module("time")),
+                                "env" => Ok(Value::Module("env")),
+                                "fs" => Ok(Value::Module("fs")),
+                                "regex" => Ok(Value::Module("regex")),
+                                "html" => Ok(Value::Module("html")),
+                                "extract" => Ok(Value::Module("extract")),
+                                "geocode" => Ok(Value::Module("geocode")),
+                                "entity" => Ok(Value::Module("entity")),
+                                "recordlink" => Ok(Value::Module("recordlink")),
+                                "sourcegrade" => Ok(Value::Module("sourcegrade")),
+                                "provenance" => Ok(Value::Module("provenance")),
+                                "jobs" => Ok(Value::Module("jobs")),
                                 "sitescan" => {
-                                    Ok(Value::String("__module_sitescan__".to_string()))
+                                    Ok(Value::Module("sitescan"))
                                 }
-                                "advisory" => Ok(Value::String("__module_advisory__".to_string())),
-                                "compress" => Ok(Value::String("__module_compress__".to_string())),
-                                "mime" => Ok(Value::String("__module_mime__".to_string())),
-                                "cli" => Ok(Value::String("__module_cli__".to_string())),
-                                "config" => Ok(Value::String("__module_config__".to_string())),
-                                "db" => Ok(Value::String("__module_db__".to_string())),
-                                "sync" => Ok(Value::String("__module_sync__".to_string())),
-                                "process" => Ok(Value::String("__module_process__".to_string())),
-                                "rand" => Ok(Value::String("__module_rand__".to_string())),
-                                "net" => Ok(Value::String("__module_net__".to_string())),
-                                "crypto" => Ok(Value::String("__module_crypto__".to_string())),
-                                "osint" => Ok(Value::String("__module_osint__".to_string())),
+                                "advisory" => Ok(Value::Module("advisory")),
+                                "compress" => Ok(Value::Module("compress")),
+                                "mime" => Ok(Value::Module("mime")),
+                                "cli" => Ok(Value::Module("cli")),
+                                "config" => Ok(Value::Module("config")),
+                                "db" => Ok(Value::Module("db")),
+                                "sync" => Ok(Value::Module("sync")),
+                                "process" => Ok(Value::Module("process")),
+                                "rand" => Ok(Value::Module("rand")),
+                                "net" => Ok(Value::Module("net")),
+                                "crypto" => Ok(Value::Module("crypto")),
+                                "osint" => Ok(Value::Module("osint")),
                                 "forensics" => {
-                                    Ok(Value::String("__module_forensics__".to_string()))
+                                    Ok(Value::Module("forensics"))
                                 }
-                                "beehiiv" => Ok(Value::String("__module_beehiiv__".to_string())),
-                                "medium" => Ok(Value::String("__module_medium__".to_string())),
-                                "substack" => Ok(Value::String("__module_substack__".to_string())),
-                                "wordpress" => Ok(Value::String("__module_wordpress__".to_string())),
-                                "ghost" => Ok(Value::String("__module_ghost__".to_string())),
-                                "oauth" => Ok(Value::String("__module_oauth__".to_string())),
-                                "jwt" => Ok(Value::String("__module_jwt__".to_string())),
-                                "sso" => Ok(Value::String("__module_sso__".to_string())),
-                                "escalation" => Ok(Value::String("__module_escalation__".to_string())),
-                                "azure_app_proxy" => Ok(Value::String("__module_azure_app_proxy__".to_string())),
+                                "beehiiv" => Ok(Value::Module("beehiiv")),
+                                "medium" => Ok(Value::Module("medium")),
+                                "substack" => Ok(Value::Module("substack")),
+                                "wordpress" => Ok(Value::Module("wordpress")),
+                                "ghost" => Ok(Value::Module("ghost")),
+                                "oauth" => Ok(Value::Module("oauth")),
+                                "jwt" => Ok(Value::Module("jwt")),
+                                "sso" => Ok(Value::Module("sso")),
+                                "escalation" => Ok(Value::Module("escalation")),
+                                "azure_app_proxy" => Ok(Value::Module("azure_app_proxy")),
                                 // P1-fix (2026-09-16): single-file stdlib module
                                 // namespaces (class sentinels above are the
                                 // class-style surface; these are the lowercase
                                 // module-style surface, e.g. `cookie_jar.new()`).
-                                "cookie_jar" => Ok(Value::String("__module_cookie_jar__".to_string())),
-                                "rate_limit" => Ok(Value::String("__module_rate_limit__".to_string())),
-                                "tls_profile" => Ok(Value::String("__module_tls_profile__".to_string())),
-                                "ws" => Ok(Value::String("__module_ws__".to_string())),
-                                "email" => Ok(Value::String("__module_email__".to_string())),
-                                "captcha" => Ok(Value::String("__module_captcha__".to_string())),
+                                "cookie_jar" => Ok(Value::Module("cookie_jar")),
+                                "rate_limit" => Ok(Value::Module("rate_limit")),
+                                "tls_profile" => Ok(Value::Module("tls_profile")),
+                                "ws" => Ok(Value::Module("ws")),
+                                "email" => Ok(Value::Module("email")),
+                                "captcha" => Ok(Value::Module("captcha")),
                                 // FIX12 triage modules: Rust dispatch was registered
                                 // (2026-08-27) but the bare-ident namespace was never
                                 // added, so the fix12_bare_*_namespace tests were red.
-                                "csv" => Ok(Value::String("__module_csv__".to_string())),
-                                "decimal" => Ok(Value::String("__module_decimal__".to_string())),
-                                "finance" => Ok(Value::String("__module_finance__".to_string())),
-                                "heston" => Ok(Value::String("__module_heston__".to_string())),
-                                _ if crate::stdlib::is_registered_module(name) => {
+                                "csv" => Ok(Value::Module("csv")),
+                                "decimal" => Ok(Value::Module("decimal")),
+                                "finance" => Ok(Value::Module("finance")),
+                                "heston" => Ok(Value::Module("heston")),
+                                _ => match crate::stdlib::registered_module_name(name) {
                                     // Single source of truth for module namespaces:
                                     // any module the stdlib router registered is
-                                    // callable by bare name, not just the lists above.
-                                    Ok(Value::String(format!("__module_{name}__")))
-                                }
-                                _ => Err(RuntimeError::UndefinedVar(name.clone())),
+                                    // callable by bare name, not just the lists
+                                    // above — and it becomes a `Module`, never a
+                                    // string spelling of one.
+                                    Some(canonical) => Ok(Value::Module(canonical)),
+                                    None => Err(RuntimeError::UndefinedVar(name.clone())),
+                                },
                             }
                         }
                     }
@@ -3201,15 +3258,19 @@ impl Interpreter {
                     .map(|a| self.eval_expr(&a.value, env))
                     .collect::<Result<Vec<_>, RuntimeError>>()?;
 
-                // Handle module namespace calls like Random.uuid(), KeyPair.generate()
-                if let Value::String(ref s) = obj {
-                    if s.starts_with("__module_") {
-                        let module = &s[9..s.len() - 2]; // extract module name
-                        let full_name = format!("{module}.{method}");
-                        let named_args: Vec<(Option<String>, Value)> =
-                            evaluated_args.into_iter().map(|v| (None, v)).collect();
-                        return self.call_function(&full_name, named_args, env);
-                    }
+                // Module namespace calls: `Random.uuid()`, `math.sqrt(x)`,
+                // `net.connect(h)`, `tallow.net.connect(h)`.
+                //
+                // Dispatch keys on `Value::Module` and on nothing else. A
+                // `Value::String` never reaches this arm, however it was built:
+                // a string is data, and data is not a namespace (lattice N-1).
+                // `"__module_net__".connect(h)` is a method call on a string
+                // receiver and refuses in `call_method` like any other.
+                if let Value::Module(module) = &obj {
+                    let full_name = format!("{module}.{method}");
+                    let named_args: Vec<(Option<String>, Value)> =
+                        evaluated_args.into_iter().map(|v| (None, v)).collect();
+                    return self.call_function(&full_name, named_args, env);
                 }
 
                 self.call_method(obj, method, evaluated_args)
@@ -3233,42 +3294,33 @@ impl Interpreter {
 
                 let obj = self.eval_expr(object, env)?;
 
-                // Sub-module namespace: __module_X__.field → resolve constants or __module_X.field__
-                if let Value::String(ref s) = obj {
-                    // Namespace proxy: tallow.html → __module_html__
-                    if s == "__namespace_tallow__" {
+                // Sub-namespace resolution on a module value: `tallow.http`
+                // (the stdlib proxy) and the `math` constants.
+                //
+                // Again keyed on `Value::Module`: a `String` is not a namespace,
+                // so nothing built at run time can reach this arm.
+                if let Value::Module(module) = &obj {
+                    // Namespace proxy: tallow.http → <module http>. The field is
+                    // a *syntactic* identifier from the AST (never a runtime
+                    // `String`), so interning it is not a forge path.
+                    if *module == "tallow" {
+                        return Ok(Value::Module(intern_module_name(field)));
+                    }
+                    // Resolve math constants directly (parity with codegen)
+                    if *module == "math" {
                         match field.as_str() {
-                            "log" => return Ok(Value::String("__module_log__".into())),
-                            "http" => return Ok(Value::String("__module_http__".into())),
-                            "json" => return Ok(Value::String("__module_json__".into())),
-                            "html" => return Ok(Value::String("__module_html__".into())),
-                            "time" => return Ok(Value::String("__module_time__".into())),
-                            "env" => return Ok(Value::String("__module_env__".into())),
-                            "fs" => return Ok(Value::String("__module_fs__".into())),
-                            "db" => return Ok(Value::String("__module_db__".into())),
-                            "crypto" => return Ok(Value::String("__module_crypto__".into())),
-                            "net" => return Ok(Value::String("__module_net__".into())),
-                            "math" => return Ok(Value::String("__module_math__".into())),
-                            "regex" => return Ok(Value::String("__module_regex__".into())),
-                            _ => return Ok(Value::String(format!("__module_{}__", field))),
+                            "pi" => return Ok(Value::Float(std::f64::consts::PI)),
+                            "e" => return Ok(Value::Float(std::f64::consts::E)),
+                            "tau" => return Ok(Value::Float(std::f64::consts::TAU)),
+                            "infinity" => return Ok(Value::Float(f64::INFINITY)),
+                            "nan" => return Ok(Value::Float(f64::NAN)),
+                            _ => {}
                         }
                     }
-                    if s.starts_with("__module_") && s.ends_with("__") {
-                        let module = &s[9..s.len() - 2];
-                        // Resolve math constants directly (parity with codegen)
-                        if module == "math" {
-                            match field.as_str() {
-                                "pi" => return Ok(Value::Float(std::f64::consts::PI)),
-                                "e" => return Ok(Value::Float(std::f64::consts::E)),
-                                "tau" => return Ok(Value::Float(std::f64::consts::TAU)),
-                                "infinity" => return Ok(Value::Float(f64::INFINITY)),
-                                "nan" => return Ok(Value::Float(f64::NAN)),
-                                _ => {}
-                            }
-                        }
-                        let sub = format!("__module_{module}.{field}__");
-                        return Ok(Value::String(sub));
-                    }
+                    // `Module.field` read as a value: keep the qualified spelling
+                    // so a later call dispatches `{module}.{field}.{method}`.
+                    let sub = format!("{module}.{field}");
+                    return Ok(Value::Module(intern_module_name(&sub)));
                 }
 
                 // Unwrap provenance for transparent field access. `Ok(…)` is
@@ -4251,6 +4303,12 @@ impl Interpreter {
             (BinOp::Lte, Value::String(a), Value::String(b)) => Ok(Value::Bool(a <= b)),
             (BinOp::Gte, Value::String(a), Value::String(b)) => Ok(Value::Bool(a >= b)),
 
+            // ── Comparison (Module) — namespaces compare by identity of name.
+            //    A Module never equals a String: a string is not a namespace,
+            //    so `"net" == net` is a type error, not a way to smuggle one in.
+            (BinOp::Eq, Value::Module(a), Value::Module(b)) => Ok(Value::Bool(*a == *b)),
+            (BinOp::Neq, Value::Module(a), Value::Module(b)) => Ok(Value::Bool(*a != *b)),
+
             // ── Comparison (Bool) ──
             (BinOp::Eq, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
             (BinOp::Neq, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a != b)),
@@ -4531,8 +4589,9 @@ impl Interpreter {
             }
         }
 
-        // Module-qualified stdlib dispatch (e.g., "fs.read_file", "time.now")
-        // These arrive via the __module_ mechanism in eval_expr (line 1162-1170)
+        // Module-qualified stdlib dispatch (e.g., "fs.read_file", "time.now").
+        // These arrive from the `Value::Module` arm in eval_expr, which is the
+        // only place a namespace receiver can build a dotted callee name.
         if let Some(dot_pos) = name.find('.') {
             let module = &name[..dot_pos];
             let function = &name[dot_pos + 1..];
@@ -32581,6 +32640,9 @@ pub fn type_name(val: &Value) -> &'static str {
         Value::Provenance(inner, _) => type_name(inner),
         Value::Boxed(_) => "Box",
         Value::Channel(_) => "Chan",
+        // A namespace is not a value of any user-visible type; naming it keeps
+        // method-dispatch errors readable without making it data.
+        Value::Module(_) => "module",
     }
 }
 
@@ -46607,7 +46669,7 @@ world
 
     #[test]
     fn browser_module_namespace() {
-        // "Browser" should resolve to __module_Browser__ for dispatch
+        // "Browser" should resolve to a module namespace for dispatch
         let (_, output) = run(r#"
             fn main() {
                 // Browser.launch dispatches through module namespace

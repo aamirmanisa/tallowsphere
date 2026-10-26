@@ -320,50 +320,112 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
 /// resolve bare `module.func` namespaces for every registered module
 /// (FIX12 triage added 56 modules to the router but not to interp.rs's
 /// hardcoded lowercase-namespace list — this is the single source of truth).
+/// Every module name the stdlib router dispatch understands.
+///
+/// One list, two jobs: `is_registered_module` answers membership, and
+/// `registered_module_name` hands back the **static** spelling so the
+/// interpreter can build a `Value::Module` from an identifier without ever
+/// turning a runtime `String` into a namespace. It must mirror the `match
+/// module` arms in [`dispatch`]; a test in `tests/module_value.rs` pins the
+/// names the interpreter's bare-identifier path relies on.
+const REGISTERED_MODULES: &[&str] = &[
+    "algos", "browser", "compress", "copy",
+    "crypto", "deals", "docs", "edgar",
+    "env", "filter", "filings", "forensics",
+    "fs", "html", "http", "json",
+    "log", "market", "math", "mesh",
+    "net", "osint", "process", "rand",
+    "regex", "time", "transfer", "transfer_net",
+    "url", "sync", "beehiiv", "relay_room",
+    "relayroom", "medium", "cxense", "substack",
+    "wordpress", "ghost", "oauth", "jwt",
+    "sso", "escalation", "legal",
+    "csv", "curves", "decimal", "finance",
+    "fred", "ohlcv", "options", "technical",
+    "orders", "portfolio2", "positions", "sentiment",
+    "timeseries", "yahoo", "markdown", "agent",
+    "agentic", "cli", "config", "email",
+    "test", "captcha", "cookie_jar", "csrf",
+    "extract", "Extract", "mime", "otp",
+    "fingerprint", "frame", "graphql", "ocr",
+    "pdf", "rate_limit", "request_queue", "scenarios",
+    "session", "tls_profile", "turnstile", "warmup",
+    "ws", "cloud", "detection", "iot",
+    "otel", "pec", "safety", "path_util",
+    "heston", "spotify", "db", "recordlink",
+    "sourcegrade", "geocode", "entity", "provenance",
+    "Provenance", "sitescan", "secretstore", "MeshNode",
+    "QuicTransfer", "Target", "TechStack", "DomainIntel",
+    "ASNIntel", "EmailIntel", "IntelGraph", "IntelReport",
+    "Scanner", "ScanScope", "IOCEnrichment", "WebArchive",
+    "ScanDB", "EvidenceChain", "MemoryDump", "DiskImage",
+    "FileCarver", "NetworkCapture", "VolatileData", "StixBundle",
+    "AttackTechnique", "Transfer", "FileCopy", "FileVault",
+    "DeltaSync", "Compress", "TransferSession", "TransferStream",
+    "ErasureCode", "NetworkPath", "Peer", "Swarm",
+    "Dht", "Manifest", "TransferCode", "Relay",
+    "MultiTransfer", "TransferCompress", "ParallelConfig", "BandwidthConfig",
+    "WatchSession", "jobs", "Jobs", "advisory",
+    "Advisory", "URL", "FileInfo", "FilterFileInfo",
+    "FilterProfile", "FilterResult", "FilterPredicate", "FsWatcher",
+    "Connection", "HtmlDocument", "HtmlElement", "Regex",
+    "HttpListener", "Response", "ChildProcess", "Process",
+    "IntelEntity", "IntelEdge", "Finding", "SubdomainResult",
+    "Technology", "DocumentMeta", "SpfResult", "DmarcResult",
+    "BreachResult", "ScanResult", "EnrichmentResult", "Snapshot",
+    "ScanRecord", "EvidenceEntry", "CarvedFile", "StixObject",
+    "ProcessInfo", "CopyStats", "MerkleTree", "ChunkInfo",
+    "FileEntry", "DeltaResult", "EncryptResult", "DecryptResult",
+    "CompressibilityResult", "ManifestInfo", "TransferProgress", "ErasureEncoded",
+    "ErasureDecoded", "ErasureStatus", "PathEstimate", "AnnounceResult",
+    "SwarmStatus", "Schedule", "Assignment", "DhtNode",
+    "DhtAnnounce", "DhtLookup", "QuicServer", "QuicConnection",
+    "QuicStatus", "TransferResult", "ReceiveResult", "SendResult",
+    "CodeSession", "RelayServer", "RelaySendResult", "RelayReceiveResult",
+    "MultiTransferResult", "DirTransferResult", "CompressedTransfer", "WatchChanges",
+    "WatchEntry", "ExcelWorkbook", "ExcelSheet", "WordDocument",
+    "DocElement", "BrowserSurfaceManifest", "BrowserSurfaceEntry", "BrowserPipeTransportStatus",
+    "BrowserFallbackBoundary", "BrowserFallbackServiceStatus", "PeerInfo", "GrpcServer",
+    "GrpcClient", "QuicStream", "WebSocket", "RelayRoom",
+    "RelayEvent", "RelaySendOutcome", "PacketCapture", "TorPool",
+    "ProxyChain", "Tunnel", "OnionAddr", "TrafficShape",
+    "Transport", "TcpServer", "UdpServer", "TcpConnection",
+    "SyncMutex", "SyncRwLock", "SyncBarrier", "SyncOnce",
+    "AtomicI64", "WaitGroup", "SecretStore", "SyncPair",
+    "SyncStatus", "SyncFileEntry", "MeshConfig", "Resolution",
+    "SyncHistoryEntry", "Alert", "Playbook", "App",
+    "Command", "Context", "Flag", "CsrfSession",
+    "Inbox", "GuerrillaInbox", "CookieJar", "RateLimiter",
+    "TLSProfile", "CaptchaChallenge", "Token", "Frame",
+    "GraphqlResult", "OcrTable", "PdfPage", "TurnstileSolution",
+    "WarmupResult", "IacResult", "IacFinding", "CloudPolicy",
+    "PolicyResult", "SigmaRule", "OtaPackage", "HealthCheck",
+    "MigratedData", "IcsSimulator", "CollectionRecord",
+];
+
+/// Returns true if `module` is a registered stdlib dispatch module.
+///
+/// Mirrors the `match module` arms in [`dispatch`] so the interpreter can
+/// resolve bare `module.func` namespaces for every registered module
+/// (FIX12 triage added 56 modules to the router but not to interp.rs's
+/// hardcoded lowercase-namespace list — this is the single source of truth).
 pub fn is_registered_module(module: &str) -> bool {
-    matches!(module,
-        // Core + original modules
-        "algos" | "browser" | "compress" | "copy" | "crypto" | "deals" | "docs" | "edgar"
-        | "env" | "filter" | "filings" | "forensics" | "fs" | "html" | "http"
-        | "json" | "log" | "market" | "math" | "mesh" | "net" | "osint" | "process" | "rand"
-        | "regex" | "time" | "transfer" | "transfer_net" | "url" | "sync" | "beehiiv"
-        | "relay_room" | "relayroom"
-        | "medium" | "cxense" | "substack" | "wordpress" | "ghost" | "oauth" | "jwt" | "sso"
-        | "escalation" | "legal" | "azure_app_proxy"
-        // FIX12 stdlib triage modules (2026-08-27)
-        | "csv" | "curves" | "decimal" | "finance" | "fred" | "ohlcv" | "options" | "technical"
-        | "orders" | "portfolio2" | "positions" | "sentiment" | "timeseries" | "yahoo"
-        | "markdown" | "agent" | "agentic" | "cli" | "config" | "email" | "test" | "captcha"
-        | "cookie_jar" | "csrf" | "extract" | "Extract" | "mime" | "otp" | "fingerprint" | "frame"
-        | "graphql" | "ocr" | "pdf" | "rate_limit" | "request_queue" | "scenarios" | "session"
-        | "tls_profile" | "turnstile" | "warmup" | "ws" | "cloud" | "detection" | "iot"
-        | "otel" | "pec" | "safety" | "path_util"
-        // FIX13 modules (2026-08-27)
-        | "heston" | "spotify" | "db"
-        // Research modules (2026-09-04)
-        | "recordlink" | "sourcegrade" | "geocode"
-        // Entity resolution / record linkage (roadmap #4, 2026-09-05)
-        | "entity"
-        // Provenance module (2026-09-05)
-        | "provenance" | "Provenance"
-        // Sitescan module (2026-09-12)
-        | "sitescan"
-        // Aliases routed in dispatch
-        | "secretstore"
-        // Capitalized type namespaces routed through dispatch
-        | "MeshNode" | "QuicTransfer" | "Target" | "TechStack" | "DomainIntel" | "ASNIntel"
-        | "EmailIntel" | "IntelGraph" | "IntelReport" | "Scanner" | "ScanScope" | "IOCEnrichment"
-        | "WebArchive" | "ScanDB" | "EvidenceChain" | "MemoryDump" | "DiskImage" | "FileCarver"
-        | "NetworkCapture" | "VolatileData" | "StixBundle" | "AttackTechnique" | "Transfer"
-        | "FileCopy" | "FileVault" | "DeltaSync" | "Compress" | "TransferSession"
-        | "TransferStream" | "ErasureCode" | "NetworkPath" | "Peer" | "Swarm" | "Dht"
-        | "Manifest" | "TransferCode" | "Relay" | "MultiTransfer" | "TransferCompress"
-        | "ParallelConfig" | "BandwidthConfig" | "WatchSession"
-        // Jobs module (roadmap #3 stage 1, 2026-09-05)
-        | "jobs" | "Jobs"
-        // Advisory feed (C5, 2026-09-05)
-        | "advisory" | "Advisory")
+    registered_module_name(module).is_some()
 }
+
+/// The canonical `&'static str` spelling of a registered module name.
+///
+/// This is a whitelist, and that is the point: the only `&'static str` values
+/// the interpreter can turn into a module namespace are the literals in this
+/// table, so nothing a program builds at run time can become one.
+pub fn registered_module_name(module: &str) -> Option<&'static str> {
+    REGISTERED_MODULES
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == module)
+}
+
+
 
 /// Dispatch a method call on a stdlib object type.
 ///

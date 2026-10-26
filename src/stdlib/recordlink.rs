@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn interp_end_to_end() {
         // Full lex→parse→interpret path, proving module-namespace routing
-        // (bare `recordlink` ident → __module_recordlink__ → dispatch).
+        // (bare `recordlink` ident → `Value::Module("recordlink")` → dispatch).
         let src = r#"
         fn main() {
             let m = recordlink.score("Acme Corporation", "123 Main St Austin TX 78701", "ACME CORP", "123 Main Street Austin TX 78701")

@@ -3062,8 +3062,8 @@ impl<'a> TypeChecker<'a> {
                 // warned W0102 "possibly undefined variable".
                 | "type_name"
                 | "type_of"
-                // `FileCopy` is a runtime module (interp maps it to
-                // `__module_FileCopy__`; `FileCopy.copy_metadata` is the
+                // `FileCopy` is a runtime module (interp maps the bare ident to
+                // `Value::Module("FileCopy")`; `FileCopy.copy_metadata` is the
                 // metadata-preserving copy primitive). It was missing from this
                 // list, so the only correct way to copy a file with metadata
                 // preservation warned W0102 on every use.
