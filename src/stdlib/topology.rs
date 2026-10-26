@@ -38,12 +38,34 @@ use std::time::{Duration, Instant};
 ///
 /// Returns the ports in ascending order, de-duplicated. An empty list is an
 /// error, not "scan nothing": a scan with no ports is a typo.
+/// A port argument, validated rather than truncated.
+///
+/// `arg_u64(..) as u16` silently wraps 70000 into 4464, which turns a typo
+/// into a probe of a port nobody asked for. Out-of-range is a refusal.
+fn arg_port(args: &[Value], idx: usize, default: u16) -> Result<u16, String> {
+    let raw = arg_u64(args, idx, default as u64);
+    if raw == 0 || raw > u16::MAX as u64 {
+        return Err(format!(
+            "topology: port {raw} is out of range (expected 1-65535)"
+        ));
+    }
+    Ok(raw as u16)
+}
+
 pub fn parse_ports(spec: &str) -> Result<Vec<u16>, String> {
+    if spec.trim().is_empty() {
+        return Err("topology: empty port specification".to_string());
+    }
     let mut out = Vec::new();
     for part in spec.split(',') {
         let part = part.trim();
         if part.is_empty() {
-            continue;
+            // "1,,2" is a typo, and silently scanning 1 and 2 is a scan of
+            // ports nobody named. An empty element is an error like any other
+            // malformed token; only the empty *spec* has its own message.
+            return Err(format!(
+                "topology: empty element in port specification '{spec}'"
+            ));
         }
         if let Some((a, b)) = part.split_once('-') {
             let lo: u16 = a
@@ -735,8 +757,11 @@ fn discover_fn(args: Vec<Value>) -> StdlibResult {
     let timeout_ms = arg_u64(&args, 3, 500);
     let rps = arg_u64(&args, 4, 20).max(1) as f64;
 
-    let dst = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let dst = resolve_v4(&target)?;
     let timeout = Duration::from_millis(timeout_ms);
     let started = Instant::now();
 
@@ -1018,15 +1043,18 @@ fn tls_posture_fn(args: Vec<Value>) -> StdlibResult {
     use std::sync::Arc;
 
     let target = arg_str(&args, 0, "target")?;
-    let port = arg_u64(&args, 1, 443) as u16;
+    let port = arg_port(&args, 1, 443)?;
     let timeout_ms = arg_u64(&args, 2, 3000);
     let sni = match args.get(3) {
         Some(Value::String(s)) if !s.is_empty() => s.clone(),
         _ => target.clone(),
     };
 
-    let addr = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let addr = resolve_v4(&target)?;
 
     // rustls refuses to guess when more than one provider is linked, and the
     // panic happens deep inside the verifier rather than at the call site, so
@@ -1224,12 +1252,15 @@ fn banner_fn(args: Vec<Value>) -> StdlibResult {
     use std::io::{Read, Write};
 
     let target = arg_str(&args, 0, "target")?;
-    let port = arg_u64(&args, 1, 80) as u16;
+    let port = arg_port(&args, 1, 80)?;
     let timeout_ms = arg_u64(&args, 2, 800);
     let probe = arg_str(&args, 3, "probe").unwrap_or_else(|_| "auto".to_string());
 
-    let addr = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let addr = resolve_v4(&target)?;
 
     let timeout = Duration::from_millis(timeout_ms);
     let started = Instant::now();
@@ -1534,15 +1565,18 @@ fn ja4_fn(args: Vec<Value>) -> StdlibResult {
     use std::sync::Arc;
 
     let target = arg_str(&args, 0, "target")?;
-    let port = arg_u64(&args, 1, 443) as u16;
+    let port = arg_port(&args, 1, 443)?;
     let timeout_ms = arg_u64(&args, 2, 3000);
     let sni = match args.get(3) {
         Some(Value::String(s)) if !s.is_empty() => s.clone(),
         _ => target.clone(),
     };
 
-    let addr = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let addr = resolve_v4(&target)?;
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -1713,8 +1747,11 @@ fn udp_scan_fn(args: Vec<Value>) -> StdlibResult {
     let timeout_ms = arg_u64(&args, 2, 800);
     let rps = arg_u64(&args, 3, 50).max(1) as f64;
 
-    let addr = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let addr = resolve_v4(&target)?;
     let timeout = Duration::from_millis(timeout_ms);
     let started = Instant::now();
 
@@ -1945,8 +1982,11 @@ fn traceroute_fn(args: Vec<Value>) -> StdlibResult {
     let timeout_ms = arg_u64(&args, 2, 700);
     let probes = arg_u64(&args, 3, 2).clamp(1, 3) as u16;
 
-    let dst = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let dst = resolve_v4(&target)?;
 
     let started = Instant::now();
     let asn_table = AsnTable::load();
@@ -2117,6 +2157,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "ja4" => Some(ja4_fn(args)),
         "udp_scan" => Some(udp_scan_fn(args)),
         "reconcile" => Some(reconcile_fn(args)),
+        "parse_ports" => Some(parse_ports_fn(args)),
         "traceroute" => Some(traceroute_fn(args)),
         _ => None,
     }
@@ -2143,8 +2184,11 @@ fn plan_fn(args: Vec<Value>) -> StdlibResult {
     let rps = arg_u64(&args, 3, 20).max(1) as f64;
     let timeout_ms = arg_u64(&args, 4, 1000);
 
-    let host = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let host = resolve_v4(&target)?;
     let plan = make_plan(1, ports.len(), technique, rps, timeout_ms);
 
     Ok(Value::Struct {
@@ -2302,6 +2346,14 @@ fn merge_observations(observations: Vec<Observation>) -> Vec<MergedPort> {
 
     merged.sort_by_key(|m| m.port);
     merged
+}
+
+fn parse_ports_fn(args: Vec<Value>) -> StdlibResult {
+    let spec = arg_str(&args, 0, "spec")?;
+    let ports = parse_ports(&spec)?;
+    Ok(Value::Array(
+        ports.iter().map(|p| Value::Int(*p as i128)).collect(),
+    ))
 }
 
 fn struct_port_list(value: &Value, field: &str) -> Vec<u16> {
@@ -2474,8 +2526,11 @@ fn scan(args: Vec<Value>, technique: Technique) -> StdlibResult {
     let timeout_ms = arg_u64(&args, 2, 1000);
     let rps = arg_u64(&args, 3, 20).max(1) as f64;
 
-    let dst = resolve_v4(&target)?;
+    // The register is consulted on the literal target before the resolver
+    // runs: a DNS query is a packet, and an unauthorized name must not be
+    // looked up at all.
     require_authorized(&target)?;
+    let dst = resolve_v4(&target)?;
 
     let timeout = Duration::from_millis(timeout_ms);
     let started = Instant::now();
