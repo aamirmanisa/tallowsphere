@@ -209,9 +209,18 @@ fn format_type(ty: &TypeExpr) -> String {
             let parts: Vec<_> = types.iter().map(|t| format_type(t)).collect();
             format!("({})", parts.join(", "))
         }
-        TypeExprKind::Function { params, return_type } => {
+        TypeExprKind::Function {
+            params,
+            return_type,
+            effects,
+        } => {
             let params_str: Vec<_> = params.iter().map(|p| format_type(p)).collect();
-            format!("fn({}) -> {}", params_str.join(", "), format_type(return_type))
+            let mut out = format!("fn({}) -> {}", params_str.join(", "), format_type(return_type));
+            if !effects.is_empty() {
+                out.push_str(" with ");
+                out.push_str(&crate::ast::format_effect_row(effects));
+            }
+            out
         }
         TypeExprKind::Boxed(inner) => format!("Box<{}>", format_type(inner)),
         TypeExprKind::ImplTrait(name) => format!("impl {name}"),

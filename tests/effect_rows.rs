@@ -554,3 +554,159 @@ fn two_mains_are_refused() {
         "the refusal must name the rule:\n{stderr}"
     );
 }
+
+// ── G01 P0.3 — the row lives on the function *type* (audit N-3…N-8) ─────────
+//
+// A row travelled with a function value only through a bare identifier. A
+// parameter, a returned function, an array element, a struct field, a
+// reassigned binding and an `if`-selected value all dropped it, and every one
+// of those six exits 0 with no row at all. The row now lives in the type
+// (`fn(..) with Net(connect)`), so a call through a value requires exactly
+// what the type declares — and a value may not be laundered into a type that
+// declares less.
+
+/// A call through a row-carrying function value reached through `channel`'s
+/// shape is refused at the call, with the ordinary E0141 wording.
+fn assert_channel_refused(negative: &str, positive: &str) {
+    let (ok, stderr) = check(negative);
+    assert!(
+        !ok,
+        "{negative}: a call through a row-carrying function value must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0141"),
+        "{negative}: the refusal must carry code E0141:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "function body requires effect Net(connect) but the signature does not declare it"
+        ),
+        "{negative}: the refusal must name the effect and the operation:\n{stderr}"
+    );
+
+    let (ok, stderr) = check(positive);
+    assert!(
+        ok,
+        "{positive}: declaring the forwarded row on the caller must compile:\n{stderr}"
+    );
+    for code in ["E0141", "E0142", "E0117"] {
+        assert!(
+            !stderr.contains(code),
+            "{positive}: no {code} expected:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn function_typed_parameter_carries_the_row() {
+    // N-3: `fn apply(f: fn(Grant<Net>, String) with Net(connect), ..) { f(g,h) }`
+    assert_channel_refused("fn_typed_param_row.tl", "fn_typed_param_row_ok.tl");
+}
+
+#[test]
+fn returned_function_carries_the_row() {
+    // N-4: the row is on `get`'s return type and survives into `f`.
+    let (ok, stderr) = check("returned_fn_row.tl");
+    assert!(!ok, "a returned row-carrying function must not launder the row:\n{stderr}");
+    assert!(
+        stderr.contains("E0141"),
+        "the refusal must carry code E0141:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("returned_fn_row.tl:17:"),
+        "the refusal must be reported at the call in `outer` (line 17):\n{stderr}"
+    );
+    let (ok, stderr) = check("returned_fn_row_ok.tl");
+    assert!(ok, "the positive twin must compile:\n{stderr}");
+}
+
+#[test]
+fn array_element_carries_the_row() {
+    // N-5: `[worker, worker]` is `[fn(..) with Net(connect)]`, `fs[0]` keeps it.
+    assert_channel_refused("array_element_fn_row.tl", "array_element_fn_row_ok.tl");
+}
+
+#[test]
+fn struct_field_carries_the_row() {
+    // N-6: the row is on the field type, so `b.f(g, h)` requires it.
+    assert_channel_refused("struct_field_fn_row.tl", "struct_field_fn_row_ok.tl");
+}
+
+#[test]
+fn reassignment_updates_the_row() {
+    // N-7: `var f = nop; f = worker; f(g, h)` — the binding follows the value.
+    assert_channel_refused("reassigned_fn_row.tl", "reassigned_fn_row_ok.tl");
+}
+
+#[test]
+fn if_selection_joins_the_row() {
+    // N-8: the joined type carries the union, so the rowless arm is no cover.
+    assert_channel_refused("if_selected_fn_row.tl", "if_selected_fn_row_ok.tl");
+}
+
+#[test]
+fn a_function_row_cannot_be_laundered_into_a_typed_slot() {
+    // The other half of the type-carried row: a value may not flow into a
+    // function type that declares less than the value can do. Without this,
+    // `fn get() -> fn(Grant<Net>, String) { worker }` would hand back a
+    // rowless type over a rowwed value (the audit's literal N-4 shape).
+    let (ok, stderr) = check("fn_row_laundered_by_return.tl");
+    assert!(!ok, "a rowwed function must not fill a rowless return slot:\n{stderr}");
+    assert!(
+        stderr.contains("E0141"),
+        "the refusal must carry code E0141:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("declares no such row"),
+        "the refusal must name the laundering:\n{stderr}"
+    );
+
+    let (ok, stderr) = check("fn_row_laundered_by_param.tl");
+    assert!(!ok, "a rowwed function must not fill a rowless parameter slot:\n{stderr}");
+    assert!(
+        stderr.contains("E0141"),
+        "the refusal must carry code E0141:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("cannot pass as an argument a function value requiring effect Net(connect)"),
+        "the refusal must name the slot and the row:\n{stderr}"
+    );
+}
+
+#[test]
+fn const_initialiser_may_not_perform_an_effect() {
+    // N-2 / F-14: the initialiser is walked at last. `const status = net.connect(..)`
+    // is E0148 — no signature to carry a row, no main to be the trust root.
+    let (ok, stderr) = check("const_effect_initialiser.tl");
+    assert!(
+        !ok,
+        "a top-level initialiser that performs an effect must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0148"),
+        "the refusal must carry code E0148:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "a top-level initialiser may not perform effect Net(connect); move it into main"
+        ),
+        "the refusal must name the rule and the fix:\n{stderr}"
+    );
+
+    // The other form of the same finding: `const N = net`. Walking the
+    // initialiser catches it as E0146 — a module namespace is not a value —
+    // because it performs no effect, only launders the namespace.
+    let (ok, stderr) = check("const_namespace_initialiser.tl");
+    assert!(
+        !ok,
+        "a const holding a module namespace must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0146"),
+        "the namespace form is refused with E0146:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("E0148"),
+        "no effect is performed, so E0148 must not fire:\n{stderr}"
+    );
+}

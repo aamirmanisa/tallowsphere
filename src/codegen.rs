@@ -10796,6 +10796,7 @@ void tallow_async_runtime_shutdown(void) {
         if let TypeExprKind::Function {
             params,
             return_type,
+            ..
         } = &ty.kind
         {
             Some((
@@ -27377,12 +27378,14 @@ fn substitute_type_expr(ty: &TypeExpr, subst: &HashMap<String, String>) -> TypeE
         TypeExprKind::Function {
             params,
             return_type,
+            effects,
         } => TypeExprKind::Function {
             params: params
                 .iter()
                 .map(|p| substitute_type_expr(p, subst))
                 .collect(),
             return_type: Box::new(substitute_type_expr(return_type, subst)),
+            effects: effects.clone(),
         },
         TypeExprKind::Boxed(inner) => {
             TypeExprKind::Boxed(Box::new(substitute_type_expr(inner, subst)))

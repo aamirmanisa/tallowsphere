@@ -562,7 +562,11 @@ impl<'a> LegalPass<'a> {
             TypeExprKind::Tuple(types) => {
                 types.iter().any(|t| self.type_expr_is_private(t))
             }
-            TypeExprKind::Function { params, return_type } => {
+            TypeExprKind::Function {
+                params,
+                return_type,
+                ..
+            } => {
                 params.iter().any(|p| self.type_expr_is_private(p))
                     || self.type_expr_is_private(return_type)
             }

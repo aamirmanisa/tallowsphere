@@ -809,6 +809,7 @@ impl Formatter {
             TypeExprKind::Function {
                 params,
                 return_type,
+                effects,
             } => {
                 self.write("fn(");
                 for (i, p) in params.iter().enumerate() {
@@ -819,6 +820,12 @@ impl Formatter {
                 }
                 self.write(") -> ");
                 self.format_type_expr(return_type);
+                if !effects.is_empty() {
+                    // `fn(..) -> T with Net(connect)` round-trips: the parser
+                    // reads a row written here as this type's row.
+                    self.write(" with ");
+                    self.write(&crate::ast::format_effect_row(effects));
+                }
             }
             TypeExprKind::Boxed(inner) => {
                 self.write("Box<");

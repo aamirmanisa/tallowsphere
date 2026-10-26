@@ -79,6 +79,30 @@ pub struct EffectReq {
     pub span: Span,
 }
 
+impl EffectReq {
+    /// `Net(connect)` / `Net` — the spelling an effect row is written in.
+    ///
+    /// Shared by the diagnostic layer, the formatter and the type-display
+    /// path so a row can never be rendered three slightly different ways.
+    pub fn display(&self) -> String {
+        if self.ops.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}({})", self.name, self.ops.join(", "))
+        }
+    }
+}
+
+/// Render a whole row: `Net(connect), Net(read)`; empty string for an empty
+/// row.
+pub fn format_effect_row(effects: &[EffectReq]) -> String {
+    effects
+        .iter()
+        .map(|e| e.display())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[derive(Debug, Clone)]
 pub struct Param {
     pub name: String,
@@ -592,10 +616,25 @@ pub enum TypeExprKind {
     Optional(Box<TypeExpr>),
     /// Tuple: `(T, U)`
     Tuple(Vec<TypeExpr>),
-    /// Function type: `fn(i32) -> i32`
+    /// Function type: `fn(i32) -> i32`, optionally carrying an effect row:
+    /// `fn(Grant<Net>, String) with Net(connect)`.
+    ///
+    /// G01 P0.3 (audit N-3…N-8): the row is part of the *type*, not of the
+    /// syntax that calls the value. A function value can reach a caller as a
+    /// parameter, a return value, an array element, a struct field or an
+    /// `if`-selected binding; in every one of those positions the only place a
+    /// row can travel is the type. Enforcing the row at a call through a value
+    /// therefore starts here.
+    ///
+    /// Grammar note: a `with` row immediately following a function type binds
+    /// to that type (the innermost one), because the row is written where the
+    /// type ends. A declaration's own row is written after its parameter list;
+    /// when that list's last parameter, or the return type, is a function type
+    /// with a row, the row read there belongs to the function type.
     Function {
         params: Vec<TypeExpr>,
         return_type: Box<TypeExpr>,
+        effects: Vec<EffectReq>,
     },
     /// Heap-indirected type: `Box<T>` — enables recursive data types
     Boxed(Box<TypeExpr>),

@@ -41,6 +41,19 @@ pub enum Type {
     Function {
         params: Vec<Type>,
         return_type: Box<Type>,
+        /// Effects of `(effect, operations)` this function value may perform
+        /// (G01 P0.3, audit N-3…N-8). Empty for a rowless function type.
+        ///
+        /// This is the row the value carries: a call through the value
+        /// requires whatever the type says, exactly as a call to a named
+        /// function requires its declared row. It lives on the *type* because
+        /// a function value reaches a call site as a parameter, a return
+        /// value, an array element or a struct field, and none of those
+        /// positions has a signature to carry a row instead.
+        ///
+        /// Spans are deliberately absent: this is part of type identity, and
+        /// two occurrences of the same row are the same row.
+        effects: Vec<(String, Vec<String>)>,
     },
 
     // Consent wrapper (GDPR consent chain)
@@ -108,8 +121,38 @@ fn type_label(t: &Type) -> String {
         Type::Private(inner) | Type::Secret(inner) => type_label(inner),
         Type::Grant(effect) if effect.is_empty() => "Grant".to_string(),
         Type::Grant(effect) => format!("Grant<{effect}>"),
+        Type::Function {
+            params,
+            return_type,
+            effects,
+        } => {
+            let params = params.iter().map(type_label).collect::<Vec<_>>().join(", ");
+            let mut out = format!("fn({params}) -> {}", type_label(return_type));
+            if !effects.is_empty() {
+                out.push_str(" with ");
+                out.push_str(&format_type_row(effects));
+            }
+            out
+        }
         other => format!("{other:?}"),
     }
+}
+
+/// Render a row carried on a *type* (`[(effect, ops)]`): `Net(connect)`.
+///
+/// The AST form is [`crate::ast::format_effect_row`]; this is the resolved
+/// form, which drops spans because they are not part of a type.
+fn format_type_row(row: &[(String, Vec<String>)]) -> String {
+    row.iter()
+        .map(|(name, ops)| {
+            if ops.is_empty() {
+                name.clone()
+            } else {
+                format!("{name}({})", ops.join(", "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl Type {
@@ -543,7 +586,62 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
+        // Pass 2b: top-level `const` initialisers (G01 P0.3, audit N-2/F-14).
+        self.check_const_initialisers();
+
         (self.env, self.diags)
+    }
+
+    /// A top-level initialiser runs at program start, outside every signature.
+    ///
+    /// There is no row it could be declared in, and no `main` for the
+    /// trust-root exemption to point at, so the only correct answer is that it
+    /// may not perform an effect at all (audit N-2 / F-14: `const status:
+    /// string = net.connect(..)` checked clean and *opened a socket* under the
+    /// interpreter). The walk is the ordinary expression walk, so the initialiser
+    /// also gets every other value-position rule: `const N = net` is refused as
+    /// E0146 (module namespace is not a value) before this pass ever reaches the
+    /// effect question.
+    fn check_const_initialisers(&mut self) {
+        for item in &self.program.items {
+            let Item::Const(c) = item else {
+                continue;
+            };
+            if let Some(ty) = &c.ty {
+                self.validate_grant_shape(ty);
+            }
+            let locals: HashMap<String, VarInfo> = HashMap::new();
+            self.declared_effects = Vec::new();
+            self.body_effect_reqs = Vec::new();
+            self.body_grant_sites = Vec::new();
+            self.current_body_is_entry_main = false;
+            self.current_body_is_imported_main = false;
+            self.current_return_type = None;
+            self.closure_depth = 0;
+            self.check_expr(&c.value, &locals);
+            let reqs = std::mem::take(&mut self.body_effect_reqs);
+            self.body_grant_sites.clear();
+            for (effect, op, span, _grant) in reqs {
+                let what = if op.is_empty() {
+                    effect.clone()
+                } else {
+                    format!("{effect}({op})")
+                };
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0148",
+                        format!(
+                            "a top-level initialiser may not perform effect {what}; move it into main"
+                        ),
+                        span,
+                    )
+                    .with_help(format!(
+                        "`const {}` is evaluated before any row exists: obtain the value inside a function that declares `with {effect}`",
+                        c.name
+                    )),
+                );
+            }
+        }
     }
 
     // ── Pass 1: Registration ─────────────────────────────────────────────
@@ -821,6 +919,7 @@ impl<'a> TypeChecker<'a> {
             TypeExprKind::Function {
                 params,
                 return_type,
+                ..
             } => {
                 params
                     .iter()
@@ -958,9 +1057,19 @@ impl<'a> TypeChecker<'a> {
             TypeExprKind::Function {
                 params,
                 return_type,
+                effects,
             } => Type::Function {
                 params: params.iter().map(|p| self.resolve_type_expr(p)).collect(),
                 return_type: Box::new(self.resolve_type_expr(return_type)),
+                // G01 P0.3: the row is resolved into the *type*, in the same
+                // span-free `(effect, ops)` shape the rest of the checker
+                // forwards. Type identity compares rows, so two occurrences of
+                // `fn(..) with Net(connect)` are the same type; spans are not
+                // part of a type.
+                effects: effects
+                    .iter()
+                    .map(|e| (e.name.clone(), e.ops.clone()))
+                    .collect(),
             },
             TypeExprKind::ImplTrait(name) => Type::Named(name.clone()),
             TypeExprKind::DynTrait(name) => Type::Named(name.clone()),
@@ -1331,6 +1440,118 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// The row a *type* carries: empty for everything that is not a function
+    /// type. The one place the type-carried row is read (G01 P0.3).
+    fn type_row(ty: &Type) -> &[(String, Vec<String>)] {
+        match ty {
+            Type::Function { effects, .. } => effects,
+            _ => &[],
+        }
+    }
+
+    /// Forward a row that came from a *type* rather than from a signature.
+    ///
+    /// Same requirement, same codes, same call-site span as
+    /// [`Self::note_callee_row`]: the only difference is where the row was
+    /// read, and the caller must not be able to tell.
+    fn note_type_row(
+        &mut self,
+        row: &[(String, Vec<String>)],
+        span: Span,
+        locals: &HashMap<String, VarInfo>,
+    ) {
+        let reqs: Vec<EffectReq> = row
+            .iter()
+            .map(|(name, ops)| EffectReq {
+                name: name.clone(),
+                ops: ops.clone(),
+                span,
+            })
+            .collect();
+        self.note_callee_row(&reqs, span, locals);
+    }
+
+    /// Union of two rows, entry-wise; the result is in first-seen order.
+    ///
+    /// A bare entry (`Net`, no operations) covers every operation of the
+    /// effect, so it swallows the operations of a matching entry: the union of
+    /// `Net` and `Net(connect)` is `Net`. Keeping the operations would claim
+    /// the joined value does less than one of its arms.
+    fn union_rows(
+        a: &[(String, Vec<String>)],
+        b: &[(String, Vec<String>)],
+    ) -> Vec<(String, Vec<String>)> {
+        let mut out: Vec<(String, Vec<String>)> = a.to_vec();
+        for (name, ops) in b {
+            match out.iter_mut().find(|(n, _)| n == name) {
+                Some((_, existing)) => {
+                    if existing.is_empty() || ops.is_empty() {
+                        existing.clear();
+                    } else {
+                        for op in ops {
+                            if !existing.iter().any(|o| o == op) {
+                                existing.push(op.clone());
+                            }
+                        }
+                    }
+                }
+                None => out.push((name.clone(), ops.clone())),
+            }
+        }
+        out
+    }
+
+    /// G01 P0.3 (audit N-7): update what a binding *carries* when it is
+    /// reassigned.
+    ///
+    /// The union is deliberate: rows accumulate over a binding's life and
+    /// never shrink. Straight-line `var f = worker; f = nop` could in principle
+    /// drop the row, but the walk visits a loop body once, so
+    /// `var f = nop; while c { f = worker }; f(g, h)` would then call through a
+    /// value whose row the walk had just forgotten. Accumulating is the only
+    /// direction that stays sound without a fixpoint; the cost is a possible
+    /// false positive after a dead straight-line reassignment, and declaring
+    /// the row clears it.
+    fn assign_binding_row(
+        info: &mut VarInfo,
+        value_ty: &Type,
+        value_row: &[EffectReq],
+        span: Span,
+    ) {
+        let assigned: Vec<(String, Vec<String>)> = Self::type_row(value_ty).to_vec();
+        match &mut info.ty {
+            Type::Function { effects, .. } => {
+                *effects = Self::union_rows(effects, &assigned);
+            }
+            other => {
+                // `var f = nop` recorded no type worth keeping; a rowwed
+                // function assigned afterwards is what the binding now holds.
+                if matches!(other, Type::Unknown) && matches!(value_ty, Type::Function { .. }) {
+                    *other = value_ty.clone();
+                }
+            }
+        }
+        // Keep the per-binding record (the pre-type channel) in step, so a
+        // call site that still reads `VarInfo::effects` sees the same row.
+        let mut union: Vec<(String, Vec<String>)> = info
+            .effects
+            .iter()
+            .map(|e| (e.name.clone(), e.ops.clone()))
+            .collect();
+        union = Self::union_rows(&union, &assigned);
+        union = Self::union_rows(
+            &union,
+            &value_row
+                .iter()
+                .map(|e| (e.name.clone(), e.ops.clone()))
+                .collect::<Vec<_>>(),
+        );
+        info.effects = union
+            .into_iter()
+            .map(|(name, ops)| EffectReq { name, ops, span })
+            .collect();
+    }
+
     /// The declared row of the function a binding initialises from, if the
     /// initialiser is a function value (G01, audit F-8).
     ///
@@ -1549,6 +1770,7 @@ impl<'a> TypeChecker<'a> {
             TypeExprKind::Function {
                 params,
                 return_type,
+                ..
             } => {
                 for p in params {
                     self.validate_grant_shape(p);
@@ -1870,6 +2092,9 @@ impl<'a> TypeChecker<'a> {
                     self.check_optional_binding(&resolved, value, locals, value.span);
                     self.check_declared_literal(&resolved, value, value.span);
                     self.check_grant_binding(&resolved, value, locals, value.span);
+                    // G01 P0.3: `let f: fn() = worker` is a slot, and a
+                    // rowwed value may not be laundered into it.
+                    self.check_row_slot(&resolved, value, locals, "bind");
                 }
                 self.check_expr(value, locals);
                 // G01 (audit F-8): a local may hold a function. The row then
@@ -1895,6 +2120,9 @@ impl<'a> TypeChecker<'a> {
                     self.check_optional_binding(&resolved, value, locals, value.span);
                     self.check_declared_literal(&resolved, value, value.span);
                     self.check_grant_binding(&resolved, value, locals, value.span);
+                    // G01 P0.3: `let f: fn() = worker` is a slot, and a
+                    // rowwed value may not be laundered into it.
+                    self.check_row_slot(&resolved, value, locals, "bind");
                 }
                 self.check_expr(value, locals);
                 let effects = self.fn_value_effects(value, locals);
@@ -1923,6 +2151,24 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Expr { expr } => {
                 self.check_expr(expr, locals);
+                // G01 P0.3 (audit N-7): `var f = nop; f = worker` — the row a
+                // binding carries follows the value it holds. Handled at
+                // statement position, which is the only place an assignment can
+                // change a binding the walk will read later.
+                if let ExprKind::Assign { target, value } = &expr.kind {
+                    if let ExprKind::Ident(name) = &target.kind {
+                        let value_ty = self.infer_expr_type(value, locals);
+                        let value_row = self.fn_value_effects(value, locals);
+                        if let Some(info) = locals.get_mut(name) {
+                            Self::assign_binding_row(
+                                info,
+                                &value_ty,
+                                &value_row,
+                                value.span,
+                            );
+                        }
+                    }
+                }
             }
             StmtKind::Return(Some(expr)) => {
                 self.check_expr(expr, locals);
@@ -2129,23 +2375,86 @@ impl<'a> TypeChecker<'a> {
         position: &str,
     ) {
         let got = self.infer_expr_type(value, locals);
-        if !Self::capability_mismatch(declared, &got) {
-            return;
+        if Self::capability_mismatch(declared, &got) {
+            let effect = Self::first_grant_effect(declared)
+                .or_else(|| Self::first_grant_effect(&got))
+                .unwrap_or("");
+            let source = if effect.is_empty() {
+                "scope.grant(<effect>)".to_string()
+            } else {
+                format!("scope.grant({effect})")
+            };
+            let msg = format!(
+                "cannot {position} `{}` where `{}` is required: a capability cannot be forged -- the only source is {source}",
+                self.type_display(&got),
+                type_label(declared)
+            );
+            self.diags.error("E0117", msg, value.span);
         }
-        let effect = Self::first_grant_effect(declared)
-            .or_else(|| Self::first_grant_effect(&got))
-            .unwrap_or("");
-        let source = if effect.is_empty() {
-            "scope.grant(<effect>)".to_string()
-        } else {
-            format!("scope.grant({effect})")
+        // G01 P0.3: a slot is a slot for a *row* too, not only for a
+        // capability. The same positions — return, argument, struct field,
+        // default — must not launder a rowwed function into a rowless type.
+        self.check_row_slot(declared, value, locals, position);
+    }
+
+    /// G01 P0.3: no laundering a row through a typed slot.
+    ///
+    /// This is the second half of the type-carried row. The first half says a
+    /// call *through* a value requires what the value's type declares; this
+    /// half says the type must declare what the value can actually do.
+    /// Without it `fn get() -> fn(Grant<Net>, String) { worker }` would hand
+    /// back a value whose type has no row while the value reaches a socket, and
+    /// the call through `get()`'s result would require nothing (audit N-4).
+    fn check_row_slot(
+        &mut self,
+        declared: &Type,
+        value: &Expr,
+        locals: &HashMap<String, VarInfo>,
+        position: &str,
+    ) {
+        let Type::Function {
+            effects: allowed, ..
+        } = declared
+        else {
+            return;
         };
-        let msg = format!(
-            "cannot {position} `{}` where `{}` is required: a capability cannot be forged -- the only source is {source}",
-            self.type_display(&got),
-            type_label(declared)
-        );
-        self.diags.error("E0117", msg, value.span);
+        let mut row = Self::type_row(&self.infer_expr_type(value, locals)).to_vec();
+        if row.is_empty() {
+            row = self
+                .fn_value_effects(value, locals)
+                .into_iter()
+                .map(|e| (e.name, e.ops))
+                .collect();
+        }
+        for (name, ops) in row {
+            if Self::row_covers(allowed, &name, &ops) {
+                continue;
+            }
+            let what = if ops.is_empty() {
+                name.clone()
+            } else {
+                format!("{name}({})", ops.join(", "))
+            };
+            let msg = format!(
+                "cannot {position} a function value requiring effect {what} where `{}` declares no such row",
+                type_label(declared)
+            );
+            self.diags.push(
+                crate::error::Diagnostic::error("E0141", msg, value.span)
+                    .with_help(format!("add: with {what} to the function type")),
+            );
+        }
+    }
+
+    /// Does a declared row cover one requirement? A bare entry (`Net`) covers
+    /// every operation of the effect; an operation entry covers only itself.
+    fn row_covers(allowed: &[(String, Vec<String>)], name: &str, ops: &[String]) -> bool {
+        allowed.iter().any(|(n, allowed_ops)| {
+            n == name
+                && (allowed_ops.is_empty()
+                    || (!ops.is_empty()
+                        && ops.iter().all(|op| allowed_ops.iter().any(|a| a == op))))
+        })
     }
 
     /// Positional capability check for a call's arguments against the callee's
@@ -2239,6 +2548,21 @@ impl<'a> TypeChecker<'a> {
         // keys on dotted callee paths and `f` is an ordinary local. The row is
         // recorded on the binding (see `fn_value_effects`), so the requirement
         // is forwarded here exactly as a direct call forwards it.
+        // G01 P0.3 (audit N-3…N-8): the row a function value carries in its
+        // *type*. This is the channel every one of the six escapes has in
+        // common — a parameter, a returned function, an array element, a
+        // struct field, an `if`-selected binding and a reassigned one all
+        // reach the call as a value whose type is `fn(..) with Net(connect)`.
+        // Reading the type here is what makes the row survive all six without
+        // a rule per syntax.
+        if !row_forwarded {
+            let callee_ty = self.infer_expr_type(callee, locals);
+            let row = Self::type_row(&callee_ty);
+            if !row.is_empty() {
+                self.note_type_row(row, span, locals);
+                row_forwarded = true;
+            }
+        }
         if !row_forwarded {
             if let ExprKind::Ident(name) = &callee.kind {
                 if let Some(effects) = locals.get(name).map(|v| v.effects.clone()) {
@@ -2446,6 +2770,25 @@ impl<'a> TypeChecker<'a> {
                 });
                 if let Some(effects) = callee_row {
                     self.note_callee_row(&effects, expr.span, locals);
+                }
+                // G01 P0.3 (audit N-6): `b.f(g, h)` is a *method call* to the
+                // parser even when `f` is a struct field of function type, so
+                // the receiver's struct is the only place the row can be read.
+                // Without this the struct-field channel is the one of the six
+                // that the type-carried row cannot see.
+                if let Some(ref tname) = type_name {
+                    let field_row = self.env.structs.get(tname).and_then(|sinfo| {
+                        sinfo
+                            .fields
+                            .iter()
+                            .find(|(f, _)| f == method)
+                            .map(|(_, fty)| Self::type_row(fty).to_vec())
+                    });
+                    if let Some(row) = field_row {
+                        if !row.is_empty() {
+                            self.note_type_row(&row, expr.span, locals);
+                        }
+                    }
                 }
                 let mut method_params: Option<Vec<(String, Type)>> = None;
                 if let Some(ref tname) = type_name {
@@ -3223,10 +3566,27 @@ impl<'a> TypeChecker<'a> {
             ExprKind::StringLit(_) | ExprKind::Interpolation(_) => Type::String,
             ExprKind::BoolLit(_) => Type::Bool,
             ExprKind::Nil => Type::Void,
-            ExprKind::Ident(name) => locals
-                .get(name)
-                .map(|vi| vi.ty.clone())
-                .unwrap_or(Type::Unknown),
+            ExprKind::Ident(name) => {
+                if let Some(vi) = locals.get(name) {
+                    return vi.ty.clone();
+                }
+                // A top-level function used as a value *is* a function type,
+                // and that type carries the declared row (G01 P0.3). Without
+                // this, `let fs = [worker, worker]` inferred `[Unknown]` and
+                // the row vanished into the array.
+                if let Some(sig) = self.env.functions.get(name) {
+                    return Type::Function {
+                        params: sig.params.iter().map(|(_, t)| t.clone()).collect(),
+                        return_type: Box::new(sig.return_type.clone()),
+                        effects: sig
+                            .effects
+                            .iter()
+                            .map(|e| (e.name.clone(), e.ops.clone()))
+                            .collect(),
+                    };
+                }
+                Type::Unknown
+            }
             ExprKind::Call { callee, .. } => {
                 if let ExprKind::Ident(name) = &callee.kind {
                     if let Some(sig) = self.env.functions.get(name) {
@@ -3300,7 +3660,24 @@ impl<'a> TypeChecker<'a> {
                 _ => Type::Unknown,
             },
             ExprKind::Await(inner) => self.infer_expr_type(inner, locals),
-            ExprKind::If { then_block, .. } | ExprKind::IfLet { then_block, .. } => {
+            ExprKind::If {
+                then_block,
+                else_branch,
+                ..
+            } => {
+                // G01 P0.3 (audit N-8): `let f = if c { worker } else { nop }`
+                // picks a value at run time, so the joined type carries the
+                // union of the arms' rows — one rowless arm does not make the
+                // call safe.
+                let then_ty = self.block_tail_type(then_block, locals);
+                let else_ty = match else_branch.as_ref() {
+                    Some(ElseBranch::Block(block)) => self.block_tail_type(block, locals),
+                    Some(ElseBranch::ElseIf(expr)) => self.infer_expr_type(expr, locals),
+                    None => Type::Void,
+                };
+                Self::join_branch_types(then_ty, else_ty)
+            }
+            ExprKind::IfLet { then_block, .. } => {
                 if let Some(last) = then_block.stmts.last() {
                     if let StmtKind::Expr { expr } = &last.kind {
                         return self.infer_expr_type(expr, locals);
@@ -3349,8 +3726,55 @@ impl<'a> TypeChecker<'a> {
                 }
                 Type::Unknown
             }
+            // `fs[0]` is the element, and for an array of function values the
+            // element type is where the row lives (G01 P0.3, audit N-5).
+            ExprKind::Index { object, .. } => match self.infer_expr_type(object, locals) {
+                Type::Array(inner) => *inner,
+                Type::Map(_, value) => *value,
+                _ => Type::Unknown,
+            },
             ExprKind::StructLit { name, .. } => Type::Named(name.clone()),
             _ => Type::Unknown,
+        }
+    }
+
+    /// Type of a block's tail expression; `Void` when the block ends in a
+    /// statement (or is empty).
+    fn block_tail_type(&self, block: &Block, locals: &HashMap<String, VarInfo>) -> Type {
+        match block.stmts.last() {
+            Some(Stmt {
+                kind: StmtKind::Expr { expr },
+                ..
+            }) => self.infer_expr_type(expr, locals),
+            _ => Type::Void,
+        }
+    }
+
+    /// Join the types of two branches of an `if` (G01 P0.3, audit N-8).
+    ///
+    /// Two function types join to one carrying the union of their rows. Every
+    /// other shape keeps the pre-existing rule — the then-branch's type wins —
+    /// except that `Unknown` (inference's placeholder) defers to the branch
+    /// that knows something.
+    fn join_branch_types(then_ty: Type, else_ty: Type) -> Type {
+        match (then_ty, else_ty) {
+            (
+                Type::Function {
+                    params,
+                    return_type,
+                    effects,
+                },
+                Type::Function {
+                    effects: else_effects,
+                    ..
+                },
+            ) => Type::Function {
+                params,
+                return_type,
+                effects: Self::union_rows(&effects, &else_effects),
+            },
+            (Type::Unknown, other) => other,
+            (then_ty, _) => then_ty,
         }
     }
 

@@ -585,9 +585,21 @@ impl Parser {
                 ops,
                 span: Span::new(start.start, self.prev_span().end),
             });
-            if !self.eat(TokenKind::Comma) {
+            // A comma here may belong to the *enclosing* list rather than to
+            // the row: a function-typed parameter's row ends at the parameter
+            // comma, and a struct field's row ends at the field comma. So the
+            // row continues only when the *current* token is that comma and
+            // what follows it can start another effect — an identifier that is
+            // not a `name: Type` pair. Checking the lookahead without first
+            // checking for the comma is how `with Net(connect) { … }` used to
+            // swallow the body's opening brace.
+            let comma_belongs_to_row = self.check(TokenKind::Comma)
+                && matches!(self.peek_kind_ahead(1), Some(TokenKind::Ident(_)))
+                && !matches!(self.peek_kind_ahead(2), Some(TokenKind::Colon));
+            if !comma_belongs_to_row {
                 break;
             }
+            self.advance(); // the comma
         }
         Ok(effects)
     }
@@ -2970,10 +2982,18 @@ impl Parser {
                 )
             };
             let span = Span::new(start.start, return_type.span.end);
+            // G01 P0.3 (audit N-3…N-8): a function *type* may carry a row —
+            // `fn(Grant<Net>, String) with Net(connect)`. A row written here
+            // belongs to this type rather than to an enclosing declaration:
+            // that is the only reading that lets `fn get() -> fn(..) with
+            // Net(connect) { worker }` put the row on the returned value,
+            // which is what makes the row survive the return.
+            let effects = self.parse_effect_row()?;
             return Ok(TypeExpr::new(
                 TypeExprKind::Function {
                     params,
                     return_type: Box::new(return_type),
+                    effects,
                 },
                 span,
             ));

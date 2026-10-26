@@ -16653,13 +16653,25 @@ fn format_type_expr(ty: &tallow::ast::TypeExpr) -> String {
         TypeExprKind::Function {
             params,
             return_type,
+            effects,
         } => {
             let params_str: Vec<String> = params.iter().map(format_type_expr).collect();
-            format!(
+            let mut out = format!(
                 "fn({}) -> {}",
                 params_str.join(", "),
                 format_type_expr(return_type)
-            )
+            );
+            if !effects.is_empty() {
+                out.push_str(" with ");
+                out.push_str(
+                    &effects
+                        .iter()
+                        .map(|e| e.display())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+            }
+            out
         }
         TypeExprKind::Boxed(inner) => format!("Box<{}>", format_type_expr(inner)),
         TypeExprKind::ImplTrait(name) => format!("impl {name}"),
