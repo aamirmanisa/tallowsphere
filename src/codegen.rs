@@ -4001,6 +4001,7 @@ void tallow_async_runtime_shutdown(void) {
             type_params: vec![], // specialized — no longer generic
             params: specialized_params,
             return_type: specialized_ret,
+            effects: generic_fn.effects.clone(),
             body: specialized_body,
             span: generic_fn.span,
         }

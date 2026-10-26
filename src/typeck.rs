@@ -333,12 +333,49 @@ impl FnSignature {
     }
 }
 
+// ── Effect rows (G01) ────────────────────────────────────────────────────────
+
+/// The effect a dotted call path requires, if any.
+///
+/// Only the **first** segment names the primitive family; the second segment is
+/// the operation (`Tcp.connect` → `Net(connect)`). Families that open a socket
+/// are mapped to `Net`; everything else needs no row.
+pub fn effect_for_callee(name: &str) -> Option<&'static str> {
+    let head = name.split('.').next().unwrap_or("");
+    match head {
+        "Tcp" | "Udp" | "TLSConn" | "net" | "sitescan" | "http" => Some("Net"),
+        _ => None,
+    }
+}
+
+/// The operation segment of a dotted callee path (`Tcp.connect` → `connect`).
+fn effect_op(name: &str) -> &str {
+    name.split('.').nth(1).unwrap_or("")
+}
+
+/// Dotted path of a callee expression: `Tcp` → `"Tcp"`, `Tcp.connect` →
+/// `"Tcp.connect"`. `None` when the callee is a computed expression, which
+/// carries no static path to match on.
+fn callee_path(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::FieldAccess { object, field } => {
+            callee_path(object).map(|p| format!("{p}.{field}"))
+        }
+        _ => None,
+    }
+}
+
 // ── Type Checker ─────────────────────────────────────────────────────────────
 
 pub struct TypeChecker<'a> {
     program: &'a Program,
     pub env: TypeEnv,
     pub diags: Diagnostics,
+    /// Effect row of the signature whose body is being walked (G01).
+    declared_effects: Vec<EffectReq>,
+    /// `(effect, op, call span)` collected from the body being walked (G01).
+    body_effect_reqs: Vec<(&'static str, String, Span)>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -347,6 +384,8 @@ impl<'a> TypeChecker<'a> {
             program,
             env: TypeEnv::default(),
             diags: Diagnostics::new(),
+            declared_effects: Vec::new(),
+            body_effect_reqs: Vec::new(),
         }
     }
 
@@ -871,10 +910,17 @@ impl<'a> TypeChecker<'a> {
             self.validate_type_exists(&ty, p.span);
         }
 
-        // Check each statement
+        // Check each statement.
+        //
+        // G01: the walk also collects the effects the body's calls require
+        // (recorded in `check_expr`); the row is enforced right after it, so a
+        // socket-opening call without `with Net(op)` is reported at the call.
+        self.declared_effects = f.effects.clone();
+        self.body_effect_reqs = Vec::new();
         for stmt in &f.body.stmts {
             self.check_stmt(stmt, &mut locals);
         }
+        self.enforce_effect_row();
 
         // Check return type matches body
         let declared_return = f
@@ -904,8 +950,57 @@ impl<'a> TypeChecker<'a> {
                 locals.insert(p.name.clone(), VarInfo { ty, mutable: false });
             }
         }
+        // G01: same effect-row enforcement for impl methods — the row on an
+        // `impl` method is checked exactly like a free function's.
+        self.declared_effects = method.effects.clone();
+        self.body_effect_reqs = Vec::new();
         for stmt in &method.body.stmts {
             self.check_stmt(stmt, &mut locals);
+        }
+        self.enforce_effect_row();
+    }
+
+    // ── Effect rows (G01) ───────────────────────────────────────────────
+
+    /// Record that a call at `span` opens a socket, if its path names one of
+    /// the network families in [`effect_for_callee`].
+    fn note_effect_call(&mut self, path: &str, span: Span) {
+        let Some(effect) = effect_for_callee(path) else {
+            return;
+        };
+        let op = effect_op(path).to_string();
+        // The same call site can be visited twice (a `?`/`await` wrapper walks
+        // its inner expression); one diagnostic per site is enough.
+        if self
+            .body_effect_reqs
+            .iter()
+            .any(|(e, o, s)| *e == effect && *o == op && s.start == span.start && s.end == span.end)
+        {
+            return;
+        }
+        self.body_effect_reqs.push((effect, op, span));
+    }
+
+    /// The last gate of a body walk (G01): every effect a call required must
+    /// appear in the signature's row. `with Net` (no parentheses) covers every
+    /// operation of `Net`; `with Net(connect)` covers only `connect`.
+    fn enforce_effect_row(&mut self) {
+        let reqs = std::mem::take(&mut self.body_effect_reqs);
+        let declared = std::mem::take(&mut self.declared_effects);
+        for (effect, op, span) in reqs {
+            let satisfied = declared.iter().any(|d| {
+                d.name == effect && (d.ops.is_empty() || d.ops.iter().any(|o| *o == op))
+            });
+            if satisfied {
+                continue;
+            }
+            let msg = format!(
+                "function body requires effect {effect}({op}) but the signature does not declare it"
+            );
+            self.diags.push(
+                crate::error::Diagnostic::error("E0141", msg, span)
+                    .with_help(format!("add: with {effect}({op})")),
+            );
         }
     }
 
@@ -1347,6 +1442,11 @@ impl<'a> TypeChecker<'a> {
 
             // ── Calls: check argument count ─────────────────────────────
             ExprKind::Call { callee, args, .. } => {
+                // G01: a call to a socket-opening primitive is an effect the
+                // body requires; the signature's row is enforced after the walk.
+                if let Some(path) = callee_path(callee) {
+                    self.note_effect_call(&path, expr.span);
+                }
                 self.check_expr(callee, locals);
                 for arg in args {
                     self.check_expr(&arg.value, locals);
@@ -1430,6 +1530,21 @@ impl<'a> TypeChecker<'a> {
                 }
                 let obj_ty = self.infer_expr_type(object, locals);
                 let type_name = self.type_to_name(&obj_ty);
+                // G01: `Tcp.connect(..)` / `net.connect(..)` — a static module
+                // path — and `conn.connect()` where the receiver's type is a
+                // socket type both open a socket.
+                let socket_path = match callee_path(object) {
+                    Some(p) if effect_for_callee(&p).is_some() => Some(format!("{p}.{method}")),
+                    _ => match &obj_ty {
+                        Type::Named(n) if matches!(n.as_str(), "Tcp" | "Udp" | "TLSConn") => {
+                            Some(format!("{n}.{method}"))
+                        }
+                        _ => None,
+                    },
+                };
+                if let Some(path) = socket_path {
+                    self.note_effect_call(&path, expr.span);
+                }
                 if let Some(ref tname) = type_name {
                     if let Some(methods) = self.env.methods.get(tname) {
                         let arity = methods.iter().find(|s| s.name == *method).map(|sig| {

@@ -24,7 +24,7 @@ struct TLSConn {
 }
 
 impl TLSConn {
-    fn connect(addr: String) -> Result<TLSConn> {
+    fn connect(addr: String) -> Result<TLSConn> with Net(connect) {
         Ok(TLSConn { host: addr, port: 443 })
     }
 }
@@ -48,7 +48,7 @@ struct QuicStream {
 impl QuicStream {
     // Establishes QUIC connection to the given URL
     // Returns QuicStream with active connection
-    native fn connect(url: String) -> Result<QuicStream>
+    native fn connect(url: String) -> Result<QuicStream> with Net(connect)
 
     // Opens a unidirectional stream and sends data
     native fn send(self, data: Bytes) -> Result<()>
@@ -72,7 +72,7 @@ struct WebSocket {
 
 impl WebSocket {
     // Establishes WebSocket connection (ws:// or wss://)
-    native fn connect(url: String) -> Result<WebSocket>
+    native fn connect(url: String) -> Result<WebSocket> with Net(connect)
 
     // Sends a text message over the WebSocket
     native fn send(self, msg: String) -> Result<()>
@@ -346,7 +346,7 @@ impl Transport {
     // For obfs4: performs obfuscation handshake with bridge
     // For meek: establishes domain-fronted HTTPS session
     // For snowflake: negotiates WebRTC connection through broker
-    native fn connect(self) -> Result<bool>
+    native fn connect(self) -> Result<bool> with Net(connect)
 
     // Sends data through the transport, returns bytes sent.
     // Data is automatically obfuscated per the transport protocol.

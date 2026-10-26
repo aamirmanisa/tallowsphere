@@ -521,6 +521,12 @@ impl Parser {
             None
         };
 
+        // Effect row (G01): `-> Result<String> with Net(connect) { ... }`.
+        // `with` is a contextual keyword — it is only a row in this position,
+        // so it stays an ordinary identifier everywhere else and the lexer is
+        // untouched.
+        let effects = self.parse_effect_row()?;
+
         let body = if is_native {
             Block {
                 stmts: Vec::new(),
@@ -538,9 +544,51 @@ impl Parser {
             type_params,
             params,
             return_type,
+            effects,
             body,
             span: Span::new(start.start, self.prev_span().end),
         })
+    }
+
+    /// Parse an effect row: `with Net(connect), Net(read)`.
+    ///
+    /// Grammar (G01, blueprint §2.1):
+    /// ```text
+    /// effect_row := ε | 'with' effect (',' effect)*
+    /// effect     := Ident [ '(' Ident (',' Ident)* ')' ]
+    /// ```
+    /// `with` is contextual: this is the only grammar position that reaches the
+    /// helper, so it is consumed here and remains an ordinary identifier in
+    /// every other position (no lexer keyword).
+    fn parse_effect_row(&mut self) -> Result<Vec<EffectReq>, ParseError> {
+        let mut effects = Vec::new();
+        if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "with") {
+            return Ok(effects);
+        }
+        self.advance();
+        loop {
+            let start = self.span();
+            let name = self.expect_ident()?;
+            let mut ops = Vec::new();
+            if self.eat(TokenKind::LParen) {
+                while !self.check(TokenKind::RParen) && !self.at_eof() {
+                    ops.push(self.expect_ident()?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+            }
+            effects.push(EffectReq {
+                name,
+                ops,
+                span: Span::new(start.start, self.prev_span().end),
+            });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        Ok(effects)
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {

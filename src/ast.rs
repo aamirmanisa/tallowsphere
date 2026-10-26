@@ -50,7 +50,26 @@ pub struct FnDecl {
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
+    /// Effect row declared after the return type: `with Net(connect), Net(read)`.
+    ///
+    /// An empty vector is the empty row (every function written before 2.0).
+    /// `with Net` (no parentheses) declares the whole effect and is treated as
+    /// covering every operation of it.
+    pub effects: Vec<EffectReq>,
     pub body: Block,
+    pub span: Span,
+}
+
+/// One entry of a function's effect row: `Net(connect)` or bare `Net`.
+///
+/// G01 (blueprint §2.1/§4): the socket-opening primitives in [`crate::typeck`]
+/// require the enclosing signature to declare them; `E0141` is reported at the
+/// call site when it does not.
+#[derive(Debug, Clone)]
+pub struct EffectReq {
+    pub name: String,
+    /// Empty for the bare `Net` form — "all operations of this effect".
+    pub ops: Vec<String>,
     pub span: Span,
 }
 

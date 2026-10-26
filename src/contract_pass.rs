@@ -519,6 +519,7 @@ mod tests {
             type_params: vec![],
             params,
             return_type: None,
+            effects: Vec::new(),
             body: Block {
                 stmts: body,
                 span: dummy_span(),

@@ -1675,6 +1675,7 @@ impl Interpreter {
                                             type_params: Vec::new(),
                                             params: tm.params.clone(),
                                             return_type: tm.return_type.clone(),
+                                            effects: Vec::new(),
                                             body: body.clone(),
                                             span: tm.span,
                                         };
@@ -22474,6 +22475,7 @@ impl Interpreter {
                                 type_params: Vec::new(),
                                 params: tm.params.clone(),
                                 return_type: tm.return_type.clone(),
+                                effects: Vec::new(),
                                 body: body.clone(),
                                 span: tm.span,
                             }));
