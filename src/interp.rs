@@ -3103,6 +3103,34 @@ impl Interpreter {
                 method,
                 args,
             } => {
+                // ── scope.grant(<Effect>) ────────────────────────────────
+                //
+                // The runtime half of the capability model (G01 P0.3). The
+                // argument is an effect *name*, not a value: `scope.grant(Net)`
+                // must not evaluate `Net`, which has no binding anywhere in the
+                // program. It is read from the AST exactly as the checker reads
+                // it, and the call is answered before any argument is
+                // evaluated.
+                //
+                // A grant is per-effect, not per-host, so this does not touch
+                // the host decision: it requires that the same deny-by-default
+                // register `net.connect` consults is present and loadable, and
+                // fails closed naming the path if it is not.
+                if let ExprKind::Ident(name) = &object.kind {
+                    if name == "scope" && method == "grant" && env.get("scope").is_none() {
+                        let effect = match args.first().map(|a| &a.value.kind) {
+                            Some(ExprKind::Ident(effect)) => effect.clone(),
+                            _ => {
+                                return Err(RuntimeError::Error(
+                                    "scope.grant expects an effect name, e.g. scope.grant(Net)"
+                                        .to_string(),
+                                ))
+                            }
+                        };
+                        return self.scope_grant(&effect);
+                    }
+                }
+
                 // Box.new(expr) → Value::Boxed
                 if let ExprKind::Ident(name) = &object.kind {
                     if name == "Box" && method == "new" {
@@ -4518,6 +4546,43 @@ impl Interpreter {
         verdict
             .err()
             .map(|msg| Value::Err(Box::new(Value::String(format!("capability_denied: {msg}")))))
+    }
+
+    /// Runtime binding for `scope.grant(<Effect>)` (G01 P0.3).
+    ///
+    /// The checker already refuses a grant outside `main`, an unknown effect
+    /// name, and a row that no grant backs; this is the other half — the
+    /// authority producer actually existing when a correct program runs.
+    ///
+    /// The value is deliberately opaque: `Value::Struct { name: "Grant" }` can
+    /// be built by no source expression, because no `Grant` struct is declared,
+    /// and no integer or string operation accepts it. It carries the effect
+    /// name so printing or debugging a program that mints authority shows what
+    /// was minted, not a token that can be forged from a literal.
+    ///
+    /// It does not consult or widen a host entry: a grant is per-effect
+    /// authority, and the per-host decision stays where it is, at connect. What
+    /// it does require is that the same deny-by-default register `net.connect`
+    /// reads is present and loadable, and it fails closed naming the path when
+    /// it is not.
+    fn scope_grant(&mut self, effect: &str) -> Result<Value, RuntimeError> {
+        if !crate::typeck::is_known_effect(effect) {
+            return Err(RuntimeError::Error(format!(
+                "scope.grant: unknown effect `{effect}`"
+            )));
+        }
+        let registry = crate::scope::ScopeRegister::load_default();
+        if let Some(failure) = registry.load_failure() {
+            return Err(RuntimeError::Error(format!(
+                "scope.grant({effect}) refused: the scope registry at {} could not be loaded: {}",
+                crate::scope::DEFAULT_REGISTER_PATH,
+                failure.explain()
+            )));
+        }
+        Ok(Value::Struct {
+            name: "Grant".to_string(),
+            fields: vec![("effect".to_string(), Value::String(effect.to_string()))],
+        })
     }
 
     fn call_function(

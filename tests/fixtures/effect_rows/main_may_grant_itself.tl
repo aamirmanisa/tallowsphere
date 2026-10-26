@@ -17,5 +17,7 @@
 @fingerprint_policy(policy: .normalize, bot_identity: "TallowGrantFixture/1.0 (+https://tallow.invalid/bot)")
 fn main() with Net(connect) {
     let g = scope.grant(Net)
-    net.connect("example.com")
+    // `host:port` — net.connect takes a socket address; the portless spelling
+    // was never reachable because this fixture used to die at `scope.grant`.
+    net.connect("example.com:443")
 }

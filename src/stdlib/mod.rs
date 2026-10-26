@@ -348,7 +348,7 @@ const REGISTERED_MODULES: &[&str] = &[
     "test", "captcha", "cookie_jar", "csrf",
     "extract", "Extract", "mime", "otp",
     "fingerprint", "frame", "graphql", "ocr",
-    "pdf", "rate_limit", "request_queue", "scenarios",
+    "pdf", "rate_limit", "request_queue", "scenarios", "scope",
     "session", "tls_profile", "turnstile", "warmup",
     "ws", "cloud", "detection", "iot",
     "otel", "pec", "safety", "path_util",
