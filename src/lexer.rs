@@ -577,8 +577,7 @@ impl<'src> Lexer<'src> {
                 ));
             }
 
-            value.push(ch as char);
-            self.advance();
+            self.push_char(&mut value);
         }
 
         Ok(Token::new(
@@ -629,8 +628,7 @@ impl<'src> Lexer<'src> {
                 ));
             }
 
-            value.push(ch as char);
-            self.advance();
+            self.push_char(&mut value);
         }
 
         Ok(Token::new(
@@ -671,8 +669,7 @@ impl<'src> Lexer<'src> {
                 continue;
             }
 
-            value.push(ch as char);
-            self.advance();
+            self.push_char(&mut value);
         }
 
         Ok(Token::new(
@@ -720,9 +717,35 @@ impl<'src> Lexer<'src> {
                 ));
             }
 
-            value.push(ch as char);
-            self.advance();
+            self.push_char(&mut value);
         }
+    }
+
+    /// Append one character — not one byte — of the source to `value`.
+    ///
+    /// A string literal may contain any UTF-8 scalar. Pushing `byte as char`
+    /// decoded each byte of a multi-byte scalar as Latin-1, so `"—"` came back
+    /// as `"â€""`: text that looked right in the source was mojibake the moment
+    /// it left the lexer, and every plane printed the damage.
+    fn push_char(&mut self, value: &mut String) {
+        let width = match self.bytes[self.pos] {
+            0x00..=0x7F => 1,
+            0xC2..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF4 => 4,
+            _ => 0, // continuation byte or invalid lead: pos is mid-scalar
+        };
+        if width > 0 && self.pos + width <= self.bytes.len() {
+            if let Ok(s) = std::str::from_utf8(&self.bytes[self.pos..self.pos + width]) {
+                value.push_str(s);
+                self.pos += width;
+                return;
+            }
+        }
+        // Malformed or bisected sequence: one replacement char, one byte
+        // forward, so the lexer cannot loop forever on bad input.
+        value.push('\u{FFFD}');
+        self.advance();
     }
 
     /// Scan a single escape sequence, appending to `value`.
@@ -2619,6 +2642,23 @@ mod tests {
     fn lex_string_with_escapes() {
         let (tokens, _) = tokenize(r#""hello\nworld""#);
         assert!(matches!(&tokens[0].kind, TokenKind::StringLit(s) if s.contains('\n')));
+    }
+
+    #[test]
+    fn lex_string_keeps_multibyte_utf8() {
+        // Regression: pushing `byte as char` decoded UTF-8 as Latin-1, so an em
+        // dash reached the interpreter as "â€"" and every plane printed that.
+        let (tokens, errors) = tokenize("fn main() { print(\"— café 日本 \u{1F600}\") }");
+        assert!(errors.is_empty(), "{errors:?}");
+        let lit = tokens
+            .iter()
+            .find_map(|t| match &t.kind {
+                TokenKind::StringLit(s) => Some(s.clone()),
+                _ => None,
+            })
+            .expect("string literal");
+        assert_eq!(lit, "— café 日本 \u{1F600}");
+        assert_eq!(lit.chars().count(), 11, "one char per scalar, not per byte");
     }
 
     #[test]
