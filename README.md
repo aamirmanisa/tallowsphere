@@ -1,16 +1,21 @@
 <div align="center">
 
-# Tallow Extraction Engine
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/sphere-hero-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/sphere-hero-light.png">
+  <img src="assets/sphere-hero-light.png" alt="Tallow — the extraction engine" width="100%">
+</picture>
 
 **A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
-![status](https://img.shields.io/badge/status-1.5.7-informational?style=flat-square)
-![license](https://img.shields.io/badge/license-MIT-black?style=flat-square)
-![rust](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&logo=rust&logoColor=white)
-![backend](https://img.shields.io/badge/backend-LLVM%20%C2%B7%20clang%2018-2d2d2d?style=flat-square)
-![artifact](https://img.shields.io/badge/linux--aarch64-stable-2ea44f?style=flat-square)
+<sub><a href="#extraction-in-five-minutes">Extraction</a> &nbsp;·&nbsp; <a href="#install">Install</a> &nbsp;·&nbsp; <a href="#the-language-underneath">The language</a> &nbsp;·&nbsp; <a href="#architecture">Architecture</a> &nbsp;·&nbsp; <a href="#building-from-source">Build</a> &nbsp;·&nbsp; <a href="#hosting-and-deployment">Deploy</a> &nbsp;·&nbsp; <a href="#what-it-does-not-do-yet">Limits</a></sub>
 
-[Extraction](#extraction-in-five-minutes) · [Install](#install) · [The language](#the-language-underneath) · [Architecture](#architecture) · [Build](#building-from-source) · [Deploy](#hosting-and-deployment) · [Limits](#what-it-does-not-do-yet)
+![release 1.5.7](https://img.shields.io/badge/release-1.5.7-E39B3E?style=flat-square&labelColor=171513)
+![rust 1.98.1](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&labelColor=171513&logo=rust&logoColor=white)
+![linux-aarch64](https://img.shields.io/badge/linux--aarch64-published-2F7A53?style=flat-square&labelColor=171513)
+![extraction local · no egress](https://img.shields.io/badge/extraction-local%20%C2%B7%20no%20egress-E39B3E?style=flat-square&labelColor=171513)
+![licence MIT](https://img.shields.io/badge/licence-MIT-6E675D?style=flat-square&labelColor=171513)
+[![build and conformance](https://github.com/aamirmanisa/tallowsphere/actions/workflows/ci.yml/badge.svg)](https://github.com/aamirmanisa/tallowsphere/actions/workflows/ci.yml)
 
 </div>
 
@@ -23,6 +28,14 @@ Two properties shape everything here.
 **Extraction is schema-first and local.** A contract is applied to an HTML file you already have. No LLM, no API key, no engine, no egress. The model-backed tier exists for pages a selector cannot cover, and it stays off until you name an engine and a policy that permits the transfer.
 
 **Nothing fails quietly.** A page that misses a required field writes no row and exits `1`. A refusal names its reason. A short read is an error, not a truncated string.
+
+## Three surfaces, one tree
+
+| You came for | Entry point | What is verified |
+|---|---|---|
+| **Extraction** | `tallow schema check`, `tallow extract`, `tallow plan dry-run` | [`schemas/tallow/examples/`](schemas/tallow/examples/), [`docs/extraction-engine/`](docs/extraction-engine/) |
+| **The language** | `tallow check`, `build`, `run --interpret`, `fmt`, `lint` | [`conformance/`](conformance/), [`docs/spec/`](docs/spec/) |
+| **Operations** | `tallow-reader`, `tallow-daemon`, `tallow-locator`, `tallow-jobs` | [`crates/`](crates/), [`docs/operations/`](docs/operations/) |
 
 ## Extraction in five minutes
 
@@ -42,11 +55,25 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-25 · release `v1.5.7` · `schema check` exit 0; `extract` exit 0
-with one row — and, against a page that does not carry the expected fields, two
-`unknown:` lines naming the selectors that yielded nothing rather than a guessed row]
+[measured 2026-10-25 · release `v1.5.7` · `schema check` exit 0; `extract` exit 0 with one row and an empty quarantine file against a three-field fixture — and, against a page that does not carry the expected fields, `unknown:` lines naming the selectors that yielded nothing rather than a guessed row]
 
 Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
+
+```json
+{"row_index":0,"status":"accepted","row_confidence":1.0,
+ "fields":{"name":{"value":"Blue  Widget","selector":".product .name",
+                   "selector_kind":"css","confidence":1.0,
+                   "source_evidence":"local html: …/product.html"}},
+ "non_claims":{"live_scraping":false,"production_ready":false}}
+```
+
+[measured 2026-10-25 · the same run, abridged; the row carries its own `non_claims` block so a consumer cannot mistake a local fixture for a live scrape]
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/sphere-extract-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/sphere-extract-light.png">
+  <img src="assets/sphere-extract-light.png" alt="Extraction pipeline: HTML and a schema resolve into rows with evidence, or into quarantine; no egress on this path" width="100%">
+</picture>
 
 `tallow schema check` is the gate to run in CI before a run depends on a contract. `tallow plan dry-run <manifest>` prints exactly what would be fetched and performs no egress; it refuses a manifest whose requests omit their `compliance` block.
 
@@ -96,14 +123,12 @@ installed tallow 1.5.7 into /root/.local/bin
 probe ok — native compile and run work
 ```
 
-[measured 2026-10-25 · release `v1.5.7` · the published linux-aarch64 tarball is
-174,665,207 B, sha256 `51b44074…5ec6` matches its sidecar, and the extracted
-binary prints `tallow 1.5.7` (git `447e7da1e1`) and runs a program]
+[measured 2026-10-25 · release `v1.5.7` · the published linux-aarch64 tarball is 174,665,207 B, sha256 `51b44074…5ec6` matches its sidecar, and the extracted binary prints `tallow 1.5.7` (git `447e7da1e1`) and runs a program]
 
 ```console
 $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
-$ curl -fsSL …/install.sh | bash -s -- --version 1.5.2
-$ ./install.sh --from ./tallow-linux-aarch64-1.5.2.tar.gz    # air-gapped
+$ curl -fsSL …/install.sh | bash -s -- --version <version>
+$ ./install.sh --from ./tallow-linux-aarch64-<version>.tar.gz    # air-gapped
 ```
 
 ### What the machine needs
@@ -120,12 +145,14 @@ $ ./install.sh --from ./tallow-linux-aarch64-1.5.2.tar.gz    # air-gapped
 
 ```console
 $ tallow --version
-tallow 1.5.2
+tallow 1.5.7
   platform: linux
   arch: aarch64
-  build: <stamp of the tagged build>
-  git: <tagged commit>
+  build: 2026-10-25T22:42:24Z
+  git: 447e7da1e1
 ```
+
+[measured 2026-10-25 · the binary installed by the one-line installer on this host]
 
 The `git:` line is provenance: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so the two are distinguishable.
 
@@ -152,6 +179,12 @@ hello, edsger
 **Two execution planes, one language.** Every program runs in the interpreter (`tallow run --interpret`) and compiles to a native binary (`tallow build`). That is not a convenience — it is the correctness harness: a codegen bug appears as a disagreement between planes, and every test that touches behaviour runs both.
 
 **Nothing hidden at run time.** A compiled program is a normal ELF binary linked against `libc` and the Tallow archive. No garbage collector, no VM handshake, no configuration lookup at startup.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/sphere-compiler-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/sphere-compiler-light.png">
+  <img src="assets/sphere-compiler-light.png" alt="Compiler pipeline: source, lexer, parser, imports, typeck, contracts, IR, clang, ELF — with the interpreter as an independent second plane" width="100%">
+</picture>
 
 ### Scripts
 
@@ -194,26 +227,18 @@ Operational verbs are documented in [`docs/`](docs/) and in `tallow --help`, whi
 
 ## Architecture
 
-```
- source .tl
-     │
- lexer ──▶ parser (recover | fast) ──▶ imports ──▶ typeck ──▶ contracts ──▶ IR ──▶ clang ──▶ ELF
-                                                                     │
-                                                                     └──▶ interpreter (second plane)
-```
-
 | Layer | Responsibility | Location |
 |---|---|---|
 | Front end | Lexing, error-recovering parsing, import resolution, type checking, contract verification | `src/lexer.rs`, `src/parser*.rs`, `src/typeck.rs` |
 | Back end | IR construction and emission, lowering of every stdlib call, link step | `src/codegen.rs` |
 | Interpreter | Independent execution plane for the same AST | `src/interp.rs` |
 | Extraction tier | Schema application, model tier, HAR import, provenance, smart extract | `src/browser/llm_extract.rs`, `src/browser/har_import.rs` |
-| Standard library | 111 modules: text, collections, files, JSON, HTTP, crypto, database, browser, CLI | `src/stdlib/` |
-| Browser runtime | Chrome over CDP: 138 files / 103,104 LOC, 163 device profiles, stealth and CAPTCHA handling | `src/browser/` |
+| Standard library | 113 modules: text, collections, files, JSON, HTTP, crypto, database, browser, CLI | `src/stdlib/` |
+| Browser runtime | Chrome over CDP: 139 files / 104,068 lines, 163 device profiles, stealth and CAPTCHA handling | `src/browser/` |
 | Toolchain | Build, run, check, fmt, lint, test, doc, repl, lsp, packages, SBOM, signing | `src/main.rs`, `src/cli/` |
 | Fleet crates | Daemon, jobs, admission, registry, mesh, reader, crypto, net, protocol, SVID, locator, advisory, copy engine | `crates/` |
 
-The engine is ~534,000 lines of Rust [measured 2026-10-21]. The browser runtime is not a side artefact of the extraction tier — it is why the repository carries device profiles, CDP profiles and CAPTCHA handling at all.
+The engine is 554,133 lines of Rust across `src/**/*.rs` [measured 2026-10-25; comments and blank lines included]. The browser runtime is not a side artefact of the extraction tier — it is why the repository carries device profiles, CDP profiles and CAPTCHA handling at all.
 
 ### The crates
 
@@ -233,6 +258,23 @@ Each crate has its own page with setup, API and deployment notes.
 | `tallow-locator` | Lawful egress broker: score, select, fail closed | [read](crates/tallow-locator/README.md) |
 | `tallow-advisory` | Read-only anomaly findings for a human | [read](crates/tallow-advisory/README.md) |
 | `tallow-copy-engine` | Planning and execution engine for file copies | [read](crates/tallow-copy-engine/README.md) |
+
+## What is in here
+
+```text
+src/            compiler, interpreter, stdlib, browser runtime, CLI
+crates/         12 workspace crates — daemon, jobs, registry, reader, locator, crypto, net, …
+stdlib/         the declared standard-library surface (.tl)
+schemas/        extraction contracts, including the example used above
+conformance/    the corpus this tree must pass on both planes
+docs/           architecture, extraction-engine spec, operations, ADRs, benchmarks
+examples/       runnable .tl programs
+benches/        reliability and crypto benchmarks
+scripts/        packaging, gates, fault suite
+assets/         hero and diagram sources (SVG) plus the rendered PNGs
+```
+
+`MANIFEST.md` records what this published tree contains, what was filtered out of the development repository, and why.
 
 ## Building from source
 
@@ -269,8 +311,8 @@ $ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local
 For a fleet, keep versions side by side so an upgrade is a symlink swap and rollback is a directory:
 
 ```console
-$ install -d /opt/tallow/1.5.2 && tar -xzf tallow-linux-aarch64-1.5.2.tar.gz -C /opt/tallow/1.5.2
-$ ln -sfn /opt/tallow/1.5.2 /opt/tallow/current
+$ install -d /opt/tallow/<version> && tar -xzf tallow-linux-aarch64-<version>.tar.gz -C /opt/tallow/<version>
+$ ln -sfn /opt/tallow/<version> /opt/tallow/current
 $ ln -sf /opt/tallow/current/bin/tallow /usr/local/bin/tallow
 ```
 
@@ -320,7 +362,7 @@ ENTRYPOINT ["tallow"]
 
 ```console
 $ cargo build --profile release --locked --target aarch64-unknown-linux-gnu --bin tallow --lib
-$ ./scripts/package_release.sh aarch64-unknown-linux-gnu 1.5.2 --out dist/
+$ ./scripts/package_release.sh aarch64-unknown-linux-gnu <version> --out dist/
 ```
 
 The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)`. It writes the archive and its `.sha256`, and stamps the commit into the binary's version output. Upload both; the installer verifies the checksum before unpacking.
@@ -329,16 +371,16 @@ The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)
 
 | Gate | Result | Revision |
 |---|---|---|
-| `cargo test --lib` | **9,250 passed · 0 failed · 33 ignored** | `0fdd5797ee`, 2026-10-24 [measured] |
-| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, empty quarantine, no egress | released 1.5.2 [measured] |
-| Conformance | **18 programs × 2 planes, 0 failures** against the installed 1.5.2 binary | 2026-10-24 [measured] |
-| Examples & tutorial | **10 of 10 programs** byte-identical on both planes, including `error_handling.tl` (`String.parse` now lowers natively) | 2026-10-22 [measured] |
-| Install probe | compiles and runs a program from the installed archive | 2026-10-21 [measured] |
+| Conformance | **21 cases · 19 run · 2 skipped · 0 failures**, both planes, against the installed binary | `447e7da1e1`, 2026-10-25 [measured] |
+| Extraction, schema-first | `schema check` exit 0; `extract` exit 0, one row, empty quarantine, no egress | v1.5.7, 2026-10-25 [measured] |
+| Tests, library suite | **9,250 passed · 0 failed · 33 ignored** | `0fdd5797ee`, 2026-10-24 [measured] |
+| Examples & tutorial | **10 of 10 programs** byte-identical on both planes | `447e7da1e1`, 2026-10-25 [measured] |
+| Install probe | compiles and runs a program from the installed archive | v1.5.7, 2026-10-25 [measured] |
 
 ```console
+$ python3 conformance/run.py --tallow $(command -v tallow)   # 19 run, 2 skipped (zk, fhe)
+$ python3 conformance/run.py --tallow … --features zk,fhe    # all 21
 $ cargo test --lib -- --test-threads=2
-$ cargo test --test script_mode --test fs_read_file_native --test exit_in_conditional
-$ python3 conformance/run.py --tallow $(command -v tallow)
 ```
 
 **How to read numbers in this repository.** Every quantitative claim carries a label: **[measured]** reproduced from a command in this tree at the stated revision · **[partial]** measured for part of the claim only · **[target-only]** a goal, not a measurement. A number without a label is prose.
@@ -355,6 +397,7 @@ $ python3 conformance/run.py --tallow $(command -v tallow)
 
 ## Documentation
 
+- [`docs/README.md`](docs/README.md) — the documentation index: architecture, operations, security, release
 - [`docs/extraction-engine/`](docs/extraction-engine/) — the extraction product's spec, checklist and runbook
 - [`docs/INSTALL.md`](docs/INSTALL.md) — install, upgrade, uninstall
 - [`TALLOW_SPEC.md`](TALLOW_SPEC.md) — the language specification carried in this tree
