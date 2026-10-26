@@ -371,3 +371,32 @@ fn udp_scan_separates_a_listener_from_a_refusal() {
         "an ICMP port-unreachable must be reported closed, not filtered:\n{stdout}"
     );
 }
+
+#[test]
+fn reconcile_merges_techniques_into_one_record() {
+    // N12: two techniques that agree must produce one verdict per port with no
+    // disagreement flag — and the verdict must be the one the packets support.
+    let listener = TcpListener::bind("127.0.0.1:46011").expect("bind 46011");
+    let _server = thread::spawn(move || {
+        let _ = listener.accept();
+    });
+
+    let (ok, stdout, stderr) = run("reconcile_loopback.tl");
+    assert!(ok, "reconcile must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("open=1") && stdout.contains("closed=1"),
+        "the merged record must count one open and one closed port:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("disagreements=0"),
+        "agreeing techniques must not be flagged as disagreeing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("port=46011 verdict=open"),
+        "the listener must be open in the merged record:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("port=46013 verdict=closed"),
+        "the closed port must be closed in the merged record:\n{stdout}"
+    );
+}

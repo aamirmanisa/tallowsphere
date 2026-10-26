@@ -1842,6 +1842,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "banner" => Some(banner_fn(args)),
         "ja4" => Some(ja4_fn(args)),
         "udp_scan" => Some(udp_scan_fn(args)),
+        "reconcile" => Some(reconcile_fn(args)),
         _ => None,
     }
 }
@@ -1896,6 +1897,297 @@ fn plan_fn(args: Vec<Value>) -> StdlibResult {
             (
                 "worst_case_ms".to_string(),
                 Value::Int((plan.packets as u128 * plan.max_rtt_ms as u128).min(i128::MAX as u128) as i128),
+            ),
+        ],
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Cross-technique reconciliation (N12)
+// ══════════════════════════════════════════════════════════════════
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Verdict {
+    Open,
+    Closed,
+    Filtered,
+    OpenOrFiltered,
+}
+
+impl Verdict {
+    fn rank(self) -> u8 {
+        match self {
+            // A positive answer outranks every absence of answer: a SYN-ACK or
+            // a UDP reply is evidence of a listener, while "no reply" is
+            // evidence of nothing.
+            Verdict::Open => 3,
+            Verdict::Closed => 2,
+            Verdict::OpenOrFiltered => 1,
+            Verdict::Filtered => 0,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Open => "open",
+            Verdict::Closed => "closed",
+            Verdict::Filtered => "filtered",
+            Verdict::OpenOrFiltered => "open|filtered",
+        }
+    }
+}
+
+struct Observation {
+    technique: &'static str,
+    port: u16,
+    verdict: Verdict,
+    confidence: f64,
+}
+
+struct MergedPort {
+    port: u16,
+    verdict: Verdict,
+    confidence: f64,
+    disagreement: bool,
+    by: Vec<(String, Verdict, f64)>,
+    notes: Vec<String>,
+}
+
+/// Merge per-technique observations into one verdict per port.
+///
+/// The rule is precedence, not averaging. Averaging would let two silent
+/// techniques outvote one that saw a SYN-ACK, which is exactly backwards: an
+/// open port is a positive observation and silence is not. Where techniques
+/// disagree the disagreement is recorded and the confidence is reduced — a
+/// host that answers a connect scan but not a SYN scan is a real finding about
+/// the path (a middlebox answering on the host's behalf, or a stateful filter).
+fn merge_observations(observations: Vec<Observation>) -> Vec<MergedPort> {
+    let mut by_port: HashMap<u16, Vec<Observation>> = HashMap::new();
+    for obs in observations {
+        by_port.entry(obs.port).or_default().push(obs);
+    }
+
+    let mut merged: Vec<MergedPort> = by_port
+        .into_iter()
+        .map(|(port, obs)| {
+            // Best evidence wins; ties break toward the higher confidence.
+            let winner = obs
+                .iter()
+                .max_by(|a, b| {
+                    a.verdict
+                        .rank()
+                        .cmp(&b.verdict.rank())
+                        .then(a.confidence.total_cmp(&b.confidence))
+                })
+                .expect("a port has at least one observation");
+
+            let conflicting: Vec<&Observation> = obs
+                .iter()
+                .filter(|o| o.verdict != winner.verdict)
+                .collect();
+            let decisive_conflict = obs
+                .iter()
+                .any(|o| o.verdict == Verdict::Open)
+                && obs.iter().any(|o| o.verdict == Verdict::Closed);
+
+            let mut notes = Vec::new();
+            if decisive_conflict {
+                notes.push(
+                    "one technique saw the port open and another saw it closed: the path is rewriting the answer, or a middlebox is speaking for the host"
+                        .to_string(),
+                );
+            }
+            for c in &conflicting {
+                notes.push(format!(
+                    "{} reported {} against the winning {}",
+                    c.technique,
+                    c.verdict.as_str(),
+                    winner.verdict.as_str()
+                ));
+            }
+
+            // Each disagreeing technique costs confidence, but never below a
+            // floor: the record stays usable, it just stops claiming certainty.
+            let penalty = 0.15 * conflicting.len() as f64;
+            let confidence = (winner.confidence - penalty).max(0.3);
+
+            MergedPort {
+                port,
+                verdict: winner.verdict,
+                confidence,
+                disagreement: !conflicting.is_empty(),
+                by: obs
+                    .iter()
+                    .map(|o| (o.technique.to_string(), o.verdict, o.confidence))
+                    .collect(),
+                notes,
+            }
+        })
+        .collect();
+
+    merged.sort_by_key(|m| m.port);
+    merged
+}
+
+fn struct_port_list(value: &Value, field: &str) -> Vec<u16> {
+    match value {
+        Value::Struct { fields, .. } => fields
+            .iter()
+            .find(|(k, _)| k == field)
+            .and_then(|(_, v)| match v {
+                Value::Array(items) => Some(
+                    items
+                        .iter()
+                        .filter_map(|i| match i {
+                            Value::Int(n) => Some(*n as u16),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn reconcile_fn(args: Vec<Value>) -> StdlibResult {
+    let target = arg_str(&args, 0, "target")?;
+    let ports = arg_str(&args, 1, "ports")?;
+    let techniques = arg_str(&args, 2, "techniques").unwrap_or_else(|_| "syn,connect".to_string());
+    let timeout_ms = arg_u64(&args, 3, 1000);
+    let rps = arg_u64(&args, 4, 20).max(1);
+    let started = Instant::now();
+
+    let mut observations: Vec<Observation> = Vec::new();
+    let mut ran: Vec<String> = Vec::new();
+
+    for tech in techniques.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()) {
+        let scan_args = vec![
+            Value::String(target.clone()),
+            Value::String(ports.clone()),
+            Value::Int(timeout_ms as i128),
+            Value::Int(rps as i128),
+        ];
+        if tech == "udp" {
+            let result = udp_scan_fn(scan_args)?;
+            for port in struct_port_list(&result, "open") {
+                observations.push(Observation {
+                    technique: "udp",
+                    port,
+                    verdict: Verdict::Open,
+                    confidence: 0.7,
+                });
+            }
+            for port in struct_port_list(&result, "closed") {
+                observations.push(Observation {
+                    technique: "udp",
+                    port,
+                    verdict: Verdict::Closed,
+                    confidence: 0.7,
+                });
+            }
+            for port in struct_port_list(&result, "open_or_filtered") {
+                observations.push(Observation {
+                    technique: "udp",
+                    port,
+                    verdict: Verdict::OpenOrFiltered,
+                    confidence: 0.5,
+                });
+            }
+            ran.push("udp".to_string());
+            continue;
+        }
+
+        let technique = parse_technique(tech)?;
+        let result = scan(scan_args, technique)?;
+        let confidence = match technique {
+            // A SYN-ACK or a RST is a packet-level fact from the host itself.
+            Technique::Syn => 0.95,
+            Technique::Connect => 0.9,
+            Technique::Evasion(_) => 0.5,
+        };
+        for port in struct_port_list(&result, "open") {
+            observations.push(Observation {
+                technique: technique.as_str(),
+                port,
+                verdict: Verdict::Open,
+                confidence,
+            });
+        }
+        for port in struct_port_list(&result, "closed") {
+            observations.push(Observation {
+                technique: technique.as_str(),
+                port,
+                verdict: Verdict::Closed,
+                confidence,
+            });
+        }
+        for port in struct_port_list(&result, "filtered") {
+            observations.push(Observation {
+                technique: technique.as_str(),
+                port,
+                verdict: Verdict::Filtered,
+                confidence: confidence * 0.6,
+            });
+        }
+        for port in struct_port_list(&result, "open_or_filtered") {
+            observations.push(Observation {
+                technique: technique.as_str(),
+                port,
+                verdict: Verdict::OpenOrFiltered,
+                confidence: 0.5,
+            });
+        }
+        ran.push(technique.as_str().to_string());
+    }
+
+    let merged = merge_observations(observations);
+    let disagreements = merged.iter().filter(|m| m.disagreement).count();
+
+    let port_values: Vec<Value> = merged
+        .iter()
+        .map(|m| Value::Struct {
+            name: "PortVerdict".to_string(),
+            fields: vec![
+                ("port".to_string(), Value::Int(m.port as i128)),
+                ("verdict".to_string(), Value::String(m.verdict.as_str().to_string())),
+                ("confidence".to_string(), Value::Float(m.confidence)),
+                ("disagreement".to_string(), Value::Bool(m.disagreement)),
+                (
+                    "by".to_string(),
+                    Value::Array(
+                        m.by
+                            .iter()
+                            .map(|(t, v, c)| {
+                                Value::String(format!("{t}:{}@{c:.2}", v.as_str()))
+                            })
+                            .collect(),
+                    ),
+                ),
+                (
+                    "notes".to_string(),
+                    Value::Array(m.notes.iter().cloned().map(Value::String).collect()),
+                ),
+            ],
+        })
+        .collect();
+
+    Ok(Value::Struct {
+        name: "HostRecord".to_string(),
+        fields: vec![
+            ("host".to_string(), Value::String(target)),
+            ("techniques".to_string(), Value::Array(ran.into_iter().map(Value::String).collect())),
+            ("ports".to_string(), Value::Array(port_values)),
+            ("open".to_string(), Value::Int(merged.iter().filter(|m| m.verdict == Verdict::Open).count() as i128)),
+            (
+                "closed".to_string(),
+                Value::Int(merged.iter().filter(|m| m.verdict == Verdict::Closed).count() as i128),
+            ),
+            ("disagreements".to_string(), Value::Int(disagreements as i128)),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
             ),
         ],
     })
@@ -2075,5 +2367,74 @@ mod tests {
         g.acquire(Ipv4Addr::new(10, 0, 0, 2));
         assert!(g.buckets.contains_key("host:10.0.0.1"));
         assert!(g.buckets.contains_key("prefix:10.0.0"));
+    }
+
+    #[test]
+    fn a_positive_observation_outvotes_silence() {
+        // N12: averaging would let two silent techniques outvote one SYN-ACK.
+        // Precedence is the rule: an open port is evidence, silence is not.
+        let merged = merge_observations(vec![
+            Observation {
+                technique: "syn",
+                port: 443,
+                verdict: Verdict::Open,
+                confidence: 0.95,
+            },
+            Observation {
+                technique: "connect",
+                port: 443,
+                verdict: Verdict::Filtered,
+                confidence: 0.54,
+            },
+        ]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].verdict, Verdict::Open);
+        assert!(merged[0].disagreement, "the conflict must be recorded");
+        assert!(merged[0].confidence < 0.95, "a conflict must cost confidence");
+    }
+
+    #[test]
+    fn a_technique_that_saw_the_port_closed_against_an_open_verdict_is_flagged() {
+        let merged = merge_observations(vec![
+            Observation {
+                technique: "connect",
+                port: 22,
+                verdict: Verdict::Open,
+                confidence: 0.9,
+            },
+            Observation {
+                technique: "syn",
+                port: 22,
+                verdict: Verdict::Closed,
+                confidence: 0.95,
+            },
+        ]);
+        assert_eq!(merged[0].verdict, Verdict::Open);
+        assert!(merged[0].disagreement);
+        assert!(
+            merged[0].notes.iter().any(|n| n.contains("rewriting the answer")),
+            "an open/closed conflict must name the middlebox hypothesis: {:?}",
+            merged[0].notes
+        );
+    }
+
+    #[test]
+    fn agreeing_techniques_keep_full_confidence() {
+        let merged = merge_observations(vec![
+            Observation {
+                technique: "syn",
+                port: 80,
+                verdict: Verdict::Open,
+                confidence: 0.95,
+            },
+            Observation {
+                technique: "connect",
+                port: 80,
+                verdict: Verdict::Open,
+                confidence: 0.9,
+            },
+        ]);
+        assert!(!merged[0].disagreement);
+        assert!((merged[0].confidence - 0.95).abs() < 1e-9);
     }
 }
