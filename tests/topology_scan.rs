@@ -105,3 +105,58 @@ fn an_unauthorized_target_is_refused_before_a_packet_is_sent() {
         "the register's own refusal code must be carried through:\n{stderr}"
     );
 }
+
+#[test]
+fn a_fin_scan_never_claims_open() {
+    // N03: silence from a non-SYN probe is open|filtered. A closed port must
+    // still be decisive (RST), and the caveat must travel with the result so a
+    // reader cannot mistake "no RST" for "open".
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipping: FIN scan needs CAP_NET_RAW (not root)");
+        return;
+    }
+    let listener = TcpListener::bind("127.0.0.1:45998").expect("bind 45998");
+    let _accepted = thread::spawn(move || {
+        let _ = listener.accept();
+    });
+
+    let (ok, stdout, stderr) = run("evasion_fin.tl");
+    assert!(ok, "fin scan must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("open_or_filtered=[45998]"),
+        "a listening port must be undecidable under FIN, never 'open':\n{stdout}"
+    );
+    assert!(
+        stdout.contains("closed=[45999, 46000]"),
+        "a RST is decisive even for FIN:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("silence means open|filtered"),
+        "the caveat must be carried in the result:\n{stdout}"
+    );
+}
+
+#[test]
+fn discovery_unions_icmp_and_tcp() {
+    // N04: loopback answers both. The assertion is about presence and the
+    // confidence being non-zero, not about which method won.
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipping: raw ICMP discovery needs CAP_NET_RAW (not root)");
+        return;
+    }
+    let listener = TcpListener::bind("127.0.0.1:46001").expect("bind 46001");
+    let _accepted = thread::spawn(move || {
+        let _ = listener.accept();
+    });
+
+    let (ok, stdout, stderr) = run("discover_loopback.tl");
+    assert!(ok, "discovery must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("alive=true"),
+        "loopback must be discovered alive:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("confidence=0.9"),
+        "a positive ICMP discovery carries 0.9 (a reply proves presence):\n{stdout}"
+    );
+}

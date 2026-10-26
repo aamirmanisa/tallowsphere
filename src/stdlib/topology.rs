@@ -83,8 +83,11 @@ fn parse_technique(spec: &str) -> Result<Technique, String> {
     match spec.to_ascii_lowercase().as_str() {
         "" | "syn" | "half-open" => Ok(Technique::Syn),
         "connect" | "full" => Ok(Technique::Connect),
+        "fin" => Ok(Technique::Evasion(EvasionFlags::Fin)),
+        "null" => Ok(Technique::Evasion(EvasionFlags::Null)),
+        "xmas" => Ok(Technique::Evasion(EvasionFlags::Xmas)),
         other => Err(format!(
-            "topology: unknown technique '{other}' (expected syn or connect)"
+            "topology: unknown technique '{other}' (expected syn, connect, fin, null or xmas)"
         )),
     }
 }
@@ -93,6 +96,38 @@ fn parse_technique(spec: &str) -> Result<Technique, String> {
 enum Technique {
     Syn,
     Connect,
+    /// FIN / NULL / Xmas (N03). They share one property: the probe carries no
+    /// SYN, so an RFC 793 host ignores it on an open port and answers RST on a
+    /// closed one. That makes silence "open|filtered", never "open".
+    Evasion(EvasionFlags),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EvasionFlags {
+    /// Only FIN set.
+    Fin,
+    /// No flags at all.
+    Null,
+    /// FIN|PSH|URG.
+    Xmas,
+}
+
+impl EvasionFlags {
+    fn tcp_flags(self) -> u8 {
+        match self {
+            EvasionFlags::Fin => 0x01,
+            EvasionFlags::Null => 0x00,
+            EvasionFlags::Xmas => 0x01 | 0x08 | 0x20,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            EvasionFlags::Fin => "fin",
+            EvasionFlags::Null => "null",
+            EvasionFlags::Xmas => "xmas",
+        }
+    }
 }
 
 impl Technique {
@@ -100,7 +135,12 @@ impl Technique {
         match self {
             Technique::Syn => "syn",
             Technique::Connect => "connect",
+            Technique::Evasion(f) => f.as_str(),
         }
+    }
+
+    fn is_evasion(self) -> bool {
+        matches!(self, Technique::Evasion(_))
     }
 }
 
@@ -222,6 +262,9 @@ fn make_plan(targets: usize, ports: usize, technique: Technique, rps: f64, timeo
         // cost the same on the wire.
         Technique::Syn => probes,
         Technique::Connect => probes * 2, // SYN, then FIN/ACK
+        // One probe out; an open port says nothing back. The cost on the wire
+        // is identical to SYN.
+        Technique::Evasion(_) => probes,
     };
     // The governor paces probes at `rps`; the wall time is the larger of that
     // and the timeout of the last probe still waiting.
@@ -245,6 +288,12 @@ enum PortState {
     Open,
     Closed,
     Filtered,
+    /// No RST came back to a non-SYN probe. The port is either open or
+    /// something in the path dropped the probe: RFC 793 requires silence from
+    /// an open port, but a firewall that drops and an open port look the same.
+    /// Non-RFC-compliant hosts may answer RST on open ports, so a `closed`
+    /// verdict from FIN/NULL/Xmas is the only one this technique can trust.
+    OpenOrFiltered,
 }
 
 fn resolve_v4(target: &str) -> Result<Ipv4Addr, String> {
@@ -357,13 +406,19 @@ mod raw {
             }
         }
 
-        pub fn send_syn(
+        /// Send one TCP probe with `flags` in the TCP header.
+        ///
+        /// SYN uses the same builder with `0x02`; FIN/NULL/Xmas (N03) use it
+        /// with their own flag sets, which is why the flag byte is a parameter
+        /// rather than a constant.
+        pub fn send_probe(
             &self,
             src: Ipv4Addr,
             dst: Ipv4Addr,
             src_port: u16,
             dst_port: u16,
             seq: u32,
+            flags: u8,
         ) -> io::Result<()> {
             let mut packet = [0u8; 40];
             // IPv4 header
@@ -382,7 +437,7 @@ mod raw {
             packet[24..28].copy_from_slice(&seq.to_be_bytes());
             packet[28..32].copy_from_slice(&0u32.to_be_bytes()); // ack
             packet[32] = 5 << 4; // data offset
-            packet[33] = 0x02; // SYN
+            packet[33] = flags;
             packet[34..36].copy_from_slice(&64240u16.to_be_bytes()); // window
             packet[36..38].copy_from_slice(&0u16.to_be_bytes()); // checksum, filled below
             packet[38..40].copy_from_slice(&0u16.to_be_bytes());
@@ -422,6 +477,104 @@ mod raw {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
+        }
+
+        /// One ICMP echo request, returning the round-trip time when a reply
+        /// for *this* id/sequence comes back (N04).
+        ///
+        /// The reply is matched on the payload marker as well as the id, so a
+        /// concurrent ping from another process on the same host is not
+        /// credited to this one.
+        pub fn icmp_echo(dst: Ipv4Addr, timeout: Duration) -> io::Result<Option<u128>> {
+            unsafe {
+                let fd = libc::socket(libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_ICMP);
+                if fd < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let tv = libc::timeval {
+                    tv_sec: timeout.as_secs() as libc::time_t,
+                    tv_usec: timeout.subsec_micros() as libc::suseconds_t,
+                };
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_RCVTIMEO,
+                    &tv as *const _ as *const libc::c_void,
+                    mem::size_of::<libc::timeval>() as libc::socklen_t,
+                );
+
+                let id = (std::process::id() & 0xffff) as u16;
+                let seq: u16 = 1;
+                let payload = b"tallow-n04";
+                let mut packet = vec![0u8; 8 + payload.len()];
+                packet[0] = 8; // echo request
+                packet[1] = 0;
+                packet[4..6].copy_from_slice(&id.to_be_bytes());
+                packet[6..8].copy_from_slice(&seq.to_be_bytes());
+                packet[8..].copy_from_slice(payload);
+                let ck = checksum(&packet);
+                packet[2..4].copy_from_slice(&ck.to_be_bytes());
+
+                let sa = libc::sockaddr_in {
+                    sin_family: libc::AF_INET as libc::sa_family_t,
+                    sin_port: 0,
+                    sin_addr: libc::in_addr {
+                        s_addr: u32::from_ne_bytes(dst.octets()),
+                    },
+                    sin_zero: [0; 8],
+                };
+                let started = Instant::now();
+                let sent = libc::sendto(
+                    fd,
+                    packet.as_ptr() as *const libc::c_void,
+                    packet.len(),
+                    0,
+                    &sa as *const _ as *const libc::sockaddr,
+                    mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                );
+                if sent < 0 {
+                    let err = io::Error::last_os_error();
+                    libc::close(fd);
+                    return Err(err);
+                }
+
+                let deadline = Instant::now() + timeout;
+                let mut buf = [0u8; 2048];
+                while Instant::now() < deadline {
+                    let n = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
+                    if n < 0 {
+                        let err = io::Error::last_os_error();
+                        if err.kind() == io::ErrorKind::WouldBlock
+                            || err.kind() == io::ErrorKind::TimedOut
+                        {
+                            break;
+                        }
+                        libc::close(fd);
+                        return Err(err);
+                    }
+                    let n = n as usize;
+                    if n < 28 {
+                        continue;
+                    }
+                    let ihl = ((buf[0] & 0x0f) as usize) * 4;
+                    let icmp = &buf[ihl..n];
+                    if icmp.len() < 8 + payload.len() {
+                        continue;
+                    }
+                    // Echo reply, our id/seq, our marker.
+                    if icmp[0] == 0
+                        && u16::from_be_bytes([icmp[4], icmp[5]]) == id
+                        && u16::from_be_bytes([icmp[6], icmp[7]]) == seq
+                        && &icmp[8..8 + payload.len()] == payload
+                    {
+                        let rtt = started.elapsed().as_millis();
+                        libc::close(fd);
+                        return Ok(Some(rtt));
+                    }
+                }
+                libc::close(fd);
+                Ok(None)
+            }
         }
 
         /// Collect replies for `timeout`, returning (port, open?) per probe.
@@ -513,6 +666,16 @@ mod raw {
     pub struct RawSyn;
 
     impl RawSyn {
+        pub fn icmp_echo(
+            _dst: std::net::Ipv4Addr,
+            _timeout: std::time::Duration,
+        ) -> io::Result<Option<u128>> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "host discovery over ICMP needs raw sockets (Linux only)",
+            ))
+        }
+
         pub fn open() -> io::Result<Self> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -524,13 +687,14 @@ mod raw {
             Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
         }
 
-        pub fn send_syn(
+        pub fn send_probe(
             &self,
             _src: Ipv4Addr,
             _dst: Ipv4Addr,
             _src_port: u16,
             _dst_port: u16,
             _seq: u32,
+            _flags: u8,
         ) -> io::Result<()> {
             Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
         }
@@ -548,6 +712,172 @@ mod raw {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Host discovery (N04)
+// ══════════════════════════════════════════════════════════════════
+
+/// One discovery method's verdict, with the confidence it earns.
+///
+/// The union is deliberately not a boolean: ICMP is widely filtered, so
+/// "no reply to ping" is weak evidence of absence while "reply to ping" is
+/// strong evidence of presence. Each method carries its own weight and the
+/// result reports which ones spoke.
+struct MethodResult {
+    name: &'static str,
+    alive: bool,
+    rtt_ms: Option<u128>,
+    confidence: f64,
+}
+
+fn discover_fn(args: Vec<Value>) -> StdlibResult {
+    let target = arg_str(&args, 0, "target")?;
+    let methods = arg_str(&args, 1, "methods").unwrap_or_else(|_| "icmp_echo,tcp_syn".to_string());
+    let ports = parse_ports(&arg_str(&args, 2, "ports").unwrap_or_else(|_| "80,443,22".to_string()))?;
+    let timeout_ms = arg_u64(&args, 3, 500);
+    let rps = arg_u64(&args, 4, 20).max(1) as f64;
+
+    let dst = resolve_v4(&target)?;
+    require_authorized(&target)?;
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = Instant::now();
+
+    let wanted: Vec<String> = methods
+        .split(',')
+        .map(|m| m.trim().to_ascii_lowercase())
+        .filter(|m| !m.is_empty())
+        .collect();
+    if wanted.is_empty() {
+        return Err("topology.discover: no discovery methods requested".to_string());
+    }
+
+    let mut results: Vec<MethodResult> = Vec::new();
+    let mut unsupported: Vec<String> = Vec::new();
+
+    for method in &wanted {
+        match method.as_str() {
+            "icmp_echo" | "icmp" => {
+                governor_acquire(dst, rps);
+                match raw::RawSyn::icmp_echo(dst, timeout) {
+                    Ok(rtt) => results.push(MethodResult {
+                        name: "icmp_echo",
+                        alive: rtt.is_some(),
+                        rtt_ms: rtt,
+                        // A reply proves presence; silence proves little,
+                        // because many hosts and paths drop ICMP.
+                        confidence: if rtt.is_some() { 0.9 } else { 0.2 },
+                    }),
+                    Err(e) => unsupported.push(format!("icmp_echo: {e}")),
+                }
+            }
+            "tcp_syn" | "tcp" => {
+                let sock = match raw::RawSyn::open() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        unsupported.push(format!("tcp_syn: {e}"));
+                        continue;
+                    }
+                };
+                let src = match raw::RawSyn::source_for(dst) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        unsupported.push(format!("tcp_syn: {e}"));
+                        continue;
+                    }
+                };
+                let src_port = 40000 + (std::process::id() % 20000) as u16;
+                let mut seq: u32 = 0x0dd5_0000 ^ (std::process::id() as u32) << 8;
+                for port in &ports {
+                    governor_acquire(dst, rps);
+                    seq = seq.wrapping_add(1);
+                    if let Err(e) = sock.send_probe(src, dst, src_port, *port, seq, 0x02) {
+                        unsupported.push(format!("tcp_syn send {port}: {e}"));
+                        break;
+                    }
+                }
+                match sock.collect(dst, src_port, &ports, timeout) {
+                    Ok(states) => {
+                        // Any RST or SYN-ACK is a host that answered. Silence
+                        // on all three probes is the weak case.
+                        let answered = states.iter().any(|(_, s)| *s != PortState::Filtered);
+                        results.push(MethodResult {
+                            name: "tcp_syn",
+                            alive: answered,
+                            rtt_ms: None,
+                            confidence: if answered { 0.8 } else { 0.3 },
+                        });
+                    }
+                    Err(e) => unsupported.push(format!("tcp_syn: {e}")),
+                }
+            }
+            // ARP is the only method that sees a host which blocks IP. It
+            // needs an AF_PACKET socket bound to the interface, so it is not
+            // implemented yet; saying so is better than silently reporting
+            // "down" for an on-link host.
+            "arp" => unsupported.push(
+                "arp: not implemented in this build (AF_PACKET link-layer discovery)".to_string(),
+            ),
+            other => unsupported.push(format!("{other}: unknown discovery method")),
+        }
+    }
+
+    let alive = results.iter().any(|r| r.alive);
+    let confidence = if alive {
+        results
+            .iter()
+            .filter(|r| r.alive)
+            .map(|r| r.confidence)
+            .fold(0.0_f64, f64::max)
+    } else if results.is_empty() {
+        0.0
+    } else {
+        // No method spoke: the host may be down, or every probe may have been
+        // filtered. That is not the same claim, and the number says so.
+        0.6
+    };
+
+    let method_values: Vec<Value> = results
+        .iter()
+        .map(|r| Value::Struct {
+            name: "DiscoveryMethod".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::String(r.name.to_string())),
+                ("alive".to_string(), Value::Bool(r.alive)),
+                (
+                    "rtt_ms".to_string(),
+                    match r.rtt_ms {
+                        Some(ms) => Value::Int(ms as i128),
+                        None => Value::Nil,
+                    },
+                ),
+                ("confidence".to_string(), Value::Float(r.confidence)),
+            ],
+        })
+        .collect();
+
+    Ok(Value::Struct {
+        name: "DiscoveryResult".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(dst.to_string())),
+            ("alive".to_string(), Value::Bool(alive)),
+            ("confidence".to_string(), Value::Float(confidence)),
+            ("methods".to_string(), Value::Array(method_values)),
+            (
+                "unsupported".to_string(),
+                Value::Array(
+                    unsupported
+                        .iter()
+                        .map(|m| Value::String(m.clone()))
+                        .collect(),
+                ),
+            ),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Dispatch
 // ══════════════════════════════════════════════════════════════════
 
@@ -556,6 +886,10 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "plan" => Some(plan_fn(args)),
         "syn_scan" => Some(scan(args, Technique::Syn)),
         "connect_scan" => Some(scan(args, Technique::Connect)),
+        "fin_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Fin))),
+        "null_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Null))),
+        "xmas_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Xmas))),
+        "discover" => Some(discover_fn(args)),
         _ => None,
     }
 }
@@ -629,6 +963,7 @@ fn scan(args: Vec<Value>, technique: Technique) -> StdlibResult {
     let mut open = Vec::new();
     let mut closed = Vec::new();
     let mut filtered = Vec::new();
+    let mut open_or_filtered = Vec::new();
     let mut sent = 0usize;
 
     match technique {
@@ -640,13 +975,21 @@ fn scan(args: Vec<Value>, technique: Technique) -> StdlibResult {
                     PortState::Open => open.push(*port),
                     PortState::Closed => closed.push(*port),
                     PortState::Filtered => filtered.push(*port),
+                    // A connect probe cannot be undecided: connect() either
+                    // completed, was refused, or did not.
+                    PortState::OpenOrFiltered => filtered.push(*port),
                 }
             }
         }
-        Technique::Syn => {
+        Technique::Syn | Technique::Evasion(_) => {
             let sock = raw::RawSyn::open().map_err(|e| {
-                format!("topology.syn_scan: cannot open a raw socket ({e}); use technique 'connect' when unprivileged")
+                format!("topology: technique '{}' needs a raw socket ({e}); use 'connect' when unprivileged", technique.as_str())
             })?;
+            let tcp_flags = match technique {
+                Technique::Syn => 0x02,
+                Technique::Evasion(f) => f.tcp_flags(),
+                Technique::Connect => unreachable!(),
+            };
             // Pace the send window the same way the connect path paces
             // connects: one token per probe.
             let src = raw::RawSyn::source_for(dst)
@@ -656,21 +999,27 @@ fn scan(args: Vec<Value>, technique: Technique) -> StdlibResult {
             for port in &ports {
                 governor_acquire(dst, rps);
                 seq = seq.wrapping_add(1);
-                // The source address in the pseudo-header is zero because the
-                // kernel fills it; the checksum is recomputed by the kernel
-                // when IP_HDRINCL is set on Linux, so a zero here is accepted.
-                sock.send_syn(src, dst, src_port, *port, seq)
-                    .map_err(|e| format!("topology.syn_scan: send to {dst}:{port} failed: {e}"))?;
+                sock.send_probe(src, dst, src_port, *port, seq, tcp_flags)
+                    .map_err(|e| format!("topology: send to {dst}:{port} failed: {e}"))?;
                 sent += 1;
             }
             let states = sock
                 .collect(dst, src_port, &ports, timeout)
                 .map_err(|e| format!("topology.syn_scan: receive failed: {e}"))?;
             for (port, state) in states {
+                // A non-SYN probe that drew no reply is open|filtered, never
+                // open: RFC 793 requires silence from an open port, but a
+                // dropping firewall is silent too. Only a RST is decisive.
+                let state = if technique.is_evasion() && state == PortState::Filtered {
+                    PortState::OpenOrFiltered
+                } else {
+                    state
+                };
                 match state {
                     PortState::Open => open.push(port),
                     PortState::Closed => closed.push(port),
                     PortState::Filtered => filtered.push(port),
+                    PortState::OpenOrFiltered => open_or_filtered.push(port),
                 }
             }
         }
@@ -679,6 +1028,7 @@ fn scan(args: Vec<Value>, technique: Technique) -> StdlibResult {
     open.sort_unstable();
     closed.sort_unstable();
     filtered.sort_unstable();
+    open_or_filtered.sort_unstable();
 
     Ok(Value::Struct {
         name: "ScanResult".to_string(),
@@ -699,6 +1049,25 @@ fn scan(args: Vec<Value>, technique: Technique) -> StdlibResult {
             (
                 "filtered".to_string(),
                 Value::Array(filtered.iter().map(|p| Value::Int(*p as i128)).collect()),
+            ),
+            (
+                "open_or_filtered".to_string(),
+                Value::Array(
+                    open_or_filtered
+                        .iter()
+                        .map(|p| Value::Int(*p as i128))
+                        .collect(),
+                ),
+            ),
+            // The caveat travels with the result: a reader must not mistake
+            // "no RST" for "open", and non-RFC hosts can RST an open port.
+            (
+                "caveat".to_string(),
+                Value::String(if technique.is_evasion() {
+                    "FIN/NULL/Xmas: silence means open|filtered, not open; some non-RFC-compliant hosts RST an open port, so a closed verdict is the only decisive one".to_string()
+                } else {
+                    String::new()
+                }),
             ),
             ("sent".to_string(), Value::Int(sent as i128)),
             (
