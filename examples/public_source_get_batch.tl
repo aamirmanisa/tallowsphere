@@ -6,7 +6,7 @@ import tallow.http
 
 @cra_class(.class_i)
 @legal(basis: .public_data, purpose: "local fixture public-source GET batch example", personal_data: false, robots_txt: .respect)
-fn main() {
+fn main() with Net(batch) {
     let target_urls = [
         "http://127.0.0.1:18080/status?case=batch-a",
         "http://127.0.0.1:18080/api/products"

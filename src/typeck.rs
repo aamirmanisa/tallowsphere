@@ -307,6 +307,11 @@ pub struct FnSignature {
     pub defaults: Vec<bool>,
     pub return_type: Type,
     pub span: Span,
+    /// The declared effect row (G01). A caller of this function inherits these
+    /// entries: the body of a caller must not exceed its own row, so a call
+    /// that reaches a socket through this function is the same requirement as
+    /// calling the primitive directly.
+    pub effects: Vec<EffectReq>,
 }
 
 impl FnSignature {
@@ -374,8 +379,10 @@ pub struct TypeChecker<'a> {
     pub diags: Diagnostics,
     /// Effect row of the signature whose body is being walked (G01).
     declared_effects: Vec<EffectReq>,
-    /// `(effect, op, call span)` collected from the body being walked (G01).
-    body_effect_reqs: Vec<(&'static str, String, Span)>,
+    /// `(effect, op, span)` collected from the body being walked (G01). The
+    /// effect name is owned because a row forwarded from a callee's signature
+    /// carries a `String`, not a `&'static str`.
+    body_effect_reqs: Vec<(String, String, Span)>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -466,6 +473,7 @@ impl<'a> TypeChecker<'a> {
                             defaults,
                             return_type,
                             span: f.span,
+                            effects: f.effects.clone(),
                         },
                     );
                 }
@@ -541,6 +549,7 @@ impl<'a> TypeChecker<'a> {
                         defaults,
                         return_type,
                         span: method.span,
+                        effects: method.effects.clone(),
                     });
                 }
                 self.env
@@ -969,8 +978,39 @@ impl<'a> TypeChecker<'a> {
             return;
         };
         let op = effect_op(path).to_string();
-        // The same call site can be visited twice (a `?`/`await` wrapper walks
-        // its inner expression); one diagnostic per site is enough.
+        self.push_effect_req(effect.to_string(), op, span);
+    }
+
+    /// G01, interprocedural: a call to a user function reaches whatever that
+    /// function's **declared** row says it reaches.
+    ///
+    /// The requirement is recorded at the *call site's* span, so the diagnostic
+    /// points at the call in the caller rather than repeating the callee's
+    /// declaration. A bare `Net` entry (no `ops`) has no single operation to
+    /// name: it is forwarded as `Net`, which only a bare `with Net` on the
+    /// caller satisfies.
+    ///
+    /// No fixpoint is needed and none is used. The callee's row is *declared*
+    /// in source, not inferred from its body, so it is complete before either
+    /// body is walked — including for a recursive cycle (`a` calls `a`), whose
+    /// requirement is whatever `a` declared.
+    fn note_callee_row(&mut self, effects: &[EffectReq], span: Span) {
+        for effect in effects {
+            if effect.ops.is_empty() {
+                self.push_effect_req(effect.name.clone(), String::new(), span);
+            } else {
+                for op in &effect.ops {
+                    self.push_effect_req(effect.name.clone(), op.clone(), span);
+                }
+            }
+        }
+    }
+
+    /// Append one body requirement, de-duplicated. The same call site can be
+    /// visited twice (a `?`/`await` wrapper walks its inner expression), and a
+    /// forwarded row can repeat an entry the call already required; one
+    /// diagnostic per site per requirement is enough.
+    fn push_effect_req(&mut self, effect: String, op: String, span: Span) {
         if self
             .body_effect_reqs
             .iter()
@@ -988,19 +1028,28 @@ impl<'a> TypeChecker<'a> {
         let reqs = std::mem::take(&mut self.body_effect_reqs);
         let declared = std::mem::take(&mut self.declared_effects);
         for (effect, op, span) in reqs {
+            // An empty `op` is a whole-effect requirement (a bare `with Net`
+            // forwarded from a callee): only a bare entry satisfies it.
             let satisfied = declared.iter().any(|d| {
-                d.name == effect && (d.ops.is_empty() || d.ops.iter().any(|o| *o == op))
+                d.name == effect
+                    && (d.ops.is_empty() || (!op.is_empty() && d.ops.iter().any(|o| *o == op)))
             });
             if satisfied {
                 continue;
             }
+            let (what, help) = if op.is_empty() {
+                (effect.clone(), format!("add: with {effect}"))
+            } else {
+                (
+                    format!("{effect}({op})"),
+                    format!("add: with {effect}({op})"),
+                )
+            };
             let msg = format!(
-                "function body requires effect {effect}({op}) but the signature does not declare it"
+                "function body requires effect {what} but the signature does not declare it"
             );
-            self.diags.push(
-                crate::error::Diagnostic::error("E0141", msg, span)
-                    .with_help(format!("add: with {effect}({op})")),
-            );
+            self.diags
+                .push(crate::error::Diagnostic::error("E0141", msg, span).with_help(help));
         }
     }
 
@@ -1446,6 +1495,14 @@ impl<'a> TypeChecker<'a> {
                 // body requires; the signature's row is enforced after the walk.
                 if let Some(path) = callee_path(callee) {
                     self.note_effect_call(&path, expr.span);
+                    // G01, interprocedural: a call to a user function reaches
+                    // whatever that function's declared row says it reaches —
+                    // recorded at *this* call site, so the diagnostic names the
+                    // call in the caller rather than the callee's declaration.
+                    if let Some(effects) = self.env.functions.get(&path).map(|s| s.effects.clone())
+                    {
+                        self.note_callee_row(&effects, expr.span);
+                    }
                 }
                 self.check_expr(callee, locals);
                 for arg in args {
@@ -1544,6 +1601,19 @@ impl<'a> TypeChecker<'a> {
                 };
                 if let Some(path) = socket_path {
                     self.note_effect_call(&path, expr.span);
+                }
+                // G01, interprocedural — the method analogue of the forwarded
+                // function row: an `impl` method that declares an effect row
+                // passes the requirement to its caller, at this call site.
+                let callee_row = type_name.as_ref().and_then(|tname| {
+                    self.env
+                        .methods
+                        .get(tname)
+                        .and_then(|sigs| sigs.iter().find(|s| s.name == *method))
+                        .map(|sig| sig.effects.clone())
+                });
+                if let Some(effects) = callee_row {
+                    self.note_callee_row(&effects, expr.span);
                 }
                 if let Some(ref tname) = type_name {
                     if let Some(methods) = self.env.methods.get(tname) {
@@ -5221,6 +5291,98 @@ fn main() { print(add(1)); }
         assert!(
             diags.has_errors(),
             "a parameter without a default is still required"
+        );
+    }
+
+    // ── G01: effect rows propagate through calls (interprocedural) ────────
+
+    fn e0141_msgs(source: &str) -> Vec<String> {
+        let (_, diags) = check(source);
+        diags
+            .items
+            .iter()
+            .filter(|d| d.code == "E0141")
+            .map(|d| d.msg.clone())
+            .collect()
+    }
+
+    #[test]
+    fn signature_carries_the_declared_row() {
+        let (env, _) = check("fn probe(h: string) with Net(connect) { net.connect(h) }");
+        let sig = env.functions.get("probe").expect("probe registered");
+        assert_eq!(sig.effects.len(), 1, "the row is part of the signature");
+        assert_eq!(sig.effects[0].name, "Net");
+        assert_eq!(sig.effects[0].ops, vec!["connect".to_string()]);
+    }
+
+    #[test]
+    fn caller_of_a_row_carrying_function_needs_that_row_too() {
+        let msgs = e0141_msgs(
+            r#"
+fn probe(h: string) with Net(connect) { net.connect(h) }
+fn outer(h: string) { probe(h) }
+"#,
+        );
+        assert_eq!(
+            msgs,
+            vec![
+                "function body requires effect Net(connect) but the signature does not declare it"
+                    .to_string()
+            ],
+            "the callee's declared row is the caller's requirement: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn caller_with_the_forwarded_row_is_clean() {
+        let msgs = e0141_msgs(
+            r#"
+fn probe(h: string) with Net(connect) { net.connect(h) }
+fn outer(h: string) with Net(connect) { probe(h) }
+"#,
+        );
+        assert!(
+            msgs.is_empty(),
+            "the forwarded row satisfies the gate: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn forwarding_is_transitive_and_terminates_on_a_cycle() {
+        // a → b → a is a cycle; the requirement is resolved from the *declared*
+        // rows, so the walk must terminate and the unannotated entry point must
+        // still be refused.
+        let msgs = e0141_msgs(
+            r#"
+fn a(h: string) with Net(connect) { b(h) }
+fn b(h: string) with Net(connect) { a(h) }
+fn entry(h: string) { a(h) }
+"#,
+        );
+        assert_eq!(
+            msgs.len(),
+            1,
+            "one refusal, at the call in `entry`: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn bare_row_is_forwarded_as_a_whole_effect() {
+        // A callee that declares bare `Net` names no single operation, so the
+        // caller must declare bare `Net` too — `Net(connect)` is not enough.
+        let msgs = e0141_msgs(
+            r#"
+fn probe(h: string) with Net { net.connect(h) }
+fn outer(h: string) with Net(connect) { probe(h) }
+"#,
+        );
+        assert_eq!(
+            msgs,
+            vec![
+                "function body requires effect Net but the signature does not declare it"
+                    .to_string()
+            ],
+            "a bare row forwards as a bare row: {msgs:?}"
         );
     }
 }

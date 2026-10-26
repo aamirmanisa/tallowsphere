@@ -14,7 +14,7 @@
     personal_data: false,
     rate_limit: 2.per_second
 )
-fn main() {
+fn main() with Net(probe_egress), Net(depth_info), Net(scan), Net(report) {
     print("== sitescan: comprehensive website + infrastructure scan ==")
 
     // 0. Egress posture (fail-closed contract; Tor-first).

@@ -14,7 +14,7 @@
 @burn_plan(persona: "msurface-one", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
 @fingerprint_policy(policy: .normalize, bot_identity: "TallowMSurface/1.0 (+https://tallow.invalid/bot)")
 @stealth(profile: .chrome_windows, evasions: .all)
-fn main() {
+fn main() with Net(get) {
     let u = env.get("MSURL")
     print("URL " + u)
     let r = http.get(u)

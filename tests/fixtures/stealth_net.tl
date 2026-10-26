@@ -1,6 +1,6 @@
 // Phase 23: Stealth & Advanced Networking integration test
 
-fn main() {
+fn main() with Net(tor_pool_create), Net(onion_addr), Net(proxy_chain_create), Net(tunnel_wireguard), Net(grpc_server_create), Net(grpc_client_connect), Net(traffic_shape_create), Net(transport_obfs4), Net(transport_meek), Net(transport_snowflake) {
     // Test TorPool type construction
     let tor = net.tor_pool_create(3)
     print("TorPool size: {tor.size}")
