@@ -452,6 +452,12 @@ pub struct TypeChecker<'a> {
     /// available at that call site — the capability half of the row
     /// (G01 P0.2, E0142).
     body_effect_reqs: Vec<(String, String, Span, bool)>,
+    /// `(effect, span)` of every `scope.grant(<effect>)` site in the body being
+    /// walked (G01 P0.2, E0144). The site is recorded while the locals are
+    /// live; whether it is legal is judged at the body boundary by
+    /// [`Self::enforce_grant_origin`], because the rule depends on the *name*
+    /// of the enclosing body — only `main` may originate authority.
+    body_grant_sites: Vec<(String, Span)>,
     /// Name of the body whose statements are being walked. `main` is the trust
     /// root (see `enforce_effect_row`); an `impl` method is never one.
     current_body_name: Option<String>,
@@ -465,6 +471,7 @@ impl<'a> TypeChecker<'a> {
             diags: Diagnostics::new(),
             declared_effects: Vec::new(),
             body_effect_reqs: Vec::new(),
+            body_grant_sites: Vec::new(),
             current_body_name: None,
         }
     }
@@ -1032,9 +1039,11 @@ impl<'a> TypeChecker<'a> {
         self.declared_effects = f.effects.clone();
         self.current_body_name = Some(f.name.clone());
         self.body_effect_reqs = Vec::new();
+        self.body_grant_sites = Vec::new();
         for stmt in &f.body.stmts {
             self.check_stmt(stmt, &mut locals);
         }
+        self.enforce_grant_origin(Some(&f.name), false);
         self.enforce_effect_row();
         self.current_body_name = None;
 
@@ -1079,9 +1088,13 @@ impl<'a> TypeChecker<'a> {
         self.declared_effects = method.effects.clone();
         self.current_body_name = None;
         self.body_effect_reqs = Vec::new();
+        self.body_grant_sites = Vec::new();
         for stmt in &method.body.stmts {
             self.check_stmt(stmt, &mut locals);
         }
+        // An `impl` method is never `main`: it has no path to the trust root,
+        // so it must take the capability as a parameter (E0144).
+        self.enforce_grant_origin(None, true);
         self.enforce_effect_row();
     }
 
@@ -1220,6 +1233,57 @@ impl<'a> TypeChecker<'a> {
             );
             self.diags
                 .push(crate::error::Diagnostic::error("E0142", msg, span));
+        }
+    }
+
+    /// Record one `scope.grant(<effect>)` site while the body walk is inside it
+    /// (G01 P0.2, E0144). The same expression can be visited twice through a
+    /// `?`/`await` wrapper, so the site is de-duplicated.
+    fn record_grant_site(&mut self, effect: &str, span: Span) {
+        if self
+            .body_grant_sites
+            .iter()
+            .any(|(e, s)| e == effect && s.start == span.start && s.end == span.end)
+        {
+            return;
+        }
+        self.body_grant_sites.push((effect.to_string(), span));
+    }
+
+    /// G01 P0.2 (E0144): authority may only be **originated** in `main`.
+    ///
+    /// `scope.grant` is the only producer of a `Grant<E>` (see
+    /// [`scope_grant_effect`]). If any body could call it, E0142 would be
+    /// decorative in exactly the way the row was before P0.2: a helper that
+    /// should have been handed a capability would simply mint one for itself.
+    /// So the producer is confined to the trust root `main` — the one body
+    /// whose authority comes from the runtime scope registry rather than from a
+    /// caller, and the one the program-scope gates (`@legal`, plan and
+    /// fingerprint annotations) already cover.
+    ///
+    /// Every other body must take a `Grant<E>` parameter and pass it on. An
+    /// `impl` method is never `main`, so it always needs the parameter; that is
+    /// said in the help text rather than assumed.
+    fn enforce_grant_origin(&mut self, body_name: Option<&str>, is_impl: bool) {
+        let sites = std::mem::take(&mut self.body_grant_sites);
+        if body_name == Some("main") {
+            return;
+        }
+        for (effect, span) in sites {
+            let msg = format!(
+                "authority may only be originated in main; take a Grant<{effect}> parameter instead"
+            );
+            let help = if is_impl {
+                format!(
+                    "an impl method is never main: declare `Grant<{effect}>` on the method and thread it from a caller that obtained it"
+                )
+            } else {
+                format!(
+                    "main obtains the capability with scope.grant({effect}) and passes it in as a parameter"
+                )
+            };
+            self.diags
+                .push(crate::error::Diagnostic::error("E0144", msg, span).with_help(help));
         }
     }
 
@@ -1903,6 +1967,10 @@ impl<'a> TypeChecker<'a> {
                 // applies.
                 if let Some(effect) = scope_grant_effect(expr) {
                     self.validate_scope_grant(effect, expr.span);
+                    // E0144: record the site; only `main` may originate
+                    // authority, and that is judged at the body boundary where
+                    // the enclosing body's name is known.
+                    self.record_grant_site(effect, expr.span);
                     return;
                 }
                 // A browser helper kind name (`AdaptiveCrawler.new()`) is a static

@@ -234,3 +234,60 @@ fn grant_of_an_unknown_effect_is_refused() {
         "the refusal must name the unknown effect:\n{stderr}"
     );
 }
+
+// ── G01 P0.2 — authority may only be originated in `main` (E0144) ─────────────
+//
+// The row half of P0.2 says what a body does; the grant half says where the
+// authority came from. `scope.grant` is the only producer of a capability, so
+// confining it to `main` is what stops a helper from printing its own.
+
+#[test]
+fn grant_outside_main_is_refused() {
+    // `helper` declares the row *and* grants itself: before E0144 it satisfied
+    // both halves of the rule while never being handed any authority.
+    let (ok, stderr) = check("grant_only_in_main.tl");
+    assert!(
+        !ok,
+        "a body that is not `main` must not originate authority:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0144"),
+        "the refusal must carry code E0144:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "authority may only be originated in main; take a Grant<Net> parameter instead"
+        ),
+        "the refusal must name the rule and the fix:\n{stderr}"
+    );
+    // The finding is the origin of authority, not a missing row or a missing
+    // grant: `helper` declares `Net(connect)` and holds a grant value.
+    assert!(
+        !stderr.contains("E0141"),
+        "the row is declared, so E0141 must not fire:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("E0142"),
+        "the grant is in scope, so E0142 must not fire:\n{stderr}"
+    );
+    // The span is the `scope.grant` call in `helper` (line 10), not `main`'s
+    // legitimate grant further down.
+    assert!(
+        stderr.contains("grant_only_in_main.tl:10:"),
+        "the refusal must be reported at the offending scope.grant call:\n{stderr}"
+    );
+}
+
+#[test]
+fn grant_threaded_from_main_compiles() {
+    // The shape every network helper must have: `main` originates the
+    // capability, the helper takes it as a parameter and declares its row.
+    let (ok, stderr) = check("grant_param_threaded.tl");
+    assert!(
+        ok,
+        "a `Grant<Net>` threaded from main must authorise the helper:\n{stderr}"
+    );
+    assert!(!stderr.contains("E0144"), "no E0144 expected:\n{stderr}");
+    assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
+    assert!(!stderr.contains("E0142"), "no E0142 expected:\n{stderr}");
+}
