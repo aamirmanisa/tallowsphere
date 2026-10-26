@@ -1348,6 +1348,327 @@ fn banner_fn(args: Vec<Value>) -> StdlibResult {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// JA4 client fingerprint (N07)
+// ══════════════════════════════════════════════════════════════════
+
+/// A TCP stream that records everything written through it.
+///
+/// The fingerprint must describe the ClientHello that actually went on the
+/// wire, not the configuration that was supposed to produce it; recording at
+/// the socket is the only way to be sure the two match.
+struct RecordingStream<'a> {
+    inner: &'a mut TcpStream,
+    written: Vec<u8>,
+}
+
+impl std::io::Write for RecordingStream<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        if self.written.len() < 16 * 1024 {
+            self.written.extend_from_slice(&buf[..n]);
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl std::io::Read for RecordingStream<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+#[derive(Debug, Default)]
+struct ClientHelloInfo {
+    legacy_version: u16,
+    supported_versions: Vec<u16>,
+    ciphers: Vec<u16>,
+    extensions: Vec<u16>,
+    alpn: Vec<String>,
+    has_sni: bool,
+}
+
+/// Parse the first ClientHello out of a recorded TLS stream.
+fn parse_client_hello(bytes: &[u8]) -> Option<ClientHelloInfo> {
+    if bytes.len() < 5 || bytes[0] != 0x16 || bytes[1] != 0x03 {
+        return None;
+    }
+    let mut i = 5; // record header
+    if *bytes.get(i)? != 0x01 {
+        return None; // handshake type: ClientHello
+    }
+    i += 1;
+    // handshake length (3 bytes) — not needed for parsing, the record bound is.
+    i += 3;
+    let mut info = ClientHelloInfo {
+        legacy_version: u16::from_be_bytes([*bytes.get(i)?, *bytes.get(i + 1)?]),
+        ..Default::default()
+    };
+    i += 2;
+    i += 32; // random
+    let sid_len = *bytes.get(i)? as usize;
+    i += 1 + sid_len;
+    let cipher_len = u16::from_be_bytes([*bytes.get(i)?, *bytes.get(i + 1)?]) as usize;
+    i += 2;
+    if i + cipher_len > bytes.len() {
+        return None;
+    }
+    for c in bytes[i..i + cipher_len].chunks_exact(2) {
+        info.ciphers.push(u16::from_be_bytes([c[0], c[1]]));
+    }
+    i += cipher_len;
+    let comp_len = *bytes.get(i)? as usize;
+    i += 1 + comp_len;
+    if i + 2 > bytes.len() {
+        return Some(info); // no extensions block
+    }
+    let ext_total = u16::from_be_bytes([*bytes.get(i)?, *bytes.get(i + 1)?]) as usize;
+    i += 2;
+    let ext_end = (i + ext_total).min(bytes.len());
+    while i + 4 <= ext_end {
+        let ext_type = u16::from_be_bytes([bytes[i], bytes[i + 1]]);
+        let ext_len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+        i += 4;
+        if i + ext_len > ext_end {
+            break;
+        }
+        info.extensions.push(ext_type);
+        match ext_type {
+            0x0000 => info.has_sni = true,
+            0x0010 => {
+                // ALPN: 2-byte list length, then 1-byte-len entries.
+                let data = &bytes[i..i + ext_len];
+                if data.len() >= 2 {
+                    let list_len = u16::from_be_bytes([data[0], data[1]]) as usize;
+                    let mut j = 2;
+                    let end = (2 + list_len).min(data.len());
+                    while j < end {
+                        let l = data[j] as usize;
+                        j += 1;
+                        if j + l > end {
+                            break;
+                        }
+                        info.alpn
+                            .push(String::from_utf8_lossy(&data[j..j + l]).to_string());
+                        j += l;
+                    }
+                }
+            }
+            0x002b => {
+                // supported_versions: 1-byte length, then 2-byte versions.
+                let data = &bytes[i..i + ext_len];
+                if !data.is_empty() {
+                    let l = data[0] as usize;
+                    let mut j = 1;
+                    while j + 1 < data.len() && j < 1 + l {
+                        info.supported_versions
+                            .push(u16::from_be_bytes([data[j], data[j + 1]]));
+                        j += 2;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += ext_len;
+    }
+    Some(info)
+}
+
+fn sha256_12(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(bytes);
+    hex_lower(&h.finalize())[..12].to_string()
+}
+
+/// Compute JA4 (FoxIO spec) from a parsed ClientHello.
+///
+/// `a` is protocol/version/SNI, `b` counts ciphers and extensions and carries
+/// the first ALPN token, `c` is the cipher-list hash. JA4H (the HTTP header
+/// fingerprint) is a different fingerprint and is not computed here.
+fn ja4_from(info: &ClientHelloInfo) -> (String, String, String) {
+    let version = if info.supported_versions.contains(&0x0304) {
+        "13"
+    } else if info.legacy_version >= 0x0303 {
+        "12"
+    } else {
+        "11"
+    };
+    let sni = if info.has_sni { "d" } else { "i" };
+    let alpn = match info.alpn.first() {
+        Some(a) if a.len() >= 2 => format!("{}{}", &a[..1], &a[a.len() - 1..]),
+        Some(a) => format!("{a}0"),
+        None => "00".to_string(),
+    };
+    let a = format!("t{version}{sni}");
+    let b = format!("{:02}{:02}{}", info.ciphers.len(), info.extensions.len(), alpn);
+
+    let cipher_spec = info
+        .ciphers
+        .iter()
+        .map(|c| format!("{c:04x}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let c = sha256_12(cipher_spec.as_bytes());
+
+    // The extension hash excludes SNI (0x0000) and ALPN (0x0010), which are
+    // already represented in the `a` and `b` fields, and is computed over the
+    // sorted extension list.
+    let mut exts: Vec<String> = info
+        .extensions
+        .iter()
+        .filter(|e| **e != 0x0000 && **e != 0x0010)
+        .map(|e| format!("{e:04x}"))
+        .collect();
+    exts.sort();
+    let d = sha256_12(exts.join(",").as_bytes());
+
+    (format!("{a}_{b}_{c}"), c, d)
+}
+
+fn ja4_fn(args: Vec<Value>) -> StdlibResult {
+    use rustls::pki_types::ServerName;
+    use std::sync::Arc;
+
+    let target = arg_str(&args, 0, "target")?;
+    let port = arg_u64(&args, 1, 443) as u16;
+    let timeout_ms = arg_u64(&args, 2, 3000);
+    let sni = match args.get(3) {
+        Some(Value::String(s)) if !s.is_empty() => s.clone(),
+        _ => target.clone(),
+    };
+
+    let addr = resolve_v4(&target)?;
+    require_authorized(&target)?;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("topology.ja4: cannot configure TLS versions: {e}"))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    let server_name = ServerName::try_from(sni.clone())
+        .map_err(|_| format!("topology.ja4: '{sni}' is not a valid server name"))?;
+    let timeout = Duration::from_millis(timeout_ms);
+    let mut sock = TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(addr), port), timeout)
+        .map_err(|e| format!("topology.ja4: connect {addr}:{port} failed: {e}"))?;
+    sock.set_read_timeout(Some(timeout)).ok();
+    sock.set_write_timeout(Some(timeout)).ok();
+
+    let mut conn = rustls::ClientConnection::new(Arc::new(config), server_name)
+        .map_err(|e| format!("topology.ja4: cannot start a TLS session: {e}"))?;
+
+    let started = Instant::now();
+    let hello = {
+        let mut recorder = RecordingStream {
+            inner: &mut sock,
+            written: Vec::new(),
+        };
+        // Only the first flight matters. complete_io writes the ClientHello and
+        // then blocks for the reply; if the server is slow the timeout bounds
+        // it, and the bytes already recorded are still the fingerprint.
+        let _ = conn.complete_io(&mut recorder);
+        parse_client_hello(&recorder.written)
+    };
+
+    let hello = hello.ok_or_else(|| {
+        format!("topology.ja4: no ClientHello was captured for {addr}:{port}")
+    })?;
+    let (ja4, cipher_hash, ext_hash) = ja4_from(&hello);
+
+    Ok(Value::Struct {
+        name: "JA4Result".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(addr.to_string())),
+            ("port".to_string(), Value::Int(port as i128)),
+            ("ja4".to_string(), Value::String(ja4)),
+            (
+                "legacy_version".to_string(),
+                Value::Int(hello.legacy_version as i128),
+            ),
+            (
+                "ciphers".to_string(),
+                Value::Int(hello.ciphers.len() as i128),
+            ),
+            (
+                "extensions".to_string(),
+                Value::Int(hello.extensions.len() as i128),
+            ),
+            (
+                "alpn".to_string(),
+                Value::Array(hello.alpn.iter().cloned().map(Value::String).collect()),
+            ),
+            ("sni".to_string(), Value::Bool(hello.has_sni)),
+            ("cipher_hash".to_string(), Value::String(cipher_hash)),
+            ("extension_hash".to_string(), Value::String(ext_hash)),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+/// The fingerprint describes the hello we sent; the peer's certificate is not
+/// the subject of the measurement, so verification is not attempted here (use
+/// `tls_posture` for trust).
+#[derive(Debug)]
+struct NoVerify;
+
+impl rustls::client::danger::ServerCertVerifier for NoVerify {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        use rustls::SignatureScheme::*;
+        vec![
+            ECDSA_NISTP256_SHA256,
+            ECDSA_NISTP384_SHA384,
+            ED25519,
+            RSA_PSS_SHA256,
+            RSA_PSS_SHA384,
+            RSA_PSS_SHA512,
+            RSA_PKCS1_SHA256,
+            RSA_PKCS1_SHA384,
+            RSA_PKCS1_SHA512,
+        ]
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Dispatch
 // ══════════════════════════════════════════════════════════════════
 
@@ -1362,6 +1683,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "discover" => Some(discover_fn(args)),
         "tls_posture" => Some(tls_posture_fn(args)),
         "banner" => Some(banner_fn(args)),
+        "ja4" => Some(ja4_fn(args)),
         _ => None,
     }
 }

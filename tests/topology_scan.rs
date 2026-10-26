@@ -264,3 +264,85 @@ fn banner_reads_a_server_header() {
         "the Server header must be parsed into product and version:\n{stdout}"
     );
 }
+
+#[test]
+fn ja4_describes_the_hello_that_was_sent() {
+    // N07: the fingerprint is computed from the bytes recorded off the socket,
+    // so its fields must agree with a real rustls ClientHello — TLS 1.3,
+    // SNI present, several ciphers and extensions. The exact hash is
+    // rustls-version dependent and is not asserted; the shape and the parsed
+    // counts are.
+    let key = rcgen::KeyPair::generate().expect("keygen");
+    let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+    let cert = params.self_signed(&key).expect("self-sign");
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let server_config = std::sync::Arc::new(
+        rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("versions")
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![rustls::pki_types::CertificateDer::from(cert.der().to_vec())],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()),
+                ),
+            )
+            .expect("server config"),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:46006").expect("bind 46006");
+    let _server = thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            let mut conn = rustls::ServerConnection::new(server_config).expect("server conn");
+            while conn.is_handshaking() {
+                if conn.complete_io(&mut sock).is_err() {
+                    return;
+                }
+            }
+            thread::sleep(std::time::Duration::from_millis(200));
+        }
+    });
+
+    let (ok, stdout, stderr) = run("ja4_loopback.tl");
+    assert!(ok, "ja4 must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("ja4=t13d"),
+        "a TLS 1.3 hello with SNI must fingerprint as t13d:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("sni=true"),
+        "SNI must be detected in the sent hello:\n{stdout}"
+    );
+    // The b-field encodes counts as two decimal digits each: NNMM + alpn.
+    let ciphers: u32 = stdout
+        .split("ciphers=")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|s| s.parse().ok())
+        .expect("cipher count must be printed");
+    let extensions: u32 = stdout
+        .split("extensions=")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|s| s.parse().ok())
+        .expect("extension count must be printed");
+    assert!(
+        ciphers >= 3 && extensions >= 5,
+        "a real rustls hello carries several ciphers ({ciphers}) and extensions ({extensions}):\n{stdout}"
+    );
+    assert!(
+        stdout.contains("ja4=t13d"),
+        "the a-field must be t13d:\n{stdout}"
+    );
+    // b-field = two-digit cipher count + two-digit extension count + ALPN token
+    let ja4 = stdout
+        .split("ja4=")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .expect("ja4 must be printed");
+    let b_field = ja4.split('_').nth(1).expect("b-field must exist");
+    assert!(
+        b_field.ends_with("h2"),
+        "the b-field must carry the negotiated ALPN token, got '{b_field}':\n{stdout}"
+    );
+}
