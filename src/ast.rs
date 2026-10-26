@@ -52,6 +52,13 @@ pub struct FnDecl {
     /// trust root (`main`, see `typeck::TypeChecker::check_trust_root`) anchored
     /// to an entry-point file rather than to a spelling.
     pub is_imported: bool,
+    /// The file an imported item came from, when `is_imported` is set.
+    ///
+    /// Spans are byte offsets into *their own* file, so a diagnostic about an
+    /// imported item rendered against the entry file's text points at the wrong
+    /// line (audit N-9: E0147 rendered an imported `main` against the caller's
+    /// source). Carrying the path lets the diagnostic read the right file.
+    pub imported_from: Option<std::path::PathBuf>,
     pub name: String,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,

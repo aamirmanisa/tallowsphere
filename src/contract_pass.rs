@@ -516,6 +516,7 @@ mod tests {
             is_async: false,
             is_native: false,
             is_imported: false,
+            imported_from: None,
             name: name.to_string(),
             type_params: vec![],
             params,

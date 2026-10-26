@@ -541,6 +541,7 @@ impl Parser {
             is_async,
             is_native,
             is_imported: false,
+            imported_from: None,
             name,
             type_params,
             params,

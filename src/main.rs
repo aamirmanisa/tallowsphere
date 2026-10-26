@@ -3332,7 +3332,14 @@ fn real_main() -> anyhow::Result<()> {
                     std::process::exit(exit_codes::IO_ERROR);
                 }
             };
-            resolve_imports(&mut program, file);
+            let import_diags = resolve_imports(&mut program, file);
+            if !import_diags.is_empty() {
+                let filename = file.display().to_string();
+                for d in &import_diags {
+                    eprintln!("{}", d.render(&source, &filename));
+                }
+                std::process::exit(exit_codes::COMPILE_ERROR);
+            }
 
             let results = smt_export::generate_all_smt(&program);
 
@@ -10231,7 +10238,7 @@ fn real_main() -> anyhow::Result<()> {
 
             // ── Phase 2b: Resolve imports ────────────────────────────
             let mut program = program;
-            resolve_imports(&mut program, file);
+            let import_diags = resolve_imports(&mut program, file);
 
             // ── Phase 3: Type Check ──────────────────────────────────
             let (env, typeck_diags) = TypeChecker::new(&program).check();
@@ -10419,6 +10426,12 @@ fn real_main() -> anyhow::Result<()> {
 
             // ── Collect all diagnostics ──────────────────────────────
             let mut all_diags = tallow::error::Diagnostics::new();
+            // Import resolution runs before every pass, so its refusals are
+            // reported first: a program compiled against a module that is not
+            // there is broken before it is typechecked (audit N-10).
+            for d in import_diags {
+                all_diags.push(d);
+            }
             for d in typeck_diags.items {
                 all_diags.push(d);
             }
@@ -11241,7 +11254,10 @@ fn run_check_deps(fix: bool) -> anyhow::Result<()> {
 /// Supports transitive imports: if A imports B and B imports C,
 /// C's definitions become available in A. Circular imports are
 /// detected and skipped via the `loaded` set.
-fn resolve_imports(program: &mut tallow::ast::Program, main_file: &PathBuf) {
+fn resolve_imports(
+    program: &mut tallow::ast::Program,
+    main_file: &PathBuf,
+) -> Vec<tallow::error::Diagnostic> {
     use std::collections::HashSet;
 
     let project_root = main_file
@@ -11265,13 +11281,22 @@ fn resolve_imports(program: &mut tallow::ast::Program, main_file: &PathBuf) {
     );
 
     let mut new_items = Vec::new();
-    resolve_imports_recursive(&program.items, project_root, &mut loaded, &mut new_items);
+    let mut unresolved = Vec::new();
+    resolve_imports_recursive(
+        &program.items,
+        project_root,
+        &mut loaded,
+        &mut new_items,
+        &mut unresolved,
+    );
 
     // Merge imported items BEFORE existing items (so declarations are available)
     if !new_items.is_empty() {
         new_items.append(&mut program.items);
         program.items = new_items;
     }
+
+    unresolved
 }
 
 /// Recursively resolve imports from a list of items.
@@ -11282,13 +11307,17 @@ fn resolve_imports_recursive(
     project_root: &std::path::Path,
     loaded: &mut std::collections::HashSet<String>,
     out: &mut Vec<tallow::ast::Item>,
+    unresolved: &mut Vec<tallow::error::Diagnostic>,
 ) {
     for item in items {
         if let tallow::ast::Item::Import(import) = item {
             let path_str = import.path.join(".");
 
-            // Skip stdlib imports (tallow.*)
-            if import.path.first().map(|s| s.as_str()) == Some("tallow") {
+            // Skip stdlib imports: `tallow.*` and any bare module name the
+            // runtime registers (`import math`). Those are resolved by the
+            // stdlib router, not by a file on disk.
+            let head = import.path.first().map(|s| s.as_str()).unwrap_or("");
+            if head == "tallow" || tallow::stdlib::is_registered_module(head) {
                 continue;
             }
 
@@ -11303,6 +11332,7 @@ fn resolve_imports_recursive(
                 project_root.join("src").join(&rel_path).join("mod.tl"),
             ];
 
+            let mut resolved = false;
             for candidate in &candidates {
                 if candidate.exists() {
                     let canon = candidate
@@ -11310,10 +11340,15 @@ fn resolve_imports_recursive(
                         .unwrap_or_else(|_| candidate.clone());
                     let canon_str = canon.display().to_string();
                     if loaded.contains(&canon_str) {
+                        resolved = true;
                         break; // already loaded, skip (circular import protection)
                     }
                     loaded.insert(canon_str);
 
+                    // From here on the import resolved to this file, whether or
+                    // not it parses: a parse error is its own diagnostic, and
+                    // reporting "unresolved" as well would name the wrong fault.
+                    resolved = true;
                     match std::fs::read_to_string(candidate) {
                         Ok(source) => {
                             let (tokens, lex_errors) = tallow::lexer::tokenize(&source);
@@ -11332,18 +11367,23 @@ fn resolve_imports_recursive(
                                         project_root,
                                         loaded,
                                         out,
+                                        unresolved,
                                     );
                                     // Then add the imported file's own non-import items.
                                     // `is_imported` is set here, at the one place that
                                     // knows the item came from another file: the trust
                                     // root (`main`) is anchored to the entry file, so a
                                     // library function spelled `main` is not one.
+                                    // `imported_from` records *which* file, so a
+                                    // diagnostic about the item can render its own
+                                    // source instead of the entry file's (audit N-9).
                                     for mut imp_item in imported.items {
                                         if matches!(imp_item, tallow::ast::Item::Import(_)) {
                                             continue;
                                         }
                                         if let tallow::ast::Item::Fn(f) = &mut imp_item {
                                             f.is_imported = true;
+                                            f.imported_from = Some(candidate.clone());
                                         }
                                         out.push(imp_item);
                                     }
@@ -11359,6 +11399,22 @@ fn resolve_imports_recursive(
                     }
                     break;
                 }
+            }
+            if !resolved {
+                // Audit N-10: an import that resolves to nothing used to be
+                // dropped silently, so a program compiled against a module it
+                // never loaded. The module is simply absent, which is a broken
+                // program, not a smaller one.
+                unresolved.push(
+                    tallow::error::Diagnostic::error(
+                        "E0149",
+                        format!("cannot resolve import '{path_str}': no file found"),
+                        import.span,
+                    )
+                    .with_help(format!(
+                        "looked for src/{path_str}.tl, {path_str}.tl and src/{path_str}/mod.tl under the project root; stdlib modules are imported by their bare name (e.g. `import math`)"
+                    )),
+                );
             }
         }
     }

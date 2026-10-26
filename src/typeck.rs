@@ -1363,16 +1363,21 @@ impl<'a> TypeChecker<'a> {
                 continue;
             }
             if f.is_imported {
-                self.diags.push(
-                    crate::error::Diagnostic::error(
-                        "E0147",
-                        "main is the entry point of the program, not a library item".to_string(),
-                        f.span,
-                    )
-                    .with_help(
-                        "rename this function: authority is originated only by the `main` of the file compiled",
-                    ),
+                let mut diag = crate::error::Diagnostic::error(
+                    "E0147",
+                    "main is the entry point of the program, not a library item".to_string(),
+                    f.span,
+                )
+                .with_help(
+                    "rename this function: authority is originated only by the `main` of the file compiled",
                 );
+                // The span is an offset into the imported module's own source,
+                // so the diagnostic must render against that file: pointed at
+                // the entry file it showed an unrelated line (audit N-9).
+                if let Some(path) = &f.imported_from {
+                    diag = diag.with_file(path.clone());
+                }
+                self.diags.push(diag);
                 continue;
             }
             if entry_main.is_some() {
@@ -3370,6 +3375,18 @@ impl<'a> TypeChecker<'a> {
     /// a value, and every later `db` is that value — so the caller checks
     /// `locals` before asking this.
     fn is_module_namespace(&self, name: &str) -> bool {
+        // A user declaration of the same name shadows the module, exactly as a
+        // local does: `fn db(x: i64)` makes `db` a function value, so E0146 on
+        // `let f = db` was a false positive (audit N-12). The W0102 check in the
+        // ident walk already consults these tables; this one did not. It cannot
+        // reopen the hole it guards: a function value is not a dispatch path at
+        // run time either.
+        if self.env.functions.contains_key(name)
+            || self.env.structs.contains_key(name)
+            || self.env.enums.contains_key(name)
+        {
+            return false;
+        }
         if matches!(name, "Tcp" | "Udp" | "TLSConn") {
             return true;
         }

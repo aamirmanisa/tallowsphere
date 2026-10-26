@@ -16,6 +16,13 @@ pub struct Diagnostic {
     pub msg: String,
     pub span: Span,
     pub help: Option<String>,
+    /// The file the span belongs to, when it is not the file being compiled.
+    ///
+    /// Spans are byte offsets into their own source, so rendering an imported
+    /// item's span against the entry file points at unrelated text (audit
+    /// N-9). Set this only for diagnostics whose span comes from an imported
+    /// file; `None` means "the file being compiled".
+    pub file: Option<std::path::PathBuf>,
 }
 
 impl Diagnostic {
@@ -26,6 +33,7 @@ impl Diagnostic {
             msg: msg.into(),
             span,
             help: None,
+            file: None,
         }
     }
 
@@ -36,7 +44,14 @@ impl Diagnostic {
             msg: msg.into(),
             span,
             help: None,
+            file: None,
         }
+    }
+
+    /// Point this diagnostic at the file its span came from (an imported item).
+    pub fn with_file(mut self, file: impl Into<std::path::PathBuf>) -> Self {
+        self.file = Some(file.into());
+        self
     }
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
@@ -45,7 +60,20 @@ impl Diagnostic {
     }
 
     /// Format the diagnostic with source context.
+    ///
+    /// When `file` is set the span belongs to that file, so its text is read
+    /// and the location line names it — otherwise an imported item's offset
+    /// would be rendered against the entry file (audit N-9).
     pub fn render(&self, source: &str, filename: &str) -> String {
+        let (source, filename): (String, String) = match &self.file {
+            Some(path) => (
+                std::fs::read_to_string(path).unwrap_or_default(),
+                path.display().to_string(),
+            ),
+            None => (source.to_string(), filename.to_string()),
+        };
+        let source = source.as_str();
+        let filename = filename.as_str();
         let (line, col) = self.span.line_col(source);
         let severity_str = match self.severity {
             Severity::Error => "error",
