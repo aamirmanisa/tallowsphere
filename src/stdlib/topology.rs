@@ -1172,6 +1172,182 @@ fn tls_posture_fn(args: Vec<Value>) -> StdlibResult {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Service banner (N05)
+// ══════════════════════════════════════════════════════════════════
+
+/// Split `product/version` or `product version` into its two halves.
+///
+/// Returns (product, version) only when a separator exists; a banner that is
+/// just a word yields (word, "") rather than inventing a version.
+fn split_product_version(token: &str) -> (String, String) {
+    let cleaned = token.trim().trim_end_matches([';', ',', ')']);
+    if let Some((product, version)) = cleaned.split_once('/') {
+        return (product.trim().to_string(), version.trim().to_string());
+    }
+    if let Some((product, version)) = cleaned.split_once(' ') {
+        return (product.trim().to_string(), version.trim().to_string());
+    }
+    (cleaned.to_string(), String::new())
+}
+
+/// Pull (product, version) out of a banner, or nothing.
+///
+/// Only shapes that are actually defined are matched: an SSH identification
+/// string (RFC 4253) and an HTTP `Server` header. A banner that matches
+/// neither returns empty fields, because guessing a product from arbitrary
+/// greeting text would produce confident nonsense.
+fn identify_banner(first_line: &str, headers: &[String]) -> (String, String) {
+    if let Some(rest) = first_line.strip_prefix("SSH-") {
+        // SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13
+        if let Some((_proto, software)) = rest.split_once('-') {
+            let software = software.split_whitespace().next().unwrap_or(software);
+            if let Some((product, version)) = software.split_once('_') {
+                return (product.to_string(), version.to_string());
+            }
+            return (software.to_string(), String::new());
+        }
+    }
+    for line in headers {
+        if let Some(value) = line
+            .strip_prefix("Server:")
+            .or_else(|| line.strip_prefix("server:"))
+        {
+            let value = value.trim();
+            let first = value.split_whitespace().next().unwrap_or(value);
+            return split_product_version(first);
+        }
+    }
+    (String::new(), String::new())
+}
+
+fn banner_fn(args: Vec<Value>) -> StdlibResult {
+    use std::io::{Read, Write};
+
+    let target = arg_str(&args, 0, "target")?;
+    let port = arg_u64(&args, 1, 80) as u16;
+    let timeout_ms = arg_u64(&args, 2, 800);
+    let probe = arg_str(&args, 3, "probe").unwrap_or_else(|_| "auto".to_string());
+
+    let addr = resolve_v4(&target)?;
+    require_authorized(&target)?;
+
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = Instant::now();
+    let mut sock = TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(addr), port), timeout)
+        .map_err(|e| format!("topology.banner: connect {addr}:{port} failed: {e}"))?;
+    sock.set_read_timeout(Some(timeout)).ok();
+    sock.set_write_timeout(Some(timeout)).ok();
+
+    // "auto" means: speak HTTP on the ports that almost always expect it, and
+    // stay silent elsewhere — a probe sent to an SSH or SMTP port can make the
+    // daemon log a protocol error and close, losing the greeting it would have
+    // offered unprompted.
+    let effective = match probe.as_str() {
+        "auto" => {
+            if matches!(port, 80 | 8080 | 8000 | 8888) {
+                "http"
+            } else {
+                "none"
+            }
+        }
+        other => other,
+    };
+
+    match effective {
+        "http" => {
+            let host = target.clone();
+            let req = format!("HEAD / HTTP/1.0\r\nHost: {host}\r\nUser-Agent: TallowTopology/1.0\r\n\r\n");
+            sock.write_all(req.as_bytes())
+                .map_err(|e| format!("topology.banner: send to {addr}:{port} failed: {e}"))?;
+        }
+        "crlf" => {
+            sock.write_all(b"\r\n").ok();
+        }
+        "none" => {}
+        other => {
+            return Err(format!(
+                "topology.banner: unknown probe '{other}' (expected auto, none, http or crlf)"
+            ))
+        }
+    }
+
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        if raw.len() >= 4096 {
+            break;
+        }
+        match sock.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                raw.extend_from_slice(&buf[..n]);
+                // A greeting is one line; an HTTP response ends at the blank
+                // line. Either way there is no point waiting out the timeout.
+                if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+                if raw.len() > 2 && raw.windows(2).any(|w| w == b"\r\n") && effective != "http" {
+                    break;
+                }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                break
+            }
+            Err(e) => {
+                // A reset after the greeting is normal for banner grabbing;
+                // what was already read is still the answer.
+                if raw.is_empty() {
+                    return Err(format!("topology.banner: read from {addr}:{port} failed: {e}"));
+                }
+                break;
+            }
+        }
+    }
+
+    let tls_detected = raw.first() == Some(&0x16);
+    let text = String::from_utf8_lossy(&raw).to_string();
+    let mut lines: Vec<String> = text
+        .split("\r\n")
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let first_line = lines.first().cloned().unwrap_or_default();
+    let headers: Vec<String> = lines.drain(1..).collect();
+    let (product, version) = if tls_detected {
+        (String::new(), String::new())
+    } else {
+        identify_banner(&first_line, &headers)
+    };
+
+    Ok(Value::Struct {
+        name: "BannerResult".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(addr.to_string())),
+            ("port".to_string(), Value::Int(port as i128)),
+            ("probe".to_string(), Value::String(effective.to_string())),
+            ("tls_detected".to_string(), Value::Bool(tls_detected)),
+            (
+                "banner".to_string(),
+                Value::String(first_line.chars().take(200).collect()),
+            ),
+            ("product".to_string(), Value::String(product)),
+            ("version".to_string(), Value::String(version)),
+            (
+                "bytes".to_string(),
+                Value::Int(raw.len() as i128),
+            ),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Dispatch
 // ══════════════════════════════════════════════════════════════════
 
@@ -1185,6 +1361,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "xmas_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Xmas))),
         "discover" => Some(discover_fn(args)),
         "tls_posture" => Some(tls_posture_fn(args)),
+        "banner" => Some(banner_fn(args)),
         _ => None,
     }
 }

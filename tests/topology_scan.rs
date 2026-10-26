@@ -8,7 +8,7 @@
 //! the environment denies it — a skipped test that says why is evidence; a
 //! silently passing one is not.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
 use std::thread;
@@ -220,5 +220,47 @@ fn tls_posture_reports_the_handshake_it_saw() {
     assert!(
         stdout.contains("chain_len=1"),
         "the presented chain length must be reported:\n{stdout}"
+    );
+}
+
+#[test]
+fn banner_identifies_the_service_from_its_own_greeting() {
+    // N05: the product/version must come from the banner text, not from a
+    // port-number table. An SSH identification string has a defined shape.
+    let listener = TcpListener::bind("127.0.0.1:46004").expect("bind 46004");
+    let _server = thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            let _ = sock.write_all(b"SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13\r\n");
+            thread::sleep(std::time::Duration::from_millis(200));
+        }
+    });
+
+    let (ok, stdout, stderr) = run("banner_ssh.tl");
+    assert!(ok, "banner probe must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("product=OpenSSH version=9.6p1"),
+        "the SSH identification string must be parsed:\n{stdout}"
+    );
+}
+
+#[test]
+fn banner_reads_a_server_header() {
+    // N05: an HTTP response carries its product in Server. The probe must send
+    // a well-formed request — a silent connect would never see this line.
+    let listener = TcpListener::bind("127.0.0.1:46005").expect("bind 46005");
+    let _server = thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            let mut buf = [0u8; 256];
+            let _ = sock.read(&mut buf);
+            let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nServer: nginx/1.24.0\r\nContent-Length: 0\r\n\r\n");
+            thread::sleep(std::time::Duration::from_millis(200));
+        }
+    });
+
+    let (ok, stdout, stderr) = run("banner_http.tl");
+    assert!(ok, "banner probe must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("product=nginx version=1.24.0"),
+        "the Server header must be parsed into product and version:\n{stdout}"
     );
 }
