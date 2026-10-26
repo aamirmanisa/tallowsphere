@@ -461,6 +461,15 @@ pub struct TypeChecker<'a> {
     /// Name of the body whose statements are being walked. `main` is the trust
     /// root (see `enforce_effect_row`); an `impl` method is never one.
     current_body_name: Option<String>,
+    /// Declared return type of the body being walked, when it is not `Void`
+    /// (G01 P0.2). `return <expr>` and the tail expression are compared to it,
+    /// so the return position cannot manufacture a capability any more than a
+    /// `let` can.
+    current_return_type: Option<Type>,
+    /// Nesting depth of closure bodies. A `return` inside a closure returns
+    /// from the closure, not from the enclosing function, so the return-slot
+    /// check is suspended there.
+    closure_depth: usize,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -473,6 +482,8 @@ impl<'a> TypeChecker<'a> {
             body_effect_reqs: Vec::new(),
             body_grant_sites: Vec::new(),
             current_body_name: None,
+            current_return_type: None,
+            closure_depth: 0,
         }
     }
 
@@ -1031,6 +1042,49 @@ impl<'a> TypeChecker<'a> {
             self.validate_grant_shape(ret);
         }
 
+        let declared_return = f
+            .return_type
+            .as_ref()
+            .map(|t| self.resolve_type_expr(t))
+            .unwrap_or(Type::Void);
+
+        // G01 P0.2: a `native fn` has no body, so a `-> Grant<E>` on it would
+        // be a producer of authority that no `scope.grant` call backs (E0145).
+        // Capabilities are *consumed* by native code as parameters; they are
+        // not made by it.
+        if f.is_native {
+            if let Some(effect) = Self::first_grant_effect(&declared_return) {
+                let named = if effect.is_empty() {
+                    "Grant".to_string()
+                } else {
+                    format!("Grant<{effect}>")
+                };
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0145",
+                        format!(
+                            "`native fn {}` cannot produce `{named}`: a native declaration has no body, so no scope.grant call backs it",
+                            f.name
+                        ),
+                        f.span,
+                    )
+                    .with_help(
+                        "take the capability as a parameter and thread it in from main",
+                    ),
+                );
+            }
+        }
+
+        // G01 P0.2: a default value is a producer position. `fn scan(g:
+        // Grant<Net> = 7, ..)` typechecked because defaults were never compared
+        // to the parameter's declared type.
+        for p in &f.params {
+            if let Some(default) = &p.default {
+                let declared = self.resolve_param_type(p);
+                self.check_capability_slot(&declared, default, &locals, "use as a default value");
+            }
+        }
+
         // Check each statement.
         //
         // G01: the walk also collects the effects the body's calls require
@@ -1038,6 +1092,8 @@ impl<'a> TypeChecker<'a> {
         // socket-opening call without `with Net(op)` is reported at the call.
         self.declared_effects = f.effects.clone();
         self.current_body_name = Some(f.name.clone());
+        self.current_return_type = (declared_return != Type::Void).then(|| declared_return.clone());
+        self.closure_depth = 0;
         self.body_effect_reqs = Vec::new();
         self.body_grant_sites = Vec::new();
         for stmt in &f.body.stmts {
@@ -1047,12 +1103,18 @@ impl<'a> TypeChecker<'a> {
         self.enforce_effect_row();
         self.current_body_name = None;
 
+        // G01 P0.2: the tail expression is the implicit return; it is compared
+        // to the declared type exactly like an explicit `return`.
+        if let Some(declared) = self.current_return_type.clone() {
+            if let Some(last) = f.body.stmts.last() {
+                if let StmtKind::Expr { expr } = &last.kind {
+                    self.check_capability_slot(&declared, expr, &locals, "return");
+                }
+            }
+        }
+        self.current_return_type = None;
+
         // Check return type matches body
-        let declared_return = f
-            .return_type
-            .as_ref()
-            .map(|t| self.resolve_type_expr(t))
-            .unwrap_or(Type::Void);
         if declared_return != Type::Void {
             self.check_return_coverage(f, &declared_return);
         }
@@ -1087,6 +1149,20 @@ impl<'a> TypeChecker<'a> {
         // `impl` method is checked exactly like a free function's.
         self.declared_effects = method.effects.clone();
         self.current_body_name = None;
+        let declared_return = method
+            .return_type
+            .as_ref()
+            .map(|t| self.resolve_type_expr(t))
+            .unwrap_or(Type::Void);
+        self.current_return_type = (declared_return != Type::Void).then(|| declared_return.clone());
+        self.closure_depth = 0;
+        // G01 P0.2: a default value is a producer position, in a method too.
+        for p in &method.params {
+            if let Some(default) = &p.default {
+                let declared = self.resolve_param_type(p);
+                self.check_capability_slot(&declared, default, &locals, "use as a default value");
+            }
+        }
         self.body_effect_reqs = Vec::new();
         self.body_grant_sites = Vec::new();
         for stmt in &method.body.stmts {
@@ -1096,6 +1172,15 @@ impl<'a> TypeChecker<'a> {
         // so it must take the capability as a parameter (E0144).
         self.enforce_grant_origin(None, true);
         self.enforce_effect_row();
+        // G01 P0.2: the tail expression is the implicit return.
+        if let Some(declared) = self.current_return_type.clone() {
+            if let Some(last) = method.body.stmts.last() {
+                if let StmtKind::Expr { expr } = &last.kind {
+                    self.check_capability_slot(&declared, expr, &locals, "return");
+                }
+            }
+        }
+        self.current_return_type = None;
     }
 
     // ── Effect rows (G01) ───────────────────────────────────────────────
@@ -1696,6 +1781,15 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Return(Some(expr)) => {
                 self.check_expr(expr, locals);
+                // G01 P0.2: an explicit `return` is a producer position — the
+                // declared return type is the slot. A `return` inside a
+                // closure returns from the closure, so the check is suspended
+                // there.
+                if self.closure_depth == 0 {
+                    if let Some(declared) = self.current_return_type.clone() {
+                        self.check_capability_slot(&declared, expr, locals, "return");
+                    }
+                }
             }
             StmtKind::Return(None) => {}
             StmtKind::For {
@@ -1818,6 +1912,112 @@ impl<'a> TypeChecker<'a> {
         self.diags.error("E0117", msg, span);
     }
 
+    /// Is `got` a value that may not fill a `declared` slot, because one of the
+    /// two is a capability and they are not the *same* capability?
+    ///
+    /// This is the assignability rule of `check_grant_binding` factored out so
+    /// it can be applied at every position a value can flow through — the
+    /// return slot, a call argument, a struct-literal field, a default
+    /// parameter value. A capability is not constructible, only obtained, so
+    /// the only value that may fill a `Grant<E>` slot is a `Grant<E>`; and a
+    /// `Grant<E>` may not be laundered into any other known slot.
+    ///
+    /// `Unknown` is inference's placeholder, not evidence: the reverse
+    /// direction (a capability into an untyped slot) is left alone rather than
+    /// guessing. The forward direction stays strict — a `Grant<E>` slot
+    /// demands exactly `Grant<E>`.
+    fn capability_mismatch(declared: &Type, got: &Type) -> bool {
+        match (declared, got) {
+            (Type::Grant(want), Type::Grant(have)) => want != have,
+            (Type::Grant(_), _) => true,
+            (Type::Unknown, _) => false,
+            (_, Type::Grant(_)) => true,
+            (Type::Optional(d), Type::Optional(g))
+            | (Type::Result(d), Type::Result(g))
+            | (Type::Array(d), Type::Array(g))
+            | (Type::Set(d), Type::Set(g))
+            | (Type::Chan(d), Type::Chan(g))
+            | (Type::Boxed(d), Type::Boxed(g))
+            | (Type::Private(d), Type::Private(g))
+            | (Type::Secret(d), Type::Secret(g)) => Self::capability_mismatch(d, g),
+            _ => false,
+        }
+    }
+
+    /// The effect named by the first `Grant<E>` reachable inside `ty`, so a
+    /// refusal can say which capability the slot wanted. `Some("")` for a
+    /// malformed `Grant` (already reported as E0143 elsewhere).
+    fn first_grant_effect(ty: &Type) -> Option<&str> {
+        match ty {
+            Type::Grant(effect) => Some(effect),
+            Type::Optional(inner)
+            | Type::Result(inner)
+            | Type::Array(inner)
+            | Type::Set(inner)
+            | Type::Chan(inner)
+            | Type::Boxed(inner)
+            | Type::Private(inner)
+            | Type::Secret(inner)
+            | Type::Consent(inner)
+            | Type::Erasable(inner)
+            | Type::Trusted(inner)
+            | Type::Unverified(inner)
+            | Type::Fresh(inner, _) => Self::first_grant_effect(inner),
+            Type::Tuple(items) => items.iter().find_map(Self::first_grant_effect),
+            Type::Map(k, v) => Self::first_grant_effect(k).or_else(|| Self::first_grant_effect(v)),
+            _ => None,
+        }
+    }
+
+    /// Refuse a value produced for, or passed into, a `Grant<E>` slot
+    /// (G01 P0.2) — the same rule and the same code as `check_grant_binding`,
+    /// applied at every position other than `let`/`var`.
+    ///
+    /// `position` is the verb phrase the refusal names: `"return"`,
+    /// `"pass as an argument"`, `"store"`, `"use as a default value"`.
+    fn check_capability_slot(
+        &mut self,
+        declared: &Type,
+        value: &Expr,
+        locals: &HashMap<String, VarInfo>,
+        position: &str,
+    ) {
+        let got = self.infer_expr_type(value, locals);
+        if !Self::capability_mismatch(declared, &got) {
+            return;
+        }
+        let effect = Self::first_grant_effect(declared)
+            .or_else(|| Self::first_grant_effect(&got))
+            .unwrap_or("");
+        let source = if effect.is_empty() {
+            "scope.grant(<effect>)".to_string()
+        } else {
+            format!("scope.grant({effect})")
+        };
+        let msg = format!(
+            "cannot {position} `{}` where `{}` is required: a capability cannot be forged -- the only source is {source}",
+            self.type_display(&got),
+            type_label(declared)
+        );
+        self.diags.error("E0117", msg, value.span);
+    }
+
+    /// Positional capability check for a call's arguments against the callee's
+    /// declared parameter types. A named argument keeps its position here: the
+    /// rule is only tightened for capabilities, so an out-of-order named
+    /// argument cannot become a false refusal.
+    fn check_capability_args(
+        &mut self,
+        params: &[(String, Type)],
+        args: &[CallArg],
+        locals: &HashMap<String, VarInfo>,
+        position: &str,
+    ) {
+        for (arg, (_, declared)) in args.iter().zip(params.iter()) {
+            self.check_capability_slot(declared, &arg.value, locals, position);
+        }
+    }
+
     /// A literal whose kind cannot inhabit the declared type is an error at the
     /// binding site. With an annotation the declared type wins, so inference
     /// alone never sees the contradiction: `let x: i64 = "nope"` used to check
@@ -1928,6 +2128,13 @@ impl<'a> TypeChecker<'a> {
                             self.diags.error("E0103", message, expr.span);
                         }
                     }
+                    // G01 P0.2: a parameter is a slot. A `Grant<E>` argument
+                    // may only be the same `Grant<E>`, and only a `Grant<E>`
+                    // may fill a `Grant<E>` parameter — the call position used
+                    // to be entirely unchecked (audit F-7).
+                    if let Some(params) = self.env.functions.get(name).map(|s| s.params.clone()) {
+                        self.check_capability_args(&params, args, locals, "pass as an argument");
+                    }
                     // Check privacy: print/log with private/secret arg
                     if name == "print" || name == "log" {
                         for arg in args {
@@ -2022,6 +2229,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(effects) = callee_row {
                     self.note_callee_row(&effects, expr.span, locals);
                 }
+                let mut method_params: Option<Vec<(String, Type)>> = None;
                 if let Some(ref tname) = type_name {
                     if let Some(methods) = self.env.methods.get(tname) {
                         let arity = methods.iter().find(|s| s.name == *method).map(|sig| {
@@ -2031,6 +2239,10 @@ impl<'a> TypeChecker<'a> {
                                 sig.accepts_arity(args.len()),
                             )
                         });
+                        method_params = methods
+                            .iter()
+                            .find(|s| s.name == *method)
+                            .map(|s| s.params.clone());
                         if let Some((expected, required, accepted)) = arity {
                             if !accepted {
                                 let got = args.len();
@@ -2053,6 +2265,11 @@ impl<'a> TypeChecker<'a> {
                         // Note: we don't error on unknown methods because many are builtins
                         // or come from stdlib types not registered in env.methods
                     }
+                }
+                // G01 P0.2: a method's parameter is a slot too, exactly like a
+                // free function's.
+                if let Some(params) = method_params {
+                    self.check_capability_args(&params, args, locals, "pass as an argument");
                 }
                 // E0950: Scanner.scan requires ScanScope as first argument
                 if method == "scan" {
@@ -2274,14 +2491,23 @@ impl<'a> TypeChecker<'a> {
                     self.check_expr(s, locals);
                 }
                 // Check struct exists and fields match
-                if let Some(sinfo) = self.env.structs.get(name) {
+                let declared_fields: Option<Vec<(String, Type)>> =
+                    self.env.structs.get(name).map(|s| s.fields.clone());
+                if let Some(sinfo_fields) = declared_fields {
                     for field in fields {
-                        if !sinfo.fields.iter().any(|(f, _)| *f == field.name) {
-                            self.diags.error(
+                        match sinfo_fields.iter().find(|(f, _)| *f == field.name) {
+                            // G01 P0.2: a field is a slot. `Holder { g: 7 }`
+                            // used to store an int in a `Grant<Net>` field,
+                            // and `let g = box.g` then read authority back
+                            // out (audit F-4).
+                            Some((_, declared)) => {
+                                self.check_capability_slot(declared, &field.value, locals, "store");
+                            }
+                            None => self.diags.error(
                                 "E0106",
                                 format!("struct `{name}` has no field `{}`", field.name),
                                 field.span,
-                            );
+                            ),
                         }
                     }
                 } else {
@@ -2329,9 +2555,14 @@ impl<'a> TypeChecker<'a> {
                         .unwrap_or(Type::Unknown);
                     inner_locals.insert(cp.name.clone(), VarInfo { ty, mutable: false });
                 }
+                // A `return` inside the closure returns from the closure, not
+                // from the enclosing body: the return-slot check is suspended
+                // while its statements are walked.
+                self.closure_depth += 1;
                 for s in body {
                     self.check_stmt(s, &mut inner_locals);
                 }
+                self.closure_depth -= 1;
             }
             ExprKind::Bail(e) => {
                 self.check_expr(e, locals);

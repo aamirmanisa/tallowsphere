@@ -291,3 +291,109 @@ fn grant_threaded_from_main_compiles() {
     assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
     assert!(!stderr.contains("E0142"), "no E0142 expected:\n{stderr}");
 }
+
+// ── F-2…F-7: `Grant<E>` is unfabricable in every position ────────────────────
+//
+// The assignability rule (E0117) used to run only where `let`/`var` binds a
+// value. These fixtures cover the remaining producer and consumer positions:
+// return expressions, struct-literal fields, `native fn` signatures, default
+// parameter values and call arguments. Each one is the audit's reproduction.
+
+/// A refusal must carry `code` and must not be the row/grant gates, which are
+/// satisfied in these fixtures by construction.
+fn assert_refused_with(name: &str, code: &str) -> String {
+    let (ok, stderr) = check(name);
+    assert!(!ok, "{name} must be refused:\n{stderr}");
+    assert!(
+        stderr.contains(code),
+        "{name} must be refused with {code}:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Grant<Net>"),
+        "{name}: the refusal must name the capability type:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("E0141"),
+        "{name}: the row is declared, so E0141 must not fire:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("E0142"),
+        "{name}: a grant is in scope at the call, so E0142 must not fire:\n{stderr}"
+    );
+    stderr
+}
+
+#[test]
+fn return_position_forgery_is_refused() {
+    // F-2: `fn mk() -> Grant<Net> { 0 }` — the tail expression is the return
+    // value and must be assignable to the declared type.
+    let stderr = assert_refused_with("forge_return_int.tl", "E0117");
+    assert!(
+        stderr.contains("forge_return_int.tl:9:"),
+        "the refusal must be reported at the forged tail expression:\n{stderr}"
+    );
+}
+
+#[test]
+fn explicit_return_forgery_is_refused() {
+    // F-3: the same forgery through `return <expr>`.
+    let stderr = assert_refused_with("forge_return_str.tl", "E0117");
+    assert!(
+        stderr.contains("forge_return_str.tl:8:"),
+        "the refusal must be reported at the explicit return:\n{stderr}"
+    );
+}
+
+#[test]
+fn struct_field_forgery_is_refused() {
+    // F-4: `Holder { g: 7 }` — a field initialiser is a producer position.
+    let stderr = assert_refused_with("forge_struct_field.tl", "E0117");
+    assert!(
+        stderr.contains("forge_struct_field.tl:13:"),
+        "the refusal must be reported at the field initialiser:\n{stderr}"
+    );
+}
+
+#[test]
+fn native_fn_cannot_produce_a_capability() {
+    // F-5: no body to check, so the declaration itself is refused (E0145) and
+    // `scope.grant` stays the only declared producer.
+    let stderr = assert_refused_with("forge_native_fn.tl", "E0145");
+    assert!(
+        stderr.contains("native fn get_grant"),
+        "the refusal must name the native declaration:\n{stderr}"
+    );
+}
+
+#[test]
+fn default_parameter_forgery_is_refused() {
+    // F-6: `fn scan(g: Grant<Net> = 7, ..)` — a default is a producer position.
+    let stderr = assert_refused_with("forge_default_param.tl", "E0117");
+    assert!(
+        stderr.contains("forge_default_param.tl:7:"),
+        "the refusal must be reported at the default value:\n{stderr}"
+    );
+}
+
+#[test]
+fn call_argument_forgery_is_refused() {
+    // F-7: `scan(7, ...)` from a caller that legitimately holds a grant. The
+    // finding is the argument, not a missing row or a missing grant.
+    assert_refused_with("forge_call_arg.tl", "E0117");
+}
+
+#[test]
+fn grant_passed_as_argument_compiles() {
+    // The positive half: a real `Grant<Net>` passed from `main` to a helper is
+    // accepted, so tightening the argument slot did not break the sanctioned
+    // flow of authority through a call.
+    let (ok, stderr) = check("grant_passed_as_argument.tl");
+    assert!(
+        ok,
+        "a `Grant<Net>` argument must satisfy the parameter slot:\n{stderr}"
+    );
+    assert!(!stderr.contains("E0117"), "no E0117 expected:\n{stderr}");
+    assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
+    assert!(!stderr.contains("E0142"), "no E0142 expected:\n{stderr}");
+    assert!(!stderr.contains("E0144"), "no E0144 expected:\n{stderr}");
+}
