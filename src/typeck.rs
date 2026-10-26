@@ -424,7 +424,7 @@ impl FnSignature {
 pub fn effect_for_callee(name: &str) -> Option<&'static str> {
     let head = name.split('.').next().unwrap_or("");
     match head {
-        "Tcp" | "Udp" | "TLSConn" | "net" | "sitescan" | "http" => Some("Net"),
+        "Tcp" | "Udp" | "TLSConn" | "net" | "sitescan" | "http" | "topology" => Some("Net"),
         _ => None,
     }
 }

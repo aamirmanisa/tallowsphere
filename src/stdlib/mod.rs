@@ -38,6 +38,7 @@ pub mod llm;
 pub mod mesh_exec;
 // Sitescan module (2026-09-12): comprehensive website + infrastructure scanning
 pub mod sitescan;
+pub mod topology;
 pub mod net;
 pub mod osint;
 pub mod phone_osint;
@@ -167,6 +168,7 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         "MeshNode" => mesh::dispatch(function, args),
         // Sitescan (2026-09-12): comprehensive website + infrastructure scanning
         "sitescan" => sitescan::dispatch(function, args),
+        "topology" => topology::dispatch(function, args),
         "net" => net::dispatch(function, args),
         "osint" => osint::dispatch(function, args),
         // Capitalized OSINT type namespaces route through osint dispatch with full name
@@ -335,7 +337,7 @@ const REGISTERED_MODULES: &[&str] = &[
     "fs", "html", "http", "json",
     "log", "market", "math", "mesh",
     "net", "osint", "process", "rand",
-    "regex", "time", "transfer", "transfer_net",
+    "regex", "time", "topology", "transfer", "transfer_net",
     "url", "sync", "beehiiv", "relay_room",
     "relayroom", "medium", "cxense", "substack",
     "wordpress", "ghost", "oauth", "jwt",
