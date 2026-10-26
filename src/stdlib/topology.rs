@@ -1669,6 +1669,163 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// UDP scanning (N02)
+// ══════════════════════════════════════════════════════════════════
+
+/// The payload a UDP service is most likely to answer.
+///
+/// An empty datagram gets a reply from almost nothing: most UDP daemons parse
+/// the first bytes and drop what they cannot understand, so a scanner that
+/// sends nothing learns nothing and reports every live service as filtered.
+/// These are the smallest well-formed requests that elicit a response.
+fn udp_probe(port: u16) -> Vec<u8> {
+    match port {
+        // DNS: standard query, RD set, one question for example.com A.
+        53 => vec![
+            0xab, 0xcd, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, b'e',
+            b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00,
+            0x01,
+        ],
+        // NTP: client request, version 4, mode 3.
+        123 => {
+            let mut p = vec![0u8; 48];
+            p[0] = 0x23; // LI 0, VN 4, mode 3
+            p
+        }
+        // SNMP v1 GetRequest for 1.3.6.1.2.1.1.1.0 with community "public".
+        161 => vec![
+            0x30, 0x26, 0x02, 0x01, 0x00, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa0,
+            0x19, 0x02, 0x04, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30,
+            0x0b, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00,
+        ],
+        // IKE: 8-byte ISAKMP header, SA init, no payloads. Enough for a
+        // responder to answer with NO_PROPOSAL_CHOSEN rather than silence.
+        500 | 4500 => vec![0u8; 28],
+        _ => Vec::new(),
+    }
+}
+
+fn udp_scan_fn(args: Vec<Value>) -> StdlibResult {
+    use std::net::UdpSocket;
+
+    let target = arg_str(&args, 0, "target")?;
+    let ports = parse_ports(&arg_str(&args, 1, "ports")?)?;
+    let timeout_ms = arg_u64(&args, 2, 800);
+    let rps = arg_u64(&args, 3, 50).max(1) as f64;
+
+    let addr = resolve_v4(&target)?;
+    require_authorized(&target)?;
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = Instant::now();
+
+    let mut open = Vec::new();
+    let mut closed = Vec::new();
+    let mut undecided = Vec::new();
+    let mut details: Vec<Value> = Vec::new();
+
+    for port in &ports {
+        governor_acquire(addr, rps);
+
+        // A *connected* UDP socket is what makes ICMP interpretation possible:
+        // an ICMP port-unreachable is reported to the next recv() as
+        // ECONNREFUSED, which is the only reliable way for an unprivileged
+        // process to tell "closed" from "nothing answered".
+        let sock = match UdpSocket::bind("0.0.0.0:0") {
+            Ok(s) => s,
+            Err(e) => return Err(format!("topology.udp_scan: cannot bind a UDP socket: {e}")),
+        };
+        if let Err(e) = sock.connect(SocketAddr::new(IpAddr::V4(addr), *port)) {
+            return Err(format!(
+                "topology.udp_scan: cannot connect to {addr}:{port}: {e}"
+            ));
+        }
+        sock.set_read_timeout(Some(timeout)).ok();
+
+        let payload = udp_probe(*port);
+        if let Err(e) = sock.send(&payload) {
+            return Err(format!(
+                "topology.udp_scan: send to {addr}:{port} failed: {e}"
+            ));
+        }
+
+        let mut buf = [0u8; 2048];
+        match sock.recv(&mut buf) {
+            Ok(n) => {
+                open.push(*port);
+                details.push(Value::Struct {
+                    name: "UDPResponse".to_string(),
+                    fields: vec![
+                        ("port".to_string(), Value::Int(*port as i128)),
+                        ("bytes".to_string(), Value::Int(n as i128)),
+                        (
+                            "probe_bytes".to_string(),
+                            Value::Int(payload.len() as i128),
+                        ),
+                    ],
+                });
+                continue;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                closed.push(*port);
+                continue;
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // Silence: either the service is open and ignores malformed
+                // input, or a firewall dropped the probe. UDP cannot tell
+                // these apart without a reply, and the verdict says so.
+                undecided.push(*port);
+                continue;
+            }
+            Err(e) => {
+                return Err(format!(
+                    "topology.udp_scan: read from {addr}:{port} failed: {e}"
+                ))
+            }
+        }
+    }
+
+    open.sort_unstable();
+    closed.sort_unstable();
+    undecided.sort_unstable();
+
+    Ok(Value::Struct {
+        name: "UDPScanResult".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(addr.to_string())),
+            ("open".to_string(), Value::Array(open.iter().map(|p| Value::Int(*p as i128)).collect())),
+            (
+                "closed".to_string(),
+                Value::Array(closed.iter().map(|p| Value::Int(*p as i128)).collect()),
+            ),
+            (
+                "open_or_filtered".to_string(),
+                Value::Array(
+                    undecided
+                        .iter()
+                        .map(|p| Value::Int(*p as i128))
+                        .collect(),
+                ),
+            ),
+            ("responses".to_string(), Value::Array(details)),
+            (
+                "caveat".to_string(),
+                Value::String(
+                    "UDP silence is open|filtered: no reply means either a live service that ignored the probe or a firewall that dropped it; only an ICMP port-unreachable proves closed"
+                        .to_string(),
+                ),
+            ),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Dispatch
 // ══════════════════════════════════════════════════════════════════
 
@@ -1684,6 +1841,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "tls_posture" => Some(tls_posture_fn(args)),
         "banner" => Some(banner_fn(args)),
         "ja4" => Some(ja4_fn(args)),
+        "udp_scan" => Some(udp_scan_fn(args)),
         _ => None,
     }
 }

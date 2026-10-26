@@ -346,3 +346,28 @@ fn ja4_describes_the_hello_that_was_sent() {
         "the b-field must carry the negotiated ALPN token, got '{b_field}':\n{stdout}"
     );
 }
+
+#[test]
+fn udp_scan_separates_a_listener_from_a_refusal() {
+    // N02: a live UDP socket answers, a closed one produces ICMP
+    // port-unreachable. The distinction is the whole point — without the
+    // connected-socket trick both would look like silence.
+    let udp = std::net::UdpSocket::bind("127.0.0.1:46007").expect("bind udp 46007");
+    let _server = thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        if let Ok((n, from)) = udp.recv_from(&mut buf) {
+            let _ = udp.send_to(&buf[..n], from);
+        }
+    });
+
+    let (ok, stdout, stderr) = run("udp_loopback.tl");
+    assert!(ok, "udp scan must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("open=[46007]"),
+        "a live UDP listener must be reported open:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("closed=[46009]"),
+        "an ICMP port-unreachable must be reported closed, not filtered:\n{stdout}"
+    );
+}
