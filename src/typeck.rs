@@ -46,6 +46,14 @@ pub enum Type {
     // Consent wrapper (GDPR consent chain)
     Consent(Box<Type>), // Data accessible only via .with_consent {} block
 
+    // Effect capability (G01 P0.2, blueprint §2.1). The payload is the
+    // *effect name*, not a type: `Grant<Net>` is the value that authorises a
+    // `Net` effect. It is the only type able to satisfy the grant side of an
+    // effect row, and the only expression that produces one is the native
+    // builtin `scope.grant(Net)` — there is no literal, cast or default, so a
+    // row cannot be satisfied by a promise.
+    Grant(String),
+
     // Erasable wrapper (GDPR right-to-erasure)
     Erasable(Box<Type>), // Data tracked for complete deletion via purge()
 
@@ -98,6 +106,8 @@ fn type_label(t: &Type) -> String {
         Type::Array(inner) => format!("[{}]", type_label(inner)),
         Type::Named(name) => name.clone(),
         Type::Private(inner) | Type::Secret(inner) => type_label(inner),
+        Type::Grant(effect) if effect.is_empty() => "Grant".to_string(),
+        Type::Grant(effect) => format!("Grant<{effect}>"),
         other => format!("{other:?}"),
     }
 }
@@ -129,6 +139,19 @@ impl Type {
     /// Is this type a Consent wrapper?
     pub fn is_consent(&self) -> bool {
         matches!(self, Type::Consent(_))
+    }
+
+    /// Is this an effect capability (`Grant<Net>`)?
+    pub fn is_grant(&self) -> bool {
+        matches!(self, Type::Grant(_))
+    }
+
+    /// The effect a capability authorises (`Grant<Net>` → `Some("Net")`).
+    pub fn granted_effect(&self) -> Option<&str> {
+        match self {
+            Type::Grant(effect) => Some(effect.as_str()),
+            _ => None,
+        }
     }
 
     /// Is this type an Erasable wrapper?
@@ -353,6 +376,19 @@ pub fn effect_for_callee(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Effect names a capability type may name: `Grant<Effect>` (G01 P0.2).
+///
+/// Only effects the checker can *enforce* are listed. `Net` is the enforced
+/// one today; `Budget` and `Plane` join it when their lattices land
+/// (blueprint §2.1), and until then `Grant<Budget>` is a type error, not a
+/// silently-accepted promise.
+pub const KNOWN_EFFECTS: &[&str] = &["Net"];
+
+/// True when `name` may appear as the argument of a capability type.
+pub fn is_known_effect(name: &str) -> bool {
+    KNOWN_EFFECTS.contains(&name)
+}
+
 /// The operation segment of a dotted callee path (`Tcp.connect` → `connect`).
 fn effect_op(name: &str) -> &str {
     name.split('.').nth(1).unwrap_or("")
@@ -371,6 +407,36 @@ fn callee_path(expr: &Expr) -> Option<String> {
     }
 }
 
+/// The effect a `scope.grant(<effect>)` call names, when `expr` is exactly
+/// that call (G01 P0.2).
+///
+/// `scope.grant` is the **only** producer of a `Grant<E>` value: there is no
+/// literal, cast or default of the type, so a body cannot satisfy a row's
+/// capability half out of thin air. The argument is an effect *name* — an
+/// identifier, not a value — which is why it is read here rather than typed as
+/// an expression.
+fn scope_grant_effect(expr: &Expr) -> Option<&str> {
+    let ExprKind::MethodCall {
+        object,
+        method,
+        args,
+        ..
+    } = &expr.kind
+    else {
+        return None;
+    };
+    if method != "grant" || !matches!(&object.kind, ExprKind::Ident(n) if n == "scope") {
+        return None;
+    }
+    match args.as_slice() {
+        [arg] => match &arg.value.kind {
+            ExprKind::Ident(effect) => Some(effect.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 // ── Type Checker ─────────────────────────────────────────────────────────────
 
 pub struct TypeChecker<'a> {
@@ -379,10 +445,16 @@ pub struct TypeChecker<'a> {
     pub diags: Diagnostics,
     /// Effect row of the signature whose body is being walked (G01).
     declared_effects: Vec<EffectReq>,
-    /// `(effect, op, span)` collected from the body being walked (G01). The
-    /// effect name is owned because a row forwarded from a callee's signature
-    /// carries a `String`, not a `&'static str`.
-    body_effect_reqs: Vec<(String, String, Span)>,
+    /// `(effect, op, span, grant_in_scope)` collected from the body being
+    /// walked (G01). The effect name is owned because a row forwarded from a
+    /// callee's signature carries a `String`, not a `&'static str`;
+    /// `grant_in_scope` is whether a `Grant<effect>` value was lexically
+    /// available at that call site — the capability half of the row
+    /// (G01 P0.2, E0142).
+    body_effect_reqs: Vec<(String, String, Span, bool)>,
+    /// Name of the body whose statements are being walked. `main` is the trust
+    /// root (see `enforce_effect_row`); an `impl` method is never one.
+    current_body_name: Option<String>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -393,6 +465,7 @@ impl<'a> TypeChecker<'a> {
             diags: Diagnostics::new(),
             declared_effects: Vec::new(),
             body_effect_reqs: Vec::new(),
+            current_body_name: None,
         }
     }
 
@@ -493,6 +566,12 @@ impl<'a> TypeChecker<'a> {
                         .iter()
                         .map(|f| (f.name.clone(), self.resolve_type_expr(&f.ty)))
                         .collect();
+                    // A capability may be stored in a field (`struct Probe {
+                    // grant: Grant<Net> }`), so field type expressions are
+                    // shape-checked like a parameter's.
+                    for f in &s.fields {
+                        self.validate_grant_shape(&f.ty);
+                    }
                     self.env.structs.insert(
                         s.name.clone(),
                         StructInfo {
@@ -806,6 +885,23 @@ impl<'a> TypeChecker<'a> {
                             .unwrap_or(0);
                         Type::Fresh(Box::new(inner), ttl_ms)
                     }
+                    "Grant" => {
+                        // `Grant<Net>` is a lattice type, not a parameterised
+                        // struct: its argument names an *effect*. A malformed
+                        // shape (no argument, two arguments, a non-name
+                        // argument) resolves to `Type::Grant("")`, and an
+                        // effect the checker does not know resolves to
+                        // `Type::Grant(<name>)`. Both are reported as E0143 by
+                        // `validate_grant_shape`, which owns the diagnostic —
+                        // this resolver is `&self` and cannot emit one.
+                        match args.as_slice() {
+                            [arg] => match &arg.kind {
+                                TypeExprKind::Named(effect) => Type::Grant(effect.clone()),
+                                _ => Type::Grant(String::new()),
+                            },
+                            _ => Type::Grant(String::new()),
+                        }
+                    }
                     _ => Type::Named(name.clone()),
                 }
             }
@@ -863,6 +959,11 @@ impl<'a> TypeChecker<'a> {
             "Bytes" => Type::Bytes,
             "char" => Type::Char,
             _ => {
+                // `Grant` with no argument list: a malformed capability, not
+                // an unknown type. `report_grant_shape` turns it into E0143.
+                if name == "Grant" {
+                    return Type::Grant(String::new());
+                }
                 // Check built-in privacy types
                 if PRIVATE_TYPES.contains(&name) {
                     Type::Private(Box::new(Type::String))
@@ -917,6 +1018,10 @@ impl<'a> TypeChecker<'a> {
         for p in &f.params {
             let ty = self.resolve_param_type(p);
             self.validate_type_exists(&ty, p.span);
+            self.validate_grant_shape(&p.ty);
+        }
+        if let Some(ret) = &f.return_type {
+            self.validate_grant_shape(ret);
         }
 
         // Check each statement.
@@ -925,11 +1030,13 @@ impl<'a> TypeChecker<'a> {
         // (recorded in `check_expr`); the row is enforced right after it, so a
         // socket-opening call without `with Net(op)` is reported at the call.
         self.declared_effects = f.effects.clone();
+        self.current_body_name = Some(f.name.clone());
         self.body_effect_reqs = Vec::new();
         for stmt in &f.body.stmts {
             self.check_stmt(stmt, &mut locals);
         }
         self.enforce_effect_row();
+        self.current_body_name = None;
 
         // Check return type matches body
         let declared_return = f
@@ -959,9 +1066,18 @@ impl<'a> TypeChecker<'a> {
                 locals.insert(p.name.clone(), VarInfo { ty, mutable: false });
             }
         }
+        // G01 P0.2: an `impl` method's parameter and return types are
+        // capability-checked exactly like a free function's.
+        for p in &method.params {
+            self.validate_grant_shape(&p.ty);
+        }
+        if let Some(ret) = &method.return_type {
+            self.validate_grant_shape(ret);
+        }
         // G01: same effect-row enforcement for impl methods — the row on an
         // `impl` method is checked exactly like a free function's.
         self.declared_effects = method.effects.clone();
+        self.current_body_name = None;
         self.body_effect_reqs = Vec::new();
         for stmt in &method.body.stmts {
             self.check_stmt(stmt, &mut locals);
@@ -973,12 +1089,13 @@ impl<'a> TypeChecker<'a> {
 
     /// Record that a call at `span` opens a socket, if its path names one of
     /// the network families in [`effect_for_callee`].
-    fn note_effect_call(&mut self, path: &str, span: Span) {
+    fn note_effect_call(&mut self, path: &str, span: Span, locals: &HashMap<String, VarInfo>) {
         let Some(effect) = effect_for_callee(path) else {
             return;
         };
         let op = effect_op(path).to_string();
-        self.push_effect_req(effect.to_string(), op, span);
+        let grant_ok = Self::grant_in_scope(locals, effect);
+        self.push_effect_req(effect.to_string(), op, span, grant_ok);
     }
 
     /// G01, interprocedural: a call to a user function reaches whatever that
@@ -994,62 +1111,222 @@ impl<'a> TypeChecker<'a> {
     /// in source, not inferred from its body, so it is complete before either
     /// body is walked — including for a recursive cycle (`a` calls `a`), whose
     /// requirement is whatever `a` declared.
-    fn note_callee_row(&mut self, effects: &[EffectReq], span: Span) {
+    ///
+    /// A forwarded row is a *capability* requirement too (G01 P0.2): the
+    /// caller must hold the `Grant` as well as declare the row. Grants are
+    /// **not** propagated the way rows are — a grant is a value, and a callee
+    /// that needs one takes it as a parameter.
+    fn note_callee_row(
+        &mut self,
+        effects: &[EffectReq],
+        span: Span,
+        locals: &HashMap<String, VarInfo>,
+    ) {
         for effect in effects {
+            let grant_ok = Self::grant_in_scope(locals, &effect.name);
             if effect.ops.is_empty() {
-                self.push_effect_req(effect.name.clone(), String::new(), span);
+                self.push_effect_req(effect.name.clone(), String::new(), span, grant_ok);
             } else {
                 for op in &effect.ops {
-                    self.push_effect_req(effect.name.clone(), op.clone(), span);
+                    self.push_effect_req(effect.name.clone(), op.clone(), span, grant_ok);
                 }
             }
         }
+    }
+
+    /// Is a `Grant<effect>` value lexically in scope at this point in the body?
+    ///
+    /// The local map *is* the lexical scope, so this is exact: a grant taken as
+    /// a parameter, or bound by `let g = scope.grant(Net)` earlier in the same
+    /// (or an enclosing) block, counts; a grant bound in a sibling block does
+    /// not.
+    fn grant_in_scope(locals: &HashMap<String, VarInfo>, effect: &str) -> bool {
+        locals
+            .values()
+            .any(|v| matches!(&v.ty, Type::Grant(e) if e == effect))
     }
 
     /// Append one body requirement, de-duplicated. The same call site can be
     /// visited twice (a `?`/`await` wrapper walks its inner expression), and a
     /// forwarded row can repeat an entry the call already required; one
     /// diagnostic per site per requirement is enough.
-    fn push_effect_req(&mut self, effect: String, op: String, span: Span) {
-        if self
-            .body_effect_reqs
-            .iter()
-            .any(|(e, o, s)| *e == effect && *o == op && s.start == span.start && s.end == span.end)
-        {
+    ///
+    /// `grant_ok` records whether a capability for this effect was in scope at
+    /// the call site. It is captured here, while the locals are live, because
+    /// the enforcement pass runs after the walk has left the scope.
+    fn push_effect_req(&mut self, effect: String, op: String, span: Span, grant_ok: bool) {
+        if self.body_effect_reqs.iter().any(|(e, o, s, _)| {
+            *e == effect && *o == op && s.start == span.start && s.end == span.end
+        }) {
             return;
         }
-        self.body_effect_reqs.push((effect, op, span));
+        self.body_effect_reqs.push((effect, op, span, grant_ok));
     }
 
     /// The last gate of a body walk (G01): every effect a call required must
     /// appear in the signature's row. `with Net` (no parentheses) covers every
     /// operation of `Net`; `with Net(connect)` covers only `connect`.
+    ///
+    /// G01 P0.2 adds the second half: a declared row must be backed by a
+    /// `Grant<effect>` value in scope (E0142). A row is a capability, not a
+    /// promise. `E0141` is checked first and unchanged, so a body that is
+    /// missing both reports the row, which is the outer fix.
     fn enforce_effect_row(&mut self) {
         let reqs = std::mem::take(&mut self.body_effect_reqs);
         let declared = std::mem::take(&mut self.declared_effects);
-        for (effect, op, span) in reqs {
+        // `main` is the trust root: it originates authority from the runtime
+        // scope registry rather than receiving it from a caller, so it needs no
+        // incoming grant. That exemption is not a hole, because a network-
+        // reaching `main` is already forced through the existing program-scope
+        // gates: `@legal` (E0100, `legal_pass`), the collection plan
+        // `@cra_class` / `@persona` / `@burn_plan` (E5004), and
+        // `@fingerprint_policy` for any stealth or fingerprint use (E5100-
+        // E5104) — so the one place authority can originate is also the most
+        // heavily annotated one.
+        let trust_root = self.current_body_name.as_deref() == Some("main");
+        for (effect, op, span, grant_ok) in reqs {
             // An empty `op` is a whole-effect requirement (a bare `with Net`
             // forwarded from a callee): only a bare entry satisfies it.
             let satisfied = declared.iter().any(|d| {
                 d.name == effect
                     && (d.ops.is_empty() || (!op.is_empty() && d.ops.iter().any(|o| *o == op)))
             });
-            if satisfied {
+            if !satisfied {
+                let (what, help) = if op.is_empty() {
+                    (effect.clone(), format!("add: with {effect}"))
+                } else {
+                    (
+                        format!("{effect}({op})"),
+                        format!("add: with {effect}({op})"),
+                    )
+                };
+                let msg = format!(
+                    "function body requires effect {what} but the signature does not declare it"
+                );
+                self.diags
+                    .push(crate::error::Diagnostic::error("E0141", msg, span).with_help(help));
                 continue;
             }
-            let (what, help) = if op.is_empty() {
-                (effect.clone(), format!("add: with {effect}"))
+            if grant_ok || trust_root {
+                continue;
+            }
+            let what = if op.is_empty() {
+                effect.clone()
             } else {
-                (
-                    format!("{effect}({op})"),
-                    format!("add: with {effect}({op})"),
-                )
+                format!("{effect}({op})")
             };
             let msg = format!(
-                "function body requires effect {what} but the signature does not declare it"
+                "effect {what} requires a Grant<{effect}> in scope; take one as a parameter or obtain it with scope.grant({effect})"
             );
             self.diags
-                .push(crate::error::Diagnostic::error("E0141", msg, span).with_help(help));
+                .push(crate::error::Diagnostic::error("E0142", msg, span));
+        }
+    }
+
+    /// `Grant` is a lattice type, not a struct (G01 P0.2, blueprint §2.1):
+    /// it takes exactly one argument and that argument names an effect the
+    /// checker can enforce. Every other spelling is `E0143`, because a
+    /// capability naming an effect no pass enforces would be precisely the
+    /// unbacked promise this task removes from the language.
+    ///
+    /// The resolver (`resolve_type_expr`, `&self`) cannot emit diagnostics, so
+    /// it encodes a malformed capability as `Type::Grant("")`; the shape — not
+    /// just the resolved type — is re-read here, where `&mut self` can report.
+    fn validate_grant_shape(&mut self, ty: &TypeExpr) {
+        match &ty.kind {
+            TypeExprKind::Named(name) if name == "Grant" => {
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0143",
+                        "capability type `Grant` requires exactly one effect argument, e.g. `Grant<Net>`"
+                            .to_string(),
+                        ty.span,
+                    )
+                    .with_help("write: Grant<Net>"),
+                );
+            }
+            TypeExprKind::Generic { name, args } if name == "Grant" => {
+                self.report_grant_shape(args, ty.span);
+            }
+            // A capability may appear under any wrapper — `[Grant<Net>]`,
+            // `Grant<Net>?`, `Box<Grant<Net>>` — so the walk descends through
+            // the type expression rather than stopping at the top level.
+            TypeExprKind::Boxed(inner)
+            | TypeExprKind::Slice(inner)
+            | TypeExprKind::Optional(inner) => self.validate_grant_shape(inner),
+            TypeExprKind::Tuple(types) => {
+                for t in types {
+                    self.validate_grant_shape(t);
+                }
+            }
+            TypeExprKind::Function {
+                params,
+                return_type,
+            } => {
+                for p in params {
+                    self.validate_grant_shape(p);
+                }
+                self.validate_grant_shape(return_type);
+            }
+            TypeExprKind::Generic { args, .. } => {
+                for a in args {
+                    self.validate_grant_shape(a);
+                }
+            }
+            TypeExprKind::Named(_) | TypeExprKind::ImplTrait(_) | TypeExprKind::DynTrait(_) => {}
+        }
+    }
+
+    /// The `Grant<...>` argument list, checked for shape: exactly one argument,
+    /// and that argument a known effect name. `Grant<Bogus>`, `Grant<Tcp>`,
+    /// `Grant<>` and `Grant<A, B>` are all `E0143`.
+    fn report_grant_shape(&mut self, args: &[TypeExpr], span: Span) {
+        let help = |known: bool| {
+            if known {
+                format!("known effects: {}", KNOWN_EFFECTS.join(", "))
+            } else {
+                "write: Grant<Net>".to_string()
+            }
+        };
+        let arg = match args {
+            [only] => only,
+            _ => {
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0143",
+                        format!(
+                            "capability type `Grant` requires exactly one effect argument, got {}",
+                            args.len()
+                        ),
+                        span,
+                    )
+                    .with_help(help(false)),
+                );
+                return;
+            }
+        };
+        match &arg.kind {
+            TypeExprKind::Named(effect) if is_known_effect(effect) => {}
+            TypeExprKind::Named(effect) => {
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0143",
+                        format!("unknown effect `{effect}` in capability type `Grant<{effect}>`"),
+                        arg.span,
+                    )
+                    .with_help(help(true)),
+                );
+            }
+            _ => {
+                self.diags.push(
+                    crate::error::Diagnostic::error(
+                        "E0143",
+                        "capability type `Grant` takes an effect name, not a type".to_string(),
+                        arg.span,
+                    )
+                    .with_help(help(false)),
+                );
+            }
         }
     }
 
@@ -1297,6 +1574,7 @@ impl<'a> TypeChecker<'a> {
         match &stmt.kind {
             StmtKind::Let { name, ty, value } => {
                 let resolved = if let Some(ty_expr) = ty {
+                    self.validate_grant_shape(ty_expr);
                     self.resolve_type_expr(ty_expr)
                 } else {
                     self.infer_expr_type(value, locals)
@@ -1304,6 +1582,7 @@ impl<'a> TypeChecker<'a> {
                 if ty.is_some() {
                     self.check_optional_binding(&resolved, value, locals, value.span);
                     self.check_declared_literal(&resolved, value, value.span);
+                    self.check_grant_binding(&resolved, value, locals, value.span);
                 }
                 self.check_expr(value, locals);
                 locals.insert(
@@ -1316,6 +1595,7 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Var { name, ty, value } => {
                 let resolved = if let Some(ty_expr) = ty {
+                    self.validate_grant_shape(ty_expr);
                     self.resolve_type_expr(ty_expr)
                 } else {
                     self.infer_expr_type(value, locals)
@@ -1323,6 +1603,7 @@ impl<'a> TypeChecker<'a> {
                 if ty.is_some() {
                     self.check_optional_binding(&resolved, value, locals, value.span);
                     self.check_declared_literal(&resolved, value, value.span);
+                    self.check_grant_binding(&resolved, value, locals, value.span);
                 }
                 self.check_expr(value, locals);
                 locals.insert(
@@ -1427,6 +1708,52 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Check the argument of `scope.grant(<effect>)` when it is not a known
+    /// effect, or when the call has the wrong shape. The call is recognised by
+    /// [`scope_grant_effect`]; a well-formed one needs no diagnostic here — it
+    /// types as `Grant<effect>` in [`infer_expr_type`].
+    fn validate_scope_grant(&mut self, effect: &str, span: Span) {
+        if is_known_effect(effect) {
+            return;
+        }
+        self.diags.push(
+            crate::error::Diagnostic::error(
+                "E0143",
+                format!("unknown effect `{effect}` in scope.grant({effect})"),
+                span,
+            )
+            .with_help(format!("known effects: {}", KNOWN_EFFECTS.join(", "))),
+        );
+    }
+
+    /// A `Grant<E>` slot accepts only a `Grant<E>` value (G01 P0.2).
+    ///
+    /// There is no coercion, no widening and no default: the only producer is
+    /// `scope.grant(E)`, so a struct literal, an `int`, or a grant for a
+    /// different effect cannot be bound into the slot. This is the assignability
+    /// rule for the lattice — a capability is not constructible, only obtained.
+    fn check_grant_binding(
+        &mut self,
+        declared: &Type,
+        value: &Expr,
+        locals: &HashMap<String, VarInfo>,
+        span: Span,
+    ) {
+        let Type::Grant(want) = declared else {
+            return;
+        };
+        let got = self.infer_expr_type(value, locals);
+        if matches!(&got, Type::Grant(have) if have == want) {
+            return;
+        }
+        let msg = format!(
+            "cannot bind `{}` to `{}`: a capability cannot be forged -- the only source is scope.grant({want})",
+            self.type_display(&got),
+            type_label(declared)
+        );
+        self.diags.error("E0117", msg, span);
+    }
+
     /// A literal whose kind cannot inhabit the declared type is an error at the
     /// binding site. With an annotation the declared type wins, so inference
     /// alone never sees the contradiction: `let x: i64 = "nope"` used to check
@@ -1494,14 +1821,14 @@ impl<'a> TypeChecker<'a> {
                 // G01: a call to a socket-opening primitive is an effect the
                 // body requires; the signature's row is enforced after the walk.
                 if let Some(path) = callee_path(callee) {
-                    self.note_effect_call(&path, expr.span);
+                    self.note_effect_call(&path, expr.span, locals);
                     // G01, interprocedural: a call to a user function reaches
                     // whatever that function's declared row says it reaches —
                     // recorded at *this* call site, so the diagnostic names the
                     // call in the caller rather than the callee's declaration.
                     if let Some(effects) = self.env.functions.get(&path).map(|s| s.effects.clone())
                     {
-                        self.note_callee_row(&effects, expr.span);
+                        self.note_callee_row(&effects, expr.span, locals);
                     }
                 }
                 self.check_expr(callee, locals);
@@ -1566,6 +1893,18 @@ impl<'a> TypeChecker<'a> {
                 args,
                 ..
             } => {
+                // `scope.grant(Net)` is the one expression that manufactures a
+                // capability (G01 P0.2). Its argument is an *effect name*, not
+                // a value and not a variable, so neither the receiver nor the
+                // argument is walked: a W0102 for `scope` or `Net` would be
+                // exactly wrong. Recognition lives here — inside a body walk —
+                // and nowhere else, which is what keeps `scope.grant` out of
+                // const, global and type positions where no effect table
+                // applies.
+                if let Some(effect) = scope_grant_effect(expr) {
+                    self.validate_scope_grant(effect, expr.span);
+                    return;
+                }
                 // A browser helper kind name (`AdaptiveCrawler.new()`) is a static
                 // namespace, not a value: the interpreter dispatches on the
                 // dotted name, so warning that the receiver is "possibly
@@ -1600,7 +1939,7 @@ impl<'a> TypeChecker<'a> {
                     },
                 };
                 if let Some(path) = socket_path {
-                    self.note_effect_call(&path, expr.span);
+                    self.note_effect_call(&path, expr.span, locals);
                 }
                 // G01, interprocedural — the method analogue of the forwarded
                 // function row: an `impl` method that declares an effect row
@@ -1613,7 +1952,7 @@ impl<'a> TypeChecker<'a> {
                         .map(|sig| sig.effects.clone())
                 });
                 if let Some(effects) = callee_row {
-                    self.note_callee_row(&effects, expr.span);
+                    self.note_callee_row(&effects, expr.span, locals);
                 }
                 if let Some(ref tname) = type_name {
                     if let Some(methods) = self.env.methods.get(tname) {
@@ -2089,6 +2428,7 @@ impl<'a> TypeChecker<'a> {
             }
             Type::Map(k, v) => format!("Map<{}, {}>", self.type_display(k), self.type_display(v)),
             Type::Named(n) => n.clone(),
+            Type::Grant(effect) => format!("Grant<{effect}>"),
             _ => format!("{ty:?}"),
         }
     }
@@ -2304,6 +2644,16 @@ impl<'a> TypeChecker<'a> {
                 Type::Unknown
             }
             ExprKind::MethodCall { object, method, .. } => {
+                // `scope.grant(Net)` is the only expression that produces a
+                // `Grant<Net>` (G01 P0.2). An unknown effect name is reported
+                // as E0143 by `validate_scope_grant`; infer nothing usable.
+                if let Some(effect) = scope_grant_effect(expr) {
+                    return if is_known_effect(effect) {
+                        Type::Grant(effect.to_string())
+                    } else {
+                        Type::Unknown
+                    };
+                }
                 let obj_ty = self.infer_expr_type(object, locals);
                 // .redact() and .hash() on private types return String
                 if obj_ty.is_sensitive()

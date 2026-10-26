@@ -6,10 +6,10 @@
 // `@legal` is present so E0100 (the pre-existing @legal gate) can never be what
 // the assertion is reading.
 @legal(basis: .public_data, purpose: "effect row fixture")
-fn probe(host: String) with Net(connect) {
+fn probe(g: Grant<Net>, host: String) with Net(connect) {
     net.connect(host)
 }
 
-fn outer(host: String) {
-    probe(host)
+fn outer(g: Grant<Net>, host: String) {
+    probe(g, host)
 }

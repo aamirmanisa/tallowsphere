@@ -141,3 +141,96 @@ fn indirect_call_with_row_on_the_caller_compiles() {
     );
     assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
 }
+
+// ── G01 P0.2 — `Grant<Net>` as a lattice capability type ─────────────────────
+//
+// The row says what a body does; the grant says where the authority came from.
+// Both are required, and the grant is a *value*: it cannot be declared into
+// existence, only obtained from `scope.grant` (or taken as a parameter).
+
+#[test]
+fn grant_parameter_satisfies_the_row() {
+    let (ok, stderr) = check("grant_param_satisfies_row.tl");
+    assert!(
+        ok,
+        "a `Grant<Net>` parameter must authorise the call:\n{stderr}"
+    );
+    assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
+    assert!(!stderr.contains("E0142"), "no E0142 expected:\n{stderr}");
+}
+
+#[test]
+fn declared_row_without_a_grant_is_refused() {
+    let (ok, stderr) = check("row_without_grant_is_refused.tl");
+    assert!(
+        !ok,
+        "a declared row with no `Grant<Net>` in scope must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0142"),
+        "the refusal must carry code E0142:\n{stderr}"
+    );
+    // The row *is* declared, so E0141 must not be what fired: the missing
+    // authority is the finding, not the missing declaration.
+    assert!(
+        !stderr.contains("E0141"),
+        "the row is declared, so E0141 must not fire:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "effect Net(connect) requires a Grant<Net> in scope; take one as a parameter or obtain it with scope.grant(Net)"
+        ),
+        "the refusal must name the effect, the capability and both fixes:\n{stderr}"
+    );
+}
+
+#[test]
+fn main_is_the_trust_root_and_may_grant_itself() {
+    let (ok, stderr) = check("main_may_grant_itself.tl");
+    assert!(
+        ok,
+        "`main` obtains its own grant from scope.grant and needs no incoming one:\n{stderr}"
+    );
+    assert!(!stderr.contains("E0142"), "no E0142 expected:\n{stderr}");
+    assert!(!stderr.contains("E0141"), "no E0141 expected:\n{stderr}");
+}
+
+#[test]
+fn grant_is_not_forgeable() {
+    let (ok, stderr) = check("grant_is_not_forgeable.tl");
+    assert!(
+        !ok,
+        "a capability cannot be constructed or coerced into existence:\n{stderr}"
+    );
+    // The gate is assignability: there is no literal, cast or default for the
+    // type, so a struct value and an `int` both fail to bind.
+    assert!(
+        stderr.contains("E0117"),
+        "the refusal must carry code E0117:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Grant<Net>"),
+        "the refusal must name the capability type:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("E0142"),
+        "the forgery, not a missing grant, is the finding:\n{stderr}"
+    );
+}
+
+#[test]
+fn grant_of_an_unknown_effect_is_refused() {
+    let (ok, stderr) = check("grant_wrong_effect.tl");
+    assert!(
+        !ok,
+        "`Grant<Bogus>` names an effect no pass enforces and must not compile:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("E0143"),
+        "the refusal must carry code E0143:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("unknown effect `Bogus` in capability type"),
+        "the refusal must name the unknown effect:\n{stderr}"
+    );
+}
