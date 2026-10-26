@@ -20,7 +20,7 @@ native fn parse_ports(spec: String) -> []Int
 // Estimate a scan without sending anything:
 // {ports_count, packets, estimated_ms, worst_case_ms}. worst_case_ms assumes
 // every probe times out, which is the honest number on a filtered host.
-native fn plan(target: String, ports: String, technique: String?, rps: Int?, timeout_ms: Int?) -> Plan
+native fn plan(target: String, ports: String, technique: String?, rps: Int?, timeout_ms: Int?) -> ScanPlan
 
 // Half-open scan: a real IPv4+TCP SYN, with the pseudo-header checksum computed
 // from the routed source address. Reports open (SYN-ACK), closed (RST) and
