@@ -18,6 +18,11 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
   `c3 a2 c2 80 c2 94` and a program whose source said `—` printed `â€"`. Both
   planes, every release. Found from the outside: `tallowx --help` printed
   `tallowx â verified copy/move`.
+- **Two classes of defined name were reported as undefined.** Top-level `const`
+  declarations were never registered in the type environment, and the
+  `FileCopy` runtime module was missing from the builtin list, so a program
+  using either correctly warned `W0102 use of possibly undefined variable` on
+  every use. `tallowx` printed three warnings on a clean run because of it.
 
 ### What was fixed
 
@@ -28,6 +33,12 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
   byte so malformed input cannot stall the loop. Covered by
   `lexer::tests::lex_string_keeps_multibyte_utf8` and, end to end, by the
   `22-utf8-literals` conformance case in Tallow-Language.
+- `src/typeck.rs` — `TypeEnv` gained a `constants` set populated from
+  `Item::Const`, and `FileCopy` joined `is_builtin_name`. Verified:
+  `tallow check tallowx.tl` went from `28 items, 3 warnings` to
+  `28 items, 0 warnings`; `typeck::tests` 218 pass, including new tests that a
+  const and `FileCopy` do not warn and that a genuinely undefined name still
+  does.
 
 ## [v1.5.7] — 2026-10-25 — the audit pass: dependency refresh and a register that renders
 

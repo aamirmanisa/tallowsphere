@@ -6,7 +6,7 @@
 //! - Verify type compatibility in assignments, calls, and returns
 //! - Build a type environment for downstream passes (legal_pass, privacy_pass)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::error::Diagnostics;
@@ -292,6 +292,9 @@ pub struct TypeEnv {
     pub enums: HashMap<String, EnumInfo>,
     /// (type_name) → list of method signatures from impl blocks.
     pub methods: HashMap<String, Vec<FnSignature>>,
+    /// Top-level `const` names. They are globals, not locals, and were not
+    /// registered anywhere — so every use of one warned W0102.
+    pub constants: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -451,6 +454,9 @@ impl<'a> TypeChecker<'a> {
                             span: s.span,
                         },
                     );
+                }
+                Item::Const(c) => {
+                    self.env.constants.insert(c.name.clone());
                 }
                 Item::Enum(e) => {
                     let variants: Vec<String> = e.variants.iter().map(|v| v.name.clone()).collect();
@@ -1328,6 +1334,7 @@ impl<'a> TypeChecker<'a> {
                     && !self.env.functions.contains_key(name)
                     && !self.env.structs.contains_key(name)
                     && !self.env.enums.contains_key(name)
+                    && !self.env.constants.contains(name)
                     && !self.is_builtin_name(name)
                 {
                     self.diags.warning(
@@ -1939,6 +1946,12 @@ impl<'a> TypeChecker<'a> {
                 // warned W0102 "possibly undefined variable".
                 | "type_name"
                 | "type_of"
+                // `FileCopy` is a runtime module (interp maps it to
+                // `__module_FileCopy__`; `FileCopy.copy_metadata` is the
+                // metadata-preserving copy primitive). It was missing from this
+                // list, so the only correct way to copy a file with metadata
+                // preservation warned W0102 on every use.
+                | "FileCopy"
                 | "spawn"
                 | "Ok"
                 | "Err"
@@ -3014,6 +3027,47 @@ mod tests {
             w0102.is_empty(),
             "builtin names must not be reported as possibly undefined: {w0102:?}"
         );
+    }
+
+    // Top-level `const`s are globals. Nothing registered them, so every use of
+    // one warned W0102 — `tallowx` printed three warnings on a clean run because
+    // of this and the FileCopy entry below.
+    #[test]
+    fn const_use_does_not_warn_w0102() {
+        let (_, diags) = check(
+            r#"
+            const RESUME_MIN: i64 = 8388608
+            fn main() {
+                if 12 >= RESUME_MIN { print("big") }
+            }
+            "#,
+        );
+        let w0102: Vec<&str> = diags
+            .items
+            .iter()
+            .filter(|d| d.code == "W0102")
+            .map(|d| d.msg.as_str())
+            .collect();
+        assert!(w0102.is_empty(), "a top-level const is not undefined: {w0102:?}");
+    }
+
+    #[test]
+    fn filecopy_namespace_does_not_warn_w0102() {
+        let (_, diags) = check(
+            r#"
+            fn main() {
+                let r = FileCopy.copy_metadata("/tmp/a", "/tmp/b")
+                print(r.bytes)
+            }
+            "#,
+        );
+        let w0102: Vec<&str> = diags
+            .items
+            .iter()
+            .filter(|d| d.code == "W0102")
+            .map(|d| d.msg.as_str())
+            .collect();
+        assert!(w0102.is_empty(), "the FileCopy module is not undefined: {w0102:?}");
     }
 
     /// The fix must not over-suppress: a genuinely undefined name still warns.
