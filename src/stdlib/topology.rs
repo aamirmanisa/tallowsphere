@@ -878,6 +878,300 @@ fn discover_fn(args: Vec<Value>) -> StdlibResult {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// TLS posture (N06)
+// ══════════════════════════════════════════════════════════════════
+
+/// Records the certificate chain the server presents while accepting it, so
+/// the report can be produced even for an untrusted or expired certificate.
+///
+/// Verification is deliberately split: the handshake must complete to observe
+/// the negotiated version and cipher, and a host with a bad certificate still
+/// has a posture worth reporting. The trust decision is made afterwards
+/// against the same root store, and its failure is reported as data
+/// (`trusted=false`, `trust_error=…`) rather than aborting the probe.
+#[derive(Debug)]
+struct CapturingVerifier {
+    certs: Mutex<Vec<Vec<u8>>>,
+    inner: std::sync::Arc<rustls::client::WebPkiServerVerifier>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for CapturingVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let mut recorded = self.certs.lock().unwrap();
+        recorded.clear();
+        recorded.push(end_entity.as_ref().to_vec());
+        for cert in intermediates {
+            recorded.push(cert.as_ref().to_vec());
+        }
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
+/// Read a DER length at `i`, returning (length, index of first content byte).
+fn der_length(der: &[u8], i: usize) -> Option<(usize, usize)> {
+    let first = *der.get(i)? as usize;
+    if first & 0x80 == 0 {
+        return Some((first, i + 1));
+    }
+    let n = first & 0x7f;
+    if n == 0 || n > 4 {
+        return None;
+    }
+    let mut len = 0usize;
+    for k in 0..n {
+        len = (len << 8) | *der.get(i + 1 + k)? as usize;
+    }
+    Some((len, i + 1 + n))
+}
+
+/// Extract the dNSName entries from a certificate's subjectAltName extension.
+///
+/// A dependency-free walk for the one extension the posture report needs:
+/// OID 2.5.29.17 (06 03 55 1D 11), wrapped in an OCTET STRING, containing a
+/// SEQUENCE of GeneralNames where a dNSName is context tag 2 (0x82). IP
+/// addresses (0x87) and other name forms are deliberately not returned here —
+/// they are a different kind of answer to "which names does this certificate
+/// cover".
+fn san_dns_names(der: &[u8]) -> Vec<String> {
+    let oid = [0x06u8, 0x03, 0x55, 0x1D, 0x11];
+    let mut names = Vec::new();
+    let pos = match der.windows(oid.len()).position(|w| w == oid) {
+        Some(p) => p + oid.len(),
+        None => return names,
+    };
+    let mut i = pos;
+    if der.get(i) != Some(&0x04) {
+        return names;
+    }
+    i += 1;
+    let (outer_len, next) = match der_length(der, i) {
+        Some(v) => v,
+        None => return names,
+    };
+    i = next;
+    if der.get(i) != Some(&0x30) {
+        return names;
+    }
+    i += 1;
+    let (_seq_len, next) = match der_length(der, i) {
+        Some(v) => v,
+        None => return names,
+    };
+    i = next;
+    let end = (i + outer_len).min(der.len());
+    while i < end {
+        let tag = der[i];
+        i += 1;
+        let (len, next) = match der_length(der, i) {
+            Some(v) => v,
+            None => break,
+        };
+        i = next;
+        if i + len > der.len() {
+            break;
+        }
+        if tag == 0x82 {
+            names.push(String::from_utf8_lossy(&der[i..i + len]).to_string());
+        }
+        i += len;
+    }
+    names
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn tls_posture_fn(args: Vec<Value>) -> StdlibResult {
+    use rustls::client::danger::ServerCertVerifier;
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+    use sha2::Digest;
+    use std::sync::Arc;
+
+    let target = arg_str(&args, 0, "target")?;
+    let port = arg_u64(&args, 1, 443) as u16;
+    let timeout_ms = arg_u64(&args, 2, 3000);
+    let sni = match args.get(3) {
+        Some(Value::String(s)) if !s.is_empty() => s.clone(),
+        _ => target.clone(),
+    };
+
+    let addr = resolve_v4(&target)?;
+    require_authorized(&target)?;
+
+    // rustls refuses to guess when more than one provider is linked, and the
+    // panic happens deep inside the verifier rather than at the call site, so
+    // the provider is installed once here before any rustls type is built.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let inner = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots.clone()))
+        .build()
+        .map_err(|e| format!("topology.tls_posture: cannot build the verifier: {e}"))?;
+    let capturing = Arc::new(CapturingVerifier {
+        certs: Mutex::new(Vec::new()),
+        inner,
+    });
+
+    // The custom verifier replaces the built-in chain walk, so the root store
+    // is not installed on the client config: it is held by the verifier, which
+    // applies it after the handshake to produce the trust verdict.
+    // Pin the provider: the crate links ring for its other TLS paths, but a
+    // second provider in the dependency graph makes the implicit default
+    // ambiguous, and rustls panics rather than guessing.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("topology.tls_posture: cannot configure TLS versions: {e}"))?
+        .dangerous()
+        .with_custom_certificate_verifier(capturing.clone())
+        .with_no_client_auth();
+    // Offering both makes the server's choice observable; with no ALPN offered
+    // a server that only speaks h2 would still answer, and the report would
+    // silently lose a protocol fact.
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    let server_name = ServerName::try_from(sni.clone())
+        .map_err(|_| format!("topology.tls_posture: '{sni}' is not a valid server name"))?;
+
+    let started = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms);
+    let mut sock = TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(addr), port), timeout)
+        .map_err(|e| format!("topology.tls_posture: connect {addr}:{port} failed: {e}"))?;
+    sock.set_read_timeout(Some(timeout)).ok();
+    sock.set_write_timeout(Some(timeout)).ok();
+
+    let mut conn = rustls::ClientConnection::new(Arc::new(config), server_name.clone())
+        .map_err(|e| format!("topology.tls_posture: cannot start a TLS session: {e}"))?;
+
+    let deadline = Instant::now() + timeout;
+    while conn.is_handshaking() {
+        if Instant::now() > deadline {
+            return Err(format!(
+                "topology.tls_posture: handshake with {addr}:{port} did not complete within {timeout_ms} ms"
+            ));
+        }
+        match conn.complete_io(&mut sock) {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!(
+                    "topology.tls_posture: handshake with {addr}:{port} failed: {e}"
+                ))
+            }
+        }
+    }
+
+    let version = match conn.protocol_version() {
+        Some(rustls::ProtocolVersion::TLSv1_3) => "TLSv1.3",
+        Some(rustls::ProtocolVersion::TLSv1_2) => "TLSv1.2",
+        Some(other) => return Err(format!("topology.tls_posture: unexpected version {other:?}")),
+        None => "none",
+    }
+    .to_string();
+    let cipher = conn
+        .negotiated_cipher_suite()
+        .map(|s| format!("{:?}", s.suite()))
+        .unwrap_or_else(|| "none".to_string());
+    let alpn = conn
+        .alpn_protocol()
+        .map(|p| String::from_utf8_lossy(p).to_string())
+        .unwrap_or_default();
+
+    let chain = capturing.certs.lock().unwrap().clone();
+    let leaf = chain.first().cloned().unwrap_or_default();
+    let trust = if leaf.is_empty() {
+        Err("no certificate presented".to_string())
+    } else {
+        let end = CertificateDer::from(leaf.clone());
+        let intermediates: Vec<CertificateDer<'static>> = chain
+            .iter()
+            .skip(1)
+            .map(|c| CertificateDer::from(c.clone()))
+            .collect();
+        capturing
+            .inner
+            .verify_server_cert(
+                &end,
+                &intermediates,
+                &server_name,
+                &[],
+                UnixTime::now(),
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    };
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(&leaf);
+    let fingerprint = hex_lower(&hasher.finalize());
+
+    Ok(Value::Struct {
+        name: "TLSReport".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(addr.to_string())),
+            ("port".to_string(), Value::Int(port as i128)),
+            ("server_name".to_string(), Value::String(sni)),
+            ("version".to_string(), Value::String(version)),
+            ("cipher".to_string(), Value::String(cipher)),
+            ("alpn".to_string(), Value::String(alpn)),
+            (
+                "trusted".to_string(),
+                Value::Bool(trust.is_ok()),
+            ),
+            (
+                "trust_error".to_string(),
+                Value::String(trust.err().unwrap_or_default()),
+            ),
+            ("chain_len".to_string(), Value::Int(chain.len() as i128)),
+            ("leaf_sha256".to_string(), Value::String(fingerprint)),
+            (
+                "sans".to_string(),
+                Value::Array(
+                    san_dns_names(&leaf)
+                        .into_iter()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            ),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Dispatch
 // ══════════════════════════════════════════════════════════════════
 
@@ -890,6 +1184,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "null_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Null))),
         "xmas_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Xmas))),
         "discover" => Some(discover_fn(args)),
+        "tls_posture" => Some(tls_posture_fn(args)),
         _ => None,
     }
 }

@@ -8,6 +8,7 @@
 //! the environment denies it — a skipped test that says why is evidence; a
 //! silently passing one is not.
 
+use std::io::Read;
 use std::net::TcpListener;
 use std::process::Command;
 use std::thread;
@@ -158,5 +159,66 @@ fn discovery_unions_icmp_and_tcp() {
     assert!(
         stdout.contains("confidence=0.9"),
         "a positive ICMP discovery carries 0.9 (a reply proves presence):\n{stdout}"
+    );
+}
+
+#[test]
+fn tls_posture_reports_the_handshake_it_saw() {
+    // N06: a self-signed server still has a reportable posture. The assertions
+    // are the facts a posture report exists to carry: negotiated version,
+    // cipher, the certificate's own SAN, and the trust verdict as data.
+    let key = rcgen::KeyPair::generate().expect("keygen");
+    let params =
+        rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("cert params");
+    let cert = params.self_signed(&key).expect("self-sign");
+
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let server_config = std::sync::Arc::new(
+        rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("protocol versions")
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![rustls::pki_types::CertificateDer::from(cert.der().to_vec())],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()),
+                ),
+            )
+            .expect("server config"),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:46003").expect("bind 46003");
+    let _server = thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            let mut conn = rustls::ServerConnection::new(server_config).expect("server conn");
+            let mut buf = [0u8; 16];
+            // Drive the handshake only; the client closes after reading posture.
+            while conn.is_handshaking() {
+                if conn.complete_io(&mut sock).is_err() {
+                    return;
+                }
+            }
+            // Read anything the client sends so it does not see an early RST.
+            let _ = sock.read(&mut buf);
+        }
+    });
+
+    let (ok, stdout, stderr) = run("tls_posture.tl");
+    assert!(ok, "posture probe must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("version=TLSv1.3"),
+        "the negotiated version must be reported:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("trusted=false"),
+        "a self-signed certificate is untrusted and must be reported as such:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"localhost\"") || stdout.contains("localhost"),
+        "the certificate's own SAN must be reported:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("chain_len=1"),
+        "the presented chain length must be reported:\n{stdout}"
     );
 }
