@@ -9,6 +9,26 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [Unreleased]
+
+### What was wrong
+
+- **Every non-ASCII string literal was double-encoded.** The lexer decoded each
+  byte of a UTF-8 scalar as a Latin-1 character, so `print("—")` wrote
+  `c3 a2 c2 80 c2 94` and a program whose source said `—` printed `â€"`. Both
+  planes, every release. Found from the outside: `tallowx --help` printed
+  `tallowx â verified copy/move`.
+
+### What was fixed
+
+- `src/lexer.rs` — the four string scanners (`scan_string`,
+  `scan_triple_quoted_string`, `scan_single_quote_string`,
+  `scan_string_continuation`) now step by one scalar instead of one byte, via
+  `push_char`; an invalid or bisected sequence appends U+FFFD and advances one
+  byte so malformed input cannot stall the loop. Covered by
+  `lexer::tests::lex_string_keeps_multibyte_utf8` and, end to end, by the
+  `22-utf8-literals` conformance case in Tallow-Language.
+
 ## [v1.5.7] — 2026-10-25 — the audit pass: dependency refresh and a register that renders
 
 ### Added
