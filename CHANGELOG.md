@@ -9,7 +9,7 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
-## [Unreleased]
+## [v1.5.8] — 2026-10-26 — UTF-8 literals, and two names the checker called undefined
 
 ### What was wrong
 
