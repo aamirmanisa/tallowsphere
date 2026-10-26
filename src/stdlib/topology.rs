@@ -1826,6 +1826,280 @@ fn udp_scan_fn(args: Vec<Value>) -> StdlibResult {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// TTL walk (N08)
+// ══════════════════════════════════════════════════════════════════
+
+/// Optional offline ASN database (ip2asn-v4.tsv: start, end, asn, cc, org).
+///
+/// No lookup is invented when the file is absent: a hop with no database says
+/// `asn = 0` and the result carries a note saying why, because "ASN 0" and
+/// "ASN unknown" must not look the same to a reader.
+struct AsnTable {
+    rows: Vec<(u32, u32, u32, String)>,
+}
+
+impl AsnTable {
+    fn load() -> Option<Self> {
+        let path = std::env::var("TALLOW_IP2ASN")
+            .unwrap_or_else(|_| "/usr/share/ip2asn/ip2asn-v4.tsv".to_string());
+        let text = std::fs::read_to_string(&path).ok()?;
+        let mut rows = Vec::new();
+        for line in text.lines().skip(1) {
+            let mut parts = line.split('\t');
+            let (Some(start), Some(end), Some(asn), Some(_cc), Some(org)) = (
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+            ) else {
+                continue;
+            };
+            let (Ok(start), Ok(end), Ok(asn)) = (
+                start.parse::<u32>(),
+                end.parse::<u32>(),
+                asn.parse::<u32>(),
+            ) else {
+                continue;
+            };
+            rows.push((start, end, asn, org.trim().to_string()));
+        }
+        rows.sort_by_key(|r| r.0);
+        Some(AsnTable { rows })
+    }
+
+    fn lookup(&self, ip: Ipv4Addr) -> Option<(u32, String)> {
+        let key = u32::from(ip);
+        let idx = match self.rows.binary_search_by(|r| {
+            if key < r.0 {
+                std::cmp::Ordering::Greater
+            } else if key > r.1 {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        }) {
+            Ok(i) => i,
+            Err(_) => return None,
+        };
+        let row = &self.rows[idx];
+        Some((row.2, row.3.clone()))
+    }
+}
+
+/// Read one ICMP error and, when it quotes a probe we sent to `port`, return
+/// (responder, is_destination_unreachable).
+fn icmp_for_port(fd: libc::c_int, port: u16, deadline: Instant) -> Option<(Ipv4Addr, bool)> {
+    let mut buf = [0u8; 1500];
+    loop {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        let n = unsafe {
+            libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0)
+        };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::WouldBlock
+                || err.kind() == std::io::ErrorKind::TimedOut
+            {
+                return None;
+            }
+            return None;
+        }
+        let n = n as usize;
+        if n < 28 {
+            continue;
+        }
+        let ihl = ((buf[0] & 0x0f) as usize) * 4;
+        if n < ihl + 8 {
+            continue;
+        }
+        let responder = Ipv4Addr::new(buf[12], buf[13], buf[14], buf[15]);
+        let icmp_type = buf[ihl];
+        if icmp_type != 11 && icmp_type != 3 {
+            continue;
+        }
+        // The quoted datagram: IP header + at least 8 bytes of UDP header.
+        let quoted = ihl + 8;
+        if n < quoted + 20 {
+            continue;
+        }
+        let qihl = ((buf[quoted] & 0x0f) as usize) * 4;
+        if n < quoted + qihl + 4 {
+            continue;
+        }
+        let udp = quoted + qihl;
+        let dst_port = u16::from_be_bytes([buf[udp + 2], buf[udp + 3]]);
+        if dst_port == port {
+            return Some((responder, icmp_type == 3));
+        }
+    }
+}
+
+fn traceroute_fn(args: Vec<Value>) -> StdlibResult {
+    use std::net::UdpSocket;
+
+    let target = arg_str(&args, 0, "target")?;
+    let max_hops = arg_u64(&args, 1, 20).clamp(1, 64) as u8;
+    let timeout_ms = arg_u64(&args, 2, 700);
+    let probes = arg_u64(&args, 3, 2).clamp(1, 3) as u16;
+
+    let dst = resolve_v4(&target)?;
+    require_authorized(&target)?;
+
+    let started = Instant::now();
+    let asn_table = AsnTable::load();
+    let mut asn_note = String::new();
+    if asn_table.is_none() {
+        asn_note = "no offline ASN database found (set TALLOW_IP2ASN to an ip2asn-v4.tsv); asn fields are 0 because they are unknown, not because they are slot 0".to_string();
+    }
+
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_ICMP) };
+    if fd < 0 {
+        return Err(format!(
+            "topology.traceroute: raw ICMP socket refused ({}); traceroute needs CAP_NET_RAW",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: (timeout_ms * 1000) as libc::suseconds_t,
+    };
+    unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            &tv as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+        );
+    }
+
+    let mut hops: Vec<Value> = Vec::new();
+    let mut reached = false;
+    let mut previous_asn: Option<u32> = None;
+
+    for ttl in 1..=max_hops {
+        let mut responders: Vec<(Ipv4Addr, u128)> = Vec::new();
+        let mut hop_reached = false;
+
+        for probe in 0..probes {
+            // Different destination ports per probe so the quoted datagram in
+            // an ICMP error identifies which probe it belongs to.
+            let port: u16 = 33434 + (ttl as u16) * 8 + probe;
+            let sock = match UdpSocket::bind("0.0.0.0:0") {
+                Ok(s) => s,
+                Err(e) => {
+                    unsafe { libc::close(fd) };
+                    return Err(format!("topology.traceroute: cannot bind a UDP socket: {e}"));
+                }
+            };
+            sock.connect(SocketAddr::new(IpAddr::V4(dst), port)).ok();
+            // IP_TTL is what makes the hop observable at all.
+            let ttl_val = ttl as libc::c_int;
+            let raw = std::os::unix::io::AsRawFd::as_raw_fd(&sock);
+            unsafe {
+                libc::setsockopt(
+                    raw,
+                    libc::IPPROTO_IP,
+                    libc::IP_TTL,
+                    &ttl_val as *const _ as *const libc::c_void,
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                );
+            }
+            let sent_at = Instant::now();
+            if sock.send(&[0u8]).is_err() {
+                continue;
+            }
+            let deadline = sent_at + Duration::from_millis(timeout_ms);
+            if let Some((resp, unreachable)) = icmp_for_port(fd, port, deadline) {
+                let rtt = sent_at.elapsed().as_millis();
+                if !responders.iter().any(|(a, _)| *a == resp) {
+                    responders.push((resp, rtt));
+                }
+                if unreachable {
+                    hop_reached = true;
+                }
+            }
+        }
+
+        if responders.is_empty() {
+            // A silent hop is a real result: some routers do not rate-limit
+            // but simply do not answer, and moving on is the only option.
+            hops.push(Value::Struct {
+                name: "Hop".to_string(),
+                fields: vec![
+                    ("ttl".to_string(), Value::Int(ttl as i128)),
+                    ("responders".to_string(), Value::Array(Vec::new())),
+                    ("multipath".to_string(), Value::Bool(false)),
+                    ("asn".to_string(), Value::Int(0)),
+                    ("asn_org".to_string(), Value::String(String::new())),
+                    ("asn_change".to_string(), Value::Bool(false)),
+                ],
+            });
+        } else {
+            let best = responders
+                .iter()
+                .min_by_key(|(_, rtt)| *rtt)
+                .copied()
+                .expect("non-empty");
+            let (asn, org) = asn_table
+                .as_ref()
+                .and_then(|t| t.lookup(best.0))
+                .unwrap_or((0, String::new()));
+            let asn_change = previous_asn.map(|p| p != asn).unwrap_or(false);
+            previous_asn = Some(asn);
+            hops.push(Value::Struct {
+                name: "Hop".to_string(),
+                fields: vec![
+                    ("ttl".to_string(), Value::Int(ttl as i128)),
+                    (
+                        "responders".to_string(),
+                        Value::Array(
+                            responders
+                                .iter()
+                                .map(|(addr, rtt)| {
+                                    Value::String(format!("{addr} {rtt}ms"))
+                                })
+                                .collect(),
+                        ),
+                    ),
+                    // More than one address for a single TTL is per-flow load
+                    // balancing (ECMP), not proof of anycast: anycast cannot
+                    // be inferred from one vantage point at all.
+                    ("multipath".to_string(), Value::Bool(responders.len() > 1)),
+                    ("asn".to_string(), Value::Int(asn as i128)),
+                    ("asn_org".to_string(), Value::String(org)),
+                    ("asn_change".to_string(), Value::Bool(asn_change)),
+                ],
+            });
+        }
+
+        if hop_reached {
+            reached = true;
+            break;
+        }
+    }
+
+    unsafe { libc::close(fd) };
+
+    Ok(Value::Struct {
+        name: "TracerouteResult".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(dst.to_string())),
+            ("hops".to_string(), Value::Array(hops)),
+            ("reached".to_string(), Value::Bool(reached)),
+            ("asn_note".to_string(), Value::String(asn_note)),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Dispatch
 // ══════════════════════════════════════════════════════════════════
 
@@ -1843,6 +2117,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "ja4" => Some(ja4_fn(args)),
         "udp_scan" => Some(udp_scan_fn(args)),
         "reconcile" => Some(reconcile_fn(args)),
+        "traceroute" => Some(traceroute_fn(args)),
         _ => None,
     }
 }

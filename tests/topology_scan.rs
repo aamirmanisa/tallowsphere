@@ -400,3 +400,28 @@ fn reconcile_merges_techniques_into_one_record() {
         "the closed port must be closed in the merged record:\n{stdout}"
     );
 }
+
+#[test]
+fn traceroute_sees_the_first_hop_and_the_destination() {
+    // N08: loopback is one hop. The probe must be observed (ICMP quoted back),
+    // the destination must be recognised as reached, and the responder must be
+    // recorded with an RTT — a TTL walk that returns no hops proves nothing.
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipping: traceroute needs CAP_NET_RAW (not root)");
+        return;
+    }
+    let (ok, stdout, stderr) = run("traceroute_loopback.tl");
+    assert!(ok, "traceroute must run:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("reached=true"),
+        "loopback must be recognised as the destination:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("ttl=1") && stdout.contains("127.0.0.1"),
+        "hop 1 must be recorded with its responder:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("ms"),
+        "the responder must carry a measured RTT:\n{stdout}"
+    );
+}
