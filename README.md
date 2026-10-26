@@ -233,7 +233,7 @@ Operational verbs are documented in [`docs/`](docs/) and in `tallow --help`, whi
 | Back end | IR construction and emission, lowering of every stdlib call, link step | `src/codegen.rs` |
 | Interpreter | Independent execution plane for the same AST | `src/interp.rs` |
 | Extraction tier | Schema application, model tier, HAR import, provenance, smart extract | `src/browser/llm_extract.rs`, `src/browser/har_import.rs` |
-| Standard library | 113 modules: text, collections, files, JSON, HTTP, crypto, database, browser, CLI | `src/stdlib/` |
+| Standard library | 114 Rust modules behind 88 declared `.tl` modules: text, collections, files, JSON, HTTP, crypto, database, browser, CLI [measured 2026-10-26: `ls src/stdlib/*.rs \| wc -l` = 114; `ls stdlib/*.tl \| wc -l` = 88] | `src/stdlib/`, `stdlib/` |
 | Browser runtime | Chrome over CDP: 139 files / 104,068 lines, 163 device profiles, stealth and CAPTCHA handling | `src/browser/` |
 | Toolchain | Build, run, check, fmt, lint, test, doc, repl, lsp, packages, SBOM, signing | `src/main.rs`, `src/cli/` |
 | Fleet crates | Daemon, jobs, admission, registry, mesh, reader, crypto, net, protocol, SVID, locator, advisory, copy engine | `crates/` |

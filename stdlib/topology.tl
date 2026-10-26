@@ -67,6 +67,16 @@ native fn tls_posture(target: String, port: Int?, timeout_ms: Int?, sni: String?
 // different measurement and is not returned.
 native fn ja4(target: String, port: Int?, timeout_ms: Int?, sni: String?) -> JA4Result
 
+// TTL walk: a UDP probe per hop with IP_TTL set, read back as ICMP time-exceeded.
+// Each hop reports every responder seen for that TTL and the RTT of the first;
+// more than one responder at one TTL is per-flow load balancing (ECMP), which is
+// not evidence of anycast — a single vantage point cannot infer anycast at all.
+// `reached` means an ICMP destination-unreachable came back, not that the last
+// hop matched the target. ASN lookup is offline and optional (TALLOW_IP2ASN, or
+// /usr/share/ip2asn/ip2asn-v4.tsv); with no table every asn is 0 and asn_note
+// says why, because "ASN 0" and "ASN unknown" must not read alike.
+native fn traceroute(target: String, max_hops: Int?, timeout_ms: Int?, probes: Int?) -> TracerouteResult
+
 // Merge several techniques into one host record. Precedence, not averaging:
 // a positive observation outranks silence. Disagreements are recorded and cost
 // confidence; an open-vs-closed conflict names the middlebox hypothesis.
