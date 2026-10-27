@@ -259,6 +259,19 @@ struct BundleScan {
 // `api:bundle-no-evidence` when `bundle_url` is empty.
 native fn api.bundle_routes(source: String, bundle_url: String) -> BundleScan
 
+// Recover routes using a v3 sourcemap (N17). With `sourcesContent` present the
+// routes come from the ORIGINAL files: `source_url` is the map's source name
+// and `offset`/`line` are positions in that file, and `map_applied` is true.
+// Without it, the result falls back to the bundle text and says so —
+// `map_mode` "fallback", `map_applied` false, `map_reason` naming what was
+// missing. A map that is present but does not parse is refused with
+// `api:sourcemap-unparsable` and the byte offset where parsing stopped.
+//
+// `mappings` is NOT decoded: no VLQ. Positions come from `sourcesContent`
+// directly, which needs no mappings, and `map_reason` says so on every applied
+// map. No decoded mapping is claimed.
+native fn api.bundle_routes_with_map(source: String, bundle_url: String, sourcemap_json: String) -> BundleScan
+
 // Render a scan as `tallow.api.bundle_routes.v1` JSON: the map state, the
 // counts, and one object per route carrying `source_url`, `offset` and `line`.
 native fn api.bundle_routes_json(scan: BundleScan) -> String

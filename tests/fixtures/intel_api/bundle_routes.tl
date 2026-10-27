@@ -1,4 +1,4 @@
-// End-to-end run for the tallow.api bundle surface (N16).
+// End-to-end run for the tallow.api bundle surface (N16 + N17).
 //
 // Offline by construction: both inputs are local fixtures under
 // tests/fixtures/intel_api/, and the scanner only ever reads text — no
@@ -20,4 +20,14 @@ fn main() {
         print("n16: route=" + r.route + " from=" + r.recovered_from + " offset=" + r.offset + " line=" + r.line + " interpolated=" + r.interpolated + " partial=" + r.partial)
     }
 
+    // ── N17: the same bundle, read through its v3 sourcemap ─────────────
+    // The map carries sourcesContent, so the records must cite src/routes.js
+    // and lines in that file — not this bundle's offsets.
+    let map = fs.read_file("tests/fixtures/intel_api/bundle.min.js.map")
+    let mapped = api.bundle_routes_with_map(bundle, url, map)
+    print("n17: mode=" + mapped.map_mode + " applied=" + mapped.map_applied + " count=" + mapped.count)
+    print("n17: reason=" + mapped.map_reason)
+    for r in mapped.routes {
+        print("n17: route=" + r.route + " source=" + r.source_url + " line=" + r.line + " offset=" + r.offset + " map_applied=" + r.map_applied)
+    }
 }

@@ -1,4 +1,4 @@
-//! `tallow.api` — offline API-surface ingestion and comparison (N13, N14, N16, N20, N21).
+//! `tallow.api` — offline API-surface ingestion and comparison (N13, N14, N16, N17, N20, N21).
 //!
 //! **Offline by construction.** Nothing here opens a socket, resolves a name, or reads a clock.
 //! `openapi_load` parses a document the caller already holds; comparing two inventories is pure
@@ -96,6 +96,26 @@
 //! saved as `.js` is refused by name (`api:bundle-not-js`) — parsing HTML as JavaScript produces
 //! garbage routes, and garbage with offsets is worse than nothing.
 //!
+//! # N17 — a sourcemap is either applied or *said* not to be
+//!
+//! `bundle_routes_with_map` extracts from the **original sources** when the map carries
+//! `sourcesContent`, and cites `source_url = <map source name>` with `offset`/`line` measured in
+//! that original file — not the bundle offset. `map_mode` is `"sources-content"` there, and every
+//! record has `map_applied: true`.
+//!
+//! When `sourcesContent` is absent (or every entry is null) the extract falls back to the bundle
+//! text, and says so loudly: `map_mode: "fallback"`, `map_applied: false` on every record, and
+//! `map_reason` naming what was missing. A fallback that looks like a sourcemapped result is the
+//! defect this item exists to prevent. A map that is present but does not parse is refused
+//! (`api:sourcemap-unparsable`) with the byte offset where parsing stopped — silently using the
+//! minified text instead would hide that the map was unreadable.
+//!
+//! **`mappings` is not decoded.** VLQ decoding is what turns a generated position into an original
+//! position; this module does not do it, so it does not claim a decoded position. Positions come
+//! from `sourcesContent` directly, where line and byte offset are exact without `mappings`. The
+//! field `map_reason` says so on every applied map, so no reader can mistake a line in a source
+//! file for a mapped position.
+//!
 //! # Refusals
 //!
 //! | code | when |
@@ -108,6 +128,7 @@
 //! | `api:graphql-introspection-malformed` | JSON that is not an introspection result (no `__schema`, a type without name/kind) |
 //! | `api:bundle-not-js` | the first bytes of the input are HTML — a page saved as `.js` |
 //! | `api:bundle-no-evidence` | `bundle_url` is empty — a route that cannot name its bundle is not a finding |
+//! | `api:sourcemap-unparsable` | the map is not JSON, is not v3, has no `sources`/`mappings`, or has a non-array `sourcesContent` |
 //! | `api:bad-argument` | an argument is missing, of the wrong type, or a struct of the wrong shape |
 
 use super::StdlibResult;
@@ -123,6 +144,8 @@ pub const CODE_INTROSPECTION: &str = "api:graphql-introspection-malformed";
 pub const CODE_ARG: &str = "api:bad-argument";
 pub const CODE_BUNDLE_NOT_JS: &str = "api:bundle-not-js";
 pub const CODE_BUNDLE_NO_EVIDENCE: &str = "api:bundle-no-evidence";
+pub const CODE_SOURCEMAP_UNPARSABLE: &str = "api:sourcemap-unparsable";
+
 /// Canonical 8-4-4-4-12 UUID shape. See the module docs for the known weakness.
 pub const UUID_PATTERN: &str =
     r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -1482,11 +1505,11 @@ fn change_value(c: &EndpointChange) -> Value {
     }
 }
 
-// ── N16: JS bundle route recovery ─────────────────────────────────────────
+// ── N16/N17: JS bundle route recovery ─────────────────────────────────────
 
 /// A route record. `offset` is a byte offset into the text named by `source_url`: the opening
 /// quote of the literal in the bundle (N16), or the offset within `sourcesContent` when a map was
-/// applied. `line` is 1-based in that same text.
+/// applied (N17). `line` is 1-based in that same text.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BundleRoute {
     pub route: String,
@@ -1965,6 +1988,148 @@ pub fn bundle_routes(source: &str, bundle_url: &str) -> Result<BundleScan, Strin
     Ok(scan)
 }
 
+struct MapPlan {
+    /// Pairs of (source name, original text) for every source that actually carried content.
+    sources: Vec<(String, String)>,
+    /// Why the fallback is a fallback. Empty when the map was fully usable.
+    reason: String,
+}
+
+/// Byte offset of a JSON syntax error, so a refusal points at the byte and not just the line.
+fn json_error_offset(map_json: &str, e: &serde_json::Error) -> usize {
+    let line = e.line().max(1);
+    let col = e.column().max(1);
+    let mut off = 0usize;
+    for (idx, l) in map_json.split_inclusive('\n').enumerate() {
+        if idx + 1 == line {
+            return off + (col - 1).min(l.len());
+        }
+        off += l.len();
+    }
+    off.min(map_json.len())
+}
+
+/// Offset of `"key"` in the map text, for a structural refusal that still wants to point somewhere.
+fn key_offset(map_json: &str, key: &str) -> usize {
+    let needle = format!("\"{key}\"");
+    map_json.find(&needle).unwrap_or(0)
+}
+
+fn sourcemap_plan(map_json: &str, bundle_url: &str) -> Result<MapPlan, String> {
+    let u = bundle_url.trim();
+    if map_json.trim().is_empty() {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: the sourcemap is empty — nothing to read at byte 0"
+        ));
+    }
+    let doc: J = serde_json::from_str(map_json).map_err(|e| {
+        format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: not JSON: {e} at byte {}",
+            json_error_offset(map_json, &e)
+        )
+    })?;
+    if doc.get("version").and_then(J::as_i64) != Some(3) {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `version` is {} — this module reads v3 sourcemaps \
+             only (byte {})",
+            doc.get("version").map(|v| v.to_string()).unwrap_or_else(|| "absent".to_string()),
+            key_offset(map_json, "version")
+        ));
+    }
+    let Some(sources) = doc.get("sources").and_then(J::as_array) else {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: no `sources` array (looked at key `sources`, byte {})",
+            key_offset(map_json, "sources")
+        ));
+    };
+    if !doc.get("mappings").is_some_and(J::is_string) {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `mappings` is absent or not a string — a v3 map \
+             without mappings is not a map (byte {})",
+            key_offset(map_json, "mappings")
+        ));
+    }
+    let contents = match doc.get("sourcesContent") {
+        None => None,
+        Some(c) => match c.as_array() {
+            Some(a) => Some(a),
+            None => {
+                return Err(format!(
+                    "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `sourcesContent` is present but is not an \
+                     array (byte {})",
+                    key_offset(map_json, "sourcesContent")
+                ));
+            }
+        },
+    };
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (idx, s) in sources.iter().enumerate() {
+        let Some(name) = s.as_str() else {
+            return Err(format!(
+                "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `sources[{idx}]` is not a string"
+            ));
+        };
+        if let Some(c) = contents.and_then(|c| c.get(idx)).and_then(J::as_str) {
+            pairs.push((name.to_string(), c.to_string()));
+        }
+    }
+    if pairs.is_empty() {
+        return Ok(MapPlan {
+            reason: format!(
+                "`sourcesContent` carries no text for any of the {} source(s) in {u} — extracted \
+                 from the bundle text instead, so offsets are bundle offsets, not original-file \
+                 positions",
+                sources.len()
+            ),
+            sources: pairs,
+        });
+    }
+    Ok(MapPlan {
+        reason: String::new(),
+        sources: pairs,
+    })
+}
+
+/// N17: recover routes from the original sources a v3 sourcemap carries.
+pub fn bundle_routes_with_map(
+    source: &str,
+    bundle_url: &str,
+    sourcemap_json: &str,
+) -> Result<BundleScan, String> {
+    check_bundle(source, bundle_url)?;
+    let url = bundle_url.trim().to_string();
+    let plan = sourcemap_plan(sourcemap_json, &url)?;
+    if plan.sources.is_empty() {
+        let mut scan = BundleScan {
+            bundle_url: url.clone(),
+            map_mode: "fallback".to_string(),
+            map_applied: false,
+            map_reason: Some(plan.reason),
+            ..Default::default()
+        };
+        extract_routes(source, &url, false, &mut scan);
+        sort_routes(&mut scan.routes);
+        return Ok(scan);
+    }
+    let mut scan = BundleScan {
+        bundle_url: url,
+        map_mode: "sources-content".to_string(),
+        map_applied: true,
+        // Said on every applied map: the positions are real, the mapping is not decoded.
+        map_reason: Some(
+            "extracted from `sourcesContent`; `mappings` VLQ was not decoded, so `offset`/`line` \
+             are positions in the cited original source, not mapped positions"
+                .to_string(),
+        ),
+        ..Default::default()
+    };
+    for (name, content) in &plan.sources {
+        extract_routes(content, name, true, &mut scan);
+    }
+    sort_routes(&mut scan.routes);
+    Ok(scan)
+}
+
 fn route_value(r: &BundleRoute) -> Value {
     Value::Struct {
         name: "BundleRoute".to_string(),
@@ -2276,10 +2441,15 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
                     ],
                 })
             }
-            // ── N16: JS bundle route recovery ────────────────────────────
+            // ── N16/N17: JS bundle route recovery ────────────────────────
             "bundle_routes" => Ok(bundle_scan_value(&bundle_routes(
                 &str_arg(&args, 0, "bundle_routes")?,
                 &str_arg(&args, 1, "bundle_routes")?,
+            )?)),
+            "bundle_routes_with_map" => Ok(bundle_scan_value(&bundle_routes_with_map(
+                &str_arg(&args, 0, "bundle_routes_with_map")?,
+                &str_arg(&args, 1, "bundle_routes_with_map")?,
+                &str_arg(&args, 2, "bundle_routes_with_map")?,
             )?)),
             "bundle_routes_json" => {
                 let scan = bundle_scan_of(
@@ -2843,6 +3013,112 @@ mod intel_api_tests {
         let s = bundle_routes(r#"var a = 1; var b = "/api/truncated"#, BUNDLE_URL).unwrap();
         assert_eq!(s.skipped_unlocated, 1);
         assert!(s.routes.is_empty(), "an unlocatable fragment is not a finding");
+    }
+
+    // ── N17: sourcemap-aware recovery ────────────────────────────────────
+
+    const MAP_SOURCE: &str = "webpack:///src/api.js";
+
+    fn map_with(content: &str) -> String {
+        json!({
+            "version": 3,
+            "file": "app.min.js",
+            "sources": [MAP_SOURCE],
+            "sourcesContent": [content],
+            "mappings": "AAAA"
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_map_with_sources_content_gives_original_file_provenance() {
+        let original = "// original source\nconst API = \"/v1/users\";\nfunction load(){return fetch(`/v1/users/${id}`)}\n";
+        // The bundle's own literal must not be what comes back: that is the whole point.
+        let bundle = "var A=\"/from-the-bundle\";";
+        let s = bundle_routes_with_map(bundle, BUNDLE_URL, &map_with(original)).unwrap();
+        assert_eq!(s.map_mode, "sources-content");
+        assert!(s.map_applied);
+        assert_eq!(s.routes.len(), 2);
+        for r in &s.routes {
+            assert_eq!(r.source_url, MAP_SOURCE, "cited as the original source");
+            assert!(r.map_applied);
+            assert_ne!(r.source_url, BUNDLE_URL);
+        }
+        let lit = &s.routes[0];
+        assert_eq!(lit.route, "/v1/users");
+        assert_eq!(lit.line, 2, "1-based line in the original file");
+        assert_eq!(lit.offset, original.find("\"/v1/users\"").unwrap());
+        assert_eq!(s.routes[1].route, "/v1/users/{}");
+        assert!(s.routes[1].interpolated);
+        // Said out loud, because the mapping itself was not decoded.
+        assert!(s.map_reason.as_deref().unwrap().contains("VLQ"));
+    }
+
+    #[test]
+    fn a_map_without_sources_content_falls_back_and_says_so() {
+        let bundle = r#"var A="/api/from-bundle";"#;
+        let absent = json!({"version": 3, "sources": ["a.js"], "mappings": "AAAA"}).to_string();
+        for map in [
+            absent,
+            json!({"version": 3, "sources": ["a.js"], "sourcesContent": [null], "mappings": "AAAA"})
+                .to_string(),
+        ] {
+            let s = bundle_routes_with_map(bundle, BUNDLE_URL, &map).unwrap();
+            assert_eq!(s.map_mode, "fallback");
+            assert!(!s.map_applied);
+            assert!(
+                s.map_reason.as_deref().unwrap().contains("sourcesContent"),
+                "the reason names what was missing: {:?}",
+                s.map_reason
+            );
+            assert_eq!(s.routes.len(), 1);
+            assert_eq!(s.routes[0].source_url, BUNDLE_URL);
+            assert!(
+                !s.routes[0].map_applied,
+                "a fallback record must not look sourcemapped"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unparsable_map_is_refused_naming_the_byte() {
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, "{\"version\": 3, ").unwrap_err();
+        assert!(e.starts_with(CODE_SOURCEMAP_UNPARSABLE), "{e}");
+        assert!(e.contains("byte"), "{e}");
+
+        let v2 = json!({"version": 2, "sources": [], "mappings": ""}).to_string();
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, &v2).unwrap_err();
+        assert!(
+            e.starts_with(CODE_SOURCEMAP_UNPARSABLE) && e.contains("version"),
+            "{e}"
+        );
+
+        let no_mappings = json!({"version": 3, "sources": ["a.js"]}).to_string();
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, &no_mappings).unwrap_err();
+        assert!(
+            e.starts_with(CODE_SOURCEMAP_UNPARSABLE) && e.contains("mappings"),
+            "{e}"
+        );
+
+        let bad_content = json!({"version": 3, "sources": ["a.js"], "sourcesContent": "nope", "mappings": ""})
+            .to_string();
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, &bad_content).unwrap_err();
+        assert!(e.starts_with(CODE_SOURCEMAP_UNPARSABLE), "{e}");
+    }
+
+    #[test]
+    fn a_map_source_with_no_name_cannot_be_cited() {
+        let map = json!({
+            "version": 3,
+            "sources": [""],
+            "sourcesContent": ["var a=\"/api/z\";"],
+            "mappings": "AAAA"
+        })
+        .to_string();
+        let s = bundle_routes_with_map("var a=1;", BUNDLE_URL, &map).unwrap();
+        assert!(s.map_applied, "the map was applied; the record had no source");
+        assert!(s.routes.is_empty());
+        assert_eq!(s.skipped_unlocated, 1);
     }
 
     #[test]
