@@ -60,6 +60,20 @@ evidence = "loopback interface on this host"
 methods = ["GET", "HEAD"]
 notes = "local development and health checks"
 
+# IPv6 loopback — same interface, same grant as 127.0.0.1. Added 2026-10-26 with
+# N09; without an entry here every IPv6 scan refused scope:not-listed, which made
+# the family unusable in this workspace even though the code path existed.
+# A bracketed form ([::1]) is normalised to this key by the register.
+[[authorized]]
+host = "::1"
+basis = "self-hosted"
+granted_by = "operator (workspace default)"
+granted_at = "2026-10-26"
+expires_at = "2027-10-16"
+evidence = "loopback interface on this host"
+methods = ["GET", "HEAD"]
+notes = "local development and health checks over IPv6"
+
 # IANA-reserved documentation domain (RFC 2606): published for exactly this
 # purpose, no authentication, no personal data.
 [[authorized]]
