@@ -206,3 +206,67 @@ struct ApiInventoryDiff {
 // Compare two inventories. Removal is the loud case; every entry names what
 // changed and both sides.
 native fn api.diff(old_inventory: ApiInventory, new_inventory: ApiInventory) -> ApiInventoryDiff
+
+// ── N16: JS bundle route recovery ────────────────────────────────────────
+//
+// A bundle is read as TEXT. Nothing is evaluated: no eval, no Function, no
+// DOM, no engine. A route is a claim about a file, so every record names the
+// text it was read from (`source_url`) and where in it (`offset`, a byte
+// offset to the opening quote).
+//
+// Recovered constructs: path-shaped string literals, template literals (whose
+// `${...}` segments render as `{}` with `interpolated` true — the value is
+// never read), and the first argument of `fetch(...)`, `axios.get|post|...`
+// and `$.ajax({url: ...})`, which is named in `recovered_from`. A route built
+// by concatenation is `partial` and carries the fragment that was actually
+// seen: completing it would be inventing bytes the bundle does not contain.
+
+// One recovered route. `route` is the path (`{}` for an interpolated
+// segment). `recovered_from` is `string-literal`, `template-literal`,
+// `fetch`, `axios.<method>` or `jquery.ajax`. A `partial` record holds only
+// the `fragment` the scanner saw.
+struct BundleRoute {
+    route:          String,
+    kind:           String,   // "literal" | "template"
+    recovered_from: String,
+    interpolated:   Bool,
+    partial:        Bool,
+    fragment:       String?,  // set exactly when `partial`
+    source_url:     String,   // the bundle, or the map source that was used
+    offset:         Int,      // byte offset into `source_url`'s text
+    line:           Int,      // 1-based line in that same text
+    map_applied:    Bool,
+}
+
+// One bundle read. `map_mode` is "bundle" (no map), "sources-content" (a map
+// was applied) or "fallback" (a map was supplied but carried no text — the
+// records are then bundle-derived and every one has `map_applied` false).
+// `skipped_unlocated` counts path-shaped fragments that could not be cited;
+// `skipped_non_route` counts strings that were file paths, not routes.
+struct BundleScan {
+    bundle_url:        String,
+    map_mode:          String,
+    map_applied:       Bool,
+    map_reason:        String?,
+    count:             Int,
+    skipped_unlocated: Int,
+    skipped_non_route: Int,
+    routes:            []BundleRoute,
+}
+
+// Recover routes from a JavaScript bundle (N16). Refuses `api:bundle-not-js`
+// when the first bytes are HTML — a page saved as `.js` — and
+// `api:bundle-no-evidence` when `bundle_url` is empty.
+native fn api.bundle_routes(source: String, bundle_url: String) -> BundleScan
+
+// Render a scan as `tallow.api.bundle_routes.v1` JSON: the map state, the
+// counts, and one object per route carrying `source_url`, `offset` and `line`.
+native fn api.bundle_routes_json(scan: BundleScan) -> String
+
+// Build one route record by hand. Argument order: route, kind, recovered_from,
+// source_url, offset, line, interpolated, partial, fragment, map_applied.
+native fn api.bundle_route(route: String, kind: String, recovered_from: String, source_url: String, offset: Int, line: Int, interpolated: Bool, partial: Bool, fragment: String?, map_applied: Bool) -> BundleRoute
+
+// Build a scan from routes the caller holds. `count` is the number of routes,
+// so it is not an argument; routes are sorted by (source_url, offset).
+native fn api.bundle_scan(bundle_url: String, map_mode: String, map_applied: Bool, map_reason: String?, skipped_unlocated: Int, skipped_non_route: Int, routes: []BundleRoute) -> BundleScan
