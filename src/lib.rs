@@ -19,6 +19,7 @@ pub mod blind_sig;
 pub mod burn_flow;
 pub mod calibration_runner;
 pub mod callnorm;
+pub mod newtypes;
 pub mod canary_page;
 pub mod circuits;
 pub mod clearness_gate;

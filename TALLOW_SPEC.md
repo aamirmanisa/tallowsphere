@@ -88,6 +88,49 @@ type        := IDENT | IDENT '<' type '>' | '[' ']' type | type '?'
 expr        := literal | IDENT | call | method_call | match_expr | if_expr | block
 ```
 
+## TYPE ALIASES AND NEWTYPES (G10)
+
+Two declarations share a shape and nothing else:
+
+```
+type Port = u16        // transparent: Port *is* u16
+newtype UserId = String // nominal: UserId is not String
+```
+
+An **alias** resolves to its target at every use site. It exists to name a
+type, and it can be passed, returned and assigned exactly as the target can.
+
+A **newtype** is a distinct type. It is related to its target by exactly two
+spellings, and neither of them is implicit:
+
+| direction | spelling | example |
+|---|---|---|
+| target → newtype | the constructor | `UserId("ada")` |
+| newtype → target | `.inner` | `id.inner` |
+
+Normative rules:
+
+1. `Name(<target value>)` is the only expression that produces a `Name`. The
+   argument must be a value of the target type (numeric widening from an int
+   literal to a float target is the same allowance a plain binding gets). The
+   expression has type `Name`.
+2. A value of the target type may not fill a `Name` slot — not as an argument,
+   not as a binding initialiser, not as an assignment, not as a return value,
+   not as a struct-literal field, not as a default parameter value. The
+   diagnostic names the newtype and the constructor (E0117).
+3. A `Name` may not fill a target-typed slot in any of those same positions.
+   The diagnostic names `.inner` (E0117).
+4. Two newtypes over the same target are unrelated types: `fn f(id: UserId)`
+   rejects a `Handle` even though both erase to `String`.
+5. `.inner` is the **only** accessor. Any other field on a newtype value is an
+   error (E0117), never a silent `unknown`.
+6. A newtype takes no type parameters and no `private`/`secret` qualifier; a
+   qualified target is written as an alias of a qualified type instead.
+7. At run time a newtype value *is* the wrapped value: construction, `.inner`
+   and passing a `Name` where a `Name` is expected are erased before either
+   execution plane runs, so the interpreter and the native backend see the same
+   program (see `src/newtypes.rs`).
+
 ## PRIVACY TYPES (for type checker)
 
 ```rust

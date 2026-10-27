@@ -180,7 +180,9 @@ fn emit_const(out: &mut String, c: &ConstDecl) {
 }
 
 fn emit_type_alias(out: &mut String, t: &TypeAlias) {
-    write!(out, "type {}", t.name).unwrap();
+    // G10: a newtype is not an alias; the generated interface has to say which
+    // one it is or a consumer will treat the nominal type as transparent.
+    write!(out, "{} {}", if t.newtype { "newtype" } else { "type" }, t.name).unwrap();
     if let Some(qualifier) = t.qualifier {
         match qualifier {
             TypeQualifier::Private => write!(out, " = private {}", format_type(&t.ty)).unwrap(),

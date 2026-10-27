@@ -78,6 +78,24 @@ pub enum Type {
     // Heap-indirected type: Box<T> — enables recursive data types
     Boxed(Box<Type>),
 
+    /// Nominal newtype (G10): `newtype UserId = String`.
+    ///
+    /// An alias is *transparent*: `type Port = u16` and `u16` are the same type
+    /// everywhere. A newtype is not. It is carried by name, because two
+    /// newtypes over the same target are unrelated types (`UserId` and
+    /// `Meter`-over-`String` are distinct even though both erase to `String` at
+    /// run time), and it never becomes its target implicitly in any direction:
+    /// a `String` is not a `UserId` (that needs `UserId(..)`) and a `UserId` is
+    /// not a `String` (that needs `.inner`).
+    ///
+    /// `inner` is carried so the constructor's argument can be checked and the
+    /// unwrap can be typed without a lookup back into the environment — the
+    /// value *is* the target at run time, which is what makes erasure safe.
+    Newtype {
+        name: String,
+        inner: Box<Type>,
+    },
+
     // User-defined (resolved by name for now)
     Named(String),
 
@@ -118,6 +136,7 @@ fn type_label(t: &Type) -> String {
         Type::Optional(inner) => format!("{}?", type_label(inner)),
         Type::Array(inner) => format!("[{}]", type_label(inner)),
         Type::Named(name) => name.clone(),
+        Type::Newtype { name, .. } => name.clone(),
         Type::Private(inner) | Type::Secret(inner) => type_label(inner),
         Type::Grant(effect) if effect.is_empty() => "Grant".to_string(),
         Type::Grant(effect) => format!("Grant<{effect}>"),
@@ -351,6 +370,15 @@ pub struct TypeEnv {
     pub functions: HashMap<String, FnSignature>,
     /// Type alias name → resolved type.
     pub type_aliases: HashMap<String, Type>,
+    /// Newtype name → `Type::Newtype { name, inner }` (G10).
+    ///
+    /// Separate from `type_aliases` because the two are different relations: an
+    /// alias *is* its target, a newtype only *erases to* its target at run
+    /// time. Name resolution consults this map first, so `UserId` never
+    /// silently resolves to `String`; the alias map also carries the name
+    /// (mapped to the inner type) so layout passes that never see the checker's
+    /// nominal type still give it the right representation.
+    pub newtypes: HashMap<String, Type>,
     /// Functions that touch the network (call fetch, pool.map, etc.).
     pub network_functions: Vec<String>,
     /// Functions that call browser navigation methods (goto, navigate, new_page, new_context, launch).
@@ -597,6 +625,10 @@ impl<'a> TypeChecker<'a> {
         self.register_structs_and_enums();
         self.register_impl_methods();
 
+        // Pass 1e: newtype targets (G10). Runs after struct/enum registration
+        // because the rule depends on what a target name *is*.
+        self.validate_newtype_targets();
+
         // Pass 2: Check function bodies
         for item in &self.program.items {
             match item {
@@ -677,6 +709,60 @@ impl<'a> TypeChecker<'a> {
             match item {
                 Item::TypeAlias(ta) => {
                     let inner = self.resolve_type_expr(&ta.ty);
+                    // A newtype may not be named as the target of either
+                    // declaration: `type A = UserId` claims an alias (which is
+                    // transparent) over a nominal type, and `newtype A = UserId`
+                    // makes `A`'s representation a newtype's, which no layout
+                    // pass knows how to lower. Both compositions are refused
+                    // here, where the declaration is, rather than miscompiled
+                    // later. Writing the underlying type is always available.
+                    if let Some(named) = Self::named_newtype(&inner) {
+                        self.diags.push(
+                            crate::error::Diagnostic::error(
+                                "E0117",
+                                format!(
+                                    "{} `{}` cannot be declared over newtype `{named}`: a \
+                                     newtype is nominal, so it cannot be another declaration's \
+                                     target",
+                                    if ta.newtype { "newtype" } else { "type alias" },
+                                    ta.name
+                                ),
+                                ta.span,
+                            )
+                            .with_help(format!(
+                                "declare `{named}` and use it directly, or write the underlying \
+                                 type this declaration is really about"
+                            )),
+                        );
+                    }
+                    if ta.newtype {
+                        // `newtype Loop = Loop` would resolve to an unresolved
+                        // name and then be treated as its own representation;
+                        // there is no value of that type to wrap.
+                        if matches!(&inner, Type::Named(n) if n == &ta.name) {
+                            self.diags.error(
+                                "E0117",
+                                format!(
+                                    "newtype `{}` cannot wrap itself: the target must be a \
+                                     type that already exists",
+                                    ta.name
+                                ),
+                                ta.span,
+                            );
+                        }
+                        // `newtype UserId = String` (G10). The name resolves to a
+                        // nominal type, never to `inner`; registering the erased
+                        // form in `type_aliases` as well gives layout passes a
+                        // representation without giving any *checker* rule a
+                        // conversion.
+                        let ty = Type::Newtype {
+                            name: ta.name.clone(),
+                            inner: Box::new(inner.clone()),
+                        };
+                        self.env.newtypes.insert(ta.name.clone(), ty);
+                        self.env.type_aliases.insert(ta.name.clone(), inner);
+                        continue;
+                    }
                     let ty = match ta.qualifier {
                         Some(TypeQualifier::Private) => Type::Private(Box::new(inner)),
                         Some(TypeQualifier::Secret) => Type::Secret(Box::new(inner)),
@@ -1103,6 +1189,13 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn resolve_named_type(&self, name: &str) -> Type {
+        // G10: a newtype name resolves to the *nominal* type, before the alias
+        // table can hand back its target. This is the single place the two
+        // declarations part company, and every use site (annotation, parameter,
+        // return, field) resolves through here.
+        if let Some(ty) = self.env.newtypes.get(name) {
+            return ty.clone();
+        }
         // Check type aliases first
         if let Some(ty) = self.env.type_aliases.get(name) {
             return ty.clone();
@@ -2126,6 +2219,9 @@ impl<'a> TypeChecker<'a> {
                     // G01 P0.3: `let f: fn() = worker` is a slot, and a
                     // rowwed value may not be laundered into it.
                     self.check_row_slot(&resolved, value, locals, "bind");
+                    // G10: `let id: UserId = "x"` is a slot too, and neither
+                    // the constructor nor the unwrap happens implicitly.
+                    self.check_newtype_slot(&resolved, value, locals, "bind");
                 }
                 self.check_expr(value, locals);
                 // G01 (audit F-8): a local may hold a function. The row then
@@ -2154,6 +2250,9 @@ impl<'a> TypeChecker<'a> {
                     // G01 P0.3: `let f: fn() = worker` is a slot, and a
                     // rowwed value may not be laundered into it.
                     self.check_row_slot(&resolved, value, locals, "bind");
+                    // G10: `let id: UserId = "x"` is a slot too, and neither
+                    // the constructor nor the unwrap happens implicitly.
+                    self.check_newtype_slot(&resolved, value, locals, "bind");
                 }
                 self.check_expr(value, locals);
                 let effects = self.fn_value_effects(value, locals);
@@ -2579,6 +2678,198 @@ impl<'a> TypeChecker<'a> {
         // capability. The same positions — return, argument, struct field,
         // default — must not launder a rowwed function into a rowless type.
         self.check_row_slot(declared, value, locals, position);
+        // G10: every one of those positions is also a newtype slot. Wiring it
+        // here — not at each call site — is what keeps `return`, `f(id)`,
+        // `Point { id: id }` and `fn f(id: UserId = ..)` under one rule.
+        self.check_newtype_slot(declared, value, locals, position);
+    }
+
+    /// G10: the assignability rule for a newtype, applied wherever a value is
+    /// placed into a typed slot.
+    ///
+    /// An alias is transparent, so `type Port = u16` needs no rule here. A
+    /// newtype is not: `UserId` and `String` are different types, and there is
+    /// no implicit conversion in *either* direction. Both directions get a
+    /// diagnostic that names the construct that would make the program legal —
+    /// the constructor going in, `.inner` coming out — because "type mismatch"
+    /// leaves the reader to guess which of the two they needed.
+    fn check_newtype_slot(
+        &mut self,
+        declared: &Type,
+        value: &Expr,
+        locals: &HashMap<String, VarInfo>,
+        position: &str,
+    ) {
+        let got = self.infer_expr_type(value, locals);
+        // `Unknown` is inference's placeholder, not evidence of a mismatch.
+        let got = match got {
+            Type::Unknown => return,
+            other => other,
+        };
+        match (declared, &got) {
+            // The one accepted case: the same newtype.
+            (Type::Newtype { name: want, .. }, Type::Newtype { name: have, .. })
+                if want == have =>
+            {
+                return;
+            }
+            // Two different newtypes, even over the same target, are unrelated.
+            (Type::Newtype { name: want, .. }, Type::Newtype { name: have, .. }) => {
+                let inner = self.newtype_inner(have);
+                let msg = format!(
+                    "cannot {position} newtype `{have}` where newtype `{want}` is required: \
+                     two newtypes over the same target are distinct types and neither \
+                     converts to the other"
+                );
+                self.diags.push(
+                    crate::error::Diagnostic::error("E0117", msg, value.span).with_help(format!(
+                        "`{want}` is built with `{want}(<{}>)`, so this must be written as an \
+                         explicit conversion: `{want}(<{have} value>.inner)`",
+                        self.type_display(&inner)
+                    )),
+                );
+            }
+            // A bare target where the newtype is expected: the constructor is
+            // the missing step, and it is named.
+            (Type::Newtype { name, inner }, _) => {
+                let msg = format!(
+                    "cannot {position} `{}` where newtype `{name}` is required: a `{name}` \
+                     is constructed explicitly with `{name}(<{}>)`, and nothing converts \
+                     into it implicitly",
+                    type_label(&got),
+                    self.type_display(inner)
+                );
+                self.diags.push(
+                    crate::error::Diagnostic::error("E0117", msg, value.span).with_help(format!(
+                        "write `{name}(<{}>)` if this value is meant to be a `{name}`; add the \
+                         explicit constructor rather than relying on a conversion",
+                        self.type_display(&got)
+                    )),
+                );
+            }
+            // A newtype where its target (or anything else) is expected: the
+            // unwrap is the missing step, and it is named.
+            (_, Type::Newtype { name, .. }) => {
+                let msg = format!(
+                    "cannot {position} newtype `{name}` where `{}` is required: a newtype \
+                     never converts to its target implicitly",
+                    type_label(declared)
+                );
+                self.diags.push(
+                    crate::error::Diagnostic::error("E0117", msg, value.span).with_help(format!(
+                        "unwrap it explicitly: `<{name} value>.inner`"
+                    )),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// A newtype's target must be a type the native layout bridge can express
+    /// as "the target's own representation".
+    ///
+    /// Erasure means a `UserId`-typed slot is laid out exactly like its target,
+    /// and that bridge (`codegen::privacy_type_to_lltype`) is exact for scalars
+    /// and containers but falls back to `i64` for a `Named` type. `newtype W =
+    /// Point` would therefore take a pointer where the slot says integer —
+    /// silently wrong code in the native plane, which is the one failure mode
+    /// this feature must not introduce. Until the bridge learns struct layouts,
+    /// such a target is refused at the declaration.
+    fn validate_newtype_targets(&mut self) {
+        let mut invalid: Vec<(String, String, Span)> = Vec::new();
+        for item in &self.program.items {
+            let Item::TypeAlias(ta) = item else {
+                continue;
+            };
+            if !ta.newtype {
+                continue;
+            }
+            let Some(Type::Newtype { inner, .. }) = self.env.newtypes.get(&ta.name) else {
+                continue;
+            };
+            // A newtype-over-newtype target is already refused at
+            // registration; do not report the same declaration twice.
+            if Self::named_newtype(inner).is_none() && !Self::layout_bridge_supports(inner) {
+                invalid.push((ta.name.clone(), type_label(inner), ta.span));
+            }
+        }
+        for (name, target, span) in invalid {
+            self.diags.push(
+                crate::error::Diagnostic::error(
+                    "E0117",
+                    format!(
+                        "newtype `{name}` cannot wrap `{target}`: a newtype is laid out as its \
+                         target, and only scalar and container targets have a layout the native \
+                         backend can express"
+                    ),
+                    span,
+                )
+                .with_help(
+                    "wrap a scalar (`String`, `Int`, `Float`, `Bool`, `Bytes`, `char`) or a \
+                     container of one; a newtype over a struct is not supported yet"
+                        .to_string(),
+                ),
+            );
+        }
+    }
+
+    /// The target types `codegen::privacy_type_to_lltype` maps exactly.
+    fn layout_bridge_supports(ty: &Type) -> bool {
+        match ty {
+            Type::Bool
+            | Type::Int(_)
+            | Type::Float(_)
+            | Type::String
+            | Type::Bytes
+            | Type::Char => true,
+            Type::Array(inner) | Type::Set(inner) => Self::layout_bridge_supports(inner),
+            Type::Map(key, value) => {
+                Self::layout_bridge_supports(key) && Self::layout_bridge_supports(value)
+            }
+            _ => false,
+        }
+    }
+
+    /// The newtype named at the top of `ty`, if any — through a privacy
+    /// qualifier or an erasable wrapper, since those are transparent at layout.
+    fn named_newtype(ty: &Type) -> Option<String> {
+        match ty {
+            Type::Newtype { name, .. } => Some(name.clone()),
+            Type::Private(inner)
+            | Type::Secret(inner)
+            | Type::Erasable(inner)
+            | Type::Trusted(inner)
+            | Type::Unverified(inner)
+            | Type::Fresh(inner, _) => Self::named_newtype(inner),
+            _ => None,
+        }
+    }
+
+    /// The target type behind a newtype name, for diagnostics.
+    fn newtype_inner(&self, name: &str) -> Type {
+        match self.env.newtypes.get(name) {
+            Some(Type::Newtype { inner, .. }) => (**inner).clone(),
+            _ => Type::Unknown,
+        }
+    }
+
+    /// Can `got` seed the constructor of a newtype over `inner`?
+    ///
+    /// Only a value the target already accepts. Numeric widening (`1` into a
+    /// `Float` target) is not a new conversion — the checker allows that for
+    /// plain bindings too — while a `str` for a `Float` target, or another
+    /// newtype, is refused.
+    fn newtype_arg_fits(inner: &Type, got: &Type) -> bool {
+        if matches!(got, Type::Unknown) {
+            return true;
+        }
+        if inner == got {
+            return true;
+        }
+        matches!(
+            (base_kind(inner), base_kind(got)),
+            ("int", "int") | ("float", "int") | ("float", "float") | ("str", "str") | ("bool", "bool")
+        )
     }
 
     /// G01 P0.3: no laundering a row through a typed slot.
@@ -2713,6 +3004,61 @@ impl<'a> TypeChecker<'a> {
         span: Span,
         locals: &HashMap<String, VarInfo>,
     ) {
+        // ── G10: `UserId("x")` is the newtype constructor ────────────────
+        //
+        // It is recognised *here*, by the declaration's name, and nowhere
+        // else: there is no function of that name, so falling through would
+        // emit `undefined function` at run time and a W0102 here. The
+        // constructor is the only thing that turns a `String` into a
+        // `UserId`, so its argument gets a real type check rather than being
+        // waved through.
+        if let ExprKind::Ident(name) = &callee.kind {
+            if let Some(ty) = self.env.newtypes.get(name).cloned() {
+                if let Type::Newtype {
+                    name: newtype,
+                    inner,
+                } = ty
+                {
+                    if args.len() != 1 {
+                        self.diags.error(
+                            "E0103",
+                            format!(
+                                "newtype `{newtype}` takes exactly one constructor argument \
+                                 (`{newtype}(<{}>)`), got {}",
+                                self.type_display(&inner),
+                                args.len()
+                            ),
+                            span,
+                        );
+                    }
+                    if let Some(arg) = args.first() {
+                        self.check_expr(&arg.value, locals);
+                        let got = self.infer_expr_type(&arg.value, locals);
+                        if !Self::newtype_arg_fits(&inner, &got) {
+                            self.diags.push(
+                                crate::error::Diagnostic::error(
+                                    "E0117",
+                                    format!(
+                                        "cannot construct `{newtype}` from `{}`: the constructor \
+                                         takes `{}`, and no conversion is applied",
+                                        self.type_display(&got),
+                                        self.type_display(&inner)
+                                    ),
+                                    arg.value.span,
+                                )
+                                .with_help(format!(
+                                    "`{newtype}` wraps `{}`; convert the value first, then \
+                                     construct (`{newtype}(<{}>)`)",
+                                    self.type_display(&inner),
+                                    self.type_display(&inner)
+                                )),
+                            );
+                        }
+                    }
+                    return;
+                }
+            }
+        }
         // G01: a call to a socket-opening primitive is an effect the
         // body requires; the signature's row is enforced after the walk.
         let mut row_forwarded = false;
@@ -2866,6 +3212,9 @@ impl<'a> TypeChecker<'a> {
                     && !self.env.structs.contains_key(name)
                     && !self.env.enums.contains_key(name)
                     && !self.env.constants.contains(name)
+                    // G10: `UserId` is a declared type, not a missing value;
+                    // the constructor is the one legal way to name it.
+                    && !self.env.newtypes.contains_key(name)
                     && !self.is_builtin_name(name)
                 {
                     self.diags.warning(
@@ -3214,6 +3563,21 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr_inner(object, locals, true);
                 // Check field exists on known struct types
                 let obj_ty = self.infer_expr_type(object, locals);
+                // G10: a newtype is not a record. Naming any field other than
+                // the documented unwrap is a mistake worth an error rather than
+                // a silent `Unknown` that fails later in codegen.
+                if let Type::Newtype { name, .. } = &obj_ty {
+                    if field != "inner" {
+                        self.diags.error(
+                            "E0117",
+                            format!(
+                                "newtype `{name}` has no field `{field}`: its only accessor is \
+                                 `.inner`, which yields the wrapped value"
+                            ),
+                            expr.span,
+                        );
+                    }
+                }
                 if let Some(tname) = self.type_to_name(&obj_ty) {
                     if let Some(sinfo) = self.env.structs.get(&tname) {
                         if !sinfo.fields.iter().any(|(f, _)| f == field) {
@@ -3250,6 +3614,9 @@ impl<'a> TypeChecker<'a> {
                     if let Some(var_info) = locals.get(name) {
                         let declared = var_info.ty.clone();
                         self.check_optional_binding(&declared, value, locals, value.span);
+                        // G10: an assignment is a slot. `var id = UserId("x");
+                        // id = "y"` must not turn a `UserId` into a `String`.
+                        self.check_newtype_slot(&declared, value, locals, "assign to");
                     }
                 }
                 // Check that target is mutable
@@ -3568,6 +3935,7 @@ impl<'a> TypeChecker<'a> {
             }
             Type::Map(k, v) => format!("Map<{}, {}>", self.type_display(k), self.type_display(v)),
             Type::Named(n) => n.clone(),
+            Type::Newtype { name, .. } => name.clone(),
             Type::Grant(effect) => format!("Grant<{effect}>"),
             _ => format!("{ty:?}"),
         }
@@ -3577,6 +3945,9 @@ impl<'a> TypeChecker<'a> {
     fn type_to_name(&self, ty: &Type) -> Option<String> {
         match ty {
             Type::Named(name) => Some(name.clone()),
+            // A newtype's method namespace is its own name: an `impl UserId`
+            // block resolves here, and an `impl String` block does not.
+            Type::Newtype { name, .. } => Some(name.clone()),
             Type::Private(inner) | Type::Secret(inner) => self.type_to_name(inner),
             _ => None,
         }
@@ -3861,6 +4232,10 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::Call { callee, .. } => {
                 if let ExprKind::Ident(name) = &callee.kind {
+                    // G10: the constructor's value has the nominal type.
+                    if let Some(ty) = self.env.newtypes.get(name) {
+                        return ty.clone();
+                    }
                     if let Some(sig) = self.env.functions.get(name) {
                         return sig.return_type.clone();
                     }
@@ -3989,6 +4364,15 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::FieldAccess { object, field } => {
                 let obj_ty = self.infer_expr_type(object, locals);
+                // G10: `.inner` is the one documented escape hatch, and it is
+                // the *only* thing a newtype exposes. Typing it as the target
+                // is what lets `id.inner` flow anywhere a `String` is expected
+                // without the newtype itself ever doing so.
+                if let Type::Newtype { inner, .. } = &obj_ty {
+                    if field == "inner" {
+                        return (**inner).clone();
+                    }
+                }
                 if let Some(tname) = self.type_to_name(&obj_ty) {
                     if let Some(sinfo) = self.env.structs.get(&tname) {
                         if let Some((_, fty)) = sinfo.fields.iter().find(|(f, _)| f == field) {
@@ -4380,6 +4764,172 @@ mod tests {
         let (env, _) = check("type Email = private String");
         let ty = env.type_aliases.get("Email").unwrap();
         assert!(ty.is_private());
+    }
+
+    // ── G10: type aliases vs newtypes ────────────────────────────────────
+    //
+    // The bar is not "the declaration parses". It is that a newtype is *not* an
+    // alias: a bare value is refused wherever the newtype is required, and a
+    // newtype is refused wherever its target is required. Every refusal has to
+    // name the construct that would make it legal — the constructor going in,
+    // `.inner` coming out — which is what these tests pin.
+
+    /// Type errors of a source snippet, message text only.
+    fn newtype_errors(source: &str) -> Vec<String> {
+        let (_, diags) = check(source);
+        diags
+            .items
+            .iter()
+            .filter(|d| matches!(d.code, "E0117" | "E0103"))
+            .map(|d| d.msg.clone())
+            .collect()
+    }
+
+    #[test]
+    fn newtype_is_registered_nominally_and_erased_for_layout() {
+        let (env, diags) = check("newtype UserId = String");
+        assert!(diags.items.iter().all(|d| d.code != "E0117"));
+        assert_eq!(
+            env.newtypes.get("UserId"),
+            Some(&Type::Newtype {
+                name: "UserId".to_string(),
+                inner: Box::new(Type::String),
+            })
+        );
+        // The layout bridge: a pass that only knows aliases still learns the
+        // representation. It is not a conversion — name resolution asks
+        // `newtypes` first.
+        assert_eq!(env.type_aliases.get("UserId"), Some(&Type::String));
+    }
+
+    #[test]
+    fn constructor_has_the_nominal_type() {
+        // `take` demands a `UserId`; the constructor is the only producer.
+        let errors = newtype_errors(
+            "newtype UserId = String\n\
+             fn take(id: UserId) {}\n\
+             fn g() { take(UserId(\"x\")) }",
+        );
+        assert!(errors.is_empty(), "constructor must type as UserId: {errors:?}");
+    }
+
+    #[test]
+    fn bare_value_into_newtype_slot_names_newtype_and_constructor() {
+        for (position, source) in [
+            (
+                "argument",
+                "newtype UserId = String\nfn take(id: UserId) {}\nfn g() { take(\"x\") }",
+            ),
+            (
+                "binding",
+                "newtype UserId = String\nfn g() { let id: UserId = \"x\" }",
+            ),
+            (
+                "assignment",
+                "newtype UserId = String\nfn g() { var id = UserId(\"x\"); id = \"y\" }",
+            ),
+            (
+                "return",
+                "newtype UserId = String\nfn g() -> UserId { return \"x\" }",
+            ),
+        ] {
+            let errors = newtype_errors(source);
+            assert_eq!(errors.len(), 1, "{position}: exactly one refusal: {errors:?}");
+            let message = &errors[0];
+            assert!(
+                message.contains("`UserId`"),
+                "{position}: must name the newtype: {message}"
+            );
+            assert!(
+                message.contains("UserId(<String>)"),
+                "{position}: must name the constructor: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn newtype_does_not_flow_into_its_target() {
+        let errors = newtype_errors(
+            "newtype UserId = String\n\
+             fn take(s: String) {}\n\
+             fn g(id: UserId) { take(id) }",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("newtype `UserId`"), "{}", errors[0]);
+        assert!(errors[0].contains(".inner"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn distinct_newtypes_over_the_same_target_are_unrelated() {
+        let errors = newtype_errors(
+            "newtype UserId = String\n\
+             newtype Handle = String\n\
+             fn take(id: UserId) {}\n\
+             fn g(h: Handle) { take(h) }",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("`Handle`"), "{}", errors[0]);
+        assert!(errors[0].contains("`UserId`"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn same_newtype_passes_everywhere() {
+        let errors = newtype_errors(
+            "newtype UserId = String\n\
+             fn take(id: UserId) -> UserId { return id }\n\
+             fn g(id: UserId) { let copy: UserId = take(id) }",
+        );
+        assert!(errors.is_empty(), "a newtype is its own type: {errors:?}");
+    }
+
+    #[test]
+    fn inner_is_the_documented_unwrap() {
+        let errors = newtype_errors(
+            "newtype UserId = String\n\
+             fn name(id: UserId) -> String { return id.inner }\n\
+             fn g() { let s: String = UserId(\"x\").inner }",
+        );
+        assert!(errors.is_empty(), "`.inner` yields the target: {errors:?}");
+    }
+
+    #[test]
+    fn newtype_exposes_no_other_field() {
+        let errors = newtype_errors(
+            "newtype UserId = String\nfn g(id: UserId) { let n = id.length }",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains(".inner"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn constructor_checks_its_argument() {
+        // Arity.
+        let errors = newtype_errors("newtype UserId = String\nfn g() { UserId() }");
+        assert!(errors[0].contains("exactly one constructor argument"), "{errors:?}");
+        // Argument type: an `int` is not a `String`.
+        let errors = newtype_errors("newtype UserId = String\nfn g() { UserId(42) }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("cannot construct `UserId`"), "{errors:?}");
+    }
+
+    #[test]
+    fn numeric_widening_still_seeds_a_newtype() {
+        // `newtype Meter = Float; Meter(1)` is the same int-into-float widening
+        // a plain `let x: Float = 1` gets. It is not a new conversion.
+        let errors = newtype_errors(
+            "newtype Meter = Float\nfn g() { let m: Meter = Meter(1) }",
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn alias_stays_transparent() {
+        // The control: an alias is the same type on both sides, so a `type`
+        // declaration keeps checking exactly as it did before G10.
+        let errors = newtype_errors(
+            "type Port = u16\nfn take(p: Port) -> u16 { return p }\nfn g() { let x: u16 = take(8443) }",
+        );
+        assert!(errors.is_empty(), "an alias is transparent: {errors:?}");
     }
 
     #[test]

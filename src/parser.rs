@@ -211,6 +211,17 @@ impl Parser {
                 ta.annotations = annotations;
                 Ok(Item::TypeAlias(ta))
             }
+            // `newtype UserId = String` (G10). `newtype` is not a keyword: it is
+            // a declaration only when an identifier follows it, so code that
+            // uses `newtype` as a value name keeps parsing.
+            TokenKind::Ident(name)
+                if name == "newtype"
+                    && matches!(self.peek_kind_ahead(1), Some(TokenKind::Ident(_))) =>
+            {
+                let mut ta = self.parse_newtype_decl()?;
+                ta.annotations = annotations;
+                Ok(Item::TypeAlias(ta))
+            }
             TokenKind::Import => {
                 if !annotations.is_empty() {
                     return Err(self.error("annotations not allowed on imports"));
@@ -955,6 +966,46 @@ impl Parser {
             annotations: vec![],
             qualifier,
             ty,
+            newtype: false,
+            span: Span::new(start.start, self.prev_span().end),
+        })
+    }
+
+    /// `newtype UserId = String` (G10) — a nominal type over `String`.
+    ///
+    /// Parsed into the same node as an alias with `newtype: true`. The
+    /// distinction is semantic, and it is decided in the type checker: an alias
+    /// resolves to its target, a newtype does not resolve to anything.
+    fn parse_newtype_decl(&mut self) -> Result<TypeAlias, ParseError> {
+        let start = self.span();
+        self.expect_ident()?; // `newtype`, accepted contextually
+        let name = self.expect_ident()?;
+        if self.check(TokenKind::Lt) {
+            return Err(self.error(
+                "`newtype` cannot declare type parameters: a newtype is one \
+                 nominal type over one target type",
+            ));
+        }
+        self.expect(TokenKind::Eq)?;
+
+        // A privacy qualifier is meaningless here: a newtype lands on exactly
+        // one type, and privacy belongs to that target (`newtype Email =
+        // private String` would claim an alias-shaped transformation).
+        if self.check(TokenKind::Private) || self.check(TokenKind::Secret) {
+            return Err(self.error(
+                "a `newtype` cannot take a `private`/`secret` qualifier: \
+                 qualify the target type instead (`newtype Email = private String`)",
+            ));
+        }
+
+        let ty = self.parse_type()?;
+
+        Ok(TypeAlias {
+            name,
+            annotations: vec![],
+            qualifier: None,
+            ty,
+            newtype: true,
             span: Span::new(start.start, self.prev_span().end),
         })
     }

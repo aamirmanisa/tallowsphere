@@ -281,7 +281,10 @@ impl Formatter {
 
     fn format_type_alias(&mut self, t: &TypeAlias) {
         self.write_indent();
-        self.write("type ");
+        // G10: the prefix is not decoration. Emitting `type` for a `newtype`
+        // would turn a nominal type into a transparent alias, so `tallow fmt`
+        // would change what the program means.
+        self.write(if t.newtype { "newtype " } else { "type " });
         self.write(&t.name);
         self.write(" = ");
         if let Some(q) = t.qualifier {

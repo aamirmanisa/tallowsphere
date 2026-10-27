@@ -534,7 +534,12 @@ fn collect_definitions(program: &Program, _source: &str) -> Vec<SymbolDef> {
                     name: t.name.clone(),
                     kind: SymbolKind::TYPE_PARAMETER,
                     span: t.span,
-                    detail: format!("type {} = {}", t.name, format_type_expr(&t.ty)),
+                    detail: format!(
+                        "{} {} = {}",
+                        if t.newtype { "newtype" } else { "type" },
+                        t.name,
+                        format_type_expr(&t.ty)
+                    ),
                 });
             }
             Item::Import(_) => {}

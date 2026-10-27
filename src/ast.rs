@@ -211,6 +211,16 @@ pub struct TypeAlias {
     pub annotations: Vec<Annotation>,
     pub qualifier: Option<TypeQualifier>,
     pub ty: TypeExpr,
+    /// `true` for `newtype UserId = String`, `false` for `type Port = u16`.
+    ///
+    /// The two declarations share a node because they share a *shape* (a name
+    /// and a target type), not a meaning: an alias is transparent at every use
+    /// site, a newtype is a distinct type that is only related to its target by
+    /// the constructor `UserId(..)` and the `.inner` unwrap (G10). Keeping one
+    /// node keeps every pass that already walks type declarations — imports,
+    /// privacy, codegen's layout scan — operating on both without a second
+    /// exhaustive `Item` arm.
+    pub newtype: bool,
     pub span: Span,
 }
 

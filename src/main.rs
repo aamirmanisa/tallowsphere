@@ -10249,6 +10249,15 @@ fn real_main() -> anyhow::Result<()> {
             // ── Phase 3: Type Check ──────────────────────────────────
             let (env, typeck_diags) = TypeChecker::new(&program).check();
 
+            // ── Phase 3b: Newtype erasure (G10) ─────────────────────
+            // A newtype is nominal only to the checker: at run time the value
+            // is the wrapped value, so `UserId(x)` lowers to `x` and
+            // `id.inner` lowers to `id` before *either* execution plane sees
+            // the program. Erasing after the check — never before — is what
+            // keeps the implicit-conversion refusals alive: the checker has
+            // already refused every slot the newtype does not belong in.
+            tallow::newtypes::lower(&mut program, &env);
+
             // ── Phase 4: Legal Pass ──────────────────────────────────
             let (legal_diags, browser_audit_entries) = LegalPass::new(&program, &env).check();
 
