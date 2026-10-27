@@ -1,0 +1,7 @@
+# intel_ip / N33 fixture — ip2asn-v4 shape (start, end, asn, country, description).
+# Deliberately ordered shortest-prefix-first: the /8 covers the /24 below it, and
+# a "first match" reader would answer 64500 for 10.1.2.7 where longest prefix
+# must answer 64501.
+10.0.0.0	10.255.255.255	64500	US	EXAMPLE-CORP, US
+10.1.2.0	10.1.2.255	64501	DE	EXAMPLE-EDGE, DE
+192.0.2.0	192.0.2.255	64496	ZZ	TEST-NET-1
