@@ -214,6 +214,9 @@ struct ClusterWeights {
 struct IpClusterReport {
     clusters:           []IpCluster,
     linked_not_merged:  []ClusterLink,
+    // Observations that joined no cluster: not findings, but counted, so the
+    // members on show and `observation_count` can be reconciled by a reader.
+    unclustered:        []String,
     observation_count:  Int,
     link_min_score:     Float,
     merge_min_score:    Float,

@@ -499,6 +499,11 @@ struct Cluster {
 struct ClusterReport {
     clusters: Vec<Cluster>,
     linked_not_merged: Vec<Link>,
+    /// Observations that joined no cluster. They are not findings — a lone
+    /// endpoint shares evidence with nobody — but dropping them silently makes
+    /// `observation_count` disagree with the members on show and leaves a
+    /// reader unable to tell "nothing to report" from "the host was lost".
+    unclustered: Vec<String>,
     observations: usize,
     link_min: f64,
     merge_min: f64,
@@ -615,10 +620,13 @@ fn build_report(
     }
 
     let mut clusters: Vec<Cluster> = Vec::new();
+    let mut unclustered: Vec<String> = Vec::new();
     for group in &groups {
         // A cluster of one is not a cluster: a single endpoint has no shared
-        // evidence, and reporting it would dress a lone host as a finding.
+        // evidence, and reporting it would dress a lone host as a finding. It
+        // is reported as unclustered instead, so the count still adds up.
         if group.len() < 2 {
+            unclustered.extend(group.iter().map(|&i| obs[i].ip.clone()));
             continue;
         }
         let mut evidence: Vec<Link> = Vec::new();
@@ -639,6 +647,7 @@ fn build_report(
         });
     }
     clusters.sort_by(|a, b| a.members.first().cmp(&b.members.first()));
+    unclustered.sort();
 
     let mut linked_not_merged: Vec<Link> = Vec::new();
     for (i, j, link) in &links {
@@ -651,6 +660,7 @@ fn build_report(
     Ok(ClusterReport {
         clusters,
         linked_not_merged,
+        unclustered,
         observations: obs.len(),
         link_min,
         merge_min,
@@ -801,6 +811,10 @@ fn report_value(r: &ClusterReport) -> Value {
             (
                 "linked_not_merged".to_string(),
                 Value::Array(r.linked_not_merged.iter().map(link_value).collect()),
+            ),
+            (
+                "unclustered".to_string(),
+                Value::Array(r.unclustered.iter().cloned().map(Value::String).collect()),
             ),
             (
                 "observation_count".to_string(),
@@ -1461,6 +1475,24 @@ mod intel_ip_tests {
     }
 
     #[test]
+    #[test]
+    fn an_unlinked_observation_is_reported_as_unclustered_not_dropped() {
+        let obs = vec![
+            ob("10.0.0.1", Some(64500), Some("AA11"), None, None),
+            ob("10.0.0.2", Some(64501), Some("AA11"), None, None),
+            ob("10.0.0.9", Some(64500), None, None, None),
+        ];
+        let r = cluster_of(obs);
+        assert_eq!(r.clusters.len(), 1);
+        assert_eq!(r.unclustered, vec!["10.0.0.9".to_string()]);
+        let in_clusters: usize = r.clusters.iter().map(|c| c.members.len()).sum();
+        assert_eq!(
+            in_clusters + r.unclustered.len(),
+            r.observations,
+            "every observation must be accounted for exactly once"
+        );
+    }
+
     fn a_shared_asn_alone_never_clusters_and_never_links() {
         // The exact case the design exists to prevent: every Cloudflare-fronted
         // site shares AS13335 and none of them is one operator.
