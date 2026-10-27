@@ -36,7 +36,15 @@ def strip_comments(text: str) -> str:
 
 
 def parse_impls(text: str):
-    """Yield (type_name, method_name, body_text) for every fn inside an impl block."""
+    """Yield (type_name, method_name, body_text) for every fn inside an impl block.
+
+    The manifest form is a bare signature — `native fn goto(self, url: String)
+    -> Void` with no braces at all — so "empty body" means "no brace follows the
+    signature", not "{ }". Two earlier versions of this function assumed braces:
+    the first matched a brace inside a nested block and reported bodies belonging
+    to other methods; the second matched none and the script printed a clean zero
+    over 94 impl blocks.
+    """
     for m in re.finditer(r"impl\s+(\w+)\s*\{", text):
         ty = m.group(1)
         depth, i = 1, m.end()
@@ -47,19 +55,29 @@ def parse_impls(text: str):
                 depth -= 1
             i += 1
         block = text[m.end(): i - 1]
-        for fm in re.finditer(r"\bfn\s+(\w+)\s*\(", block):
+        for fm in re.finditer(r"\b(?:native\s+)?fn\s+(\w+)\s*\(", block):
             name = fm.group(1)
-            j = block.find("{", fm.end())
-            if j < 0:
-                continue
-            d, k = 1, j + 1
-            while k < len(block) and d:
-                if block[k] == "{":
-                    d += 1
-                elif block[k] == "}":
-                    d -= 1
+            paren, k = 1, fm.end()
+            while k < len(block) and paren:
+                if block[k] == "(":
+                    paren += 1
+                elif block[k] == ")":
+                    paren -= 1
                 k += 1
-            yield ty, name, block[j + 1: k - 1]
+            eol = block.find("\n", k)
+            line_rest = block[k: eol if eol >= 0 else len(block)]
+            if "{" not in line_rest:
+                yield ty, name, ""  # declared, no body — the manifest form
+                continue
+            j = k + line_rest.index("{")
+            d, n = 1, j + 1
+            while n < len(block) and d:
+                if block[n] == "{":
+                    d += 1
+                elif block[n] == "}":
+                    d -= 1
+                n += 1
+            yield ty, name, block[j + 1: n - 1]
 
 
 def main() -> int:
@@ -102,12 +120,26 @@ def main() -> int:
               f"the body rule does not match the manifest's current form")
         return 2
 
+    # Declared in stdlib/time.tl's `impl i64`, with no arm in either plane. Kept here
+    # as dated debt rather than an exclusion the checker cannot see: the interpreter's
+    # duration methods return Int milliseconds while the manifest declares
+    # `-> Duration`, so implementing these two is a semantics decision, not a patch.
+    KNOWN_UNIMPLEMENTED = {
+        "i64.nanoseconds": "2027-03-31",
+        "i64.microseconds": "2027-03-31",
+    }
+    debt = [u for u in unmentioned if u.split(": ")[-1] in KNOWN_UNIMPLEMENTED]
+    if debt:
+        for entry in debt:
+            print(f"DEBT  {entry} declared with no arm on either plane (expires {KNOWN_UNIMPLEMENTED[entry.split(': ')[-1]]})")
+        unmentioned = [u for u in unmentioned if u not in debt]
+
     for line in unmentioned:
         print(f"UNMENTIONED  {line}")
     print(
         f"checked {declarations} empty-bodied declarations, "
         f"{len(unmentioned)} unmentioned on both planes, "
-        f"{len(REFUSED)} declared refusals"
+        f"{len(REFUSED)} declared refusals, {len(debt)} dated debt"
     )
     return 1 if unmentioned else 0
 
