@@ -1,0 +1,28 @@
+# Tallowsphere — outbound authorization register (N09 denial fixture)
+#
+# A register that grants the IPv4 loopback and NOT ::1. The workspace register
+# grants ::1 since 2026-10-26 (operator decision), so the "refused before the
+# socket is used" test can no longer use it; it runs with this directory as cwd
+# instead. Deny-by-default is the property under test, not the workspace's own
+# grant list.
+# ---------------------------------------------------------------------------
+
+[[authorized]]
+host = "127.0.0.1"
+basis = "self-hosted"
+granted_by = "operator (workspace default)"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "loopback interface on this host"
+methods = ["GET", "HEAD"]
+notes = "local development and health checks"
+
+[[authorized]]
+host = "localhost"
+basis = "self-hosted"
+granted_by = "operator (workspace default)"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "loopback interface on this host"
+methods = ["GET", "HEAD"]
+notes = "local development and health checks"

@@ -179,15 +179,16 @@ fn an_unlisted_ipv6_target_is_refused_before_a_probe() {
 
 #[test]
 fn an_unlisted_ipv6_loopback_is_refused_before_the_socket_is_used() {
-    // Run from the workspace root, whose register grants 127.0.0.1 but not
-    // ::1. A listener is bound on [::1]:46031 first, so "before any probe" is
+    // Run from deny_v6/, a register that grants the IPv4 loopback and NOT ::1.
+    // (The workspace register grants ::1 since 2026-10-26 — the operator's
+    // decision — so this test can no longer borrow it; it was re-pointed here,
+    // which is exactly the signal its previous comment anticipated.)
+    // A listener is bound on [::1]:46031 first, so "before any probe" is
     // measured: if the gate let the scan through, the accept would fire.
-    //
-    // If ::1 is ever added to the operational register, this test is the signal
-    // to re-point it at another unlisted literal (and to re-read the grant).
     let seen = watch_v6_listener(UNLISTED_PORT);
 
-    let (ok, stdout, stderr) = run("unlisted_loopback_v6.tl", env!("CARGO_MANIFEST_DIR"));
+    let deny_dir = format!("{}/deny_v6", fixture_dir());
+    let (ok, stdout, stderr) = run("unlisted_loopback_v6.tl", &deny_dir);
     assert!(
         !ok,
         "::1 is not in the workspace register and must not scan:\nstdout: {stdout}\nstderr: {stderr}"
