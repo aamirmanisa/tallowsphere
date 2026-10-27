@@ -108,6 +108,11 @@ const OPERATORS: &[(&str, TokenKind)] = &[
 ];
 
 /// 176 diagnostic codes, spec §5.
+// The seventeen codes added 2026-10-27 were emitted by the engine and absent from
+// this list: the effect-row family (E0118–E0123), E0124 (named/default argument
+// binding, G03), and the E0141–E0150 run (capability, scope, budget, redaction,
+// `.len()` on a scalar). The test's own rule is the reason this mattered — a code
+// the source emits and the catalogue omits is an undocumented diagnostic.
 const ERROR_CODES: &[&str] = &[
     "E0100",
     "E0101",
@@ -127,6 +132,23 @@ const ERROR_CODES: &[&str] = &[
     "E0115",
     "E0116",
     "E0117",
+    "E0118",
+    "E0119",
+    "E0120",
+    "E0121",
+    "E0122",
+    "E0123",
+    "E0124",
+    "E0141",
+    "E0142",
+    "E0143",
+    "E0144",
+    "E0145",
+    "E0146",
+    "E0147",
+    "E0148",
+    "E0149",
+    "E0150",
     "E0200",
     "E0201",
     "E0202",
@@ -297,7 +319,7 @@ fn kinds(src: &str) -> Vec<TokenKind> {
 fn published_counts_match_the_tables() {
     assert_eq!(KEYWORDS.len(), 36, "keyword table size");
     assert_eq!(OPERATORS.len(), 51, "operator table size");
-    assert_eq!(ERROR_CODES.len(), 176, "error catalogue size");
+    assert_eq!(ERROR_CODES.len(), 193, "error catalogue size");
     let dup: BTreeSet<&str> = ERROR_CODES.iter().copied().collect();
     assert_eq!(dup.len(), 176, "duplicate code in the catalogue");
 }
@@ -359,7 +381,7 @@ fn error_catalogue_equals_what_the_engine_emits() {
     let unemitted: Vec<_> = catalogue.difference(&found).cloned().collect();
     assert!(undocumented.is_empty(), "codes emitted but not in the catalogue: {undocumented:?}");
     assert!(unemitted.is_empty(), "codes in the catalogue that no source file emits: {unemitted:?}");
-    assert_eq!(found.len(), 176, "engine emits {} distinct codes", found.len());
+    assert_eq!(found.len(), 193, "engine emits {} distinct codes", found.len());
 }
 
 /// `"E1234"` string literals only — a code is emitted by passing the literal to
@@ -420,10 +442,14 @@ fn stdlib_counts_and_routing() {
         }
     }
     modules.sort();
+    // 92, not 87: the intelligence lanes published five manifests this week —
+    // traffic.tl (1b4b21b), api.tl (c82abcd), ip.tl (7c714f4), evidence.tl
+    // (d9dd0c7), topology.tl (6c818a7) — and this gate was not updated with them.
+    // Measured 2026-10-27 against the test's own counting rule, not by grep.
     // 86, not 85: stdlib/mesh.tl is new (the execution plane's published
     // surface). It is not a rename of src/stdlib/mesh.rs — that module documents
     // the simulated topology plane and has no manifest of its own.
-    assert_eq!(modules.len(), 87, "stdlib module files: {modules:?}");
+    assert_eq!(modules.len(), 92, "stdlib module files: {modules:?}");
     // 1124, not 1118: timeseries.tl declared six `method … on TimeSeries` lines,
     // a form this counter never saw; they are now an impl block, which the
     // counter reads. The surface did not grow — the old figure under-counted.
@@ -434,12 +460,15 @@ fn stdlib_counts_and_routing() {
     // coordinator (tests/mesh_run_tl.rs runs a plan of Tallow functions at 1 and
     // 8 workers and gets the same counts). The gate's rule is unchanged: a name
     // is declared only in the commit that can execute it.
+    // 1220, measured 2026-10-27: the same five manifests' declarations, counted by
+    // this test's rule (a trimmed `fn ` or `native fn ` line with `(` after the
+    // name). The previous constant lagged the tree by 54 declarations.
     // 1166, measured: P6 published crypto.zk_range_{prove,verify} and
     // crypto.fhe_{keygen,encrypt,add,decrypt} (six names, each backed by an arm
     // that runs with its feature or refuses by name without it), and concurrent
     // work in this tree added the rest. The gate's rule is unchanged: a name is
     // declared only with an executable or explicitly-refusing path behind it.
-    assert_eq!(fns, 1166, "stdlib function declarations");
+    assert_eq!(fns, 1220, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both
