@@ -44,6 +44,11 @@ pub mod topology;
 // matching stdlib/ip.tl, so the manifest and the dispatch key agree.
 #[path = "intel_ip.rs"]
 pub mod ip;
+// A2 API surface (N13/N14/N20/N21). The Rust module is `intel_api` because
+// `intel` already names the evidence/budget lane; the .tl namespace is `api`,
+// matching stdlib/api.tl, so the manifest and the dispatch key agree.
+#[path = "intel_api.rs"]
+pub mod api;
 pub mod intel_evidence;
 pub mod net;
 pub mod osint;
@@ -179,6 +184,9 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         // `intel_ip` is tolerated as a prefix because the brief names the API
         // that way; the .tl namespace is `ip`.
         "ip" | "intel_ip" => ip::dispatch(function, args),
+        // A2 API surface (N13/N14/N20/N21): offline OpenAPI/GraphQL ingestion and
+        // inventory comparison. No sockets, no DNS, no clock.
+        "api" | "intel_api" => api::dispatch(function, args),
         // Evidence & safety (N38/N39): grant-bound export and budget receipts.
         "intel" => intel_evidence::dispatch(function, args),
         "net" => net::dispatch(function, args),
@@ -350,7 +358,7 @@ const REGISTERED_MODULES: &[&str] = &[
     "log", "market", "math", "mesh",
     "net", "osint", "process", "rand",
     "regex", "time", "topology", "transfer", "transfer_net",
-    "intel", "ip",
+    "intel", "ip", "api",
     "url", "sync", "beehiiv", "relay_room",
     "relayroom", "medium", "cxense", "substack",
     "wordpress", "ghost", "oauth", "jwt",
