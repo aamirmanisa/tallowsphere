@@ -1,0 +1,22 @@
+# The same host twice, with different bases. Whichever way the gate resolves
+
+[[authorized]]
+host = "twice.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "TWICE.example"
+basis = "public-read-only"
+granted_by = "somebody else"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "neighbour.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"

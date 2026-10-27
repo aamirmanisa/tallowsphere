@@ -1,0 +1,20 @@
+[[authorized]]
+host = "expired-yesterday.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2026-10-26"
+
+[[authorized]]
+host = "expires-today.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2026-10-27"
+
+[[authorized]]
+host = "expires-tomorrow.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2026-10-28"

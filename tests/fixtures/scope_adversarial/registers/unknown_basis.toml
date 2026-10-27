@@ -1,0 +1,6 @@
+[[authorized]]
+host = "vibes.example"
+basis = "vibes"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"

@@ -1,0 +1,29 @@
+[[authorized]]
+host = "own.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "consent.example"
+basis = "written-consent"
+granted_by = "owner of consent.example"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+evidence = "docs/consent/consent.example.txt"
+
+[[authorized]]
+host = "self.example"
+basis = "self-hosted"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "public.example"
+basis = "public-read-only"
+granted_by = "published for machine retrieval"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+evidence = "https://public.example/robots.txt"

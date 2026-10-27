@@ -1,0 +1,5 @@
+[[authorized]]
+host = "unattributed.example"
+basis = "ownership"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
