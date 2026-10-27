@@ -49,6 +49,11 @@ pub mod ip;
 // matching stdlib/api.tl, so the manifest and the dispatch key agree.
 #[path = "intel_api.rs"]
 pub mod api;
+// A3 traffic observation (N27/N28/N29/N30). The Rust module is `intel_traffic`
+// because `intel` already names the evidence/budget lane; the .tl namespace is
+// `traffic`, matching stdlib/traffic.tl, so the manifest and the dispatch key agree.
+#[path = "intel_traffic.rs"]
+pub mod traffic;
 pub mod intel_evidence;
 pub mod net;
 pub mod osint;
@@ -187,6 +192,10 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         // A2 API surface (N13/N14/N20/N21): offline OpenAPI/GraphQL ingestion and
         // inventory comparison. No sockets, no DNS, no clock.
         "api" | "intel_api" => api::dispatch(function, args),
+        // A3 traffic (N27/N28/N29/N30): offline capture parsing, protocol
+        // attribution, DNS-tunnelling signal, egress-plane summary. No sockets,
+        // no live capture, no DNS resolution, no clock.
+        "traffic" | "intel_traffic" => traffic::dispatch(function, args),
         // Evidence & safety (N38/N39): grant-bound export and budget receipts.
         "intel" => intel_evidence::dispatch(function, args),
         "net" => net::dispatch(function, args),
@@ -358,7 +367,7 @@ const REGISTERED_MODULES: &[&str] = &[
     "log", "market", "math", "mesh",
     "net", "osint", "process", "rand",
     "regex", "time", "topology", "transfer", "transfer_net",
-    "intel", "ip", "api",
+    "intel", "ip", "api", "traffic",
     "url", "sync", "beehiiv", "relay_room",
     "relayroom", "medium", "cxense", "substack",
     "wordpress", "ghost", "oauth", "jwt",
