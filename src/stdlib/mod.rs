@@ -39,6 +39,11 @@ pub mod mesh_exec;
 // Sitescan module (2026-09-12): comprehensive website + infrastructure scanning
 pub mod sitescan;
 pub mod topology;
+// A4 IP intelligence (N33/N37). The Rust module is `intel_ip` because
+// `intel` already names the evidence/budget lane; the .tl namespace is `ip`,
+// matching stdlib/ip.tl, so the manifest and the dispatch key agree.
+#[path = "intel_ip.rs"]
+pub mod ip;
 pub mod intel_evidence;
 pub mod net;
 pub mod osint;
@@ -170,6 +175,10 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         // Sitescan (2026-09-12): comprehensive website + infrastructure scanning
         "sitescan" => sitescan::dispatch(function, args),
         "topology" => topology::dispatch(function, args),
+        // A4 IP intelligence (N33/N37): offline ASN table + intel cache.
+        // `intel_ip` is tolerated as a prefix because the brief names the API
+        // that way; the .tl namespace is `ip`.
+        "ip" | "intel_ip" => ip::dispatch(function, args),
         // Evidence & safety (N38/N39): grant-bound export and budget receipts.
         "intel" => intel_evidence::dispatch(function, args),
         "net" => net::dispatch(function, args),
@@ -341,7 +350,7 @@ const REGISTERED_MODULES: &[&str] = &[
     "log", "market", "math", "mesh",
     "net", "osint", "process", "rand",
     "regex", "time", "topology", "transfer", "transfer_net",
-    "intel",
+    "intel", "ip",
     "url", "sync", "beehiiv", "relay_room",
     "relayroom", "medium", "cxense", "substack",
     "wordpress", "ghost", "oauth", "jwt",
