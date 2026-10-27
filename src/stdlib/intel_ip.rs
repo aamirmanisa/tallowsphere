@@ -1230,6 +1230,439 @@ fn geo_json_dispatch(args: Vec<Value>) -> StdlibResult {
         .map_err(|e| format!("ip.geo_json: {e}"))
 }
 
+// ── N35: multi-source join ──────────────────────────────────────────────────
+
+pub const CODE_JOIN_BAD_SOURCE: &str = "ip:join-bad-source";
+pub const CODE_JOIN_BAD_ROW: &str = "ip:join-bad-row";
+pub const CODE_JOIN_DUPLICATE: &str = "ip:join-duplicate";
+
+/// One field value as a source reported it. `authority` is a caller-assigned
+/// rank (higher = more authoritative) and it **orders the display only**: it
+/// never decides which value is true, which is why the report carries no
+/// "winner" field for it to decide.
+#[derive(Clone, Debug)]
+struct JoinRow {
+    ip: String,
+    field: String,
+    value: String,
+    confidence: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+struct JoinSource {
+    name: String,
+    authority: i64,
+    retrieved_at_ms: i64,
+    freshness_ms: i64,
+    rows: Vec<JoinRow>,
+}
+
+/// A value in the report, with its provenance and its age. `stale` is
+/// `age_ms > freshness_ms`: an expiry is information carried *with* the value,
+/// never a reason to hide it and never a licence to serve it as current.
+#[derive(Clone, Debug)]
+struct JoinValue {
+    source: String,
+    authority: i64,
+    value: String,
+    confidence: Option<f64>,
+    retrieved_at_ms: i64,
+    age_ms: i64,
+    stale: bool,
+}
+
+fn join_str(
+    fields: &[(String, Value)],
+    name: &str,
+    code: &str,
+    owner: &str,
+) -> Result<String, String> {
+    match field(fields, name) {
+        Some(Value::String(s)) if !s.trim().is_empty() => Ok(s.trim().to_string()),
+        other => Err(format!(
+            "{code}: {owner}.{name} must be a non-empty String, got {}",
+            other.map(type_name).unwrap_or("nothing")
+        )),
+    }
+}
+
+fn parse_join_row(v: &Value) -> Result<JoinRow, String> {
+    let Value::Struct { name, fields } = v else {
+        return Err(format!(
+            "{CODE_JOIN_BAD_ROW}: row expected IpJoinRow, got {}",
+            type_name(v)
+        ));
+    };
+    if name != "IpJoinRow" {
+        return Err(format!(
+            "{CODE_JOIN_BAD_ROW}: row expected IpJoinRow, got struct {name}"
+        ));
+    }
+    let confidence = match field(fields, "confidence") {
+        None | Some(Value::Nil) => None,
+        Some(Value::Float(f)) if (0.0..=1.0).contains(f) => Some(*f),
+        Some(other) => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_ROW}: confidence must be a Float in 0..=1, got {}",
+                value_label(other)
+            ));
+        }
+    };
+    Ok(JoinRow {
+        ip: join_str(fields, "ip", CODE_JOIN_BAD_ROW, "IpJoinRow")?,
+        field: join_str(fields, "field", CODE_JOIN_BAD_ROW, "IpJoinRow")?,
+        value: join_str(fields, "value", CODE_JOIN_BAD_ROW, "IpJoinRow")?,
+        confidence,
+    })
+}
+
+fn parse_join_source(v: &Value) -> Result<JoinSource, String> {
+    let Value::Struct { name, fields } = v else {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: source expected IpJoinSource, got {}",
+            type_name(v)
+        ));
+    };
+    if name != "IpJoinSource" {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: source expected IpJoinSource, got struct {name}"
+        ));
+    }
+    let int = |n: &str| -> Result<i64, String> {
+        match field(fields, n) {
+            Some(Value::Int(i)) => i64::try_from(*i)
+                .map_err(|_| format!("{CODE_JOIN_BAD_SOURCE}: {n} {i} is out of range")),
+            other => Err(format!(
+                "{CODE_JOIN_BAD_SOURCE}: IpJoinSource.{n} must be an Int, got {}",
+                other.map(type_name).unwrap_or("nothing")
+            )),
+        }
+    };
+    let (authority, retrieved_at_ms, freshness_ms) = (
+        int("authority")?,
+        int("retrieved_at_ms")?,
+        int("freshness_ms")?,
+    );
+    if authority < 0 {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: authority {authority} is negative — authority is a rank, \
+             and a negative rank orders nothing"
+        ));
+    }
+    if retrieved_at_ms <= 0 {
+        // A timestamp is evidence; a missing one is a refusal, not "now".
+        // Accepting 0 would date every value to 1970 and make `stale` meaningless.
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: IpJoinSource.retrieved_at_ms is unset ({retrieved_at_ms}) — \
+             an age needs the moment it was retrieved, and the current time is not evidence"
+        ));
+    }
+    if freshness_ms < 0 {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: freshness_ms {freshness_ms} is negative — a horizon is a \
+             duration"
+        ));
+    }
+    let Some(Value::Array(items)) = field(fields, "rows") else {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: IpJoinSource.rows must be []IpJoinRow"
+        ));
+    };
+    Ok(JoinSource {
+        name: join_str(fields, "name", CODE_JOIN_BAD_SOURCE, "IpJoinSource")?,
+        authority,
+        retrieved_at_ms,
+        freshness_ms,
+        rows: items.iter().map(parse_join_row).collect::<Result<_, _>>()?,
+    })
+}
+
+fn join_value_struct(v: &JoinValue) -> Value {
+    Value::Struct {
+        name: "IpJoinValue".to_string(),
+        fields: vec![
+            ("source".to_string(), Value::String(v.source.clone())),
+            ("authority".to_string(), Value::Int(v.authority as i128)),
+            ("value".to_string(), Value::String(v.value.clone())),
+            (
+                "confidence".to_string(),
+                match v.confidence {
+                    Some(c) => Value::Float(c),
+                    None => Value::Nil,
+                },
+            ),
+            (
+                "retrieved_at_ms".to_string(),
+                Value::Int(v.retrieved_at_ms as i128),
+            ),
+            ("age_ms".to_string(), Value::Int(v.age_ms as i128)),
+            ("stale".to_string(), Value::Bool(v.stale)),
+        ],
+    }
+}
+
+fn disagreement_line(ip: &str, field_name: &str, values: &[JoinValue]) -> String {
+    let parts: Vec<String> = values
+        .iter()
+        .map(|v| {
+            format!(
+                "{} (source {}, authority {}, age {}ms{})",
+                v.value,
+                v.source,
+                v.authority,
+                v.age_ms,
+                if v.stale { ", stale" } else { "" }
+            )
+        })
+        .collect();
+    format!("{ip} {field_name}: {}", parts.join(" vs "))
+}
+
+/// Join what the caller already retrieved. No socket, no clock: `now_ms` is the
+/// caller's, so age is arithmetic the caller can reproduce.
+///
+/// Ordering is total, so permuted input yields byte-identical output: sources
+/// by name, fields by (ip, field), values by authority descending then source
+/// name. A field where the sources differ is reported as a disagreement naming
+/// every claimant — never averaged, never collapsed to a majority, never
+/// resolved by authority, because the operator's question is *who is wrong*.
+fn build_join(sources: &[JoinSource], now_ms: i64) -> Result<Value, String> {
+    let mut ordered: Vec<&JoinSource> = sources.iter().collect();
+    ordered.sort_by(|a, b| a.name.cmp(&b.name));
+    if let Some(w) = ordered.windows(2).find(|w| w[0].name == w[1].name) {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: source `{}` appears twice — two authorities for one name \
+             would make every value it reported ambiguous",
+            w[0].name
+        ));
+    }
+
+    let mut groups: std::collections::BTreeMap<(String, String), Vec<JoinValue>> =
+        std::collections::BTreeMap::new();
+    let mut seen = std::collections::HashSet::new();
+    for s in &ordered {
+        for r in &s.rows {
+            if !seen.insert((s.name.clone(), r.ip.clone(), r.field.clone())) {
+                return Err(format!(
+                    "{CODE_JOIN_DUPLICATE}: source `{}` reported {} {} twice — one source, one \
+                     field, one value",
+                    s.name, r.ip, r.field
+                ));
+            }
+            groups
+                .entry((r.ip.clone(), r.field.clone()))
+                .or_default()
+                .push(JoinValue {
+                    source: s.name.clone(),
+                    authority: s.authority,
+                    value: r.value.clone(),
+                    confidence: r.confidence,
+                    retrieved_at_ms: s.retrieved_at_ms,
+                    age_ms: age_ms(s.retrieved_at_ms, now_ms),
+                    stale: age_ms(s.retrieved_at_ms, now_ms) > s.freshness_ms,
+                });
+        }
+    }
+
+    let (mut value_count, mut stale_values, mut agreements, mut disagreements) = (0, 0, 0, 0);
+    let mut fields: Vec<Value> = Vec::new();
+    for ((ip, name), mut values) in groups {
+        values.sort_by(|a, b| b.authority.cmp(&a.authority).then(a.source.cmp(&b.source)));
+        value_count += values.len();
+        stale_values += values.iter().filter(|v| v.stale).count();
+        let unanimous = values.iter().all(|v| v.value == values[0].value);
+        let status = if values.len() == 1 {
+            "single"
+        } else if unanimous {
+            "unanimous"
+        } else {
+            "disagreement"
+        };
+        if values.len() > 1 && unanimous {
+            agreements += 1;
+        }
+        let lines = if status == "disagreement" {
+            disagreements += 1;
+            vec![disagreement_line(&ip, &name, &values)]
+        } else {
+            Vec::new()
+        };
+        fields.push(Value::Struct {
+            name: "IpJoinField".to_string(),
+            fields: vec![
+                ("ip".to_string(), Value::String(ip)),
+                ("field".to_string(), Value::String(name)),
+                ("status".to_string(), Value::String(status.to_string())),
+                (
+                    "values".to_string(),
+                    Value::Array(values.iter().map(join_value_struct).collect()),
+                ),
+                (
+                    "disagreement".to_string(),
+                    Value::Array(lines.into_iter().map(Value::String).collect()),
+                ),
+            ],
+        });
+    }
+
+    let source_info: Vec<Value> = ordered
+        .iter()
+        .map(|s| Value::Struct {
+            name: "IpJoinSourceInfo".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::String(s.name.clone())),
+                ("authority".to_string(), Value::Int(s.authority as i128)),
+                (
+                    "retrieved_at_ms".to_string(),
+                    Value::Int(s.retrieved_at_ms as i128),
+                ),
+                (
+                    "age_ms".to_string(),
+                    Value::Int(age_ms(s.retrieved_at_ms, now_ms) as i128),
+                ),
+                (
+                    "stale".to_string(),
+                    Value::Bool(age_ms(s.retrieved_at_ms, now_ms) > s.freshness_ms),
+                ),
+                (
+                    "freshness_ms".to_string(),
+                    Value::Int(s.freshness_ms as i128),
+                ),
+            ],
+        })
+        .collect();
+
+    let field_count = fields.len();
+    Ok(Value::Struct {
+        name: "IpJoinReport".to_string(),
+        fields: vec![
+            ("fields".to_string(), Value::Array(fields)),
+            ("sources".to_string(), Value::Array(source_info)),
+            ("now_ms".to_string(), Value::Int(now_ms as i128)),
+            ("field_count".to_string(), Value::Int(field_count as i128)),
+            ("value_count".to_string(), Value::Int(value_count as i128)),
+            ("stale_values".to_string(), Value::Int(stale_values as i128)),
+            ("agreements".to_string(), Value::Int(agreements as i128)),
+            (
+                "disagreements".to_string(),
+                Value::Int(disagreements as i128),
+            ),
+        ],
+    })
+}
+
+fn join_dispatch(args: Vec<Value>) -> StdlibResult {
+    let Some(Value::Array(items)) = args.first() else {
+        return Err(format!(
+            "ip.join: argument 1 expected []IpJoinSource, got {}",
+            args.first().map(type_name).unwrap_or("nothing")
+        ));
+    };
+    let now_ms = int_arg(&args, 1, "join")?;
+    if now_ms < 0 {
+        return Err(format!(
+            "ip.join: now_ms {now_ms} is before the Unix epoch — an age cannot be measured \
+             against a clock that has not started"
+        ));
+    }
+    let sources: Vec<JoinSource> = items
+        .iter()
+        .map(parse_join_source)
+        .collect::<Result<_, _>>()?;
+    build_join(&sources, now_ms)
+}
+
+fn join_row_dispatch(args: Vec<Value>) -> StdlibResult {
+    let confidence = match args.get(3) {
+        None | Some(Value::Nil) => Value::Nil,
+        Some(Value::Float(f)) if (0.0..=1.0).contains(f) => Value::Float(*f),
+        Some(other) => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_ROW}: ip.join_row: confidence must be a Float in 0..=1, got {}",
+                type_name(other)
+            ));
+        }
+    };
+    Ok(Value::Struct {
+        name: "IpJoinRow".to_string(),
+        fields: vec![
+            (
+                "ip".to_string(),
+                Value::String(str_arg(&args, 0, "join_row")?),
+            ),
+            (
+                "field".to_string(),
+                Value::String(str_arg(&args, 1, "join_row")?),
+            ),
+            (
+                "value".to_string(),
+                Value::String(str_arg(&args, 2, "join_row")?),
+            ),
+            ("confidence".to_string(), confidence),
+        ],
+    })
+}
+
+/// A source constructor for the same reason [`observation_dispatch`] exists: a
+/// stdlib struct cannot be written as a literal in a `.tl` program, so without
+/// this the declared `join` surface would be unreachable from a program.
+fn join_source_dispatch(args: Vec<Value>) -> StdlibResult {
+    let rows = match args.get(4) {
+        Some(Value::Array(items)) => Value::Array(items.clone()),
+        Some(other) => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_SOURCE}: ip.join_source: rows must be []IpJoinRow, got {}",
+                type_name(other)
+            ));
+        }
+        None => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_SOURCE}: ip.join_source: missing argument 5 (rows)"
+            ));
+        }
+    };
+    Ok(Value::Struct {
+        name: "IpJoinSource".to_string(),
+        fields: vec![
+            (
+                "name".to_string(),
+                Value::String(str_arg(&args, 0, "join_source")?),
+            ),
+            (
+                "authority".to_string(),
+                Value::Int(int_arg(&args, 1, "join_source")? as i128),
+            ),
+            (
+                "retrieved_at_ms".to_string(),
+                Value::Int(int_arg(&args, 2, "join_source")? as i128),
+            ),
+            (
+                "freshness_ms".to_string(),
+                Value::Int(int_arg(&args, 3, "join_source")? as i128),
+            ),
+            ("rows".to_string(), rows),
+        ],
+    })
+}
+
+fn join_json_dispatch(args: Vec<Value>) -> StdlibResult {
+    let v = args
+        .first()
+        .ok_or_else(|| "ip.join_json: missing argument 1 (IpJoinReport)".to_string())?;
+    match v {
+        Value::Struct { name, .. } if name == "IpJoinReport" => {}
+        other => {
+            return Err(format!(
+                "ip.join_json: argument 1 expected IpJoinReport, got {}",
+                value_label(other)
+            ));
+        }
+    }
+    serde_json::to_string_pretty(&value_json(v))
+        .map(Value::String)
+        .map_err(|e| format!("ip.join_json: {e}"))
+}
+
 // ── Value plumbing ──────────────────────────────────────────────────────────
 
 fn field<'a>(fields: &'a [(String, Value)], name: &str) -> Option<&'a Value> {
@@ -1370,6 +1803,10 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "geo_load" => Some(geo_load_dispatch(args)),
         "geo_lookup" => Some(geo_lookup_dispatch(args)),
         "geo_json" => Some(geo_json_dispatch(args)),
+        "join" => Some(join_dispatch(args)),
+        "join_row" => Some(join_row_dispatch(args)),
+        "join_source" => Some(join_source_dispatch(args)),
+        "join_json" => Some(join_json_dispatch(args)),
         _ => None,
     }
 }
@@ -2261,5 +2698,253 @@ mod intel_ip_tests {
         .unwrap()
         .unwrap_err();
         assert!(err.starts_with(CODE_TABLE_UNKNOWN), "{err}");
+    }
+
+    // ── N35: multi-source join ──────────────────────────────────────────────
+
+    fn jrow(ip: &str, field_name: &str, value: &str) -> JoinRow {
+        JoinRow {
+            ip: ip.into(),
+            field: field_name.into(),
+            value: value.into(),
+            confidence: None,
+        }
+    }
+
+    fn jsrc(name: &str, authority: i64, at: i64, fresh: i64, rows: Vec<JoinRow>) -> JoinSource {
+        JoinSource {
+            name: name.into(),
+            authority,
+            retrieved_at_ms: at,
+            freshness_ms: fresh,
+            rows,
+        }
+    }
+
+    fn sub<'a>(v: &'a Value, name: &str) -> &'a Value {
+        match v {
+            Value::Struct { fields, .. } => field(fields, name).unwrap_or(&Value::Nil),
+            _ => &Value::Nil,
+        }
+    }
+
+    fn two_sources() -> Vec<JoinSource> {
+        // maxmind is more authoritative and current; rpki is older, past its
+        // horizon, and disagrees about the country — the case that must not be
+        // silently resolved in favour of the better-ranked source.
+        vec![
+            jsrc(
+                "maxmind",
+                90,
+                100_000,
+                3_600_000,
+                vec![
+                    jrow("10.0.0.1", "asn", "AS64500"),
+                    jrow("10.0.0.1", "country", "DE"),
+                ],
+            ),
+            jsrc(
+                "rpki",
+                60,
+                1_000,
+                60_000,
+                vec![
+                    jrow("10.0.0.1", "asn", "AS64500"),
+                    jrow("10.0.0.1", "country", "NL"),
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn agreement_and_disagreement_are_both_reported_per_field() {
+        let mut sources = two_sources();
+        sources.reverse(); // order must not matter
+        let report = build_join(&sources, 100_000).expect("join");
+        let Value::Array(fields) = sub(&report, "fields") else {
+            panic!("no fields array");
+        };
+        assert_eq!(fields.len(), 2);
+        // Fields are ordered by (ip, field): asn before country.
+        assert!(matches!(sub(&fields[0], "field"), Value::String(f) if f == "asn"));
+        assert!(matches!(sub(&fields[0], "status"), Value::String(s) if s == "unanimous"));
+        assert!(matches!(sub(&fields[1], "field"), Value::String(f) if f == "country"));
+        assert!(matches!(sub(&fields[1], "status"), Value::String(s) if s == "disagreement"));
+
+        let Value::Array(values) = sub(&fields[1], "values") else {
+            panic!("no values array");
+        };
+        assert_eq!(values.len(), 2);
+        // Authority orders the display: the 90 comes first ...
+        assert!(matches!(sub(&values[0], "source"), Value::String(s) if s == "maxmind"));
+        assert!(matches!(sub(&values[0], "stale"), Value::Bool(false)));
+        // ... but the lower-authority disagreement is still shown, with its age.
+        assert!(matches!(sub(&values[1], "source"), Value::String(s) if s == "rpki"));
+        assert!(matches!(sub(&values[1], "age_ms"), Value::Int(99_000)));
+        assert!(matches!(sub(&values[1], "stale"), Value::Bool(true)));
+        assert!(matches!(sub(&values[1], "value"), Value::String(v) if v == "NL"));
+
+        // The disagreement entry names who said what — no winner, no average.
+        let Value::Array(lines) = sub(&fields[1], "disagreement") else {
+            panic!("no disagreement lines");
+        };
+        let Value::String(line) = &lines[0] else {
+            panic!("line is not a string");
+        };
+        for needle in ["DE", "NL", "maxmind", "rpki", "stale"] {
+            assert!(line.contains(needle), "{needle} missing from: {line}");
+        }
+        // A field struct carries the claims only: no `value`/`winner` field for a
+        // silent resolution to hide in.
+        if let Value::Struct { fields: fs, .. } = &fields[1] {
+            assert_eq!(
+                fs.len(),
+                5,
+                "field struct must be ip/field/status/values/disagreement"
+            );
+        }
+
+        assert!(matches!(sub(&report, "agreements"), Value::Int(1)));
+        assert!(matches!(sub(&report, "disagreements"), Value::Int(1)));
+        assert!(matches!(sub(&report, "value_count"), Value::Int(4)));
+        assert!(matches!(sub(&report, "stale_values"), Value::Int(2)));
+        assert!(matches!(sub(&report, "field_count"), Value::Int(2)));
+        // Sources are echoed with the horizon each value was judged against.
+        let Value::Array(infos) = sub(&report, "sources") else {
+            panic!("no sources array");
+        };
+        assert!(matches!(sub(&infos[1], "name"), Value::String(s) if s == "rpki"));
+        assert!(matches!(sub(&infos[1], "freshness_ms"), Value::Int(60_000)));
+    }
+
+    #[test]
+    fn join_json_is_byte_identical_across_input_order() {
+        let forward = two_sources();
+        let mut backward = forward.clone();
+        backward.reverse();
+        let a = serde_json::to_string_pretty(&value_json(
+            &build_join(&forward, 100_000).expect("join"),
+        ))
+        .expect("json");
+        let b = serde_json::to_string_pretty(&value_json(
+            &build_join(&backward, 100_000).expect("join"),
+        ))
+        .expect("json");
+        assert_eq!(a, b, "the join must not depend on source order");
+        assert!(a.contains("\"status\": \"disagreement\""), "{a}");
+        assert!(a.contains("\"stale\": true"), "{a}");
+    }
+
+    #[test]
+    fn a_missing_timestamp_is_a_refusal_not_now() {
+        let source = dispatch(
+            "ip.join_source",
+            vec![
+                Value::String("maxmind".into()),
+                Value::Int(90),
+                Value::Int(0),
+                Value::Int(1_000),
+                Value::Array(vec![]),
+            ],
+        )
+        .expect("routed")
+        .expect("source");
+        let err = dispatch(
+            "ip.join",
+            vec![Value::Array(vec![source]), Value::Int(100_000)],
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(err.starts_with(CODE_JOIN_BAD_SOURCE), "{err}");
+        assert!(err.contains("current time is not evidence"), "{err}");
+    }
+
+    #[test]
+    fn join_source_and_row_constructors_reach_the_declared_surface() {
+        // Without constructors the declared surface is unreachable from a .tl
+        // program, because a stdlib struct cannot be written as a literal.
+        let row = |ip: &str, f: &str, v: &str, c: Value| {
+            dispatch(
+                "ip.join_row",
+                vec![
+                    Value::String(ip.into()),
+                    Value::String(f.into()),
+                    Value::String(v.into()),
+                    c,
+                ],
+            )
+            .expect("routed")
+            .expect("row")
+        };
+        let src = |name: &str, auth: i128, at: i128, fresh: i128, rows: Vec<Value>| {
+            dispatch(
+                "ip.join_source",
+                vec![
+                    Value::String(name.into()),
+                    Value::Int(auth),
+                    Value::Int(at),
+                    Value::Int(fresh),
+                    Value::Array(rows),
+                ],
+            )
+            .expect("routed")
+            .expect("source")
+        };
+        let report = dispatch(
+            "ip.join",
+            vec![
+                Value::Array(vec![
+                    src(
+                        "maxmind",
+                        90,
+                        100_000,
+                        3_600_000,
+                        vec![row("10.0.0.1", "asn", "AS64500", Value::Float(0.9))],
+                    ),
+                    src(
+                        "rpki",
+                        60,
+                        1_000,
+                        60_000,
+                        vec![row("10.0.0.1", "asn", "AS64501", Value::Nil)],
+                    ),
+                ]),
+                Value::Int(100_000),
+            ],
+        )
+        .expect("routed")
+        .expect("join");
+        let json = dispatch("ip.join_json", vec![report])
+            .expect("routed")
+            .expect("json");
+        match json {
+            Value::String(s) => {
+                assert!(s.contains("AS64500") && s.contains("AS64501"), "{s}");
+                assert!(s.contains("\"confidence\": 0.9"), "{s}");
+                assert!(s.contains("\"disagreements\": 1"), "{s}");
+            }
+            other => panic!("expected String, got {}", type_name(&other)),
+        }
+
+        // One source reporting one field twice is refused: one source, one answer.
+        let dup = dispatch(
+            "ip.join",
+            vec![
+                Value::Array(vec![src(
+                    "maxmind",
+                    90,
+                    100_000,
+                    1_000,
+                    vec![
+                        row("10.0.0.1", "asn", "AS64500", Value::Nil),
+                        row("10.0.0.1", "asn", "AS64501", Value::Nil),
+                    ],
+                )]),
+                Value::Int(100_000),
+            ],
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(dup.starts_with(CODE_JOIN_DUPLICATE), "{dup}");
     }
 }
