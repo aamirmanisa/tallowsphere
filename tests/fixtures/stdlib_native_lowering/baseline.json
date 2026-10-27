@@ -1,569 +1,569 @@
 [
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'current_stats' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "agent.current_stats()",
     "module": "agent",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'avellaneda_stoikov' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "algos.avellaneda_stoikov(1.0, 1.0, 1.0, 1.0, 1.0, 1.0)",
     "module": "algos",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "9b3e1adb551f1ffc83bc00d837826f05a11f34a1",
-    "evidence": "build failed: native backend has no lowering for method 'openapi_load' at byte offset 56 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "api.openapi_load(\"probe\", \"probe\")",
     "module": "api",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'discover' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "beehiiv.discover(\"probe\")",
     "module": "beehiiv",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'browser_context_create' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "browser.browser_context_create(\"probe\", \"probe\", \"probe\")",
     "module": "browser",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'detect' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "CAPTCHA.detect(\"probe\", nil)",
     "module": "captcha",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: compress.decompress() has no native lowering — refusing to emit a silently-truthy stub for it (fail-closed). `tallow run` falls back to the interpreter, which implements it.",
     "function": "compress.decompress(\"probe\".to_bytes())",
     "module": "compress",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "no module-level native fn declaration was parseable",
-    "function": null,
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
+    "function": "config.parse_toml(\"probe\")",
     "module": "config",
-    "status": "not_expressible"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'new' at byte offset 63 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "CookieJar.new()",
     "module": "cookie_jar",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'read' at byte offset 56 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "csv.read(\"probe\", true)",
     "module": "csv",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'nelson_siegel' at byte offset 59 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "curves.nelson_siegel([1.0], 1.0, 1.0, 1.0, 1.0)",
     "module": "curves",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'get_article' at byte offset 59 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "cxense.get_article(\"probe\", nil)",
     "module": "cxense",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "db.connect(\"probe\")",
     "module": "db",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'price_check' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "deals.price_check(\"probe\", \"probe\")",
     "module": "deals",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'decimal_add' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "decimal.decimal_add(\"probe\", \"probe\", 1)",
     "module": "decimal",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'company_facts' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "edgar.company_facts(\"probe\")",
     "module": "edgar",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'connect_imap' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "Inbox.connect_imap(\"probe\", 1, nil)",
     "module": "email",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'name_key' at byte offset 59 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "Entity.name_key(\"probe\")",
     "module": "entity",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "env.get(\"probe\")",
     "module": "env",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'fetch' at byte offset 63 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "Escalation.fetch(\"probe\", nil, nil, nil)",
     "module": "escalation",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'budget_charge' at byte offset 61 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "intel.budget_charge(\"probe\", nil, 1, 1, nil)",
     "module": "evidence",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: stdlib module 'Extract.schema' has no native lowering; failing loudly so the interpreter runs it",
     "function": "Extract.schema(\"probe\", \"probe\")",
     "module": "extract",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "error: use of undefined value '@tallow.filings'",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "filings.parse(\"probe\", \"probe\")",
     "module": "filings",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'pv' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "finance.pv(1.0, 1.0, 1)",
     "module": "finance",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'generate' at byte offset 194 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "Fingerprint.generate()",
     "module": "fingerprint",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'page_frames' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "frame.page_frames()",
     "module": "frame",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'series' at byte offset 57 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "fred.series(\"probe\", \"probe\")",
     "module": "fred",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "fs.read_file(\"probe\")",
     "module": "fs",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'normalize_address' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "geocode.normalize_address(\"probe\")",
     "module": "geocode",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'graphql_detect' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "graphql.graphql_detect(\"probe\")",
     "module": "graphql",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'price' at byte offset 59 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "heston.price(\"probe\", 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)",
     "module": "heston",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "html.parse(\"probe\")",
     "module": "html",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "no module-level native fn declaration was parseable",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "0 of 1 declared native fn(s) can be called by this census: `batch` argument `headers: Map<String, String>` is not a scalar the census can synthesize",
     "function": null,
     "module": "http",
     "status": "not_expressible"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'load' at byte offset 55 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "ip.load(nil)",
     "module": "ip",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'submit' at byte offset 57 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "jobs.submit(\"probe\", \"probe\", \"probe\", nil)",
     "module": "jobs",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'parse_value' at byte offset 57 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
-    "function": "json.parse_value(\"probe\")",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "error: use of undefined value '@tallow.json'",
+    "function": "json.parse(\"probe\")",
     "module": "json",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "error: use of undefined value '@tallow.JWT'",
     "function": "JWT.parse(\"probe\")",
     "module": "jwt",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'read_audit_log' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "legal.read_audit_log(\"probe\")",
     "module": "legal",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "llm.providers()",
     "module": "llm",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "log.debug(\"probe\")",
     "module": "log",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'convert' at byte offset 61 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "Markdown.convert(\"probe\")",
     "module": "markdown",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'summary' at byte offset 59 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "market.summary(\"probe\")",
     "module": "market",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "math.abs(1.0)",
     "module": "math",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "mesh.replay(\"probe\")",
     "module": "mesh",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'from_bytes' at byte offset 57 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "mime.from_bytes(\"probe\".to_bytes())",
     "module": "mime",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: net.tor_pool_create() has no native lowering — refusing to emit a silently-truthy stub for it (fail-closed). `tallow run` falls back to the interpreter, which implements it.",
     "function": "net.tor_pool_create(1)",
     "module": "net",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'refresh_token' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "OAuth.refresh_token(\"probe\", \"probe\", \"probe\")",
     "module": "oauth",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'ocr_extract' at byte offset 56 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "ocr.ocr_extract(\"probe\".to_bytes())",
     "module": "ocr",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "no module-level native fn declaration was parseable",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "0 of 3 declared native fn(s) can be called by this census: `from_ticks` argument `ticks: []{{timestamp: Int, price: Float, volume: Float}}` is not a scalar the census can synthesize",
     "function": null,
     "module": "ohlcv",
     "status": "not_expressible"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'black_scholes' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "options.black_scholes(\"probe\", 1.0, 1.0, 1.0, 1.0, 1.0)",
     "module": "options",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'limit' at byte offset 59 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "orders.limit(\"probe\", 1.0, 1.0, \"probe\")",
     "module": "orders",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'pdf_extract_text' at byte offset 56 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "pdf.pdf_extract_text(\"probe\".to_bytes())",
     "module": "pdf",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'returns' at byte offset 63 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "portfolio2.returns([[1.0]])",
     "module": "portfolio2",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'new' at byte offset 62 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "positions.new()",
     "module": "positions",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "process.exec(\"probe\")",
     "module": "process",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'record' at byte offset 63 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "provenance.record(\"probe\", \"probe\", \"probe\", 1, \"probe\")",
     "module": "provenance",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "error: use of undefined value '@tallow.rand'",
     "function": "rand.bytes(1)",
     "module": "rand",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'new' at byte offset 63 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "RateLimiter.new(1.0)",
     "module": "rate_limit",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'normalize_name' at byte offset 63 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "recordlink.normalize_name(\"probe\")",
     "module": "recordlink",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: regex.compile() has no native lowering — refusing to emit a silently-truthy stub for it (fail-closed). `tallow run` falls back to the interpreter, which implements it.",
     "function": "regex.compile(\"probe\")",
     "module": "regex",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for RelayRoom.join: a room session is a live relay connection and only the interpreter holds one; failing loudly so the interpreter runs it",
     "function": "RelayRoom.join(\"probe\", \"probe\", \"probe\")",
     "module": "relay_room",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'open' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "SecretStore.open(\"probe\")",
     "module": "secrets",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'analyze' at byte offset 62 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "sentiment.analyze(\"probe\")",
     "module": "sentiment",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'load' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "Session.load(\"probe\")",
     "module": "session",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'scan' at byte offset 89 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "sitescan.scan(\"probe\", nil, nil)",
     "module": "sitescan",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'grade' at byte offset 64 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "sourcegrade.grade(\"probe\")",
     "module": "sourcegrade",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'decompile' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "spotify.decompile(\"probe\")",
     "module": "spotify",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'atomic' at byte offset 57 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
-    "function": "sync.atomic(1)",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
+    "function": "sync.channel(1)",
     "module": "sync",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'sma' at byte offset 62 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "technical.sma([1.0], 1)",
     "module": "technical",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "no module-level native fn declaration was parseable",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "0 of 1 declared native fn(s) can be called by this census: `assert_panics` argument `f: fn()` is not a scalar the census can synthesize",
     "function": null,
     "module": "test",
     "status": "not_expressible"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "time.now()",
     "module": "time",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'new' at byte offset 63 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "timeseries.new(\"probe\")",
     "module": "timeseries",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'list' at byte offset 64 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "TLSProfile.list()",
     "module": "tls_profile",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'parse_ports' at byte offset 96 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "topology.parse_ports(\"probe\")",
     "module": "topology",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "ce1a6c81947fb7a6e8f99a1768c7eb3403501f3a",
-    "evidence": "build failed: native backend has no lowering for method 'flow' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "traffic.flow(\"probe\", \"probe\", 1, 1, \"probe\", 1, 1, 1, 1, 1, 1, nil, nil, nil)",
     "module": "traffic",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "",
     "function": "Transfer.hash(\"probe\")",
     "module": "transfer",
     "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'solve_turnstile' at byte offset 62 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "turnstile.solve_turnstile(\"probe\")",
     "module": "turnstile",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "error: use of undefined value '@tallow.url'",
     "function": "url.parse(\"probe\")",
     "module": "url",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'warmup_session' at byte offset 59 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "warmup.warmup_session(\"probe\", \"probe\")",
     "module": "warmup",
-    "status": "refuses"
+    "status": "lowers"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
     "evidence": "build failed: native backend has no lowering for method 'connect' at byte offset 170 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "WS.connect(\"probe\")",
     "module": "ws",
     "status": "refuses"
   },
   {
-    "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
-    "evidence": "build failed: native backend has no lowering for method 'quote' at byte offset 58 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "checked_at": "c979aa7d670cfa89bc69716b3bd6fa25c82919b5",
+    "evidence": "",
     "function": "yahoo.quote(\"probe\")",
     "module": "yahoo",
-    "status": "refuses"
+    "status": "lowers"
   }
 ]
