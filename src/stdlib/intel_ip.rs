@@ -1,19 +1,20 @@
-//! `tallow.ip` — offline IP intelligence, N33: an ASN/prefix table with
-//! longest-prefix matching.
+//! `tallow.ip` — offline IP intelligence: an ASN/prefix table (N33) and a
+//! content-addressed intel cache (N37).
 //!
 //! **Offline by construction.** Nothing in this module opens a socket, resolves
 //! a name, or reads a clock it was not handed. `load` reads a file the caller
-//! (or the environment) names. The network-shaped work — fetching a fresh ip2asn
-//! TSV — belongs to a caller that holds a `Grant`, not here.
+//! (or the environment) names; `cache_*` store bytes the caller supplies. The
+//! only network-shaped work — fetching a fresh ip2asn TSV, re-querying a
+//! registry — belongs to a caller that holds a `Grant`, not here.
 //!
-//! # Resolution order
+//! # N33 — table resolution and refusal discipline
 //!
 //! A table is resolved in this order, and the resolved path travels back to the
 //! caller so a result can always say *which* file produced it:
 //!
 //! 1. the explicit path argument to [`load`];
-//! 2. `TALLOW_IP2ASN` (the same variable `topology` already honours, so one box
-//!    needs one setting);
+//! 2. `TALLOW_IP2ASN` (the same variable `topology` already honours, so one
+//!    box needs one setting);
 //! 3. `/usr/share/ip2asn/ip2asn-v4.tsv`.
 //!
 //! A file that is missing or unreadable is a **refusal** (`ip:table-missing`)
@@ -23,20 +24,20 @@
 //! has told a lie about the network. [`load_missing`] exists so a caller can
 //! preflight a path and get that refusal without paying to parse a real table.
 //!
-//! # Malformed lines — fail closed, by line
+//! ## Malformed lines — fail closed, by line
 //!
 //! One malformed data line **invalidates the whole table** (`ip:table-malformed`,
-//! naming `source:line` and quoting the offending text). The alternative — skip
-//! the bad line and load the rest — produces a table that looks authoritative
-//! while silently mislabelling every prefix the lost line covered, which is
-//! exactly the failure mode an offline table is supposed to prevent. A file that
-//! parses to zero rows is likewise refused (`ip:table-empty`).
+//! naming `source:line` and quoting the offending text). The alternative —
+//! skip the bad line and load the rest — produces a table that looks
+//! authoritative while silently mislabelling every prefix the lost line covered,
+//! which is exactly the failure mode an offline table is supposed to prevent.
+//! A file that parses to zero rows is likewise refused (`ip:table-empty`).
 //!
 //! Blank lines, `#` comments and a single leading header line (tolerated only
 //! when its third column is not a number and the line names `ASN`, matching the
 //! ip2asn column title) are not malformed.
 //!
-//! # Longest prefix, not first match
+//! ## Longest prefix, not first match
 //!
 //! ip2asn rows are start/end ranges, not CIDRs. `prefix_len` is the number of
 //! leading bits `start` and `end` share (`(start ^ end).leading_zeros()`), which
@@ -45,12 +46,30 @@
 //! `prefix_len`, so a `/8` appearing earlier in the file cannot shadow a `/24`
 //! that appears later. Equal lengths break toward the earlier line, which is
 //! documented and deterministic rather than accidental.
+//!
+//! # N37 — content-addressed cache with an honest stale flag
+//!
+//! An entry is identified by `(source, key)`; its **content address** is
+//! `sha256(body)`, returned on both write and read so a caller can prove two
+//! reads are the same bytes without comparing them. Expiry is per source
+//! because TTL is a property of the source's change rate, not of the cache.
+//!
+//! A read past TTL is a **hit with `stale: true` and the age**, not an error and
+//! not a silent miss: an expiry is information, and the caller may still want
+//! the last known answer with its age attached. A genuine absence is
+//! `ip:cache-miss`, which is a different result. Neither is a panic.
+//!
+//! `cache_stats` takes no `now`, so it judges staleness against the wall clock;
+//! `cache_get` takes the clock its caller chooses. Both are documented behaviour,
+//! and a test pins the judgement `cache_stats` makes.
 
 use super::StdlibResult;
 use crate::interp::{Value, type_name};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Environment variable naming the table, honoured when no explicit path is given.
 pub const ENV_TABLE: &str = "TALLOW_IP2ASN";
@@ -64,6 +83,8 @@ pub const CODE_TABLE_EMPTY: &str = "ip:table-empty";
 pub const CODE_TABLE_UNKNOWN: &str = "ip:table-unknown";
 pub const CODE_BAD_ADDRESS: &str = "ip:bad-address";
 pub const CODE_UNSUPPORTED_FAMILY: &str = "ip:unsupported-family";
+pub const CODE_CACHE_MISS: &str = "ip:cache-miss";
+pub const CODE_CACHE_UNKNOWN: &str = "ip:cache-unknown";
 
 // ── Data ────────────────────────────────────────────────────────────────────
 
@@ -93,10 +114,24 @@ struct AsnTable {
     rows: Vec<Row>,
 }
 
+#[derive(Clone, Debug)]
+struct Entry {
+    content_hash: String,
+    body: String,
+    stored_at_ms: i64,
+    ttl_ms: i64,
+}
+
+#[derive(Default, Debug)]
+struct Cache {
+    entries: HashMap<(String, String), Entry>,
+}
+
 #[derive(Default)]
 struct Registry {
     next_id: u64,
     tables: HashMap<u64, AsnTable>,
+    caches: HashMap<u64, Cache>,
 }
 
 fn registry() -> MutexGuard<'static, Registry> {
@@ -115,6 +150,14 @@ fn register_table(table: AsnTable) -> u64 {
     id
 }
 
+fn register_cache(cache: Cache) -> u64 {
+    let mut reg = registry();
+    reg.next_id += 1;
+    let id = reg.next_id;
+    reg.caches.insert(id, cache);
+    id
+}
+
 fn table_by_handle(id: u64) -> Result<AsnTable, String> {
     registry().tables.get(&id).cloned().ok_or_else(|| {
         format!(
@@ -124,7 +167,18 @@ fn table_by_handle(id: u64) -> Result<AsnTable, String> {
     })
 }
 
-// ── Parse and resolve ───────────────────────────────────────────────────────
+fn with_cache<T>(id: u64, f: impl FnOnce(&mut Cache) -> T) -> Result<T, String> {
+    let mut reg = registry();
+    let cache = reg.caches.get_mut(&id).ok_or_else(|| {
+        format!(
+            "{CODE_CACHE_UNKNOWN}: no intel cache with handle {id} in this process — a handle is \
+             process-local and is not data, so it cannot be reconstructed from a serialised value"
+        )
+    })?;
+    Ok(f(cache))
+}
+
+// ── N33: parse and resolve ──────────────────────────────────────────────────
 
 /// Parse an ip2asn TSV body. `source` labels the table in results and refusals.
 ///
@@ -286,10 +340,100 @@ fn lookup_row(table: &AsnTable, ip: &str) -> Result<Row, String> {
     })
 }
 
+// ── N37: cache ──────────────────────────────────────────────────────────────
+
+fn sha256_hex(body: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(body.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn wall_clock_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
+/// `age` for a read at `now_ms`. A clock that moves backwards is clamped to 0
+/// rather than reporting negative age: this module will not invent time travel,
+/// and a negative age would make `stale` silently false.
+fn age_ms(stored_at_ms: i64, now_ms: i64) -> i64 {
+    now_ms.saturating_sub(stored_at_ms).max(0)
+}
+
+fn cache_put(
+    cache: &mut Cache,
+    source: &str,
+    key: &str,
+    body: &str,
+    ttl_ms: i64,
+    now_ms: i64,
+) -> Result<Entry, String> {
+    if ttl_ms < 0 {
+        return Err(format!(
+            "ip:cache-bad-ttl: ttl_ms {ttl_ms} is negative; a TTL is a duration, and a negative \
+             one would mean the entry was stale before it was written"
+        ));
+    }
+    let entry = Entry {
+        content_hash: sha256_hex(body),
+        body: body.to_string(),
+        stored_at_ms: now_ms,
+        ttl_ms,
+    };
+    cache
+        .entries
+        .insert((source.to_string(), key.to_string()), entry.clone());
+    Ok(entry)
+}
+
+/// `Ok(entry, stale)` — a hit is a hit even past TTL; staleness travels with it.
+fn cache_get(cache: &Cache, source: &str, key: &str, now_ms: i64) -> Result<(Entry, bool), String> {
+    let lookup = (source.to_string(), key.to_string());
+    let entry = cache.entries.get(&lookup).ok_or_else(|| {
+        format!(
+            "{CODE_CACHE_MISS}: no entry for source `{source}` key `{key}` — an entry past its \
+             TTL is returned stale, not missed, so this is a genuine absence"
+        )
+    })?;
+    let age = age_ms(entry.stored_at_ms, now_ms);
+    Ok((entry.clone(), age > entry.ttl_ms))
+}
+
+fn cache_stats(cache: &Cache) -> (usize, usize, usize) {
+    let now = wall_clock_ms();
+    let sources: std::collections::HashSet<&str> =
+        cache.entries.keys().map(|(s, _)| s.as_str()).collect();
+    let stale = cache
+        .entries
+        .values()
+        .filter(|e| age_ms(e.stored_at_ms, now) > e.ttl_ms)
+        .count();
+    (cache.entries.len(), sources.len(), stale)
+}
+
 // ── Value plumbing ──────────────────────────────────────────────────────────
 
 fn field<'a>(fields: &'a [(String, Value)], name: &str) -> Option<&'a Value> {
     fields.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+}
+
+fn int_arg(args: &[Value], idx: usize, fname: &str) -> Result<i64, String> {
+    match args.get(idx) {
+        Some(Value::Int(i)) => i64::try_from(*i)
+            .map_err(|_| format!("ip.{fname}: argument {} out of i64 range", idx + 1)),
+        Some(other) => Err(format!(
+            "ip.{fname}: argument {} expected Int, got {}",
+            idx + 1,
+            type_name(other)
+        )),
+        None => Err(format!("ip.{fname}: missing argument {}", idx + 1)),
+    }
 }
 
 fn str_arg(args: &[Value], idx: usize, fname: &str) -> Result<String, String> {
@@ -357,6 +501,41 @@ fn table_value(id: u64, table: &AsnTable) -> Value {
     }
 }
 
+fn cache_value(id: u64, cache: &Cache) -> Value {
+    Value::Struct {
+        name: "IpCache".to_string(),
+        fields: vec![
+            ("handle".to_string(), Value::Int(id as i128)),
+            (
+                "entries".to_string(),
+                Value::Int(cache.entries.len() as i128),
+            ),
+        ],
+    }
+}
+
+fn entry_value(source: &str, key: &str, e: &Entry, age: i64, stale: bool) -> Value {
+    Value::Struct {
+        name: "CacheEntry".to_string(),
+        fields: vec![
+            ("source".to_string(), Value::String(source.to_string())),
+            ("key".to_string(), Value::String(key.to_string())),
+            (
+                "content_hash".to_string(),
+                Value::String(e.content_hash.clone()),
+            ),
+            ("body".to_string(), Value::String(e.body.clone())),
+            (
+                "stored_at_ms".to_string(),
+                Value::Int(e.stored_at_ms as i128),
+            ),
+            ("age_ms".to_string(), Value::Int(age as i128)),
+            ("ttl_ms".to_string(), Value::Int(e.ttl_ms as i128)),
+            ("stale".to_string(), Value::Bool(stale)),
+        ],
+    }
+}
+
 // ── Dispatch ────────────────────────────────────────────────────────────────
 
 pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
@@ -368,6 +547,10 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "load" => Some(load_dispatch(args)),
         "load_missing" => Some(load_missing_dispatch(args)),
         "lookup" => Some(lookup_dispatch(args)),
+        "cache_new" => Some(cache_new_dispatch()),
+        "cache_put" => Some(cache_put_dispatch(args)),
+        "cache_get" => Some(cache_get_dispatch(args)),
+        "cache_stats" => Some(cache_stats_dispatch(args)),
         _ => None,
     }
 }
@@ -408,6 +591,63 @@ fn lookup_dispatch(args: Vec<Value>) -> StdlibResult {
             ("country".to_string(), Value::String(row.country)),
             ("description".to_string(), Value::String(row.description)),
             ("source".to_string(), Value::String(table.source.clone())),
+        ],
+    })
+}
+
+fn cache_new_dispatch() -> StdlibResult {
+    let id = register_cache(Cache::default());
+    Ok(cache_value(id, &Cache::default()))
+}
+
+fn cache_put_dispatch(args: Vec<Value>) -> StdlibResult {
+    let id = handle_arg(&args, 0, "IpCache", "cache_put")?;
+    let source = str_arg(&args, 1, "cache_put")?;
+    let key = str_arg(&args, 2, "cache_put")?;
+    let body = str_arg(&args, 3, "cache_put")?;
+    let ttl_ms = int_arg(&args, 4, "cache_put")?;
+    let now_ms = int_arg(&args, 5, "cache_put")?;
+    let entry = with_cache(id, |c| cache_put(c, &source, &key, &body, ttl_ms, now_ms))??;
+    Ok(Value::Struct {
+        name: "CacheWritten".to_string(),
+        fields: vec![
+            ("source".to_string(), Value::String(source)),
+            ("key".to_string(), Value::String(key)),
+            (
+                "content_hash".to_string(),
+                Value::String(entry.content_hash),
+            ),
+            (
+                "stored_at_ms".to_string(),
+                Value::Int(entry.stored_at_ms as i128),
+            ),
+            ("ttl_ms".to_string(), Value::Int(entry.ttl_ms as i128)),
+        ],
+    })
+}
+
+fn cache_get_dispatch(args: Vec<Value>) -> StdlibResult {
+    let id = handle_arg(&args, 0, "IpCache", "cache_get")?;
+    let source = str_arg(&args, 1, "cache_get")?;
+    let key = str_arg(&args, 2, "cache_get")?;
+    let now_ms = int_arg(&args, 3, "cache_get")?;
+    let (entry, stale) = with_cache(id, |c| cache_get(c, &source, &key, now_ms))??;
+    let age = age_ms(entry.stored_at_ms, now_ms);
+    Ok(entry_value(&source, &key, &entry, age, stale))
+}
+
+fn cache_stats_dispatch(args: Vec<Value>) -> StdlibResult {
+    let id = handle_arg(&args, 0, "IpCache", "cache_stats")?;
+    let (entries, sources, stale_entries) = with_cache(id, |c| cache_stats(c))?;
+    Ok(Value::Struct {
+        name: "CacheStats".to_string(),
+        fields: vec![
+            ("entries".to_string(), Value::Int(entries as i128)),
+            ("sources".to_string(), Value::Int(sources as i128)),
+            (
+                "stale_entries".to_string(),
+                Value::Int(stale_entries as i128),
+            ),
         ],
     })
 }
@@ -521,6 +761,61 @@ mod intel_ip_tests {
     fn ipv6_is_refused_rather_than_answered_from_a_v4_table() {
         let err = lookup_row(&table(), "2001:db8::1").unwrap_err();
         assert!(err.starts_with(CODE_UNSUPPORTED_FAMILY), "{err}");
+    }
+
+    #[test]
+    fn cache_hit_returns_body_and_content_address() {
+        let mut c = Cache::default();
+        let written = cache_put(&mut c, "asn", "10.1.2.7", "AS64501", 60_000, 1_000).unwrap();
+        let (entry, stale) = cache_get(&c, "asn", "10.1.2.7", 31_000).unwrap();
+        assert!(!stale);
+        assert_eq!(entry.body, "AS64501");
+        assert_eq!(entry.content_hash, written.content_hash);
+        assert_eq!(entry.content_hash, sha256_hex("AS64501"));
+        assert_eq!(entry.content_hash.len(), 64);
+    }
+
+    #[test]
+    fn entry_past_ttl_is_a_stale_hit_with_age_not_an_error() {
+        let mut c = Cache::default();
+        cache_put(&mut c, "asn", "k", "body", 1_000, 5_000).unwrap();
+        let (entry, stale) = cache_get(&c, "asn", "k", 8_500).unwrap();
+        assert!(stale, "past TTL must be reported stale: {:?}", entry.ttl_ms);
+        assert_eq!(age_ms(entry.stored_at_ms, 8_500), 3_500);
+        // Exactly at TTL is still fresh; strictly past is stale.
+        assert!(!cache_get(&c, "asn", "k", 6_000).unwrap().1);
+        assert!(cache_get(&c, "asn", "k", 6_001).unwrap().1);
+    }
+
+    #[test]
+    fn absence_is_a_cache_miss_distinct_from_stale() {
+        let c = Cache::default();
+        let err = cache_get(&c, "asn", "absent", 1).unwrap_err();
+        assert!(err.starts_with(CODE_CACHE_MISS), "{err}");
+        assert!(err.contains("stale, not missed"), "{err}");
+    }
+
+    #[test]
+    fn identical_body_under_two_keys_has_the_same_content_address() {
+        let mut c = Cache::default();
+        let a = cache_put(&mut c, "asn", "k1", "same bytes", 10, 0).unwrap();
+        let b = cache_put(&mut c, "other", "k2", "same bytes", 10, 0).unwrap();
+        assert_eq!(a.content_hash, b.content_hash);
+        let other = cache_put(&mut c, "asn", "k3", "different bytes", 10, 0).unwrap();
+        assert_ne!(a.content_hash, other.content_hash);
+    }
+
+    #[test]
+    fn ttl_is_per_entry_and_stats_count_sources_and_staleness() {
+        let mut c = Cache::default();
+        // stored_at far in the past with a tiny TTL: stale against the wall clock.
+        cache_put(&mut c, "asn", "a", "x", 1, 0).unwrap();
+        cache_put(&mut c, "asn", "b", "y", 1, 0).unwrap();
+        cache_put(&mut c, "rpki", "c", "z", i64::MAX, 0).unwrap();
+        let (entries, sources, stale) = cache_stats(&c);
+        assert_eq!(entries, 3);
+        assert_eq!(sources, 2);
+        assert_eq!(stale, 2);
     }
 
     #[test]
