@@ -4774,14 +4774,19 @@ mod tests {
     // name the construct that would make it legal — the constructor going in,
     // `.inner` coming out — which is what these tests pin.
 
-    /// Type errors of a source snippet, message text only.
+    /// Type errors of a source snippet as a reader sees them: message plus
+    /// help. The help is where the remedy ("unwrap it with `.inner`") lives, so
+    /// a test that only read `msg` would not be testing the refusal a user gets.
     fn newtype_errors(source: &str) -> Vec<String> {
         let (_, diags) = check(source);
         diags
             .items
             .iter()
             .filter(|d| matches!(d.code, "E0117" | "E0103"))
-            .map(|d| d.msg.clone())
+            .map(|d| match &d.help {
+                Some(help) => format!("{} [help: {help}]", d.msg),
+                None => d.msg.clone(),
+            })
             .collect()
     }
 
