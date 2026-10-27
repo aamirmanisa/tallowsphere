@@ -58,9 +58,14 @@ fn interpreter_refuses_len_on_an_int() {
         !stdout.contains("0\n"),
         "a wrong answer must not be printed as though it were measured: {stdout}"
     );
+    // Two legitimate refusals, and which one fires depends on how much the
+    // checker could see: a statically-known int is stopped by the E0150 check
+    // gate before anything executes (that is `tallow run`'s type check), while a
+    // value of unknown type reaches the runtime and gets the interpreter's
+    // `len() is not defined for ...`. Either is a refusal; printing 0 is not.
     assert!(
-        stderr.contains("len() is not defined for"),
-        "the refusal must name the operation; stderr:\n{stderr}"
+        stderr.contains("E0150") || stderr.contains("len() is not defined for"),
+        "the refusal must name the operation or carry its code; stderr:\n{stderr}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -84,6 +89,34 @@ fn native_backend_refuses_len_on_an_int_rather_than_answering() {
     assert!(
         !stdout.contains("0\n"),
         "native must not answer 0 for a type with no length: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_checker_rejects_len_on_an_int_before_anything_runs() {
+    let dir = std::env::temp_dir().join("tallow-len-scalar-check");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let program = write_program(&dir);
+
+    let (ok, stdout, stderr) = run(&["check"], &program);
+    assert!(
+        !ok,
+        "check must reject `5.len()`; it passed silently: {stdout}{stderr}"
+    );
+    assert!(
+        stderr.contains("E0150") || stdout.contains("E0150"),
+        "the diagnostic must carry its code; stderr:\n{stderr}"
+    );
+
+    // A string length is a real measurement and must stay legal.
+    let ok_program = dir.join("len_ok.tl");
+    std::fs::write(&ok_program, "fn main() {\n    let s = \"abcd\"\n    print(s.len())\n}\n")
+        .expect("write ok program");
+    let (ok2, stdout2, stderr2) = run(&["check"], &ok_program);
+    assert!(
+        ok2,
+        "`\"abcd\".len()` must still pass; got:\n{stdout2}{stderr2}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -2922,6 +2922,28 @@ impl<'a> TypeChecker<'a> {
                     // of a method call (E0146's one exemption).
                     self.check_expr_inner(object, locals, true);
                 }
+                // E0150: `len()` on a type that has no length. The runtime
+                // refuses this (it used to answer 0, which read as a
+                // measurement); saying so at check time means the program never
+                // gets that far. Only statically-known scalars are judged —
+                // `Unknown` stays silent, because a false positive on a type the
+                // checker cannot see would be worse than the late error.
+                if method == "len" && !static_namespace {
+                    let obj_ty = self.infer_expr_type(object, locals);
+                    if matches!(
+                        obj_ty,
+                        Type::Int(_) | Type::Float(_) | Type::Bool | Type::Char | Type::Void
+                    ) {
+                        self.diags.error(
+                            "E0150",
+                            format!(
+                                "`len()` on {} — a value with no elements has no length",
+                                self.type_display(&obj_ty)
+                            ),
+                            expr.span,
+                        );
+                    }
+                }
                 for arg in args {
                     self.check_expr(&arg.value, locals);
                 }
