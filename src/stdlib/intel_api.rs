@@ -1,9 +1,10 @@
-//! `tallow.api` — offline API-surface ingestion and comparison (N13, N14, N20, N21).
+//! `tallow.api` — offline API-surface ingestion and comparison (N13, N14, N16, N17, N20, N21).
 //!
 //! **Offline by construction.** Nothing here opens a socket, resolves a name, or reads a clock.
 //! `openapi_load` parses a document the caller already holds; comparing two inventories is pure
-//! over data the caller supplied. Fetching a spec or probing a server belongs to a caller holding
-//! a `Grant` — this module is the parser, not the call.
+//! over data the caller supplied; a JavaScript bundle is a file the caller already has. Fetching a
+//! spec or probing a server belongs to a caller holding a `Grant` — this module is the parser, not
+//! the call.
 //!
 //! # N13 — a document URL is part of the finding
 //!
@@ -72,6 +73,49 @@
 //! `(path, method)`, so two runs over the same input are byte-identical, and a reordering of the
 //! document is not a change.
 //!
+//! # N16 — a bundle is text, and a route is located in it
+//!
+//! `bundle_routes` reads a JavaScript bundle **as text**. Nothing here evaluates it: no
+//! `eval`, no `Function`, no DOM, no engine. A route record carries the `route`, the
+//! `recovered_from` construct that produced it, `source_url` (the bundle the caller named), and
+//! `offset` — the byte offset of the opening quote of the literal the route was read from. A route
+//! that cannot name both is dropped and counted in `skipped_unlocated`; "the bundle has this
+//! route" without a byte offset is a claim, not a finding.
+//!
+//! Recovered constructs: path-shaped string literals (`/api/v1/users`), template literals whose
+//! `${…}` segments are recorded as `{}` with `interpolated: true` (never with a value), and the
+//! first argument of `fetch(…)`, `axios.get|post|…(…)` and `$.ajax({url: …})`, which is reported in
+//! `recovered_from`. A route assembled by concatenation (`'/api/users/' + id`) is reported as
+//! `partial: true` with the fragment that was actually seen — completing it would be fabricating
+//! the bytes the bundle did not contain.
+//!
+//! Two heuristics are named rather than hidden: a string ending in a static-asset extension
+//! (`.js`, `.css`, `.png`, …) is a file path, not a route, and is counted in `skipped_non_route`;
+//! and text inside a literal whose end could not be found (a truncated bundle) has no trustworthy
+//! extent, so its path-shaped runs are counted in `skipped_unlocated` instead of emitted. A page
+//! saved as `.js` is refused by name (`api:bundle-not-js`) — parsing HTML as JavaScript produces
+//! garbage routes, and garbage with offsets is worse than nothing.
+//!
+//! # N17 — a sourcemap is either applied or *said* not to be
+//!
+//! `bundle_routes_with_map` extracts from the **original sources** when the map carries
+//! `sourcesContent`, and cites `source_url = <map source name>` with `offset`/`line` measured in
+//! that original file — not the bundle offset. `map_mode` is `"sources-content"` there, and every
+//! record has `map_applied: true`.
+//!
+//! When `sourcesContent` is absent (or every entry is null) the extract falls back to the bundle
+//! text, and says so loudly: `map_mode: "fallback"`, `map_applied: false` on every record, and
+//! `map_reason` naming what was missing. A fallback that looks like a sourcemapped result is the
+//! defect this item exists to prevent. A map that is present but does not parse is refused
+//! (`api:sourcemap-unparsable`) with the byte offset where parsing stopped — silently using the
+//! minified text instead would hide that the map was unreadable.
+//!
+//! **`mappings` is not decoded.** VLQ decoding is what turns a generated position into an original
+//! position; this module does not do it, so it does not claim a decoded position. Positions come
+//! from `sourcesContent` directly, where line and byte offset are exact without `mappings`. The
+//! field `map_reason` says so on every applied map, so no reader can mistake a line in a source
+//! file for a mapped position.
+//!
 //! # Refusals
 //!
 //! | code | when |
@@ -82,6 +126,9 @@
 //! | `api:openapi-no-evidence` | `doc_url` is empty — an inventory without a source is not evidence |
 //! | `api:graphql-parse` | SDL the tokenizer/parser cannot read (unterminated string, unbalanced delimiter, unexpected definition) |
 //! | `api:graphql-introspection-malformed` | JSON that is not an introspection result (no `__schema`, a type without name/kind) |
+//! | `api:bundle-not-js` | the first bytes of the input are HTML — a page saved as `.js` |
+//! | `api:bundle-no-evidence` | `bundle_url` is empty — a route that cannot name its bundle is not a finding |
+//! | `api:sourcemap-unparsable` | the map is not JSON, is not v3, has no `sources`/`mappings`, or has a non-array `sourcesContent` |
 //! | `api:bad-argument` | an argument is missing, of the wrong type, or a struct of the wrong shape |
 
 use super::StdlibResult;
@@ -95,6 +142,9 @@ pub const CODE_NO_EVIDENCE: &str = "api:openapi-no-evidence";
 pub const CODE_GRAPHQL_PARSE: &str = "api:graphql-parse";
 pub const CODE_INTROSPECTION: &str = "api:graphql-introspection-malformed";
 pub const CODE_ARG: &str = "api:bad-argument";
+pub const CODE_BUNDLE_NOT_JS: &str = "api:bundle-not-js";
+pub const CODE_BUNDLE_NO_EVIDENCE: &str = "api:bundle-no-evidence";
+pub const CODE_SOURCEMAP_UNPARSABLE: &str = "api:sourcemap-unparsable";
 
 /// Canonical 8-4-4-4-12 UUID shape. See the module docs for the known weakness.
 pub const UUID_PATTERN: &str =
@@ -1243,6 +1293,69 @@ fn opt_str_arg(args: &[Value], idx: usize, fname: &str) -> Result<Option<String>
     }
 }
 
+fn bool_arg(args: &[Value], idx: usize, fname: &str) -> Result<bool, String> {
+    match args.get(idx) {
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(other) => Err(bad(
+            fname,
+            &format!("argument {} expected Bool, got {}", idx + 1, type_name(other)),
+        )),
+        None => Err(bad(fname, &format!("missing argument {}", idx + 1))),
+    }
+}
+
+fn int_arg(args: &[Value], idx: usize, fname: &str) -> Result<usize, String> {
+    match args.get(idx) {
+        Some(Value::Int(i)) if *i >= 0 => Ok(*i as usize),
+        Some(other) => Err(bad(
+            fname,
+            &format!(
+                "argument {} expected a non-negative Int, got {}",
+                idx + 1,
+                type_name(other)
+            ),
+        )),
+        None => Err(bad(fname, &format!("missing argument {}", idx + 1))),
+    }
+}
+
+/// Read and sort a `[]BundleRoute` argument, rejecting a record of the wrong struct.
+fn routes_arg(args: &[Value], idx: usize, fname: &str) -> Result<Vec<BundleRoute>, String> {
+    let Some(v) = args.get(idx) else {
+        return Err(bad(fname, &format!("missing argument {}", idx + 1)));
+    };
+    let Value::Array(items) = v else {
+        return Err(bad(
+            fname,
+            &format!(
+                "argument {} expected []BundleRoute, got {}",
+                idx + 1,
+                type_name(v)
+            ),
+        ));
+    };
+    let mut out: Vec<BundleRoute> = Vec::new();
+    for it in items {
+        match it {
+            Value::Struct { name, fields } if name == "BundleRoute" => {
+                out.push(read_route(fields, fname)?)
+            }
+            other => {
+                return Err(bad(
+                    fname,
+                    &format!(
+                        "argument {} expected BundleRoute, got {}",
+                        idx + 1,
+                        type_name(other)
+                    ),
+                ));
+            }
+        }
+    }
+    sort_routes(&mut out);
+    Ok(out)
+}
+
 fn endpoint_of(fs: &[(String, Value)], fname: &str) -> Result<Endpoint, String> {
     Ok(Endpoint {
         method: sv(fs, "method")
@@ -1390,6 +1503,771 @@ fn change_value(c: &EndpointChange) -> Value {
             ofield("after", &c.after),
         ],
     }
+}
+
+// ── N16/N17: JS bundle route recovery ─────────────────────────────────────
+
+/// A route record. `offset` is a byte offset into the text named by `source_url`: the opening
+/// quote of the literal in the bundle (N16), or the offset within `sourcesContent` when a map was
+/// applied (N17). `line` is 1-based in that same text.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BundleRoute {
+    pub route: String,
+    /// `literal` or `template`.
+    pub kind: String,
+    /// The construct the route was read from: `string-literal`, `template-literal`, `fetch`,
+    /// `axios.get` (and siblings), or `jquery.ajax`.
+    pub recovered_from: String,
+    /// A `${…}` segment was present and is rendered `{}`. The value was never read.
+    pub interpolated: bool,
+    /// The route was assembled by concatenation; `route` is only the fragment seen.
+    pub partial: bool,
+    pub fragment: Option<String>,
+    pub source_url: String,
+    pub offset: usize,
+    pub line: usize,
+    pub map_applied: bool,
+}
+
+/// The result of one bundle read. `map_mode` is `bundle` (N16), `sources-content` (a map was
+/// applied) or `fallback` (a map was supplied but carried no content).
+#[derive(Clone, Debug, Default)]
+pub struct BundleScan {
+    pub bundle_url: String,
+    pub map_mode: String,
+    pub map_applied: bool,
+    pub map_reason: Option<String>,
+    pub skipped_unlocated: usize,
+    pub skipped_non_route: usize,
+    pub routes: Vec<BundleRoute>,
+}
+
+/// Extensions that make a leading-slash string a *file* path rather than a route. Kept short and
+/// named: `/api/export.csv` and `/api/report.json` stay, because a download endpoint is a route.
+const ASSET_EXTENSIONS: [&str; 20] = [
+    "js", "mjs", "cjs", "css", "map", "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "avif",
+    "woff", "woff2", "ttf", "otf", "eot", "mp4", "webm",
+];
+
+/// Nesting cap for `${…}` / string recursion. A crafted bundle with deeply nested interpolations
+/// must not be able to exhaust the stack; past the cap the scan treats the literal as unterminated,
+/// which counts its fragments instead of guessing at them.
+const MAX_NEST: usize = 64;
+
+fn is_html(src: &str) -> bool {
+    let t = src.trim_start_matches('\u{feff}').trim_start();
+    let b = t.as_bytes();
+    match b.first() {
+        Some(b'<') => matches!(b.get(1), Some(c) if c.is_ascii_alphabetic() || *c == b'!' || *c == b'?'),
+        _ => false,
+    }
+}
+
+/// A path-shaped string: starts with `/`, is not protocol-relative or a comment opener, carries an
+/// alphanumeric, and holds no whitespace. `/` alone is not a path.
+fn path_shaped(p: &str) -> bool {
+    if p.len() < 2 || !p.starts_with('/') || p.starts_with("//") {
+        return false;
+    }
+    if p.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    p.bytes().any(|b| b.is_ascii_alphanumeric())
+}
+
+fn asset_like(p: &str) -> bool {
+    let last = p.rsplit('/').next().unwrap_or(p);
+    match last.rsplit_once('.') {
+        Some((_, ext)) => ASSET_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()),
+        None => false,
+    }
+}
+
+/// Path-shaped runs in text that has no trustworthy extent (an unterminated literal).
+fn unlocated_fragments(text: &str) -> usize {
+    text.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '\'' | '"' | '`' | '(' | ')' | ',' | ';' | '{' | '}' | '+' | '='
+            )
+    })
+    .filter(|s| path_shaped(s))
+    .count()
+}
+
+fn skip_line_comment(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && b[i] != b'\n' {
+        i += 1;
+    }
+    i
+}
+
+fn skip_block_comment(b: &[u8], mut i: usize) -> usize {
+    i += 2;
+    while i + 1 < b.len() {
+        if b[i] == b'*' && b[i + 1] == b'/' {
+            return i + 2;
+        }
+        i += 1;
+    }
+    b.len()
+}
+
+/// A regex literal may only start where a value may start. The heuristic is the standard one and
+/// is named here because it is a heuristic: `\` is division after a value, a regex after an
+/// operator. Getting it wrong costs either a phantom route or a missed one, never an evaluation.
+fn is_regex_context(prev: Option<u8>) -> bool {
+    matches!(
+        prev,
+        None | Some(
+            b'(' | b',' | b'=' | b':' | b'[' | b'!' | b'&' | b'|' | b'?' | b'{' | b';' | b'+'
+                | b'-' | b'*' | b'%' | b'<' | b'>' | b'~' | b'^' | b'\n'
+        )
+    )
+}
+
+/// Skip a regex literal starting at `i`, or `None` if it does not terminate on its line (in which
+/// case the `/` was a division after all).
+fn skip_regex(b: &[u8], start: usize) -> Option<usize> {
+    let mut i = start + 1;
+    let mut in_class = false;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'[' => {
+                in_class = true;
+                i += 1;
+            }
+            b']' => {
+                in_class = false;
+                i += 1;
+            }
+            b'/' if !in_class => return Some(i + 1),
+            b'\n' => return None,
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+#[derive(Debug)]
+struct StrTok {
+    start: usize,
+    end: usize,
+    text: String,
+    interpolated: bool,
+    template: bool,
+    closed: bool,
+}
+
+fn read_string(b: &[u8], start: usize, q: u8) -> StrTok {
+    let mut i = start + 1;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut closed = false;
+    while i < b.len() {
+        match b[i] {
+            b'\\' if i + 1 < b.len() => {
+                let e = b[i + 1];
+                match e {
+                    b'/' | b'\\' | b'\'' | b'"' | b'`' => buf.push(e),
+                    _ => {
+                        buf.push(b'\\');
+                        buf.push(e);
+                    }
+                }
+                i += 2;
+            }
+            c if c == q => {
+                i += 1;
+                closed = true;
+                break;
+            }
+            // A raw newline cannot appear in a JS string literal; stopping here keeps a broken
+            // literal from swallowing the rest of the file.
+            b'\n' => break,
+            c => {
+                buf.push(c);
+                i += 1;
+            }
+        }
+    }
+    StrTok {
+        start,
+        end: i,
+        text: String::from_utf8_lossy(&buf).into_owned(),
+        interpolated: false,
+        template: false,
+        closed,
+    }
+}
+
+fn read_template(b: &[u8], start: usize, depth: usize) -> StrTok {
+    let mut i = start + 1;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut closed = false;
+    let mut interpolated = false;
+    while i < b.len() {
+        match b[i] {
+            b'\\' if i + 1 < b.len() => {
+                let e = b[i + 1];
+                match e {
+                    b'/' | b'\\' | b'\'' | b'"' | b'`' | b'$' => buf.push(e),
+                    _ => {
+                        buf.push(b'\\');
+                        buf.push(e);
+                    }
+                }
+                i += 2;
+            }
+            b'`' => {
+                i += 1;
+                closed = true;
+                break;
+            }
+            b'$' if b.get(i + 1) == Some(&b'{') => {
+                interpolated = true;
+                buf.extend_from_slice(b"{}");
+                i = skip_js_expr(b, i + 2, depth + 1);
+            }
+            c => {
+                buf.push(c);
+                i += 1;
+            }
+        }
+    }
+    StrTok {
+        start,
+        end: i,
+        text: String::from_utf8_lossy(&buf).into_owned(),
+        interpolated,
+        template: true,
+        closed,
+    }
+}
+
+/// Skip a `${ … }` body, honouring nested braces, strings, templates and comments. Returns the
+/// offset just past the closing `}`, or the end of input.
+fn skip_js_expr(b: &[u8], mut i: usize, depth: usize) -> usize {
+    if depth > MAX_NEST {
+        return b.len();
+    }
+    let mut open = 1usize;
+    while i < b.len() {
+        match b[i] {
+            b'{' => {
+                open += 1;
+                i += 1;
+            }
+            b'}' => {
+                open -= 1;
+                i += 1;
+                if open == 0 {
+                    return i;
+                }
+            }
+            c @ (b'\'' | b'"') => {
+                let t = read_string(b, i, c);
+                i = t.end.max(i + 1);
+            }
+            b'`' => {
+                let t = read_template(b, i, depth + 1);
+                i = t.end.max(i + 1);
+            }
+            b'/' if b.get(i + 1) == Some(&b'/') => i = skip_line_comment(b, i),
+            b'/' if b.get(i + 1) == Some(&b'*') => i = skip_block_comment(b, i),
+            _ => i += 1,
+        }
+    }
+    i
+}
+
+/// Every string and template literal in the source, in order. Comments and regex literals are
+/// skipped: their bytes are not string literals, and reading a route out of `// see /api/notes`
+/// would be a fabricated finding.
+fn scan_js(src: &str) -> Vec<StrTok> {
+    let b = src.as_bytes();
+    let mut out: Vec<StrTok> = Vec::new();
+    let mut i = 0usize;
+    let mut prev: Option<u8> = None;
+    while i < b.len() {
+        match b[i] {
+            c @ (b'\'' | b'"') => {
+                let t = read_string(b, i, c);
+                i = t.end.max(i + 1);
+                prev = Some(c);
+                out.push(t);
+            }
+            b'`' => {
+                let t = read_template(b, i, 0);
+                i = t.end.max(i + 1);
+                prev = Some(b'`');
+                out.push(t);
+            }
+            b'/' => {
+                if b.get(i + 1) == Some(&b'/') {
+                    i = skip_line_comment(b, i);
+                } else if b.get(i + 1) == Some(&b'*') {
+                    i = skip_block_comment(b, i);
+                } else if is_regex_context(prev) {
+                    match skip_regex(b, i) {
+                        Some(n) => i = n,
+                        None => {
+                            prev = Some(b'/');
+                            i += 1;
+                        }
+                    }
+                } else {
+                    prev = Some(b'/');
+                    i += 1;
+                }
+            }
+            c if c.is_ascii_whitespace() => i += 1,
+            c => {
+                prev = Some(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | b'.')
+}
+
+/// Which construct produced this literal. The answer is read from the bytes immediately before the
+/// opening quote — no symbol table, because there is no execution to build one.
+fn recovered_from(src: &str, tok: &StrTok) -> String {
+    let b = src.as_bytes();
+    let mut i = tok.start;
+    while i > 0 && b[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    if i > 0 && b[i - 1] == b'(' {
+        let mut j = i - 1;
+        while j > 0 && b[j - 1].is_ascii_whitespace() {
+            j -= 1;
+        }
+        let mut k = j;
+        while k > 0 && ident_byte(b[k - 1]) {
+            k -= 1;
+        }
+        let callee = &src[k..j];
+        if callee == "fetch" {
+            return "fetch".to_string();
+        }
+        if callee.starts_with("axios.") {
+            return callee.to_string();
+        }
+        if callee == "$.ajax" {
+            return "jquery.ajax".to_string();
+        }
+    } else if i > 0 && b[i - 1] == b':' {
+        let mut j = i - 1;
+        while j > 0 && b[j - 1].is_ascii_whitespace() {
+            j -= 1;
+        }
+        let mut k = j;
+        while k > 0 && ident_byte(b[k - 1]) {
+            k -= 1;
+        }
+        if &src[k..j] == "url" && src[..tok.start].contains("$.ajax") {
+            return "jquery.ajax".to_string();
+        }
+    }
+    match tok.template {
+        true => "template-literal".to_string(),
+        false => "string-literal".to_string(),
+    }
+}
+
+/// True when the literal is one side of a `+`. The bytes on the other side may or may not be a
+/// string; either way the route is incomplete, which is what `partial` says.
+fn is_concatenated(src: &str, tok: &StrTok) -> bool {
+    let b = src.as_bytes();
+    let mut i = tok.start;
+    while i > 0 && b[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    let left = i > 0 && b[i - 1] == b'+';
+    let mut j = tok.end;
+    while j < b.len() && b[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    left || b.get(j) == Some(&b'+')
+}
+
+fn line_of(text: &str, offset: usize) -> usize {
+    1 + text.as_bytes()[..offset.min(text.len())]
+        .iter()
+        .filter(|c| **c == b'\n')
+        .count()
+}
+
+/// The scan itself. One source of text with a name; every record it produces cites both.
+fn extract_routes(text: &str, source_url: &str, map_applied: bool, scan: &mut BundleScan) {
+    let mut found: Vec<BundleRoute> = Vec::new();
+    for tok in scan_js(text) {
+        if !tok.closed {
+            scan.skipped_unlocated += unlocated_fragments(&tok.text);
+            continue;
+        }
+        if !path_shaped(&tok.text) {
+            continue;
+        }
+        if asset_like(&tok.text) {
+            scan.skipped_non_route += 1;
+            continue;
+        }
+        if source_url.trim().is_empty() {
+            // No citable source: the offset would point into text nothing names.
+            scan.skipped_unlocated += 1;
+            continue;
+        }
+        let partial = is_concatenated(text, &tok);
+        found.push(BundleRoute {
+            route: tok.text.clone(),
+            kind: match tok.template {
+                true => "template".to_string(),
+                false => "literal".to_string(),
+            },
+            recovered_from: recovered_from(text, &tok),
+            interpolated: tok.interpolated,
+            partial,
+            fragment: match partial {
+                true => Some(tok.text.clone()),
+                false => None,
+            },
+            source_url: source_url.to_string(),
+            offset: tok.start,
+            line: line_of(text, tok.start),
+            map_applied,
+        });
+    }
+    scan.routes.extend(found);
+}
+
+fn sort_routes(routes: &mut [BundleRoute]) {
+    routes.sort_by(|a, b| {
+        (a.source_url.as_str(), a.offset, a.route.as_str()).cmp(&(
+            b.source_url.as_str(),
+            b.offset,
+            b.route.as_str(),
+        ))
+    });
+}
+
+fn check_bundle(source: &str, bundle_url: &str) -> Result<(), String> {
+    let url = bundle_url.trim();
+    if url.is_empty() {
+        return Err(format!(
+            "{CODE_BUNDLE_NO_EVIDENCE}: api.bundle_routes: bundle_url is empty — a route that \
+             cannot name the bundle it was found in is not a finding"
+        ));
+    }
+    if is_html(source) {
+        return Err(format!(
+            "{CODE_BUNDLE_NOT_JS}: {url}: the first bytes are HTML, not JavaScript — this is a \
+             page saved as .js; parsing it as a bundle would produce garbage routes"
+        ));
+    }
+    Ok(())
+}
+
+/// N16: recover routes from a JavaScript bundle, as text.
+pub fn bundle_routes(source: &str, bundle_url: &str) -> Result<BundleScan, String> {
+    check_bundle(source, bundle_url)?;
+    let mut scan = BundleScan {
+        bundle_url: bundle_url.trim().to_string(),
+        map_mode: "bundle".to_string(),
+        ..Default::default()
+    };
+    extract_routes(source, scan.bundle_url.clone().as_str(), false, &mut scan);
+    sort_routes(&mut scan.routes);
+    Ok(scan)
+}
+
+struct MapPlan {
+    /// Pairs of (source name, original text) for every source that actually carried content.
+    sources: Vec<(String, String)>,
+    /// Why the fallback is a fallback. Empty when the map was fully usable.
+    reason: String,
+}
+
+/// Byte offset of a JSON syntax error, so a refusal points at the byte and not just the line.
+fn json_error_offset(map_json: &str, e: &serde_json::Error) -> usize {
+    let line = e.line().max(1);
+    let col = e.column().max(1);
+    let mut off = 0usize;
+    for (idx, l) in map_json.split_inclusive('\n').enumerate() {
+        if idx + 1 == line {
+            return off + (col - 1).min(l.len());
+        }
+        off += l.len();
+    }
+    off.min(map_json.len())
+}
+
+/// Offset of `"key"` in the map text, for a structural refusal that still wants to point somewhere.
+fn key_offset(map_json: &str, key: &str) -> usize {
+    let needle = format!("\"{key}\"");
+    map_json.find(&needle).unwrap_or(0)
+}
+
+fn sourcemap_plan(map_json: &str, bundle_url: &str) -> Result<MapPlan, String> {
+    let u = bundle_url.trim();
+    if map_json.trim().is_empty() {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: the sourcemap is empty — nothing to read at byte 0"
+        ));
+    }
+    let doc: J = serde_json::from_str(map_json).map_err(|e| {
+        format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: not JSON: {e} at byte {}",
+            json_error_offset(map_json, &e)
+        )
+    })?;
+    if doc.get("version").and_then(J::as_i64) != Some(3) {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `version` is {} — this module reads v3 sourcemaps \
+             only (byte {})",
+            doc.get("version").map(|v| v.to_string()).unwrap_or_else(|| "absent".to_string()),
+            key_offset(map_json, "version")
+        ));
+    }
+    let Some(sources) = doc.get("sources").and_then(J::as_array) else {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: no `sources` array (looked at key `sources`, byte {})",
+            key_offset(map_json, "sources")
+        ));
+    };
+    if !doc.get("mappings").is_some_and(J::is_string) {
+        return Err(format!(
+            "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `mappings` is absent or not a string — a v3 map \
+             without mappings is not a map (byte {})",
+            key_offset(map_json, "mappings")
+        ));
+    }
+    let contents = match doc.get("sourcesContent") {
+        None => None,
+        Some(c) => match c.as_array() {
+            Some(a) => Some(a),
+            None => {
+                return Err(format!(
+                    "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `sourcesContent` is present but is not an \
+                     array (byte {})",
+                    key_offset(map_json, "sourcesContent")
+                ));
+            }
+        },
+    };
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (idx, s) in sources.iter().enumerate() {
+        let Some(name) = s.as_str() else {
+            return Err(format!(
+                "{CODE_SOURCEMAP_UNPARSABLE}: {u}: `sources[{idx}]` is not a string"
+            ));
+        };
+        if let Some(c) = contents.and_then(|c| c.get(idx)).and_then(J::as_str) {
+            pairs.push((name.to_string(), c.to_string()));
+        }
+    }
+    if pairs.is_empty() {
+        return Ok(MapPlan {
+            reason: format!(
+                "`sourcesContent` carries no text for any of the {} source(s) in {u} — extracted \
+                 from the bundle text instead, so offsets are bundle offsets, not original-file \
+                 positions",
+                sources.len()
+            ),
+            sources: pairs,
+        });
+    }
+    Ok(MapPlan {
+        reason: String::new(),
+        sources: pairs,
+    })
+}
+
+/// N17: recover routes from the original sources a v3 sourcemap carries.
+pub fn bundle_routes_with_map(
+    source: &str,
+    bundle_url: &str,
+    sourcemap_json: &str,
+) -> Result<BundleScan, String> {
+    check_bundle(source, bundle_url)?;
+    let url = bundle_url.trim().to_string();
+    let plan = sourcemap_plan(sourcemap_json, &url)?;
+    if plan.sources.is_empty() {
+        let mut scan = BundleScan {
+            bundle_url: url.clone(),
+            map_mode: "fallback".to_string(),
+            map_applied: false,
+            map_reason: Some(plan.reason),
+            ..Default::default()
+        };
+        extract_routes(source, &url, false, &mut scan);
+        sort_routes(&mut scan.routes);
+        return Ok(scan);
+    }
+    let mut scan = BundleScan {
+        bundle_url: url,
+        map_mode: "sources-content".to_string(),
+        map_applied: true,
+        // Said on every applied map: the positions are real, the mapping is not decoded.
+        map_reason: Some(
+            "extracted from `sourcesContent`; `mappings` VLQ was not decoded, so `offset`/`line` \
+             are positions in the cited original source, not mapped positions"
+                .to_string(),
+        ),
+        ..Default::default()
+    };
+    for (name, content) in &plan.sources {
+        extract_routes(content, name, true, &mut scan);
+    }
+    sort_routes(&mut scan.routes);
+    Ok(scan)
+}
+
+fn route_value(r: &BundleRoute) -> Value {
+    Value::Struct {
+        name: "BundleRoute".to_string(),
+        fields: vec![
+            sfield("route", &r.route),
+            sfield("kind", &r.kind),
+            sfield("recovered_from", &r.recovered_from),
+            ("interpolated".to_string(), Value::Bool(r.interpolated)),
+            ("partial".to_string(), Value::Bool(r.partial)),
+            ofield("fragment", &r.fragment),
+            sfield("source_url", &r.source_url),
+            ifield("offset", r.offset),
+            ifield("line", r.line),
+            ("map_applied".to_string(), Value::Bool(r.map_applied)),
+        ],
+    }
+}
+
+fn bundle_scan_value(s: &BundleScan) -> Value {
+    Value::Struct {
+        name: "BundleScan".to_string(),
+        fields: vec![
+            sfield("bundle_url", &s.bundle_url),
+            sfield("map_mode", &s.map_mode),
+            ("map_applied".to_string(), Value::Bool(s.map_applied)),
+            ofield("map_reason", &s.map_reason),
+            ifield("count", s.routes.len()),
+            ifield("skipped_unlocated", s.skipped_unlocated),
+            ifield("skipped_non_route", s.skipped_non_route),
+            (
+                "routes".to_string(),
+                Value::Array(s.routes.iter().map(route_value).collect()),
+            ),
+        ],
+    }
+}
+
+fn bool_field(fs: &[(String, Value)], k: &str) -> bool {
+    matches!(
+        fs.iter().find(|(n, _)| n == k).map(|(_, v)| v),
+        Some(Value::Bool(true))
+    )
+}
+
+fn usize_field(fs: &[(String, Value)], k: &str, fname: &str) -> Result<usize, String> {
+    match fs.iter().find(|(n, _)| n == k).map(|(_, v)| v) {
+        Some(Value::Int(i)) if *i >= 0 => Ok(*i as usize),
+        Some(other) => Err(bad(
+            fname,
+            &format!("`{k}` expected a non-negative Int, got {}", type_name(other)),
+        )),
+        None => Err(bad(fname, &format!("BundleScan/BundleRoute without `{k}`"))),
+    }
+}
+
+/// One `BundleRoute` struct read back from the value layer.
+fn read_route(fields: &[(String, Value)], fname: &str) -> Result<BundleRoute, String> {
+    Ok(BundleRoute {
+        route: sv(fields, "route").ok_or_else(|| bad(fname, "BundleRoute without a `route`"))?,
+        kind: sv(fields, "kind").unwrap_or_else(|| "literal".to_string()),
+        recovered_from: sv(fields, "recovered_from")
+            .unwrap_or_else(|| "string-literal".to_string()),
+        interpolated: bool_field(fields, "interpolated"),
+        partial: bool_field(fields, "partial"),
+        fragment: sv(fields, "fragment"),
+        source_url: sv(fields, "source_url").unwrap_or_default(),
+        offset: usize_field(fields, "offset", fname)?,
+        line: usize_field(fields, "line", fname)?,
+        map_applied: bool_field(fields, "map_applied"),
+    })
+}
+
+fn bundle_scan_of(fs: &[(String, Value)], fname: &str) -> Result<BundleScan, String> {
+    let routes = fs
+        .iter()
+        .find(|(n, _)| n == "routes")
+        .map(|(_, v)| v)
+        .ok_or_else(|| bad(fname, "BundleScan without a `routes` array"))?;
+    let Value::Array(items) = routes else {
+        return Err(bad(
+            fname,
+            &format!("BundleScan `routes` expected an array, got {}", type_name(routes)),
+        ));
+    };
+    let mut out: Vec<BundleRoute> = Vec::new();
+    for it in items {
+        let Value::Struct { name, fields } = it else {
+            return Err(bad(
+                fname,
+                &format!("expected BundleRoute, got {}", type_name(it)),
+            ));
+        };
+        if name != "BundleRoute" {
+            return Err(bad(
+                fname,
+                &format!("expected BundleRoute, got struct {name}"),
+            ));
+        }
+        out.push(read_route(fields, fname)?);
+    }
+    sort_routes(&mut out);
+    Ok(BundleScan {
+        bundle_url: sv(fs, "bundle_url").unwrap_or_default(),
+        map_mode: sv(fs, "map_mode").unwrap_or_else(|| "bundle".to_string()),
+        map_applied: bool_field(fs, "map_applied"),
+        map_reason: sv(fs, "map_reason"),
+        skipped_unlocated: usize_field(fs, "skipped_unlocated", fname).unwrap_or(0),
+        skipped_non_route: usize_field(fs, "skipped_non_route", fname).unwrap_or(0),
+        routes: out,
+    })
+}
+
+fn bundle_scan_json(s: &BundleScan) -> String {
+    json!({
+        "schema_version": "tallow.api.bundle_routes.v1",
+        "bundle_url": s.bundle_url,
+        "map_mode": s.map_mode,
+        "map_applied": s.map_applied,
+        "map_reason": s.map_reason,
+        "count": s.routes.len(),
+        "skipped_unlocated": s.skipped_unlocated,
+        "skipped_non_route": s.skipped_non_route,
+        // Every row carries the URL and the byte offset it was read from. A row without both is
+        // not in this array — it was counted in `skipped_unlocated` instead.
+        "routes": s.routes.iter().map(|r| json!({
+            "route": r.route,
+            "kind": r.kind,
+            "recovered_from": r.recovered_from,
+            "interpolated": r.interpolated,
+            "partial": r.partial,
+            "fragment": r.fragment,
+            "source_url": r.source_url,
+            "offset": r.offset,
+            "line": r.line,
+            "map_applied": r.map_applied,
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────
@@ -1563,6 +2441,46 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
                     ],
                 })
             }
+            // ── N16/N17: JS bundle route recovery ────────────────────────
+            "bundle_routes" => Ok(bundle_scan_value(&bundle_routes(
+                &str_arg(&args, 0, "bundle_routes")?,
+                &str_arg(&args, 1, "bundle_routes")?,
+            )?)),
+            "bundle_routes_with_map" => Ok(bundle_scan_value(&bundle_routes_with_map(
+                &str_arg(&args, 0, "bundle_routes_with_map")?,
+                &str_arg(&args, 1, "bundle_routes_with_map")?,
+                &str_arg(&args, 2, "bundle_routes_with_map")?,
+            )?)),
+            "bundle_routes_json" => {
+                let scan = bundle_scan_of(
+                    struct_arg(&args, 0, "BundleScan", "bundle_routes_json")?,
+                    "bundle_routes_json",
+                )?;
+                Ok(Value::String(bundle_scan_json(&scan)))
+            }
+            // Constructors: E0115 — a stdlib struct cannot be written as a literal in `.tl`, so a
+            // struct this module only *takes* is a struct no program can build.
+            "bundle_route" => Ok(route_value(&BundleRoute {
+                route: str_arg(&args, 0, "bundle_route")?,
+                kind: str_arg(&args, 1, "bundle_route")?,
+                recovered_from: str_arg(&args, 2, "bundle_route")?,
+                source_url: str_arg(&args, 3, "bundle_route")?,
+                offset: int_arg(&args, 4, "bundle_route")?,
+                line: int_arg(&args, 5, "bundle_route")?,
+                interpolated: bool_arg(&args, 6, "bundle_route")?,
+                partial: bool_arg(&args, 7, "bundle_route")?,
+                fragment: opt_str_arg(&args, 8, "bundle_route")?,
+                map_applied: bool_arg(&args, 9, "bundle_route")?,
+            })),
+            "bundle_scan" => Ok(bundle_scan_value(&BundleScan {
+                bundle_url: str_arg(&args, 0, "bundle_scan")?,
+                map_mode: str_arg(&args, 1, "bundle_scan")?,
+                map_applied: bool_arg(&args, 2, "bundle_scan")?,
+                map_reason: opt_str_arg(&args, 3, "bundle_scan")?,
+                skipped_unlocated: int_arg(&args, 4, "bundle_scan")?,
+                skipped_non_route: int_arg(&args, 5, "bundle_scan")?,
+                routes: routes_arg(&args, 6, "bundle_scan")?,
+            })),
             _ => {
                 unknown = true;
                 Ok(Value::Nil)
@@ -1971,6 +2889,313 @@ mod intel_api_tests {
             None,
             "undeclared renders nil, not an empty string"
         );
+    }
+
+    // ── N16: bundle route recovery ───────────────────────────────────────
+
+    const BUNDLE_URL: &str = "https://x.test/static/app.min.js";
+
+    #[test]
+    fn a_path_literal_is_recovered_with_its_byte_offset() {
+        let src = r#"var a="/api/v1/users";"#;
+        let s = bundle_routes(src, BUNDLE_URL).unwrap();
+        assert_eq!(s.map_mode, "bundle");
+        assert!(!s.map_applied);
+        assert_eq!(s.skipped_unlocated, 0);
+        assert_eq!(s.routes.len(), 1);
+        let r = &s.routes[0];
+        assert_eq!(r.route, "/api/v1/users");
+        assert_eq!(r.kind, "literal");
+        assert_eq!(r.recovered_from, "string-literal");
+        // The offset of the opening quote; the route is cited, not asserted.
+        assert_eq!(r.offset, src.find('"').unwrap());
+        assert_eq!(r.line, 1);
+        assert_eq!(r.source_url, BUNDLE_URL);
+        assert!(!r.partial && !r.interpolated);
+        assert_eq!(r.fragment, None);
+    }
+
+    #[test]
+    fn fetch_axios_and_jquery_arguments_are_named_after_their_construct() {
+        let src = "fetch(\"/api/a\");\naxios.post('/api/b');\n$.ajax({url: '/api/c'});\nvar d = \"/api/d\";\n";
+        let s = bundle_routes(src, BUNDLE_URL).unwrap();
+        let got: Vec<(String, String)> = s
+            .routes
+            .iter()
+            .map(|r| (r.route.clone(), r.recovered_from.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("/api/a".to_string(), "fetch".to_string()),
+                ("/api/b".to_string(), "axios.post".to_string()),
+                ("/api/c".to_string(), "jquery.ajax".to_string()),
+                ("/api/d".to_string(), "string-literal".to_string()),
+            ],
+            "document order, each named by the construct that produced it"
+        );
+    }
+
+    #[test]
+    fn a_template_literal_records_an_interpolation_not_a_value() {
+        let src = "fetch(`/api/users/${id}/orders`)";
+        let s = bundle_routes(src, BUNDLE_URL).unwrap();
+        let r = &s.routes[0];
+        assert_eq!(r.route, "/api/users/{}/orders", "the id was never read");
+        assert_eq!(r.kind, "template");
+        assert_eq!(r.recovered_from, "fetch");
+        assert!(r.interpolated, "the segment must be declared an interpolation");
+        assert!(!r.partial, "the shape is complete; only the value was interpolated");
+        assert_eq!(r.offset, src.find('`').unwrap());
+    }
+
+    #[test]
+    fn a_concatenated_route_is_partial_and_carries_the_fragment_it_saw() {
+        let src = r#"var u = "/api/users/" + id + "/orders";"#;
+        let s = bundle_routes(src, BUNDLE_URL).unwrap();
+        let parts: Vec<(&str, bool)> = s
+            .routes
+            .iter()
+            .map(|r| (r.route.as_str(), r.partial))
+            .collect();
+        assert_eq!(parts, vec![("/api/users/", true), ("/orders", true)]);
+        for r in &s.routes {
+            assert_eq!(
+                r.fragment.as_deref(),
+                Some(r.route.as_str()),
+                "a partial record names the fragment, and completes nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_saved_as_js_is_refused_by_name() {
+        let e = bundle_routes(
+            "<!doctype html>\n<html><body>/api/x</body></html>",
+            BUNDLE_URL,
+        )
+        .unwrap_err();
+        assert!(e.starts_with(CODE_BUNDLE_NOT_JS), "{e}");
+        // A BOM and leading blank lines do not hide it.
+        let e = bundle_routes(
+            "\u{feff}\n  <html><script>var x='/api/x'</script></html>",
+            BUNDLE_URL,
+        )
+        .unwrap_err();
+        assert!(e.starts_with(CODE_BUNDLE_NOT_JS), "{e}");
+        // A route with no bundle to cite is refused, not emitted with an empty source.
+        let e = bundle_routes("var a='/api/x'", "   ").unwrap_err();
+        assert!(e.starts_with(CODE_BUNDLE_NO_EVIDENCE), "{e}");
+    }
+
+    #[test]
+    fn comments_and_regex_literals_do_not_become_routes() {
+        let src = r#"
+            // see /api/from-a-line-comment
+            /* and /api/from-a-block-comment */
+            var re = /\/api\/v1\/pattern/;
+            var keep = "/api/kept";
+        "#;
+        let s = bundle_routes(src, BUNDLE_URL).unwrap();
+        let got: Vec<&str> = s.routes.iter().map(|r| r.route.as_str()).collect();
+        assert_eq!(got, vec!["/api/kept"]);
+    }
+
+    #[test]
+    fn asset_paths_and_unterminated_literals_are_counted_not_emitted() {
+        let src = r#"var a = "/static/app.css"; var b = "/img/logo.png"; var c = "/api/real";"#;
+        let s = bundle_routes(src, BUNDLE_URL).unwrap();
+        assert_eq!(s.skipped_non_route, 2);
+        assert_eq!(s.routes.len(), 1);
+        assert_eq!(s.routes[0].route, "/api/real");
+
+        // Truncated bundle: the literal has no trustworthy extent, so the fragment is counted.
+        let s = bundle_routes(r#"var a = 1; var b = "/api/truncated"#, BUNDLE_URL).unwrap();
+        assert_eq!(s.skipped_unlocated, 1);
+        assert!(s.routes.is_empty(), "an unlocatable fragment is not a finding");
+    }
+
+    // ── N17: sourcemap-aware recovery ────────────────────────────────────
+
+    const MAP_SOURCE: &str = "webpack:///src/api.js";
+
+    fn map_with(content: &str) -> String {
+        json!({
+            "version": 3,
+            "file": "app.min.js",
+            "sources": [MAP_SOURCE],
+            "sourcesContent": [content],
+            "mappings": "AAAA"
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_map_with_sources_content_gives_original_file_provenance() {
+        let original = "// original source\nconst API = \"/v1/users\";\nfunction load(){return fetch(`/v1/users/${id}`)}\n";
+        // The bundle's own literal must not be what comes back: that is the whole point.
+        let bundle = "var A=\"/from-the-bundle\";";
+        let s = bundle_routes_with_map(bundle, BUNDLE_URL, &map_with(original)).unwrap();
+        assert_eq!(s.map_mode, "sources-content");
+        assert!(s.map_applied);
+        assert_eq!(s.routes.len(), 2);
+        for r in &s.routes {
+            assert_eq!(r.source_url, MAP_SOURCE, "cited as the original source");
+            assert!(r.map_applied);
+            assert_ne!(r.source_url, BUNDLE_URL);
+        }
+        let lit = &s.routes[0];
+        assert_eq!(lit.route, "/v1/users");
+        assert_eq!(lit.line, 2, "1-based line in the original file");
+        assert_eq!(lit.offset, original.find("\"/v1/users\"").unwrap());
+        assert_eq!(s.routes[1].route, "/v1/users/{}");
+        assert!(s.routes[1].interpolated);
+        // Said out loud, because the mapping itself was not decoded.
+        assert!(s.map_reason.as_deref().unwrap().contains("VLQ"));
+    }
+
+    #[test]
+    fn a_map_without_sources_content_falls_back_and_says_so() {
+        let bundle = r#"var A="/api/from-bundle";"#;
+        let absent = json!({"version": 3, "sources": ["a.js"], "mappings": "AAAA"}).to_string();
+        for map in [
+            absent,
+            json!({"version": 3, "sources": ["a.js"], "sourcesContent": [null], "mappings": "AAAA"})
+                .to_string(),
+        ] {
+            let s = bundle_routes_with_map(bundle, BUNDLE_URL, &map).unwrap();
+            assert_eq!(s.map_mode, "fallback");
+            assert!(!s.map_applied);
+            assert!(
+                s.map_reason.as_deref().unwrap().contains("sourcesContent"),
+                "the reason names what was missing: {:?}",
+                s.map_reason
+            );
+            assert_eq!(s.routes.len(), 1);
+            assert_eq!(s.routes[0].source_url, BUNDLE_URL);
+            assert!(
+                !s.routes[0].map_applied,
+                "a fallback record must not look sourcemapped"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unparsable_map_is_refused_naming_the_byte() {
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, "{\"version\": 3, ").unwrap_err();
+        assert!(e.starts_with(CODE_SOURCEMAP_UNPARSABLE), "{e}");
+        assert!(e.contains("byte"), "{e}");
+
+        let v2 = json!({"version": 2, "sources": [], "mappings": ""}).to_string();
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, &v2).unwrap_err();
+        assert!(
+            e.starts_with(CODE_SOURCEMAP_UNPARSABLE) && e.contains("version"),
+            "{e}"
+        );
+
+        let no_mappings = json!({"version": 3, "sources": ["a.js"]}).to_string();
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, &no_mappings).unwrap_err();
+        assert!(
+            e.starts_with(CODE_SOURCEMAP_UNPARSABLE) && e.contains("mappings"),
+            "{e}"
+        );
+
+        let bad_content = json!({"version": 3, "sources": ["a.js"], "sourcesContent": "nope", "mappings": ""})
+            .to_string();
+        let e = bundle_routes_with_map("var a=1;", BUNDLE_URL, &bad_content).unwrap_err();
+        assert!(e.starts_with(CODE_SOURCEMAP_UNPARSABLE), "{e}");
+    }
+
+    #[test]
+    fn a_map_source_with_no_name_cannot_be_cited() {
+        let map = json!({
+            "version": 3,
+            "sources": [""],
+            "sourcesContent": ["var a=\"/api/z\";"],
+            "mappings": "AAAA"
+        })
+        .to_string();
+        let s = bundle_routes_with_map("var a=1;", BUNDLE_URL, &map).unwrap();
+        assert!(s.map_applied, "the map was applied; the record had no source");
+        assert!(s.routes.is_empty());
+        assert_eq!(s.skipped_unlocated, 1);
+    }
+
+    #[test]
+    fn the_json_rendering_keeps_url_and_offset_on_every_row() {
+        let scan = bundle_routes(
+            "var a=\"/api/a\"; fetch(`/api/b/${x}`)",
+            BUNDLE_URL,
+        )
+        .unwrap();
+        let Value::String(s) =
+            dispatch("bundle_routes_json", vec![bundle_scan_value(&scan)])
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("expected a string")
+        };
+        let doc: J = serde_json::from_str(&s).unwrap();
+        assert_eq!(doc["schema_version"], "tallow.api.bundle_routes.v1");
+        assert_eq!(doc["count"], 2);
+        assert_eq!(doc["skipped_unlocated"], 0);
+        let rows = doc["routes"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(row["source_url"], BUNDLE_URL);
+            assert!(row["offset"].as_u64().is_some(), "no row is emitted bare");
+            assert_eq!(row["map_applied"], false);
+        }
+    }
+
+    #[test]
+    fn the_constructors_round_trip_through_the_reader() {
+        let route = dispatch(
+            "bundle_route",
+            vec![
+                Value::String("/api/a".into()),
+                Value::String("literal".into()),
+                Value::String("fetch".into()),
+                Value::String(BUNDLE_URL.into()),
+                Value::Int(12),
+                Value::Int(1),
+                Value::Bool(false),
+                Value::Bool(false),
+                Value::Nil,
+                Value::Bool(false),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        let scan = dispatch(
+            "bundle_scan",
+            vec![
+                Value::String(BUNDLE_URL.into()),
+                Value::String("bundle".into()),
+                Value::Bool(false),
+                Value::Nil,
+                Value::Int(0),
+                Value::Int(0),
+                Value::Array(vec![route]),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        let Value::Struct { name, fields } = &scan else {
+            panic!("expected a BundleScan")
+        };
+        assert_eq!(name, "BundleScan");
+        let back = bundle_scan_of(fields, "test").unwrap();
+        assert_eq!(back.routes.len(), 1);
+        assert_eq!(back.routes[0].route, "/api/a");
+        assert_eq!(back.routes[0].offset, 12);
+        assert_eq!(back.routes[0].recovered_from, "fetch");
+
+        // A wrong argument type is a named refusal, not a panic.
+        let e = dispatch("bundle_routes", vec![Value::Int(1), Value::String(BUNDLE_URL.into())])
+            .unwrap()
+            .unwrap_err();
+        assert!(e.starts_with(CODE_ARG), "{e}");
     }
 
     fn container(rows: &[Value], i: usize) -> Vec<(String, Value)> {
