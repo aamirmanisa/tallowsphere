@@ -220,6 +220,13 @@ struct IpClusterReport {
     weights:            ClusterWeights,
 }
 
+// Build one observation. A stdlib struct type cannot be written as a literal in
+// a program (the typechecker only knows structs a program declares), so this
+// constructor is the way a caller hands clustering its own measurements. An
+// `asn` of 0 or less is refused (`ip:cluster-bad-observation`) — unknown is
+// nil, never 0.
+native fn ip.observation(ip: String, host: String?, asn: Int?, cert_sha256: String?, favicon_hash: String?, header_signature: String?) -> IpObservation
+
 // Group observations by shared signals. Offline and pure: no socket, no clock.
 // Refuses `ip:cluster-bad-observation`, `ip:cluster-bad-option` and
 // `ip:cluster-duplicate` (one address observed twice) rather than guessing.

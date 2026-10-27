@@ -986,6 +986,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "cache_get" => Some(cache_get_dispatch(args)),
         "cache_stats" => Some(cache_stats_dispatch(args)),
         "cluster" => Some(cluster_dispatch(args)),
+        "observation" => Some(observation_dispatch(args)),
         "cluster_json" => Some(cluster_json_dispatch(args)),
         _ => None,
     }
@@ -1084,6 +1085,56 @@ fn cache_stats_dispatch(args: Vec<Value>) -> StdlibResult {
                 "stale_entries".to_string(),
                 Value::Int(stale_entries as i128),
             ),
+        ],
+    })
+}
+
+fn observation_dispatch(args: Vec<Value>) -> StdlibResult {
+    let ip = str_arg(&args, 0, "observation")?;
+    if ip.trim().is_empty() {
+        return Err(format!(
+            "{CODE_CLUSTER_BAD_OBSERVATION}: ip.observation: argument 1 must be a non-empty \
+             address literal, got an empty string"
+        ));
+    }
+    let host = opt_str_arg(&args, 1, "observation")?;
+    let asn = match args.get(2) {
+        Some(Value::Int(i)) if *i > 0 => Value::Int(*i),
+        Some(Value::Nil) | None => Value::Nil,
+        Some(Value::Int(i)) => {
+            return Err(format!(
+                "{CODE_CLUSTER_BAD_OBSERVATION}: ip.observation: asn {i} is not an ASN — an \
+                 unknown ASN is nil, never 0"
+            ));
+        }
+        Some(other) => {
+            return Err(format!(
+                "ip.observation: argument 3 expected Int?, got {}",
+                type_name(other)
+            ));
+        }
+    };
+    let text = |idx: usize| -> Result<Value, String> {
+        Ok(match opt_str_arg(&args, idx, "observation")? {
+            Some(s) => Value::String(s),
+            None => Value::Nil,
+        })
+    };
+    Ok(Value::Struct {
+        name: "IpObservation".to_string(),
+        fields: vec![
+            ("ip".to_string(), Value::String(ip)),
+            (
+                "host".to_string(),
+                match host {
+                    Some(h) => Value::String(h),
+                    None => Value::Nil,
+                },
+            ),
+            ("asn".to_string(), asn),
+            ("cert_sha256".to_string(), text(3)?),
+            ("favicon_hash".to_string(), text(4)?),
+            ("header_signature".to_string(), text(5)?),
         ],
     })
 }
@@ -1574,6 +1625,71 @@ mod intel_ip_tests {
         ]);
         assert!(apart.clusters.is_empty());
         assert!(apart.linked_not_merged.is_empty());
+    }
+
+    #[test]
+    fn observation_builds_a_value_the_clusterer_accepts() {
+        // stdlib struct types cannot be written as .tl literals (typeck never
+        // loads stdlib struct declarations), so the caller needs a constructor
+        // or the declared surface is unreachable from a program.
+        let a = dispatch(
+            "ip.observation",
+            vec![
+                Value::String("10.0.0.2".into()),
+                Value::Nil,
+                Value::Int(64501),
+                Value::String("AA11".into()),
+                Value::Nil,
+                Value::Nil,
+            ],
+        )
+        .expect("routed")
+        .expect("observation");
+        let b = dispatch(
+            "ip.observation",
+            vec![
+                Value::String("10.0.0.1".into()),
+                Value::String("a.example".into()),
+                Value::Nil,
+                Value::String("aa11".into()),
+                Value::Nil,
+                Value::Nil,
+            ],
+        )
+        .expect("routed")
+        .expect("observation");
+        let report = dispatch("ip.cluster", vec![Value::Array(vec![a, b])])
+            .expect("routed")
+            .expect("cluster");
+        match report {
+            Value::Struct { fields, .. } => {
+                let Some(Value::Array(clusters)) = field(&fields, "clusters") else {
+                    panic!("no clusters field");
+                };
+                assert_eq!(clusters.len(), 1);
+                let Value::Struct { fields, .. } = &clusters[0] else {
+                    panic!("cluster is not a struct");
+                };
+                assert!(matches!(field(fields, "members"), Some(Value::Array(m)) if m.len() == 2));
+                // The hostname travels into the evidence line for a human.
+                let Some(Value::Array(lines)) = field(fields, "evidence_lines") else {
+                    panic!("no evidence_lines");
+                };
+                assert!(
+                    matches!(lines.first(), Some(Value::String(s)) if s.contains("a.example")),
+                    "{lines:?}"
+                );
+            }
+            other => panic!("expected struct, got {}", type_name(&other)),
+        }
+        // An ASN of 0 is refused rather than silently treated as unknown.
+        let err = dispatch(
+            "ip.observation",
+            vec![Value::String("10.0.0.3".into()), Value::Nil, Value::Int(0)],
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(err.starts_with(CODE_CLUSTER_BAD_OBSERVATION), "{err}");
     }
 
     #[test]
