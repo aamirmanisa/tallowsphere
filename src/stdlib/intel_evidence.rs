@@ -90,6 +90,25 @@
 //! no receipt (nothing left the secrecy lattice) — a caller is not asked to
 //! know which fields the runtime classifies as secret.
 //!
+//! **Measured limit at the `.tl` surface.** A `Secret` value handed to a native
+//! as an argument arrives already masked. In a probe program — `type SecretStr =
+//! secret String`, then a record whose `api_key` field is a secret literal —
+//! `intel.redact(record, [])` returns the marker, so the field did arrive as a
+//! `Value::Secret`; but the release path observes the payload as the
+//! three-asterisk mask, while `record.api_key.mask()` in the same run still
+//! reports the original's last four characters. A declassification can therefore
+//! only release what the runtime handed this module: material replaced before the
+//! call cannot be recovered here. The substitution was **not localised** — it
+//! happens upstream of `stdlib::dispatch`. The unit tests construct
+//! `Value::Secret` directly (the shape the runtime holds), so they measure the
+//! release path, not that boundary.
+//!
+//! **No native lowering.** No arm in `src/codegen.rs` or `src/runtime/` lowers
+//! an `intel.*` call, so this module runs on the interpreter today; a compiled
+//! program that reads a returned struct reports `native build unavailable` and
+//! falls back. Measured, not assumed: `tallow run` on a `.tl` caller prints the
+//! fallback notice.
+//!
 //! # What a `Grant` does and does not carry
 //!
 //! The runtime value is `Value::Struct { name: "Grant", fields: [("effect", …)] }`
