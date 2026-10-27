@@ -1,5 +1,6 @@
 //! Standard library: `tallow.intel` — evidence that cannot leave on a dead
-//! grant (N38) and budget refusals that carry their own receipt (N39).
+//! grant (N38), budget refusals that carry their own receipt (N39), and
+//! redaction with declassification as a recorded act (N40).
 //!
 //! # Why this module exists
 //!
@@ -29,6 +30,66 @@
 //! | `export:scope-not-listed` | the register refused the target on another ground (the `scope:*` code travels in `scope_code`) |
 //! | `export:no-target` | the record names no target; absence is a refusal, not a pass |
 //!
+//! | code | ground |
+//! |---|---|
+//! | `redact:no-reason` | a declassification names a field but gives no reason |
+//! | `redact:no-consumer` | a declassification names a field but no consumer of the released value |
+//! | `redact:unknown-field` | a declassification names a field (or dotted path) the record does not have, or names none at all |
+//! | `redact:duplicate-field` | two declassifications name the same field; one receipt per field, or a reader cannot tell whose authority applied |
+//!
+//! `redact:declassified` is the *receipt* code, not a refusal: it marks a
+//! secret that was released on a recorded authority.
+//!
+//! # N40 — redaction, and why a declassification is an act
+//!
+//! `Secret<T>` **does** exist at runtime: `Value::Secret(Box<Value>)`
+//! (`src/interp.rs:181`), minted by a cast to a secret-qualified type
+//! (`src/interp.rs:3769`) and by the crypto natives. A record field can hold
+//! one — `FieldDecl` has no qualifier slot, but a field typed with a
+//! `type X = secret T` alias resolves to `Type::Secret` and carries the wrapper
+//! at run time (`stdlib/crypto.tl:22`). So redaction keys on two signals, both
+//! owned by the runtime and neither a guess:
+//!
+//! 1. the value is `Value::Secret(_)` — a type-level fact that survived into
+//!    the value, and
+//! 2. `crate::secret_fields::is_secret(struct, field)` — the same table the
+//!    display path consults (`src/interp.rs:687`; `src/secret_fields.rs`),
+//!    keyed by the enclosing struct's name. A `Map` record has no struct name,
+//!    so this signal cannot fire for one.
+//!
+//! **Unknown fields pass through unchanged; this module does not guess that a
+//! field is secret from its name.** Both errors are real, so the choice is
+//! stated rather than left implicit:
+//!
+//! - a name heuristic over-redacts. Public evidence legitimately carries
+//!   fields called `token` (an extracted CSRF token, a sitemap `lastmod`
+//!   token), and rewriting those makes the record unreadable;
+//! - worse, a heuristic makes *declassification* meaningless. The caller could
+//!   no longer tell a type-level secret from a pattern match, so "released on
+//!   whose authority" would describe a guess.
+//!
+//! The cost is stated plainly: a caller who puts a secret into a field typed
+//! public gets it back in the clear. The fix is to type the field secret; it is
+//! not this pass's job to guess.
+//!
+//! `Private<T>` is **not** withheld here. The runtime prints it in the clear
+//! (`src/interp.rs:650`: `Value::Private(v) => v.as_string()`), so treating it
+//! as secret in this pass would make this module disagree with every other
+//! output path about what a `Private` is. That disagreement is the bug, not
+//! this refusal to work around it.
+//!
+//! Scope of the walk: fields of the record, recursively through nested structs
+//! and maps, addressed by dotted path (`keypair.identity`). **Array elements
+//! are not redacted in place.** A path cannot name an array position in a way a
+//! receipt could record as authority, so a `Secret` inside an array is not
+//! silently emitted: [`redact_record`] refuses to render the record at all.
+//!
+//! A redacted value is replaced by `[redacted:<path>]` — the marker names the
+//! field and carries no character, length or prefix of the value. A
+//! declassification of a field that is *not* withheld is accepted and produces
+//! no receipt (nothing left the secrecy lattice) — a caller is not asked to
+//! know which fields the runtime classifies as secret.
+//!
 //! # What a `Grant` does and does not carry
 //!
 //! The runtime value is `Value::Struct { name: "Grant", fields: [("effect", …)] }`
@@ -54,6 +115,9 @@
 //! - `intel.export(records, grant)` → ExportOutcome
 //! - `intel.budget_charge(kind, limit, used, attempted, consumer?)` → BudgetOutcome
 //! - `intel.receipt_json(receipt)` → String (a receipt already in the result, rendered to JSON)
+//! - `intel.redact(record, declassify?)` → RedactionOutcome (the record with every
+//!   withheld field replaced, plus one receipt per released field)
+//! - `intel.redaction_receipt_json(receipt)` → String (the same for a declassification receipt)
 
 use super::StdlibResult;
 use crate::interp::{Value, type_name};
@@ -88,6 +152,21 @@ pub const CODE_BUDGET_WITHIN: &str = "budget:within";
 pub const CODE_BUDGET_UNBOUNDED: &str = "budget:unbounded";
 pub const CODE_BUDGET_BYTES_EXCEEDED: &str = "budget:bytes-exceeded";
 pub const CODE_BUDGET_RATE_EXCEEDED: &str = "budget:rate-exceeded";
+
+/// Schema tag on a redaction outcome.
+pub const REDACTION_SCHEMA: &str = "tallow.intel_redaction.v1";
+
+/// Schema tag on a declassification receipt.
+pub const DECLASSIFICATION_SCHEMA: &str = "tallow.declassification_receipt.v1";
+
+pub const CODE_REDACT_NO_REASON: &str = "redact:no-reason";
+pub const CODE_REDACT_NO_CONSUMER: &str = "redact:no-consumer";
+pub const CODE_REDACT_UNKNOWN_FIELD: &str = "redact:unknown-field";
+pub const CODE_REDACT_DUPLICATE_FIELD: &str = "redact:duplicate-field";
+
+/// The receipt code for a secret that was released on a recorded authority.
+/// Not a refusal.
+pub const CODE_REDACT_DECLASSIFIED: &str = "redact:declassified";
 
 // ══════════════════════════════════════════════════════════════════
 // Grant token
@@ -618,6 +697,514 @@ pub fn charge(
 }
 
 // ══════════════════════════════════════════════════════════════════
+// N40 — redaction, with declassification as a recorded act
+// ══════════════════════════════════════════════════════════════════
+
+/// The marker a withheld value is replaced with: `[redacted:<path>]`.
+///
+/// It names the field and carries no character, length or prefix of the value.
+pub fn redaction_marker(path: &str) -> String {
+    format!("[redacted:{path}]")
+}
+
+/// One request to release a withheld field in the clear.
+///
+/// `reason` and `consumer` are optional in the *type* so their absence is a
+/// coded refusal (`redact:no-reason`, `redact:no-consumer`) rather than a
+/// default — the same shape as [`EvidenceRecord::grant_id`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Declassification {
+    /// Field name, or dotted path for a nested field (`keypair.identity`).
+    pub field: String,
+    pub reason: Option<String>,
+    pub consumer: Option<String>,
+}
+
+impl Declassification {
+    pub fn new(field: &str, reason: &str, consumer: &str) -> Self {
+        Declassification {
+            field: field.to_string(),
+            reason: Some(reason.to_string()),
+            consumer: Some(consumer.to_string()),
+        }
+    }
+
+    /// Read a request from the runtime value a `.tl` caller passed.
+    fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::Struct { .. } | Value::Map(_) => {}
+            other => {
+                return Err(format!(
+                    "intel.redact: a declassification must be a Declassification struct or a map, got {}",
+                    type_name(other)
+                ));
+            }
+        }
+        Ok(Declassification {
+            field: record_text(value, "field").unwrap_or_default(),
+            reason: record_text(value, "reason"),
+            consumer: record_text(value, "consumer"),
+        })
+    }
+}
+
+/// Why one declassification was refused. The field stays withheld: a refusal
+/// never releases anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedactionRefusal {
+    /// One of the `redact:*` refusal codes in this module.
+    pub code: &'static str,
+    /// The field as the request named it, or `<unnamed>`.
+    pub field: String,
+    /// One line a human can read, naming the failed requirement.
+    pub detail: String,
+}
+
+/// A released secret, and the authority that released it — as data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RedactionReceipt {
+    pub schema: &'static str,
+    pub code: &'static str,
+    /// The path that was released, e.g. `keypair.identity`.
+    pub field: String,
+    pub reason: String,
+    /// Who receives the value in the clear.
+    pub consumer: String,
+    /// Wall-clock moment of the release, unix epoch milliseconds.
+    pub at_unix_ms: i64,
+    /// Monotonic milliseconds since this process's evidence clock origin.
+    pub monotonic_delta_ms: u64,
+}
+
+impl RedactionReceipt {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|e| {
+            format!(
+                "{{\"schema\":\"{}\",\"code\":\"receipt-unserialisable\",\"detail\":{:?}}}",
+                DECLASSIFICATION_SCHEMA,
+                e.to_string()
+            )
+        })
+    }
+
+    fn to_value(&self) -> Value {
+        Value::Struct {
+            name: "RedactionReceipt".to_string(),
+            fields: vec![
+                ("schema".into(), Value::String(self.schema.to_string())),
+                ("code".into(), Value::String(self.code.to_string())),
+                ("field".into(), Value::String(self.field.clone())),
+                ("reason".into(), Value::String(self.reason.clone())),
+                ("consumer".into(), Value::String(self.consumer.clone())),
+                ("at_unix_ms".into(), Value::Int(self.at_unix_ms as i128)),
+                (
+                    "monotonic_delta_ms".into(),
+                    Value::Int(self.monotonic_delta_ms as i128),
+                ),
+            ],
+        }
+    }
+}
+
+/// The redacted record and the account of what was withheld, released and
+/// refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedactionOutcome {
+    /// The record rendered to JSON, every withheld field replaced. This is the
+    /// only form the record leaves in: handing back a `Value` tree would carry
+    /// a second copy of each unreleased secret and invite a display path that
+    /// does not consult the withholding rules.
+    pub record_json: String,
+    /// Paths replaced by [`redaction_marker`].
+    pub redacted_fields: Vec<String>,
+    /// Paths released in the clear, one receipt each.
+    pub released_fields: Vec<String>,
+    pub receipts: Vec<RedactionReceipt>,
+    pub refused: Vec<RedactionRefusal>,
+}
+
+impl RedactionOutcome {
+    /// Fail-closed, exactly as [`ExportOutcome::ok`]: a refused declassification
+    /// is not a clean run, even though the record still renders.
+    pub fn ok(&self) -> bool {
+        self.refused.is_empty()
+    }
+
+    fn to_value(&self) -> Value {
+        let strings = |items: &[String]| -> Value {
+            Value::Array(items.iter().map(|s| Value::String(s.clone())).collect())
+        };
+        let refused = self
+            .refused
+            .iter()
+            .map(|r| Value::Struct {
+                name: "RedactionRefusal".to_string(),
+                fields: vec![
+                    ("code".to_string(), Value::String(r.code.to_string())),
+                    ("field".to_string(), Value::String(r.field.clone())),
+                    ("detail".to_string(), Value::String(r.detail.clone())),
+                ],
+            })
+            .collect();
+        Value::Struct {
+            name: "RedactionOutcome".to_string(),
+            fields: vec![
+                (
+                    "schema".to_string(),
+                    Value::String(REDACTION_SCHEMA.to_string()),
+                ),
+                ("ok".to_string(), Value::Bool(self.ok())),
+                (
+                    "record_json".to_string(),
+                    Value::String(self.record_json.clone()),
+                ),
+                (
+                    "redacted_fields".to_string(),
+                    strings(&self.redacted_fields),
+                ),
+                (
+                    "released_fields".to_string(),
+                    strings(&self.released_fields),
+                ),
+                (
+                    "receipts".to_string(),
+                    Value::Array(self.receipts.iter().map(|r| r.to_value()).collect()),
+                ),
+                ("refused".to_string(), Value::Array(refused)),
+            ],
+        }
+    }
+}
+
+/// Read one named field out of a runtime record (a named struct or a map).
+fn record_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    match value {
+        Value::Struct { fields, .. } => fields.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        Value::Map(pairs) => pairs.iter().find_map(|(k, v)| match k {
+            Value::String(s) if s == key => Some(v),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+/// A named field's text, `None` when the field is absent, not a string, or
+/// blank. Blank and absent are the same answer here: both mean "not given".
+fn record_text(value: &Value, key: &str) -> Option<String> {
+    match record_field(value, key) {
+        Some(Value::String(s)) if !s.trim().is_empty() => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Dotted path for a nested field.
+fn join_path(prefix: &str, field: &str) -> String {
+    if prefix.is_empty() {
+        field.to_string()
+    } else {
+        format!("{prefix}.{field}")
+    }
+}
+
+/// The two runtime-owned signals that a field is withheld. See the module docs:
+/// neither is a name guess, and an unknown field is never withheld.
+fn is_withheld(struct_name: &str, field: &str, value: &Value) -> bool {
+    matches!(value, Value::Secret(_)) || crate::secret_fields::is_secret(struct_name, field)
+}
+
+/// Every addressable field path in a record: struct and map fields, including
+/// nested ones. Array elements are deliberately not addressable (see docs).
+fn collect_field_paths(value: &Value, prefix: &str, out: &mut Vec<String>) {
+    match value {
+        Value::Struct { fields, .. } => {
+            for (key, nested) in fields {
+                let path = join_path(prefix, key);
+                out.push(path.clone());
+                collect_field_paths(nested, &path, out);
+            }
+        }
+        Value::Map(pairs) => {
+            for (key, nested) in pairs {
+                if let Value::String(key) = key {
+                    let path = join_path(prefix, key);
+                    out.push(path.clone());
+                    collect_field_paths(nested, &path, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Copy the record, replacing or releasing withheld fields. `releases` holds
+/// `(path, reason, consumer)` already validated against the record.
+fn rewrite_record(
+    value: &Value,
+    prefix: &str,
+    releases: &[(String, String, String)],
+    redacted: &mut Vec<String>,
+    released: &mut Vec<String>,
+    receipts: &mut Vec<RedactionReceipt>,
+    at_unix_ms: i64,
+    monotonic_delta_ms: u64,
+) -> Value {
+    let mut copy_field = |key: &str, field_value: &Value, struct_name: &str| -> Value {
+        let path = join_path(prefix, key);
+        if !is_withheld(struct_name, key, field_value) {
+            return rewrite_record(
+                field_value,
+                &path,
+                releases,
+                redacted,
+                released,
+                receipts,
+                at_unix_ms,
+                monotonic_delta_ms,
+            );
+        }
+        match releases.iter().find(|(p, _, _)| *p == path) {
+            // Released: the value in the clear. A `Secret` wrapper is dropped
+            // here — that is what declassification means — and only here.
+            Some((_, reason, consumer)) => {
+                released.push(path.clone());
+                receipts.push(RedactionReceipt {
+                    schema: DECLASSIFICATION_SCHEMA,
+                    code: CODE_REDACT_DECLASSIFIED,
+                    field: path,
+                    reason: reason.clone(),
+                    consumer: consumer.clone(),
+                    at_unix_ms,
+                    monotonic_delta_ms,
+                });
+                match field_value {
+                    Value::Secret(inner) => (**inner).clone(),
+                    other => other.clone(),
+                }
+            }
+            None => {
+                redacted.push(path.clone());
+                Value::String(redaction_marker(&path))
+            }
+        }
+    };
+    match value {
+        Value::Struct { name, fields } => Value::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(key, field_value)| (key.clone(), copy_field(key, field_value, name)))
+                .collect(),
+        },
+        Value::Map(pairs) => Value::Map(
+            pairs
+                .iter()
+                .map(|(key, field_value)| {
+                    let key_name = match key {
+                        Value::String(s) => s.clone(),
+                        // No name, no path: `is_secret` cannot fire and no
+                        // declassification can address it.
+                        _ => String::new(),
+                    };
+                    // A map has no struct name, so the table cannot match.
+                    (key.clone(), copy_field(&key_name, field_value, ""))
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Render one value as JSON. Refuses a `Secret` and anything it does not know
+/// how to render by name, because a silent `"[SECRET]"` would be a redaction
+/// marker that names no field.
+fn render_evidence(value: &Value) -> Result<serde_json::Value, String> {
+    use serde_json::Value as J;
+    Ok(match value {
+        Value::Nil => J::Null,
+        Value::Bool(b) => J::Bool(*b),
+        // An integer beyond i64 travels as a decimal string rather than being
+        // truncated into a Number.
+        Value::Int(n) => match i64::try_from(*n) {
+            Ok(i) => J::Number(i.into()),
+            Err(_) => J::String(n.to_string()),
+        },
+        Value::Float(f) => match serde_json::Number::from_f64(*f) {
+            Some(n) => J::Number(n),
+            None => {
+                return Err(format!(
+                    "intel.redact: a record field holds {f}, which JSON cannot carry"
+                ));
+            }
+        },
+        Value::String(s) => J::String(s.clone()),
+        // Private prints in the clear everywhere else in the runtime
+        // (`interp.rs:650`), so it renders as its inner value here too.
+        Value::Private(inner) => render_evidence(inner)?,
+        Value::Array(items) => J::Array(
+            items
+                .iter()
+                .map(render_evidence)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Value::Map(pairs) => {
+            let mut object = serde_json::Map::new();
+            for (key, nested) in pairs {
+                let key = match key {
+                    Value::String(s) => s.clone(),
+                    other => {
+                        return Err(format!(
+                            "intel.redact: a record field name must be a string, got {}",
+                            type_name(other)
+                        ));
+                    }
+                };
+                object.insert(key, render_evidence(nested)?);
+            }
+            J::Object(object)
+        }
+        Value::Struct { fields, .. } => {
+            let mut object = serde_json::Map::new();
+            for (key, nested) in fields {
+                object.insert(key.clone(), render_evidence(nested)?);
+            }
+            J::Object(object)
+        }
+        // The renderer is the second door: a secret that reached here was not
+        // redacted, and emitting it (even as "[SECRET]" naming no field) would
+        // be a claim this module cannot make.
+        Value::Secret(_) => {
+            return Err(
+                "intel.redact: a Secret value reached the renderer unredacted; refusing to serialise \
+                 the record (a secret inside an array cannot be redacted in place)"
+                    .to_string(),
+            );
+        }
+        other => {
+            return Err(format!(
+                "intel.redact: a record field holds {}, which cannot be rendered as evidence",
+                type_name(other)
+            ));
+        }
+    })
+}
+
+/// Redact a record, releasing only what a declassification names.
+///
+/// Checks per declassification, in this order: the field must exist in the
+/// record (a typo is not an authority), it must not already be released, and
+/// the reason and consumer must be present and non-blank. A refused
+/// declassification releases nothing.
+pub fn redact_record(
+    record: &Value,
+    declassifications: &[Declassification],
+    at_unix_ms: i64,
+    monotonic_delta_ms: u64,
+) -> Result<RedactionOutcome, String> {
+    match record {
+        Value::Struct { .. } | Value::Map(_) => {}
+        other => {
+            return Err(format!(
+                "intel.redact: a record must be an EvidenceRecord struct or a map, got {}",
+                type_name(other)
+            ));
+        }
+    }
+    let mut paths = Vec::new();
+    collect_field_paths(record, "", &mut paths);
+
+    let mut refused = Vec::new();
+    let mut releases: Vec<(String, String, String)> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for request in declassifications {
+        let name = request.field.trim();
+        let detail = |what: &str| format!("declassification of '{name}': {what}");
+        if name.is_empty() {
+            refused.push(RedactionRefusal {
+                code: CODE_REDACT_UNKNOWN_FIELD,
+                field: "<unnamed>".to_string(),
+                detail: "a declassification must name a field; an unnamed release is a refusal"
+                    .to_string(),
+            });
+            continue;
+        }
+        if !paths.iter().any(|p| p == name) {
+            refused.push(RedactionRefusal {
+                code: CODE_REDACT_UNKNOWN_FIELD,
+                field: name.to_string(),
+                detail: detail("the record has no such field"),
+            });
+            continue;
+        }
+        if seen.iter().any(|s| s == name) {
+            refused.push(RedactionRefusal {
+                code: CODE_REDACT_DUPLICATE_FIELD,
+                field: name.to_string(),
+                detail: detail(
+                    "already named by an earlier declassification; one receipt per field",
+                ),
+            });
+            continue;
+        }
+        seen.push(name.to_string());
+        // Blank and absent are the same answer: "not given". A reason of "   "
+        // is not an authority, so it must not reach the release path.
+        let reason = request
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty());
+        let consumer = request
+            .consumer
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
+        let (reason, consumer) = match (reason, consumer) {
+            (Some(reason), Some(consumer)) => (reason, consumer),
+            (reason, _) => {
+                let (code, what) = if reason.is_none() {
+                    (CODE_REDACT_NO_REASON, "no reason was given")
+                } else {
+                    (CODE_REDACT_NO_CONSUMER, "no consumer was given")
+                };
+                refused.push(RedactionRefusal {
+                    code,
+                    field: name.to_string(),
+                    detail: format!(
+                        "{}; a release without a recorded authority is not a release",
+                        detail(what)
+                    ),
+                });
+                continue;
+            }
+        };
+        releases.push((name.to_string(), reason.to_string(), consumer.to_string()));
+    }
+
+    let mut redacted_fields = Vec::new();
+    let mut released_fields = Vec::new();
+    let mut receipts = Vec::new();
+    let rewritten = rewrite_record(
+        record,
+        "",
+        &releases,
+        &mut redacted_fields,
+        &mut released_fields,
+        &mut receipts,
+        at_unix_ms,
+        monotonic_delta_ms,
+    );
+    let record_json = serde_json::to_string(&render_evidence(&rewritten)?)
+        .map_err(|e| format!("intel.redact: could not serialise the redacted record: {e}"))?;
+    Ok(RedactionOutcome {
+        record_json,
+        redacted_fields,
+        released_fields,
+        receipts,
+        refused,
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Clock
 // ══════════════════════════════════════════════════════════════════
 
@@ -687,6 +1274,8 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "export" => Some(export_dispatch(args)),
         "budget_charge" => Some(budget_charge_dispatch(function, args)),
         "receipt_json" => Some(receipt_json_dispatch(args)),
+        "redact" => Some(redact_dispatch(args)),
+        "redaction_receipt_json" => Some(redaction_receipt_json_dispatch(args)),
         _ => None,
     }
 }
@@ -807,6 +1396,82 @@ fn receipt_json_dispatch(args: Vec<Value>) -> StdlibResult {
     let rendered = serde_json::Value::Object(object);
     Ok(Value::String(serde_json::to_string(&rendered).map_err(
         |e| format!("intel.receipt_json: could not serialise the receipt: {e}"),
+    )?))
+}
+
+fn redact_dispatch(args: Vec<Value>) -> StdlibResult {
+    let record = args
+        .first()
+        .ok_or_else(|| "intel.redact: missing argument 1 (record)".to_string())?;
+    let requests = match args.get(1) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                Declassification::from_value(item)
+                    .map_err(|e| format!("{e} (declassification {})", i + 1))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        // No declassification at all is the normal case, not an error: the
+        // record is redacted and nothing is released.
+        Some(Value::Nil) | None => Vec::new(),
+        Some(other) => {
+            return Err(format!(
+                "intel.redact: argument 2 expected []Declassification, got {}",
+                type_name(other)
+            ));
+        }
+    };
+    let moment = now();
+    Ok(redact_record(record, &requests, moment.unix_ms, moment.monotonic_delta_ms)?.to_value())
+}
+
+fn redaction_receipt_json_dispatch(args: Vec<Value>) -> StdlibResult {
+    let Some(Value::Struct { name, fields }) = args.first() else {
+        return Err(format!(
+            "intel.redaction_receipt_json: argument 1 expected RedactionReceipt, got {}",
+            args.first().map(type_name).unwrap_or("nothing")
+        ));
+    };
+    if name != "RedactionReceipt" {
+        return Err(format!(
+            "intel.redaction_receipt_json: argument 1 expected RedactionReceipt, got struct {name}"
+        ));
+    }
+    // Field for field, like `receipt_json`: the receipt is data, and re-deriving
+    // any part of it here would be a second opinion about what was released.
+    let mut object = serde_json::Map::new();
+    for (key, value) in fields {
+        let rendered = match value {
+            Value::String(s) => serde_json::Value::String(s.clone()),
+            Value::Int(i) => serde_json::Value::Number((*i as i64).into()),
+            Value::Bool(b) => serde_json::Value::Bool(*b),
+            Value::Nil => serde_json::Value::Null,
+            other => {
+                return Err(format!(
+                    "intel.redaction_receipt_json: field '{key}' holds {}, which a receipt cannot carry",
+                    type_name(other)
+                ));
+            }
+        };
+        object.insert(key.clone(), rendered);
+    }
+    for required in [
+        "field",
+        "reason",
+        "consumer",
+        "at_unix_ms",
+        "monotonic_delta_ms",
+    ] {
+        if !object.contains_key(required) {
+            return Err(format!(
+                "intel.redaction_receipt_json: receipt is missing `{required}`, so it is not a receipt"
+            ));
+        }
+    }
+    let rendered = serde_json::Value::Object(object);
+    Ok(Value::String(serde_json::to_string(&rendered).map_err(
+        |e| format!("intel.redaction_receipt_json: could not serialise the receipt: {e}"),
     )?))
 }
 
@@ -1120,6 +1785,21 @@ mod tests {
             .is_some()
         );
         assert!(dispatch("nope", vec![]).is_none());
+        // The N40 surface routes, and an omitted declassification list is the
+        // normal case rather than an argument error.
+        let redacted = dispatch(
+            "redact",
+            vec![Value::Struct {
+                name: "EvidenceRecord".into(),
+                fields: vec![("api_key".into(), secret("sk-live-abcdef"))],
+            }],
+        )
+        .expect("routed")
+        .expect("no argument error");
+        assert_eq!(bool_field(&redacted, "ok"), Some(true));
+        assert!(str_field(&redacted, "record_json")
+            .unwrap_or_default()
+            .contains("[redacted:api_key]"));
 
         // An unbounded call at the dispatch boundary says so, and allows.
         let out = dispatch(
@@ -1191,5 +1871,205 @@ mod tests {
         assert_eq!(CODE_SCOPE_NOT_LISTED, "export:scope-not-listed");
         assert_eq!(CODE_NO_TARGET, "export:no-target");
         assert_eq!(CODE_BUDGET_UNBOUNDED, "budget:unbounded");
+        assert_eq!(CODE_REDACT_NO_REASON, "redact:no-reason");
+        assert_eq!(CODE_REDACT_NO_CONSUMER, "redact:no-consumer");
+        assert_eq!(CODE_REDACT_UNKNOWN_FIELD, "redact:unknown-field");
+        assert_eq!(CODE_REDACT_DECLASSIFIED, "redact:declassified");
+    }
+
+    // ── N40 ──────────────────────────────────────────────────────
+
+    /// A value the runtime wraps at a cast to a secret-qualified type.
+    fn secret(s: &str) -> Value {
+        Value::Secret(Box::new(Value::String(s.to_string())))
+    }
+
+    fn evidence_record(fields: Vec<(&str, Value)>) -> Value {
+        Value::Struct {
+            name: "EvidenceRecord".to_string(),
+            fields: fields
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        }
+    }
+
+    fn decl(field: &str, reason: Option<&str>, consumer: Option<&str>) -> Declassification {
+        Declassification {
+            field: field.to_string(),
+            reason: reason.map(str::to_string),
+            consumer: consumer.map(str::to_string),
+        }
+    }
+
+    fn parsed(outcome: &RedactionOutcome) -> serde_json::Value {
+        serde_json::from_str(&outcome.record_json).expect("the redacted record is JSON")
+    }
+
+    #[test]
+    fn intel_evidence_redact_withholds_secrets_and_leaves_unknown_fields_alone() {
+        let record = evidence_record(vec![
+            ("id", Value::String("r1".into())),
+            ("api_key", secret("sk-live-abcdef123456")),
+            // A field whose name looks secret but which the runtime does not
+            // classify: it is public evidence and must survive.
+            ("csrf_token", Value::String("public-token-value".into())),
+            (
+                "keypair",
+                Value::Struct {
+                    name: "AgeKeypair".to_string(),
+                    fields: vec![
+                        ("recipient".into(), Value::String("age1public".into())),
+                        // Withheld by `secret_fields::SECRET_FIELDS`, a table the
+                        // runtime owns — not by a guess about the name.
+                        (
+                            "identity".into(),
+                            Value::String("AGE-SECRET-KEY-1PRIVATE".into()),
+                        ),
+                    ],
+                },
+            ),
+        ]);
+        let outcome = redact_record(&record, &[], 1_700_000_000_000, 5).expect("redacts");
+        assert!(outcome.ok());
+        assert_eq!(
+            outcome.redacted_fields,
+            vec!["api_key".to_string(), "keypair.identity".to_string()]
+        );
+        assert!(outcome.released_fields.is_empty());
+        assert!(outcome.receipts.is_empty());
+
+        // Neither the value nor a prefix of it survives, and no length either.
+        assert!(!outcome.record_json.contains("sk-live"));
+        assert!(!outcome.record_json.contains("PRIVATE"));
+        let json = parsed(&outcome);
+        assert_eq!(json["api_key"], "[redacted:api_key]");
+        assert_eq!(json["keypair"]["identity"], "[redacted:keypair.identity]");
+        assert_eq!(json["csrf_token"], "public-token-value");
+        assert_eq!(json["keypair"]["recipient"], "age1public");
+        assert_eq!(json["id"], "r1");
+
+        // The value form carries the schema, the flag and the same rendering.
+        let value = outcome.to_value();
+        assert_eq!(str_field(&value, "schema"), Some(REDACTION_SCHEMA));
+        assert_eq!(bool_field(&value, "ok"), Some(true));
+        assert_eq!(
+            str_field(&value, "record_json"),
+            Some(outcome.record_json.as_str())
+        );
+    }
+
+    #[test]
+    fn intel_evidence_declassification_releases_a_field_and_records_the_act() {
+        let record = evidence_record(vec![
+            ("api_key", secret("sk-live-abcdef")),
+            ("id", Value::String("r1".into())),
+        ]);
+        let requests = vec![
+            Declassification::new(
+                "api_key",
+                "the account owner asked for their own key",
+                "billing.exporter",
+            ),
+            // A field that was never withheld: accepted, nothing to record.
+            Declassification::new("id", "not withheld anyway", "billing.exporter"),
+        ];
+        let outcome = redact_record(&record, &requests, 1_700_000_000_123, 42).expect("redacts");
+        assert!(outcome.ok(), "refused: {:?}", outcome.refused);
+        assert_eq!(parsed(&outcome)["api_key"], "sk-live-abcdef");
+        assert!(outcome.redacted_fields.is_empty());
+        assert_eq!(outcome.released_fields, vec!["api_key".to_string()]);
+
+        assert_eq!(outcome.receipts.len(), 1);
+        let receipt = &outcome.receipts[0];
+        assert_eq!(receipt.schema, DECLASSIFICATION_SCHEMA);
+        assert_eq!(receipt.code, CODE_REDACT_DECLASSIFIED);
+        assert_eq!(receipt.field, "api_key");
+        assert_eq!(receipt.reason, "the account owner asked for their own key");
+        assert_eq!(receipt.consumer, "billing.exporter");
+        assert_eq!(receipt.at_unix_ms, 1_700_000_000_123);
+        assert_eq!(receipt.monotonic_delta_ms, 42);
+
+        // And the receipt is portable on its own.
+        let receipt_json: serde_json::Value =
+            serde_json::from_str(&receipt.to_json()).expect("receipt json");
+        assert_eq!(receipt_json["consumer"], "billing.exporter");
+        assert_eq!(receipt_json["code"], CODE_REDACT_DECLASSIFIED);
+    }
+
+    #[test]
+    fn intel_evidence_declassification_without_authority_is_refused_not_defaulted() {
+        let record = evidence_record(vec![
+            ("api_key", secret("sk-live-abcdef")),
+            ("session_key", secret("sess-xyz")),
+            ("export_key", secret("export-xyz")),
+        ]);
+        let requests = vec![
+            decl("api_key", None, Some("billing.exporter")),
+            decl("session_key", Some("rotation audit"), None),
+            // Blank is not a reason.
+            decl("export_key", Some("   "), Some("billing.exporter")),
+            decl("nope", Some("wanted it"), Some("billing.exporter")),
+            decl("", Some("wanted it"), Some("billing.exporter")),
+            // A second mention of an already-named field.
+            decl("api_key", Some("second opinion"), Some("other.exporter")),
+        ];
+        let outcome = redact_record(&record, &requests, 1, 1).expect("redacts");
+        assert!(!outcome.ok());
+        let codes: Vec<&str> = outcome.refused.iter().map(|r| r.code).collect();
+        assert_eq!(
+            codes,
+            vec![
+                CODE_REDACT_NO_REASON,
+                CODE_REDACT_NO_CONSUMER,
+                CODE_REDACT_NO_REASON,
+                CODE_REDACT_UNKNOWN_FIELD,
+                CODE_REDACT_UNKNOWN_FIELD,
+                CODE_REDACT_DUPLICATE_FIELD,
+            ]
+        );
+        // Fail-closed: a refusal releases nothing, so every secret stays withheld.
+        assert!(outcome.receipts.is_empty());
+        assert!(outcome.released_fields.is_empty());
+        assert_eq!(outcome.redacted_fields.len(), 3);
+        assert!(!outcome.record_json.contains("sk-live"));
+        assert_eq!(parsed(&outcome)["api_key"], "[redacted:api_key]");
+    }
+
+    #[test]
+    fn intel_evidence_redaction_receipt_json_renders_the_receipt() {
+        let record = evidence_record(vec![("api_key", secret("sk-live-abcdef"))]);
+        let requests = vec![Declassification::new(
+            "api_key",
+            "audited",
+            "billing.exporter",
+        )];
+        let value = redact_record(&record, &requests, 7, 3)
+            .expect("redacts")
+            .to_value();
+        let Value::Array(receipts) = field(&value, "receipts").expect("receipts") else {
+            panic!("receipts must be an array");
+        };
+        assert_eq!(receipts.len(), 1);
+
+        let rendered = dispatch("redaction_receipt_json", vec![receipts[0].clone()])
+            .expect("routed")
+            .expect("renders");
+        let Value::String(rendered) = rendered else {
+            panic!("expected a JSON string");
+        };
+        let json: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
+        assert_eq!(json["field"], "api_key");
+        assert_eq!(json["reason"], "audited");
+        assert_eq!(json["consumer"], "billing.exporter");
+        assert_eq!(json["code"], CODE_REDACT_DECLASSIFIED);
+        assert_eq!(json["at_unix_ms"], 7);
+
+        // A struct that is not a receipt is refused, not rendered.
+        let not_a_receipt = evidence_record(vec![("field", Value::String("api_key".into()))]);
+        let err = dispatch("redaction_receipt_json", vec![not_a_receipt])
+            .expect("routed")
+            .expect_err("not a receipt");
+        assert!(err.contains("RedactionReceipt"), "got: {err}");
     }
 }
