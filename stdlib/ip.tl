@@ -238,3 +238,140 @@ native fn ip.cluster(observations: []IpObservation, opts: IpClusterOptions?) -> 
 // Render a report as pretty-printed JSON, evidence lines included. Deterministic:
 // the same report renders byte-identically every run.
 native fn ip.cluster_json(report: IpClusterReport) -> String
+
+// ── N34: geolocation with uncertainty ───────────────────────────────────────
+
+// A loaded geolocation table. Process-local handle, like every handle here; the
+// table format is `start, end, country, region[, city[, accuracy_km]]`.
+struct IpGeoTable {
+    handle: Int,
+    source: String,
+    rows:   Int,
+}
+
+// A location and the qualification it carries. `country` and `region` are
+// always present. `city` is present **only** when the row also carried an
+// accuracy radius: a bare city name reads as exact and is not, so an
+// unqualified city is dropped and the answer falls back to country/region with
+// `code` = `ip:geo-city-unqualified`. The mirror case, a radius with no city to
+// qualify, drops the radius and says `ip:geo-radius-unqualified`. `code` is nil
+// when nothing was downgraded.
+//
+// `confidence` is derived from the radius, never invented per call: <=5 km
+// 0.95, <=25 km 0.80, <=100 km 0.55, <=500 km 0.35, wider 0.15, and no radius
+// at all 0.20 — deliberately below every radius-qualified band.
+struct GeoAnswer {
+    country:     String,
+    region:      String,
+    city:        String?,
+    accuracy_km: Float?,
+    confidence:  Float,
+    source:      String,
+    code:        String?,
+}
+
+// Load a geolocation table: explicit path, then `TALLOW_GEO`, then
+// `/usr/share/tallow/geo-ip.tsv`. A missing file refuses (`ip:table-missing`,
+// naming the path and the step that chose it); a malformed row refuses the
+// whole table with `ip:table-malformed` and `source:line`, because a
+// half-loaded geo table mislabels every range the lost line covered.
+native fn ip.geo_load(path: String?) -> IpGeoTable
+
+// Longest-prefix geolocation. Refuses `ip:not-in-table` for an address no row
+// covers, `ip:bad-address`, `ip:unsupported-family` (the table is IPv4 only),
+// and `ip:table-unknown` for a handle this process did not issue.
+native fn ip.geo_lookup(table: IpGeoTable, ip: String) -> GeoAnswer
+
+// Render a geolocation answer as pretty-printed JSON.
+native fn ip.geo_json(answer: GeoAnswer) -> String
+
+// ── N35: multi-source join ──────────────────────────────────────────────────
+
+// One field value as a source reported it. `authority` is a rank the caller
+// assigns (higher = more authoritative); it orders the *display* and never
+// decides which value is true.
+struct IpJoinRow {
+    ip:         String,
+    field:      String,
+    value:      String,
+    confidence: Float?,
+}
+
+// What one source said, and when. `retrieved_at_ms` is required: a timestamp is
+// evidence, so a missing one (unset or <= 0) is refused with
+// `ip:join-bad-source` rather than being read as "now". `freshness_ms` is the
+// horizon this source's values are judged against — a value older than it is
+// reported with `stale: true`, not hidden and not served as current.
+struct IpJoinSource {
+    name:           String,
+    authority:      Int,
+    retrieved_at_ms: Int,
+    freshness_ms:   Int,
+    rows:           []IpJoinRow,
+}
+
+// One source's claim about one (ip, field), with its age.
+struct IpJoinValue {
+    source:        String,
+    authority:     Int,
+    value:         String,
+    confidence:    Float?,
+    retrieved_at_ms: Int,
+    age_ms:        Int,
+    stale:         Bool,
+}
+
+// Every source's claim about one (ip, field). `status` is `single`, `unanimous`
+// or `disagreement`. There is deliberately no chosen value: the module will not
+// average, pick a winner, or collapse to a majority, so `values` is the whole
+// answer. `disagreement` carries one sentence per disputed field naming who said
+// what, with each claimant's authority and age.
+struct IpJoinField {
+    ip:          String,
+    field:       String,
+    status:      String,
+    values:      []IpJoinValue,
+    disagreement: []String,
+}
+
+// A source as echoed in the report, with the horizon its values were judged by.
+struct IpJoinSourceInfo {
+    name:           String,
+    authority:      Int,
+    retrieved_at_ms: Int,
+    age_ms:         Int,
+    stale:          Bool,
+    freshness_ms:   Int,
+}
+
+// `agreements` counts fields two or more sources agreed on; `disagreements`
+// counts fields they did not. Ordering is total (sources by name, fields by
+// (ip, field), values by authority then name), so the same input — in any
+// order — renders byte-identical JSON.
+struct IpJoinReport {
+    fields:        []IpJoinField,
+    sources:       []IpJoinSourceInfo,
+    now_ms:        Int,
+    field_count:   Int,
+    value_count:   Int,
+    stale_values:  Int,
+    agreements:    Int,
+    disagreements: Int,
+}
+
+// Build one row. Constructors exist because a stdlib struct cannot be written as
+// a literal in a program; `confidence`, when given, must be in 0..=1.
+native fn ip.join_row(ip: String, field: String, value: String, confidence: Float?) -> IpJoinRow
+
+// Build one source. `retrieved_at_ms` must be a real timestamp (a missing one is
+// refused, not replaced with now); `freshness_ms` is a non-negative horizon.
+native fn ip.join_source(name: String, authority: Int, retrieved_at_ms: Int, freshness_ms: Int, rows: []IpJoinRow) -> IpJoinSource
+
+// Join results the caller already retrieved. Offline and pure: no socket, no
+// clock — `now_ms` is the caller's, so every age is arithmetic the caller can
+// reproduce. Refuses `ip:join-bad-row`, `ip:join-bad-source` and
+// `ip:join-duplicate` (one source reporting one field twice).
+native fn ip.join(sources: []IpJoinSource, now_ms: Int) -> IpJoinReport
+
+// Render a join report as pretty-printed JSON, disagreements included.
+native fn ip.join_json(report: IpJoinReport) -> String

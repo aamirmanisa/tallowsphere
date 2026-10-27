@@ -132,6 +132,7 @@ struct Registry {
     next_id: u64,
     tables: HashMap<u64, AsnTable>,
     caches: HashMap<u64, Cache>,
+    geos: HashMap<u64, GeoTable>,
 }
 
 fn registry() -> MutexGuard<'static, Registry> {
@@ -865,6 +866,803 @@ fn value_json(v: &Value) -> serde_json::Value {
     }
 }
 
+// ── N34: geolocation with uncertainty ───────────────────────────────────────
+
+/// Environment variable naming the geolocation table, honoured when no explicit
+/// path is given — the same shape as [`ENV_TABLE`], so one box needs one pair of
+/// settings rather than two conventions.
+pub const ENV_GEO: &str = "TALLOW_GEO";
+/// Documented default location for the geolocation table.
+pub const DEFAULT_GEO_TABLE: &str = "/usr/share/tallow/geo-ip.tsv";
+
+pub const CODE_GEO_CITY_UNQUALIFIED: &str = "ip:geo-city-unqualified";
+pub const CODE_GEO_RADIUS_UNQUALIFIED: &str = "ip:geo-radius-unqualified";
+
+// A confidence is *derived* from the accuracy radius a row carries, never
+// invented per call. The bands are flat steps rather than a curve because the
+// inputs are themselves bands: a table saying "45 km" does not know the answer
+// to 44.8 km, and a smooth interpolation would dress that ignorance as
+// precision. Both the thresholds and the confidences they produce are exported,
+// so a reader who disagrees with a number can change it and re-run the tests.
+//
+//   radius <=   5 km -> 0.95   the row is claiming street level
+//   radius <=  25 km -> 0.80   city level
+//   radius <= 100 km -> 0.55   metro / region level
+//   radius <= 500 km -> 0.35   country level, roughly
+//   wider            -> 0.15   "somewhere on this continent"
+//   no radius        -> 0.20   country/region only — deliberately *below* every
+//                              radius-qualified band, because an answer that
+//                              names no radius makes no distance claim at all
+pub const GEO_KM_TIGHT: f64 = 5.0;
+pub const GEO_KM_CITY: f64 = 25.0;
+pub const GEO_KM_REGION: f64 = 100.0;
+pub const GEO_KM_COUNTRY: f64 = 500.0;
+
+pub const GEO_CONF_TIGHT: f64 = 0.95;
+pub const GEO_CONF_CITY: f64 = 0.80;
+pub const GEO_CONF_REGION: f64 = 0.55;
+pub const GEO_CONF_COUNTRY: f64 = 0.35;
+pub const GEO_CONF_CONTINENT: f64 = 0.15;
+pub const GEO_CONF_ADMIN: f64 = 0.20;
+
+/// One geolocation row: an IPv4 range plus the administrative answer for it.
+/// `city` and `accuracy_km` are independent `None`s, never sentinels — an empty
+/// city column is not the string "" and an absent radius is not 0 km.
+#[derive(Clone, Debug)]
+struct GeoRow {
+    start: u32,
+    end: u32,
+    country: String,
+    region: String,
+    city: Option<String>,
+    accuracy_km: Option<f64>,
+}
+
+impl GeoRow {
+    fn prefix_len(&self) -> u32 {
+        (self.start ^ self.end).leading_zeros()
+    }
+
+    fn covers(&self, key: u32) -> bool {
+        self.start <= key && key <= self.end
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GeoTable {
+    source: String,
+    rows: Vec<GeoRow>,
+}
+
+/// The answer, with the qualification that produced it. `code` is `Some` exactly
+/// when the answer was downgraded from what the row literally contained.
+#[derive(Clone, Debug)]
+struct GeoAnswer {
+    country: String,
+    region: String,
+    city: Option<String>,
+    accuracy_km: Option<f64>,
+    confidence: f64,
+    source: String,
+    code: Option<&'static str>,
+}
+
+fn geo_confidence(accuracy_km: Option<f64>) -> f64 {
+    match accuracy_km {
+        None => GEO_CONF_ADMIN,
+        Some(km) if km <= GEO_KM_TIGHT => GEO_CONF_TIGHT,
+        Some(km) if km <= GEO_KM_CITY => GEO_CONF_CITY,
+        Some(km) if km <= GEO_KM_REGION => GEO_CONF_REGION,
+        Some(km) if km <= GEO_KM_COUNTRY => GEO_CONF_COUNTRY,
+        Some(_) => GEO_CONF_CONTINENT,
+    }
+}
+
+fn register_geo_table(table: GeoTable) -> u64 {
+    let mut reg = registry();
+    reg.next_id += 1;
+    let id = reg.next_id;
+    reg.geos.insert(id, table);
+    id
+}
+
+fn geo_by_handle(id: u64) -> Result<GeoTable, String> {
+    registry().geos.get(&id).cloned().ok_or_else(|| {
+        format!(
+            "{CODE_TABLE_UNKNOWN}: no geolocation table with handle {id} in this process — a \
+             handle is process-local and is not data, so it cannot be reconstructed from a \
+             serialised value"
+        )
+    })
+}
+
+/// Parse a geolocation TSV: `start, end, country, region[, city[, accuracy_km]]`.
+///
+/// Fail-closed exactly as the ASN table is: the first malformed data line voids
+/// the whole load with `source:line`, because a half-loaded geo table mislabels
+/// every range the lost line covered — and unlike an ASN, a wrong country is a
+/// claim about a place and a person.
+fn parse_geo_table(text: &str, source: &str) -> Result<GeoTable, String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut rows = Vec::new();
+    let mut seen_data = false;
+    for (idx, raw) in text.lines().enumerate() {
+        let line_no = idx + 1;
+        let line = raw.trim_end_matches('\r');
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let ncols = line.split('\t').count();
+        let looks_like_header = !seen_data
+            && trimmed.to_ascii_uppercase().contains("COUNTRY")
+            && parse_v4(line.split('\t').next().unwrap_or("").trim()).is_err();
+        if ncols < 4 || looks_like_header {
+            if looks_like_header {
+                continue;
+            }
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: expected 4 to 6 tab-separated \
+                 fields (start, end, country, region[, city[, accuracy_km]]), got {ncols} — `{}`",
+                excerpt(line)
+            ));
+        }
+        let mut cols = line.splitn(6, '\t');
+        let start = cols.next().unwrap_or("").trim();
+        let end = cols.next().unwrap_or("").trim();
+        let country = cols.next().unwrap_or("").trim();
+        let region = cols.next().unwrap_or("").trim();
+        let city = cols.next().unwrap_or("").trim();
+        let accuracy = cols.next().unwrap_or("").trim();
+        let (Ok(start), Ok(end)) = (parse_v4(start), parse_v4(end)) else {
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: fields 1 and 2 must be IPv4 \
+                 addresses (start, end) — `{}`",
+                excerpt(line)
+            ));
+        };
+        if start > end {
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: range start {start} is after end \
+                 {end} — a reversed range is not a range"
+            ));
+        }
+        if country.is_empty() || region.is_empty() {
+            // Country and region are always reported, so a row that cannot
+            // supply them cannot answer anything this module is willing to say.
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: country and region are required \
+                 (they are the answer when the city is unqualified) — `{}`",
+                excerpt(line)
+            ));
+        }
+        let accuracy_km = if accuracy.is_empty() {
+            None
+        } else {
+            match accuracy.parse::<f64>() {
+                Ok(km) if km.is_finite() && km >= 0.0 => Some(km),
+                _ => {
+                    return Err(format!(
+                        "{CODE_TABLE_MALFORMED}: {source}:{line_no}: field 6 `{accuracy}` is not \
+                         a non-negative accuracy radius in km — `{}`",
+                        excerpt(line)
+                    ));
+                }
+            }
+        };
+        seen_data = true;
+        rows.push(GeoRow {
+            start,
+            end,
+            country: country.to_string(),
+            region: region.to_string(),
+            city: (!city.is_empty()).then(|| city.to_string()),
+            accuracy_km,
+        });
+    }
+    if rows.is_empty() {
+        return Err(format!(
+            "{CODE_TABLE_EMPTY}: {source}: the file parsed to zero rows, so it locates nothing; \
+             an empty table must not look like a loaded one"
+        ));
+    }
+    Ok(GeoTable {
+        source: source.to_string(),
+        rows,
+    })
+}
+
+fn resolve_geo_source(explicit: Option<&str>, env: Option<&str>) -> (String, &'static str) {
+    if let Some(p) = explicit.map(str::trim).filter(|p| !p.is_empty()) {
+        return (p.to_string(), "explicit");
+    }
+    if let Some(p) = env.map(str::trim).filter(|p| !p.is_empty()) {
+        return (p.to_string(), "env:TALLOW_GEO");
+    }
+    (DEFAULT_GEO_TABLE.to_string(), "default")
+}
+
+fn load_geo_table(explicit: Option<&str>) -> Result<GeoTable, String> {
+    let env = std::env::var(ENV_GEO).ok();
+    let (path, origin) = resolve_geo_source(explicit, env.as_deref());
+    load_geo_path(&path, origin)
+}
+
+fn load_geo_path(path: &str, origin: &str) -> Result<GeoTable, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_geo_table(&text, path),
+        Err(e) => Err(format!(
+            "{CODE_TABLE_MISSING}: {path} (chosen by {origin}) could not be read: {e} — set \
+             {ENV_GEO} to a geo-ip.tsv or pass an explicit path; a location is reported as \
+             unknown, never guessed"
+        )),
+    }
+}
+
+/// Longest-prefix geolocation, then *qualification* of what the row can honestly
+/// claim.
+///
+/// A city is served only when the same row carries an accuracy radius to go with
+/// it. A bare city name renders as `Paris` and reads as exact, which is the
+/// defect this item exists to prevent, so an unqualified city is dropped and the
+/// answer falls back to country/region with `ip:geo-city-unqualified` attached.
+/// The mirror case — a radius with no city to qualify — drops the radius (there
+/// is no point for it to be a radius *of*) and says
+/// `ip:geo-radius-unqualified`.
+fn geo_lookup_row(table: &GeoTable, ip: &str) -> Result<GeoAnswer, String> {
+    let addr: IpAddr = ip.trim().parse().map_err(|_| {
+        format!("{CODE_BAD_ADDRESS}: `{ip}` is not an IPv4 or IPv6 address literal")
+    })?;
+    let key = match addr {
+        IpAddr::V4(v4) => u32::from(v4),
+        IpAddr::V6(_) => {
+            return Err(format!(
+                "{CODE_UNSUPPORTED_FAMILY}: {ip} is IPv6, but the loaded table {} is IPv4 \
+                 ranges only; there is no honest v6 answer here",
+                table.source
+            ));
+        }
+    };
+    let mut best: Option<&GeoRow> = None;
+    for row in &table.rows {
+        if row.covers(key) && best.is_none_or(|b| row.prefix_len() > b.prefix_len()) {
+            best = Some(row);
+        }
+    }
+    let Some(row) = best else {
+        return Err(format!(
+            "{CODE_NOT_IN_TABLE}: {ip} is not covered by any of the {} entries in {} — absence \
+             from the table is not a location",
+            table.rows.len(),
+            table.source
+        ));
+    };
+    let (city, accuracy_km, code) = match (row.city.as_deref(), row.accuracy_km) {
+        (Some(city), Some(km)) => (Some(city.to_string()), Some(km), None),
+        (Some(_), None) => (None, None, Some(CODE_GEO_CITY_UNQUALIFIED)),
+        (None, Some(_)) => (None, None, Some(CODE_GEO_RADIUS_UNQUALIFIED)),
+        (None, None) => (None, None, None),
+    };
+    Ok(GeoAnswer {
+        country: row.country.clone(),
+        region: row.region.clone(),
+        city,
+        accuracy_km,
+        confidence: geo_confidence(accuracy_km),
+        source: table.source.clone(),
+        code,
+    })
+}
+
+fn geo_table_value(id: u64, table: &GeoTable) -> Value {
+    Value::Struct {
+        name: "IpGeoTable".to_string(),
+        fields: vec![
+            ("handle".to_string(), Value::Int(id as i128)),
+            ("source".to_string(), Value::String(table.source.clone())),
+            ("rows".to_string(), Value::Int(table.rows.len() as i128)),
+        ],
+    }
+}
+
+fn geo_answer_value(a: &GeoAnswer) -> Value {
+    Value::Struct {
+        name: "GeoAnswer".to_string(),
+        fields: vec![
+            ("country".to_string(), Value::String(a.country.clone())),
+            ("region".to_string(), Value::String(a.region.clone())),
+            (
+                "city".to_string(),
+                match &a.city {
+                    Some(c) => Value::String(c.clone()),
+                    None => Value::Nil,
+                },
+            ),
+            (
+                "accuracy_km".to_string(),
+                match a.accuracy_km {
+                    Some(km) => Value::Float(km),
+                    None => Value::Nil,
+                },
+            ),
+            ("confidence".to_string(), Value::Float(a.confidence)),
+            ("source".to_string(), Value::String(a.source.clone())),
+            (
+                "code".to_string(),
+                match a.code {
+                    Some(c) => Value::String(c.to_string()),
+                    None => Value::Nil,
+                },
+            ),
+        ],
+    }
+}
+
+fn geo_load_dispatch(args: Vec<Value>) -> StdlibResult {
+    let explicit = opt_str_arg(&args, 0, "geo_load")?;
+    let table = load_geo_table(explicit.as_deref())?;
+    let id = register_geo_table(table.clone());
+    Ok(geo_table_value(id, &table))
+}
+
+fn geo_lookup_dispatch(args: Vec<Value>) -> StdlibResult {
+    let id = handle_arg(&args, 0, "IpGeoTable", "geo_lookup")?;
+    let ip = str_arg(&args, 1, "geo_lookup")?;
+    let table = geo_by_handle(id)?;
+    Ok(geo_answer_value(&geo_lookup_row(&table, &ip)?))
+}
+
+fn geo_json_dispatch(args: Vec<Value>) -> StdlibResult {
+    let v = args
+        .first()
+        .ok_or_else(|| "ip.geo_json: missing argument 1 (GeoAnswer)".to_string())?;
+    match v {
+        Value::Struct { name, .. } if name == "GeoAnswer" => {}
+        other => {
+            return Err(format!(
+                "ip.geo_json: argument 1 expected GeoAnswer, got {}",
+                value_label(other)
+            ));
+        }
+    }
+    serde_json::to_string_pretty(&value_json(v))
+        .map(Value::String)
+        .map_err(|e| format!("ip.geo_json: {e}"))
+}
+
+// ── N35: multi-source join ──────────────────────────────────────────────────
+
+pub const CODE_JOIN_BAD_SOURCE: &str = "ip:join-bad-source";
+pub const CODE_JOIN_BAD_ROW: &str = "ip:join-bad-row";
+pub const CODE_JOIN_DUPLICATE: &str = "ip:join-duplicate";
+
+/// One field value as a source reported it. `authority` is a caller-assigned
+/// rank (higher = more authoritative) and it **orders the display only**: it
+/// never decides which value is true, which is why the report carries no
+/// "winner" field for it to decide.
+#[derive(Clone, Debug)]
+struct JoinRow {
+    ip: String,
+    field: String,
+    value: String,
+    confidence: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+struct JoinSource {
+    name: String,
+    authority: i64,
+    retrieved_at_ms: i64,
+    freshness_ms: i64,
+    rows: Vec<JoinRow>,
+}
+
+/// A value in the report, with its provenance and its age. `stale` is
+/// `age_ms > freshness_ms`: an expiry is information carried *with* the value,
+/// never a reason to hide it and never a licence to serve it as current.
+#[derive(Clone, Debug)]
+struct JoinValue {
+    source: String,
+    authority: i64,
+    value: String,
+    confidence: Option<f64>,
+    retrieved_at_ms: i64,
+    age_ms: i64,
+    stale: bool,
+}
+
+fn join_str(
+    fields: &[(String, Value)],
+    name: &str,
+    code: &str,
+    owner: &str,
+) -> Result<String, String> {
+    match field(fields, name) {
+        Some(Value::String(s)) if !s.trim().is_empty() => Ok(s.trim().to_string()),
+        other => Err(format!(
+            "{code}: {owner}.{name} must be a non-empty String, got {}",
+            other.map(type_name).unwrap_or("nothing")
+        )),
+    }
+}
+
+fn parse_join_row(v: &Value) -> Result<JoinRow, String> {
+    let Value::Struct { name, fields } = v else {
+        return Err(format!(
+            "{CODE_JOIN_BAD_ROW}: row expected IpJoinRow, got {}",
+            type_name(v)
+        ));
+    };
+    if name != "IpJoinRow" {
+        return Err(format!(
+            "{CODE_JOIN_BAD_ROW}: row expected IpJoinRow, got struct {name}"
+        ));
+    }
+    let confidence = match field(fields, "confidence") {
+        None | Some(Value::Nil) => None,
+        Some(Value::Float(f)) if (0.0..=1.0).contains(f) => Some(*f),
+        Some(other) => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_ROW}: confidence must be a Float in 0..=1, got {}",
+                value_label(other)
+            ));
+        }
+    };
+    Ok(JoinRow {
+        ip: join_str(fields, "ip", CODE_JOIN_BAD_ROW, "IpJoinRow")?,
+        field: join_str(fields, "field", CODE_JOIN_BAD_ROW, "IpJoinRow")?,
+        value: join_str(fields, "value", CODE_JOIN_BAD_ROW, "IpJoinRow")?,
+        confidence,
+    })
+}
+
+fn parse_join_source(v: &Value) -> Result<JoinSource, String> {
+    let Value::Struct { name, fields } = v else {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: source expected IpJoinSource, got {}",
+            type_name(v)
+        ));
+    };
+    if name != "IpJoinSource" {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: source expected IpJoinSource, got struct {name}"
+        ));
+    }
+    let int = |n: &str| -> Result<i64, String> {
+        match field(fields, n) {
+            Some(Value::Int(i)) => i64::try_from(*i)
+                .map_err(|_| format!("{CODE_JOIN_BAD_SOURCE}: {n} {i} is out of range")),
+            other => Err(format!(
+                "{CODE_JOIN_BAD_SOURCE}: IpJoinSource.{n} must be an Int, got {}",
+                other.map(type_name).unwrap_or("nothing")
+            )),
+        }
+    };
+    let (authority, retrieved_at_ms, freshness_ms) = (
+        int("authority")?,
+        int("retrieved_at_ms")?,
+        int("freshness_ms")?,
+    );
+    if authority < 0 {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: authority {authority} is negative — authority is a rank, \
+             and a negative rank orders nothing"
+        ));
+    }
+    if retrieved_at_ms <= 0 {
+        // A timestamp is evidence; a missing one is a refusal, not "now".
+        // Accepting 0 would date every value to 1970 and make `stale` meaningless.
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: IpJoinSource.retrieved_at_ms is unset ({retrieved_at_ms}) — \
+             an age needs the moment it was retrieved, and the current time is not evidence"
+        ));
+    }
+    if freshness_ms < 0 {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: freshness_ms {freshness_ms} is negative — a horizon is a \
+             duration"
+        ));
+    }
+    let Some(Value::Array(items)) = field(fields, "rows") else {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: IpJoinSource.rows must be []IpJoinRow"
+        ));
+    };
+    Ok(JoinSource {
+        name: join_str(fields, "name", CODE_JOIN_BAD_SOURCE, "IpJoinSource")?,
+        authority,
+        retrieved_at_ms,
+        freshness_ms,
+        rows: items.iter().map(parse_join_row).collect::<Result<_, _>>()?,
+    })
+}
+
+fn join_value_struct(v: &JoinValue) -> Value {
+    Value::Struct {
+        name: "IpJoinValue".to_string(),
+        fields: vec![
+            ("source".to_string(), Value::String(v.source.clone())),
+            ("authority".to_string(), Value::Int(v.authority as i128)),
+            ("value".to_string(), Value::String(v.value.clone())),
+            (
+                "confidence".to_string(),
+                match v.confidence {
+                    Some(c) => Value::Float(c),
+                    None => Value::Nil,
+                },
+            ),
+            (
+                "retrieved_at_ms".to_string(),
+                Value::Int(v.retrieved_at_ms as i128),
+            ),
+            ("age_ms".to_string(), Value::Int(v.age_ms as i128)),
+            ("stale".to_string(), Value::Bool(v.stale)),
+        ],
+    }
+}
+
+fn disagreement_line(ip: &str, field_name: &str, values: &[JoinValue]) -> String {
+    let parts: Vec<String> = values
+        .iter()
+        .map(|v| {
+            format!(
+                "{} (source {}, authority {}, age {}ms{})",
+                v.value,
+                v.source,
+                v.authority,
+                v.age_ms,
+                if v.stale { ", stale" } else { "" }
+            )
+        })
+        .collect();
+    format!("{ip} {field_name}: {}", parts.join(" vs "))
+}
+
+/// Join what the caller already retrieved. No socket, no clock: `now_ms` is the
+/// caller's, so age is arithmetic the caller can reproduce.
+///
+/// Ordering is total, so permuted input yields byte-identical output: sources
+/// by name, fields by (ip, field), values by authority descending then source
+/// name. A field where the sources differ is reported as a disagreement naming
+/// every claimant — never averaged, never collapsed to a majority, never
+/// resolved by authority, because the operator's question is *who is wrong*.
+fn build_join(sources: &[JoinSource], now_ms: i64) -> Result<Value, String> {
+    let mut ordered: Vec<&JoinSource> = sources.iter().collect();
+    ordered.sort_by(|a, b| a.name.cmp(&b.name));
+    if let Some(w) = ordered.windows(2).find(|w| w[0].name == w[1].name) {
+        return Err(format!(
+            "{CODE_JOIN_BAD_SOURCE}: source `{}` appears twice — two authorities for one name \
+             would make every value it reported ambiguous",
+            w[0].name
+        ));
+    }
+
+    let mut groups: std::collections::BTreeMap<(String, String), Vec<JoinValue>> =
+        std::collections::BTreeMap::new();
+    let mut seen = std::collections::HashSet::new();
+    for s in &ordered {
+        for r in &s.rows {
+            if !seen.insert((s.name.clone(), r.ip.clone(), r.field.clone())) {
+                return Err(format!(
+                    "{CODE_JOIN_DUPLICATE}: source `{}` reported {} {} twice — one source, one \
+                     field, one value",
+                    s.name, r.ip, r.field
+                ));
+            }
+            groups
+                .entry((r.ip.clone(), r.field.clone()))
+                .or_default()
+                .push(JoinValue {
+                    source: s.name.clone(),
+                    authority: s.authority,
+                    value: r.value.clone(),
+                    confidence: r.confidence,
+                    retrieved_at_ms: s.retrieved_at_ms,
+                    age_ms: age_ms(s.retrieved_at_ms, now_ms),
+                    stale: age_ms(s.retrieved_at_ms, now_ms) > s.freshness_ms,
+                });
+        }
+    }
+
+    let (mut value_count, mut stale_values, mut agreements, mut disagreements) = (0, 0, 0, 0);
+    let mut fields: Vec<Value> = Vec::new();
+    for ((ip, name), mut values) in groups {
+        values.sort_by(|a, b| b.authority.cmp(&a.authority).then(a.source.cmp(&b.source)));
+        value_count += values.len();
+        stale_values += values.iter().filter(|v| v.stale).count();
+        let unanimous = values.iter().all(|v| v.value == values[0].value);
+        let status = if values.len() == 1 {
+            "single"
+        } else if unanimous {
+            "unanimous"
+        } else {
+            "disagreement"
+        };
+        if values.len() > 1 && unanimous {
+            agreements += 1;
+        }
+        let lines = if status == "disagreement" {
+            disagreements += 1;
+            vec![disagreement_line(&ip, &name, &values)]
+        } else {
+            Vec::new()
+        };
+        fields.push(Value::Struct {
+            name: "IpJoinField".to_string(),
+            fields: vec![
+                ("ip".to_string(), Value::String(ip)),
+                ("field".to_string(), Value::String(name)),
+                ("status".to_string(), Value::String(status.to_string())),
+                (
+                    "values".to_string(),
+                    Value::Array(values.iter().map(join_value_struct).collect()),
+                ),
+                (
+                    "disagreement".to_string(),
+                    Value::Array(lines.into_iter().map(Value::String).collect()),
+                ),
+            ],
+        });
+    }
+
+    let source_info: Vec<Value> = ordered
+        .iter()
+        .map(|s| Value::Struct {
+            name: "IpJoinSourceInfo".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::String(s.name.clone())),
+                ("authority".to_string(), Value::Int(s.authority as i128)),
+                (
+                    "retrieved_at_ms".to_string(),
+                    Value::Int(s.retrieved_at_ms as i128),
+                ),
+                (
+                    "age_ms".to_string(),
+                    Value::Int(age_ms(s.retrieved_at_ms, now_ms) as i128),
+                ),
+                (
+                    "stale".to_string(),
+                    Value::Bool(age_ms(s.retrieved_at_ms, now_ms) > s.freshness_ms),
+                ),
+                (
+                    "freshness_ms".to_string(),
+                    Value::Int(s.freshness_ms as i128),
+                ),
+            ],
+        })
+        .collect();
+
+    let field_count = fields.len();
+    Ok(Value::Struct {
+        name: "IpJoinReport".to_string(),
+        fields: vec![
+            ("fields".to_string(), Value::Array(fields)),
+            ("sources".to_string(), Value::Array(source_info)),
+            ("now_ms".to_string(), Value::Int(now_ms as i128)),
+            ("field_count".to_string(), Value::Int(field_count as i128)),
+            ("value_count".to_string(), Value::Int(value_count as i128)),
+            ("stale_values".to_string(), Value::Int(stale_values as i128)),
+            ("agreements".to_string(), Value::Int(agreements as i128)),
+            (
+                "disagreements".to_string(),
+                Value::Int(disagreements as i128),
+            ),
+        ],
+    })
+}
+
+fn join_dispatch(args: Vec<Value>) -> StdlibResult {
+    let Some(Value::Array(items)) = args.first() else {
+        return Err(format!(
+            "ip.join: argument 1 expected []IpJoinSource, got {}",
+            args.first().map(type_name).unwrap_or("nothing")
+        ));
+    };
+    let now_ms = int_arg(&args, 1, "join")?;
+    if now_ms < 0 {
+        return Err(format!(
+            "ip.join: now_ms {now_ms} is before the Unix epoch — an age cannot be measured \
+             against a clock that has not started"
+        ));
+    }
+    let sources: Vec<JoinSource> = items
+        .iter()
+        .map(parse_join_source)
+        .collect::<Result<_, _>>()?;
+    build_join(&sources, now_ms)
+}
+
+fn join_row_dispatch(args: Vec<Value>) -> StdlibResult {
+    let confidence = match args.get(3) {
+        None | Some(Value::Nil) => Value::Nil,
+        Some(Value::Float(f)) if (0.0..=1.0).contains(f) => Value::Float(*f),
+        Some(other) => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_ROW}: ip.join_row: confidence must be a Float in 0..=1, got {}",
+                type_name(other)
+            ));
+        }
+    };
+    Ok(Value::Struct {
+        name: "IpJoinRow".to_string(),
+        fields: vec![
+            (
+                "ip".to_string(),
+                Value::String(str_arg(&args, 0, "join_row")?),
+            ),
+            (
+                "field".to_string(),
+                Value::String(str_arg(&args, 1, "join_row")?),
+            ),
+            (
+                "value".to_string(),
+                Value::String(str_arg(&args, 2, "join_row")?),
+            ),
+            ("confidence".to_string(), confidence),
+        ],
+    })
+}
+
+/// A source constructor for the same reason [`observation_dispatch`] exists: a
+/// stdlib struct cannot be written as a literal in a `.tl` program, so without
+/// this the declared `join` surface would be unreachable from a program.
+fn join_source_dispatch(args: Vec<Value>) -> StdlibResult {
+    let rows = match args.get(4) {
+        Some(Value::Array(items)) => Value::Array(items.clone()),
+        Some(other) => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_SOURCE}: ip.join_source: rows must be []IpJoinRow, got {}",
+                type_name(other)
+            ));
+        }
+        None => {
+            return Err(format!(
+                "{CODE_JOIN_BAD_SOURCE}: ip.join_source: missing argument 5 (rows)"
+            ));
+        }
+    };
+    Ok(Value::Struct {
+        name: "IpJoinSource".to_string(),
+        fields: vec![
+            (
+                "name".to_string(),
+                Value::String(str_arg(&args, 0, "join_source")?),
+            ),
+            (
+                "authority".to_string(),
+                Value::Int(int_arg(&args, 1, "join_source")? as i128),
+            ),
+            (
+                "retrieved_at_ms".to_string(),
+                Value::Int(int_arg(&args, 2, "join_source")? as i128),
+            ),
+            (
+                "freshness_ms".to_string(),
+                Value::Int(int_arg(&args, 3, "join_source")? as i128),
+            ),
+            ("rows".to_string(), rows),
+        ],
+    })
+}
+
+fn join_json_dispatch(args: Vec<Value>) -> StdlibResult {
+    let v = args
+        .first()
+        .ok_or_else(|| "ip.join_json: missing argument 1 (IpJoinReport)".to_string())?;
+    match v {
+        Value::Struct { name, .. } if name == "IpJoinReport" => {}
+        other => {
+            return Err(format!(
+                "ip.join_json: argument 1 expected IpJoinReport, got {}",
+                value_label(other)
+            ));
+        }
+    }
+    serde_json::to_string_pretty(&value_json(v))
+        .map(Value::String)
+        .map_err(|e| format!("ip.join_json: {e}"))
+}
+
 // ── Value plumbing ──────────────────────────────────────────────────────────
 
 fn field<'a>(fields: &'a [(String, Value)], name: &str) -> Option<&'a Value> {
@@ -1002,6 +1800,13 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "cluster" => Some(cluster_dispatch(args)),
         "observation" => Some(observation_dispatch(args)),
         "cluster_json" => Some(cluster_json_dispatch(args)),
+        "geo_load" => Some(geo_load_dispatch(args)),
+        "geo_lookup" => Some(geo_lookup_dispatch(args)),
+        "geo_json" => Some(geo_json_dispatch(args)),
+        "join" => Some(join_dispatch(args)),
+        "join_row" => Some(join_row_dispatch(args)),
+        "join_source" => Some(join_source_dispatch(args)),
+        "join_json" => Some(join_json_dispatch(args)),
         _ => None,
     }
 }
@@ -1475,7 +2280,6 @@ mod intel_ip_tests {
     }
 
     #[test]
-    #[test]
     fn an_unlinked_observation_is_reported_as_unclustered_not_dropped() {
         let obs = vec![
             ob("10.0.0.1", Some(64500), Some("AA11"), None, None),
@@ -1493,6 +2297,7 @@ mod intel_ip_tests {
         );
     }
 
+    #[test]
     fn a_shared_asn_alone_never_clusters_and_never_links() {
         // The exact case the design exists to prevent: every Cloudflare-fronted
         // site shares AS13335 and none of them is one operator.
@@ -1736,5 +2541,410 @@ mod intel_ip_tests {
         )
         .unwrap_err();
         assert!(err.starts_with(CODE_CLUSTER_DUPLICATE), "{err}");
+    }
+
+    // ── N34: geolocation with uncertainty ───────────────────────────────────
+
+    // A nested /16 inside a /8 so the fixture also pins longest-prefix order.
+    const GEO_TSV: &str = "\
+# start\tend\tcountry\tregion\tcity\taccuracy_km\n\
+10.0.0.0\t10.255.255.255\tDE\tBavaria\tBerlin\t400\n\
+10.1.0.0\t10.1.255.255\tDE\tBavaria\tMunich\t10\n";
+
+    const GEO_NO_ACCURACY: &str = "\
+10.1.0.0\t10.1.255.255\tDE\tBavaria\tMunich\n";
+
+    fn geo() -> GeoTable {
+        parse_geo_table(GEO_TSV, "geo.tsv").expect("fixture parses")
+    }
+
+    #[test]
+    fn a_row_with_an_accuracy_radius_returns_city_radius_and_confidence() {
+        let a = geo_lookup_row(&geo(), "10.1.2.3").expect("located");
+        assert_eq!(a.country, "DE");
+        assert_eq!(a.region, "Bavaria");
+        assert_eq!(a.city.as_deref(), Some("Munich"));
+        assert_eq!(a.accuracy_km, Some(10.0));
+        // 10 km sits in the city band, and the confidence is the constant that
+        // band names — not a number invented at the call site.
+        assert_eq!(a.confidence, GEO_CONF_CITY);
+        assert_eq!(a.code, None);
+        assert_eq!(a.source, "geo.tsv");
+        // The /16 wins over the /8 that also covers this address.
+        let coarse = geo_lookup_row(&geo(), "10.9.9.9").expect("located");
+        assert_eq!(coarse.city.as_deref(), Some("Berlin"));
+        assert_eq!(coarse.confidence, GEO_CONF_COUNTRY);
+    }
+
+    #[test]
+    fn a_city_without_an_accuracy_radius_is_refused_and_downgraded() {
+        let table = parse_geo_table(GEO_NO_ACCURACY, "no-acc.tsv").expect("fixture parses");
+        let a = geo_lookup_row(&table, "10.1.2.3").expect("located");
+        // Country and region always; the bare city name is *gone*, because a
+        // city with no radius reads as exact and is not.
+        assert_eq!(a.country, "DE");
+        assert_eq!(a.region, "Bavaria");
+        assert_eq!(a.city, None, "an unqualified city must not be printed");
+        assert_eq!(a.accuracy_km, None);
+        assert_eq!(a.code, Some(CODE_GEO_CITY_UNQUALIFIED));
+        assert_eq!(a.confidence, GEO_CONF_ADMIN);
+        assert!(
+            a.confidence < GEO_CONF_COUNTRY,
+            "an unqualified answer must not outrank a radius-qualified one"
+        );
+    }
+
+    #[test]
+    fn an_accuracy_radius_without_a_city_is_refused_the_other_way() {
+        let table = parse_geo_table("10.1.0.0\t10.1.255.255\tDE\tBavaria\t\t10\n", "r.tsv")
+            .expect("fixture parses");
+        let a = geo_lookup_row(&table, "10.1.2.3").expect("located");
+        assert_eq!(a.city, None);
+        assert_eq!(a.accuracy_km, None, "a radius of no point is not a radius");
+        assert_eq!(a.code, Some(CODE_GEO_RADIUS_UNQUALIFIED));
+    }
+
+    #[test]
+    fn geo_unknown_address_and_bad_input_are_coded_refusals() {
+        let err = geo_lookup_row(&geo(), "203.0.113.9").unwrap_err();
+        assert!(err.starts_with(CODE_NOT_IN_TABLE), "{err}");
+        let err = geo_lookup_row(&geo(), "2001:db8::1").unwrap_err();
+        assert!(err.starts_with(CODE_UNSUPPORTED_FAMILY), "{err}");
+        let err = geo_lookup_row(&geo(), "not-an-ip").unwrap_err();
+        assert!(err.starts_with(CODE_BAD_ADDRESS), "{err}");
+    }
+
+    #[test]
+    fn geo_malformed_row_names_its_line_and_voids_the_table() {
+        let bad = "10.0.0.0\t10.255.255.255\tDE\tBavaria\tBerlin\t800\n\
+                   10.1.0.0\t10.1.255.255\tDE\tBavaria\tMunich\twide\n";
+        let err = parse_geo_table(bad, "bad.tsv").unwrap_err();
+        assert!(err.starts_with(CODE_TABLE_MALFORMED), "{err}");
+        assert!(err.contains("bad.tsv:2:"), "must name source:line: {err}");
+        assert!(err.contains("wide"), "must quote the field: {err}");
+    }
+
+    #[test]
+    fn geo_missing_table_refuses_and_names_the_path() {
+        let path = "/nonexistent/tallow-geo-does-not-exist.tsv";
+        let err = load_geo_path(path, "explicit").unwrap_err();
+        assert!(err.starts_with(CODE_TABLE_MISSING), "{err}");
+        assert!(err.contains(path), "{err}");
+        assert!(err.contains("explicit"), "{err}");
+    }
+
+    #[test]
+    fn the_confidence_mapping_is_the_documented_one() {
+        let cases = [
+            (None, GEO_CONF_ADMIN),
+            (Some(0.0), GEO_CONF_TIGHT),
+            (Some(GEO_KM_TIGHT), GEO_CONF_TIGHT),
+            (Some(GEO_KM_TIGHT + 0.1), GEO_CONF_CITY),
+            (Some(GEO_KM_CITY), GEO_CONF_CITY),
+            (Some(GEO_KM_CITY + 0.1), GEO_CONF_REGION),
+            (Some(GEO_KM_REGION), GEO_CONF_REGION),
+            (Some(GEO_KM_COUNTRY), GEO_CONF_COUNTRY),
+            (Some(GEO_KM_COUNTRY + 1.0), GEO_CONF_CONTINENT),
+        ];
+        for (km, expected) in cases {
+            assert_eq!(geo_confidence(km), expected, "radius {km:?}");
+        }
+    }
+
+    #[test]
+    fn geo_dispatch_loads_looks_up_and_refuses_a_foreign_handle() {
+        let table = geo();
+        let id = register_geo_table(table.clone());
+        let out = dispatch(
+            "ip.geo_lookup",
+            vec![
+                geo_table_value(id, &table),
+                Value::String("10.1.2.3".into()),
+            ],
+        )
+        .expect("routed")
+        .expect("located");
+        match &out {
+            Value::Struct { name, fields } => {
+                assert_eq!(name, "GeoAnswer");
+                assert!(matches!(
+                    field(fields, "city"),
+                    Some(Value::String(c)) if c == "Munich"
+                ));
+                assert!(
+                    matches!(field(fields, "confidence"), Some(Value::Float(f)) if *f == GEO_CONF_CITY)
+                );
+            }
+            other => panic!("expected struct, got {}", type_name(other)),
+        }
+        let json = dispatch("ip.geo_json", vec![out])
+            .expect("routed")
+            .expect("json");
+        match json {
+            Value::String(s) => {
+                assert!(s.contains("\"city\": \"Munich\""), "{s}");
+                assert!(s.contains("\"accuracy_km\": 10.0"), "{s}");
+            }
+            other => panic!("expected String, got {}", type_name(&other)),
+        }
+        let bogus = Value::Struct {
+            name: "IpGeoTable".to_string(),
+            fields: vec![("handle".to_string(), Value::Int(999_999))],
+        };
+        let err = dispatch(
+            "ip.geo_lookup",
+            vec![bogus, Value::String("10.1.2.3".into())],
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(err.starts_with(CODE_TABLE_UNKNOWN), "{err}");
+    }
+
+    // ── N35: multi-source join ──────────────────────────────────────────────
+
+    fn jrow(ip: &str, field_name: &str, value: &str) -> JoinRow {
+        JoinRow {
+            ip: ip.into(),
+            field: field_name.into(),
+            value: value.into(),
+            confidence: None,
+        }
+    }
+
+    fn jsrc(name: &str, authority: i64, at: i64, fresh: i64, rows: Vec<JoinRow>) -> JoinSource {
+        JoinSource {
+            name: name.into(),
+            authority,
+            retrieved_at_ms: at,
+            freshness_ms: fresh,
+            rows,
+        }
+    }
+
+    fn sub<'a>(v: &'a Value, name: &str) -> &'a Value {
+        match v {
+            Value::Struct { fields, .. } => field(fields, name).unwrap_or(&Value::Nil),
+            _ => &Value::Nil,
+        }
+    }
+
+    fn two_sources() -> Vec<JoinSource> {
+        // maxmind is more authoritative and current; rpki is older, past its
+        // horizon, and disagrees about the country — the case that must not be
+        // silently resolved in favour of the better-ranked source.
+        vec![
+            jsrc(
+                "maxmind",
+                90,
+                100_000,
+                3_600_000,
+                vec![
+                    jrow("10.0.0.1", "asn", "AS64500"),
+                    jrow("10.0.0.1", "country", "DE"),
+                ],
+            ),
+            jsrc(
+                "rpki",
+                60,
+                1_000,
+                60_000,
+                vec![
+                    jrow("10.0.0.1", "asn", "AS64500"),
+                    jrow("10.0.0.1", "country", "NL"),
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn agreement_and_disagreement_are_both_reported_per_field() {
+        let mut sources = two_sources();
+        sources.reverse(); // order must not matter
+        let report = build_join(&sources, 100_000).expect("join");
+        let Value::Array(fields) = sub(&report, "fields") else {
+            panic!("no fields array");
+        };
+        assert_eq!(fields.len(), 2);
+        // Fields are ordered by (ip, field): asn before country.
+        assert!(matches!(sub(&fields[0], "field"), Value::String(f) if f == "asn"));
+        assert!(matches!(sub(&fields[0], "status"), Value::String(s) if s == "unanimous"));
+        assert!(matches!(sub(&fields[1], "field"), Value::String(f) if f == "country"));
+        assert!(matches!(sub(&fields[1], "status"), Value::String(s) if s == "disagreement"));
+
+        let Value::Array(values) = sub(&fields[1], "values") else {
+            panic!("no values array");
+        };
+        assert_eq!(values.len(), 2);
+        // Authority orders the display: the 90 comes first ...
+        assert!(matches!(sub(&values[0], "source"), Value::String(s) if s == "maxmind"));
+        assert!(matches!(sub(&values[0], "stale"), Value::Bool(false)));
+        // ... but the lower-authority disagreement is still shown, with its age.
+        assert!(matches!(sub(&values[1], "source"), Value::String(s) if s == "rpki"));
+        assert!(matches!(sub(&values[1], "age_ms"), Value::Int(99_000)));
+        assert!(matches!(sub(&values[1], "stale"), Value::Bool(true)));
+        assert!(matches!(sub(&values[1], "value"), Value::String(v) if v == "NL"));
+
+        // The disagreement entry names who said what — no winner, no average.
+        let Value::Array(lines) = sub(&fields[1], "disagreement") else {
+            panic!("no disagreement lines");
+        };
+        let Value::String(line) = &lines[0] else {
+            panic!("line is not a string");
+        };
+        for needle in ["DE", "NL", "maxmind", "rpki", "stale"] {
+            assert!(line.contains(needle), "{needle} missing from: {line}");
+        }
+        // A field struct carries the claims only: no `value`/`winner` field for a
+        // silent resolution to hide in.
+        if let Value::Struct { fields: fs, .. } = &fields[1] {
+            assert_eq!(
+                fs.len(),
+                5,
+                "field struct must be ip/field/status/values/disagreement"
+            );
+        }
+
+        assert!(matches!(sub(&report, "agreements"), Value::Int(1)));
+        assert!(matches!(sub(&report, "disagreements"), Value::Int(1)));
+        assert!(matches!(sub(&report, "value_count"), Value::Int(4)));
+        assert!(matches!(sub(&report, "stale_values"), Value::Int(2)));
+        assert!(matches!(sub(&report, "field_count"), Value::Int(2)));
+        // Sources are echoed with the horizon each value was judged against.
+        let Value::Array(infos) = sub(&report, "sources") else {
+            panic!("no sources array");
+        };
+        assert!(matches!(sub(&infos[1], "name"), Value::String(s) if s == "rpki"));
+        assert!(matches!(sub(&infos[1], "freshness_ms"), Value::Int(60_000)));
+    }
+
+    #[test]
+    fn join_json_is_byte_identical_across_input_order() {
+        let forward = two_sources();
+        let mut backward = forward.clone();
+        backward.reverse();
+        let a = serde_json::to_string_pretty(&value_json(
+            &build_join(&forward, 100_000).expect("join"),
+        ))
+        .expect("json");
+        let b = serde_json::to_string_pretty(&value_json(
+            &build_join(&backward, 100_000).expect("join"),
+        ))
+        .expect("json");
+        assert_eq!(a, b, "the join must not depend on source order");
+        assert!(a.contains("\"status\": \"disagreement\""), "{a}");
+        assert!(a.contains("\"stale\": true"), "{a}");
+    }
+
+    #[test]
+    fn a_missing_timestamp_is_a_refusal_not_now() {
+        let source = dispatch(
+            "ip.join_source",
+            vec![
+                Value::String("maxmind".into()),
+                Value::Int(90),
+                Value::Int(0),
+                Value::Int(1_000),
+                Value::Array(vec![]),
+            ],
+        )
+        .expect("routed")
+        .expect("source");
+        let err = dispatch(
+            "ip.join",
+            vec![Value::Array(vec![source]), Value::Int(100_000)],
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(err.starts_with(CODE_JOIN_BAD_SOURCE), "{err}");
+        assert!(err.contains("current time is not evidence"), "{err}");
+    }
+
+    #[test]
+    fn join_source_and_row_constructors_reach_the_declared_surface() {
+        // Without constructors the declared surface is unreachable from a .tl
+        // program, because a stdlib struct cannot be written as a literal.
+        let row = |ip: &str, f: &str, v: &str, c: Value| {
+            dispatch(
+                "ip.join_row",
+                vec![
+                    Value::String(ip.into()),
+                    Value::String(f.into()),
+                    Value::String(v.into()),
+                    c,
+                ],
+            )
+            .expect("routed")
+            .expect("row")
+        };
+        let src = |name: &str, auth: i128, at: i128, fresh: i128, rows: Vec<Value>| {
+            dispatch(
+                "ip.join_source",
+                vec![
+                    Value::String(name.into()),
+                    Value::Int(auth),
+                    Value::Int(at),
+                    Value::Int(fresh),
+                    Value::Array(rows),
+                ],
+            )
+            .expect("routed")
+            .expect("source")
+        };
+        let report = dispatch(
+            "ip.join",
+            vec![
+                Value::Array(vec![
+                    src(
+                        "maxmind",
+                        90,
+                        100_000,
+                        3_600_000,
+                        vec![row("10.0.0.1", "asn", "AS64500", Value::Float(0.9))],
+                    ),
+                    src(
+                        "rpki",
+                        60,
+                        1_000,
+                        60_000,
+                        vec![row("10.0.0.1", "asn", "AS64501", Value::Nil)],
+                    ),
+                ]),
+                Value::Int(100_000),
+            ],
+        )
+        .expect("routed")
+        .expect("join");
+        let json = dispatch("ip.join_json", vec![report])
+            .expect("routed")
+            .expect("json");
+        match json {
+            Value::String(s) => {
+                assert!(s.contains("AS64500") && s.contains("AS64501"), "{s}");
+                assert!(s.contains("\"confidence\": 0.9"), "{s}");
+                assert!(s.contains("\"disagreements\": 1"), "{s}");
+            }
+            other => panic!("expected String, got {}", type_name(&other)),
+        }
+
+        // One source reporting one field twice is refused: one source, one answer.
+        let dup = dispatch(
+            "ip.join",
+            vec![
+                Value::Array(vec![src(
+                    "maxmind",
+                    90,
+                    100_000,
+                    1_000,
+                    vec![
+                        row("10.0.0.1", "asn", "AS64500", Value::Nil),
+                        row("10.0.0.1", "asn", "AS64501", Value::Nil),
+                    ],
+                )]),
+                Value::Int(100_000),
+            ],
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(dup.starts_with(CODE_JOIN_DUPLICATE), "{dup}");
     }
 }
