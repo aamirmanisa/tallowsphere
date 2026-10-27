@@ -10240,6 +10240,12 @@ fn real_main() -> anyhow::Result<()> {
             let mut program = program;
             let import_diags = resolve_imports(&mut program, file);
 
+            // ── Phase 2c: Named and default arguments (G03) ──────────
+            // Rewrites every statically resolvable call into a positional one
+            // with all arguments present, so type checking and *both* execution
+            // planes see the same call shape (src/callnorm.rs).
+            let call_norm_diags = tallow::callnorm::normalize(&mut program);
+
             // ── Phase 3: Type Check ──────────────────────────────────
             let (env, typeck_diags) = TypeChecker::new(&program).check();
 
@@ -10430,6 +10436,9 @@ fn real_main() -> anyhow::Result<()> {
             // reported first: a program compiled against a module that is not
             // there is broken before it is typechecked (audit N-10).
             for d in import_diags {
+                all_diags.push(d);
+            }
+            for d in call_norm_diags.items {
                 all_diags.push(d);
             }
             for d in typeck_diags.items {
