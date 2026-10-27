@@ -105,12 +105,18 @@ pub fn dispatch_method(object: &Value, method: &str, args: Vec<Value>) -> Option
                 _ => fallback,
             }))
         }
-        "len" => Some(Ok(match object {
-            Value::Array(items) => Value::Int(items.len() as i128),
-            Value::Map(m) => Value::Int(m.len() as i128),
-            Value::String(s) => Value::Int(s.chars().count() as i128),
-            _ => Value::Int(0),
-        })),
+        // Only JSON-shaped values have a length. This arm used to answer
+        // `_ => Value::Int(0)` for every non-struct receiver, which shadowed the
+        // interpreter's own `len` — `5.len()` returned 0 instead of refusing,
+        // because `dispatch_method` is consulted before the built-in match.
+        // Returning None hands scalars back to the interpreter, which now says
+        // that `len()` is not defined for them.
+        "len" => match object {
+            Value::Array(items) => Some(Ok(Value::Int(items.len() as i128))),
+            Value::Map(m) => Some(Ok(Value::Int(m.len() as i128))),
+            Value::String(s) => Some(Ok(Value::Int(s.chars().count() as i128))),
+            _ => None,
+        },
         _ => None,
     }
 }

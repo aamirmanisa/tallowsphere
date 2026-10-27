@@ -838,11 +838,16 @@ impl Value {
     }
 
     /// Get the length of a value.
-    fn len(&self) -> Value {
+    ///
+    /// Returns an error for types that have no length. The old fallback was
+    /// `_ => Value::Int(0)`, which made `5.len()` answer 0 — a wrong answer that
+    /// looks like a measurement, and one the type checker accepted too. A type
+    /// with no elements has no length; saying so is the only honest reply.
+    fn len(&self) -> Result<Value, RuntimeError> {
         match self {
-            Value::String(s) => Value::Int(s.len() as i128),
-            Value::Array(a) => Value::Int(a.len() as i128),
-            Value::Map(m) => Value::Int(m.len() as i128),
+            Value::String(s) => Ok(Value::Int(s.len() as i128)),
+            Value::Array(a) => Ok(Value::Int(a.len() as i128)),
+            Value::Map(m) => Ok(Value::Int(m.len() as i128)),
             Value::Range { start, end, step } => {
                 let len = if *step > 0 && *end > *start {
                     (*end - *start + *step - 1) / *step
@@ -851,7 +856,7 @@ impl Value {
                 } else {
                     0
                 };
-                Value::Int(len)
+                Ok(Value::Int(len))
             }
             Value::Private(inner) | Value::Secret(inner) => inner.len(),
             // A success-Result has the length of its inner value: CDP
@@ -864,11 +869,12 @@ impl Value {
             // object. Before this arm the `_ => 0` fallback answered 0, so
             // `b.len()` and `b.len` disagreed inside the interpreter itself
             // (t_70cad4f2 pins both engines on 16).
-            Value::Bytes(b) => Value::Int(b.len() as i128),
-            Value::Channel(ch) => {
-                Value::Int(ch.receiver.len() as i128)
-            }
-            _ => Value::Int(0),
+            Value::Bytes(b) => Ok(Value::Int(b.len() as i128)),
+            Value::Channel(ch) => Ok(Value::Int(ch.receiver.len() as i128)),
+            other => Err(RuntimeError::TypeError(format!(
+                "len() is not defined for {}",
+                type_name(other)
+            ))),
         }
     }
 }
@@ -4792,7 +4798,7 @@ impl Interpreter {
             }
             "len" => {
                 if let Some(v) = positional.first() {
-                    return Ok(v.len());
+                    return v.len();
                 }
                 return Err(RuntimeError::Error("len() requires 1 argument".to_string()));
             }
@@ -15253,7 +15259,7 @@ impl Interpreter {
             },
 
             // String methods
-            "len" => Ok(object.len()),
+            "len" => object.len(),
             "trim" => match &object {
                 Value::String(s) => Ok(Value::String(s.trim().to_string())),
                 _ => Err(RuntimeError::TypeError(
@@ -39117,6 +39123,32 @@ world
     }
 
     #[test]
+    #[test]
+    fn len_of_a_scalar_is_an_error_not_zero() {
+        // `len()` used to fall through to `_ => Value::Int(0)`, so `5.len()`
+        // answered 0 — a wrong answer shaped exactly like a measurement, and
+        // the checker accepted it too. A type with no elements has no length.
+        let err = run_result(
+            r#"
+            fn main() {
+                let x = 5
+                x.len()
+            }
+        "#,
+        )
+        .expect_err("len() on an int must fail");
+        let text = format!("{err:?}");
+        assert!(
+            text.contains("len() is not defined for"),
+            "the error must name the operation: {text}"
+        );
+
+        // And the types that do have a length still answer it, so the guard
+        // above is a rejection of scalars and not a blanket refusal.
+        let (val, _) = run(r#"fn main() { "abcd".len() }"#);
+        assert!(matches!(val, Value::Int(4)));
+    }
+
     fn map_keys_values_len() {
         let (_, output) = run(r#"
             fn main() {
