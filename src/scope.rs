@@ -281,6 +281,33 @@ const AUTH_PATH_MARKERS: &[&str] = &[
     "/api/keys",
 ];
 
+/// The host key an authority contributes to a scope decision.
+///
+/// A name or an IPv4 literal ends at the first `:`, which is its port
+/// separator. An IPv6 literal does not: splitting it on `:` truncates the
+/// address to its first label (`::1` -> "", `2001:db8::1` -> "2001"), so an
+/// IPv6 grant could not be expressed in the register at all. A bracketed
+/// authority (RFC 3986) is cut at `]`; an unbracketed one that is itself a
+/// literal — with or without a `%zone` — is taken whole.
+fn host_key(authority: &str) -> &str {
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    let is_literal = authority.parse::<std::net::Ipv6Addr>().is_ok()
+        || authority
+            .split_once('%')
+            .map(|(addr, zone)| {
+                !zone.is_empty()
+                    && !zone.contains(':')
+                    && addr.parse::<std::net::Ipv6Addr>().is_ok()
+            })
+            .unwrap_or(false);
+    if is_literal {
+        return authority;
+    }
+    authority.split(':').next().unwrap_or("")
+}
+
 /// Extract `(host, path)` from a bare host or a URL.
 ///
 /// Hand-rolled rather than pulling a URL parser in: this module must be usable
@@ -315,12 +342,7 @@ fn split_host_path(input: &str) -> Result<(String, String), Refusal> {
         None => (authority_and_rest, String::new()),
     };
     // Drop port and any query/fragment left attached to the authority.
-    let host = authority
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
+    let host = host_key(authority).trim().to_ascii_lowercase();
     if host.is_empty() || host.contains(char::is_whitespace) {
         return Err(Refusal::HostMalformed {
             input: input.to_string(),

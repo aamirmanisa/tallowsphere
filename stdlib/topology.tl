@@ -9,8 +9,10 @@
 // open|filtered, and the technique that produced the verdict travels with it —
 // a SYN verdict and a connect verdict are not interchangeable.
 //
-// IPv4 only. An IPv6 target is refused with a message rather than silently
-// producing an empty scan.
+// The IPv4 entry points below cover every technique. IPv6 is served by the two
+// unprivileged paths, v6_connect_scan and v6_discover; a raw technique asked
+// for an IPv6 literal is refused with a message naming v6_connect_scan rather
+// than returning an empty scan.
 
 // Port specification parsing helper: "22", "22,80,443", "1-1024", or a mix.
 // Returned ascending and de-duplicated; an empty spec is an error, not an
@@ -38,6 +40,13 @@ native fn fin_scan(target: String, ports: String, timeout_ms: Int?, rps: Int?) -
 native fn null_scan(target: String, ports: String, timeout_ms: Int?, rps: Int?) -> ScanResult
 native fn xmas_scan(target: String, ports: String, timeout_ms: Int?, rps: Int?) -> ScanResult
 
+// IPv6 connect scan (N09) — the unprivileged path, and the only port-scan
+// technique this build can send over IPv6: connect() needs no raw socket.
+// Accepts ::1, 2001:db8::1, [::1], and a link-local literal with a zone
+// (fe80::1%eth0), whose scope id is resolved to an interface index. Verdicts
+// are the same as the IPv4 connect scan, from the same evidence.
+native fn v6_connect_scan(target: String, ports: String, timeout_ms: Int?, rps: Int?) -> ScanResult
+
 // UDP scan with protocol-appropriate payloads (DNS, NTP, SNMP, IKE). A
 // connected socket turns an ICMP port-unreachable into ECONNREFUSED, which is
 // the only reliable "closed" verdict without CAP_NET_RAW; silence stays
@@ -49,6 +58,12 @@ native fn udp_scan(target: String, ports: String, timeout_ms: Int?, rps: Int?) -
 // confidence and the list of methods that spoke. ARP (the only method that
 // sees an on-link host blocking IP) is reported as unsupported, not as "down".
 native fn discover(target: String, methods: String?, ports: String?, timeout_ms: Int?, rps: Int?) -> DiscoveryResult
+
+// IPv6 host discovery (N09): one ICMPv6 echo request (type 128), matched on its
+// echo reply (type 129) by id, sequence and payload marker. Reports alive,
+// rtt_ms and the same confidence scale as discover (a reply = 0.9, silence =
+// 0.2); a denied raw socket is reported in `unsupported`, never as "down".
+native fn v6_discover(target: String, timeout_ms: Int?) -> DiscoveryResult
 
 // Read the banner a service offers and identify the product/version only when
 // the banner defines it (SSH identification string, HTTP Server header).
