@@ -321,7 +321,7 @@ fn published_counts_match_the_tables() {
     assert_eq!(OPERATORS.len(), 51, "operator table size");
     assert_eq!(ERROR_CODES.len(), 193, "error catalogue size");
     let dup: BTreeSet<&str> = ERROR_CODES.iter().copied().collect();
-    assert_eq!(dup.len(), 176, "duplicate code in the catalogue");
+    assert_eq!(dup.len(), 193, "duplicate code in the catalogue");
 }
 
 #[test]
