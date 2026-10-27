@@ -690,7 +690,7 @@ impl<'a> ConstitutionPass<'a> {
                 self.walk_expr_for_prohibited(iter, agent_name, span, prohibited);
                 self.walk_block_for_prohibited(body, agent_name, span, prohibited);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.walk_expr_for_prohibited(condition, agent_name, span, prohibited);
                 self.walk_block_for_prohibited(body, agent_name, span, prohibited);
             }
@@ -698,13 +698,13 @@ impl<'a> ConstitutionPass<'a> {
                 self.walk_expr_for_prohibited(expr, agent_name, span, prohibited);
                 self.walk_block_for_prohibited(body, agent_name, span, prohibited);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.walk_block_for_prohibited(body, agent_name, span, prohibited);
             }
             StmtKind::LetDestructure { value, .. } => {
                 self.walk_expr_for_prohibited(value, agent_name, span, prohibited);
             }
-            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Return(None) | StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }

@@ -95,7 +95,7 @@ impl<'a> HePass<'a> {
             StmtKind::Return(Some(expr)) => {
                 self.check_expr(expr);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 if self.expr_is_encrypted(condition) {
                     self.diags.warning(
                         "W1510",

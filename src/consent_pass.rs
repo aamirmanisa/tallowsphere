@@ -143,7 +143,7 @@ impl<'a> ConsentPass<'a> {
             StmtKind::Return(Some(e)) => {
                 self.check_expr_consent(e, f);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_consent(condition, f);
                 self.check_consent_access(body, f);
             }
@@ -342,7 +342,7 @@ impl<'a> ConsentPass<'a> {
             StmtKind::Return(Some(e)) => {
                 self.check_jurisdiction_in_expr(e, f, fn_jurisdiction, jurisdiction_map);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_jurisdiction_in_expr(condition, f, fn_jurisdiction, jurisdiction_map);
                 self.check_jurisdiction_in_block(body, f, fn_jurisdiction, jurisdiction_map);
             }

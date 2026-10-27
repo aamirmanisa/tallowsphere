@@ -192,7 +192,7 @@ impl<'a> ErasurePass<'a> {
             StmtKind::Return(Some(e)) => {
                 self.scan_expr(e, erasable_params, has_io_sink, has_serialization, has_purge);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.scan_expr(condition, erasable_params, has_io_sink, has_serialization, has_purge);
                 self.scan_block(body, erasable_params, has_io_sink, has_serialization, has_purge);
             }
@@ -440,7 +440,7 @@ impl<'a> ErasurePass<'a> {
             StmtKind::Return(Some(e)) => {
                 self.scan_purge_expr(e, param, found);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.scan_purge_expr(condition, param, found);
                 self.scan_purge_block(body, param, found);
             }

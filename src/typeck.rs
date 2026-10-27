@@ -534,6 +534,30 @@ pub struct TypeChecker<'a> {
     /// from the closure, not from the enclosing function, so the return-slot
     /// check is suspended there.
     closure_depth: usize,
+    /// Enclosing loops/blocks a `break` or `continue` can target (G08), innermost
+    /// last. One entry per `loop`/`for`/`while` currently being walked.
+    label_stack: Vec<LoopTarget>,
+    /// Type inferred for the value a `loop` expression yields, recorded while
+    /// its body is checked and read back by [`TypeChecker::infer_expr_type`]
+    /// (which cannot walk a body). Keyed by the expression span.
+    loop_value_types: HashMap<(usize, usize), Type>,
+}
+
+/// One construct a `break`/`continue` can target (G08).
+#[derive(Debug, Clone)]
+struct LoopTarget {
+    /// The declared label (`'outer: loop ...`), if the loop was labeled. An
+    /// unlabeled `break` binds to the innermost entry regardless.
+    label: Option<String>,
+    /// Whether this construct can yield a value: `loop` can, `for`/`while`
+    /// cannot, so `break 'for_label v` is reported rather than silently
+    /// dropping `v`.
+    yields: bool,
+    /// Unified type of the values carried by the breaks seen so far.
+    value_ty: Option<Type>,
+    /// Span of the construct head, quoted when a break carries no value into a
+    /// construct that does yield one.
+    span: Span,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -549,6 +573,8 @@ impl<'a> TypeChecker<'a> {
             current_body_is_imported_main: false,
             current_return_type: None,
             closure_depth: 0,
+            label_stack: Vec::new(),
+            loop_value_types: HashMap::new(),
         }
     }
 
@@ -1943,7 +1969,7 @@ impl<'a> TypeChecker<'a> {
                 StmtKind::For { body, .. }
                 | StmtKind::While { body, .. }
                 | StmtKind::WhileLet { body, .. }
-                | StmtKind::Loop { body } => {
+                | StmtKind::Loop { body, .. } => {
                     if self.body_has_return(body) {
                         return true;
                     }
@@ -2189,6 +2215,7 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Return(None) => {}
             StmtKind::For {
+                label,
                 binding,
                 iter,
                 body,
@@ -2208,35 +2235,187 @@ impl<'a> TypeChecker<'a> {
                         effects: Vec::new(),
                     },
                 );
+                self.label_stack.push(LoopTarget {
+                    label: label.clone(),
+                    yields: false,
+                    value_ty: None,
+                    span: stmt.span,
+                });
                 for s in &body.stmts {
                     self.check_stmt(s, &mut inner_locals);
                 }
+                self.label_stack.pop();
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While {
+                label,
+                condition,
+                body,
+            } => {
                 self.check_expr(condition, locals);
                 let mut inner_locals = locals.clone();
+                self.label_stack.push(LoopTarget {
+                    label: label.clone(),
+                    yields: false,
+                    value_ty: None,
+                    span: stmt.span,
+                });
                 for s in &body.stmts {
                     self.check_stmt(s, &mut inner_locals);
                 }
+                self.label_stack.pop();
             }
-            StmtKind::WhileLet { expr, body, .. } => {
+            StmtKind::WhileLet {
+                label,
+                expr,
+                body,
+                ..
+            } => {
                 self.check_expr(expr, locals);
                 let mut inner_locals = locals.clone();
+                self.label_stack.push(LoopTarget {
+                    label: label.clone(),
+                    yields: false,
+                    value_ty: None,
+                    span: stmt.span,
+                });
                 for s in &body.stmts {
                     self.check_stmt(s, &mut inner_locals);
                 }
+                self.label_stack.pop();
             }
             StmtKind::Bail(expr) => {
                 self.check_expr(expr, locals);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { label, body } => {
                 let mut inner_locals = locals.clone();
+                self.label_stack.push(LoopTarget {
+                    label: label.clone(),
+                    yields: true,
+                    value_ty: None,
+                    span: stmt.span,
+                });
                 for s in &body.stmts {
                     self.check_stmt(s, &mut inner_locals);
                 }
+                self.label_stack.pop();
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { label, value } => {
+                let value_ty = self.check_break_value(value, locals);
+                let break_span = value.as_ref().map_or(stmt.span, |v| v.span);
+                self.record_break(label.as_deref(), value_ty, break_span);
+            }
+            StmtKind::Continue { label } => {
+                self.record_continue(label.as_deref(), stmt.span);
+            }
             StmtKind::Defer { .. } => {}
+        }
+    }
+
+    // ── Labeled break with value (G08) ──────────────────────────────────
+
+    /// Check a `break 'label value` payload and return its type.
+    fn check_break_value(
+        &mut self,
+        value: &Option<Expr>,
+        locals: &HashMap<String, VarInfo>,
+    ) -> Option<Type> {
+        let v = value.as_ref()?;
+        self.check_expr(v, locals);
+        Some(self.infer_expr_type(v, locals))
+    }
+
+    /// Resolve `break`/`break 'label v` against the enclosing constructs.
+    ///
+    /// An unlabeled `break` binds to the innermost construct, as it always has.
+    /// A labeled one binds to the innermost construct carrying that label, so
+    /// it can leave more than one loop (`break 'outer` from inside a `for`
+    /// inside a `loop`). A label that is not on the stack is an error naming
+    /// the label, never a silent no-op.
+    fn record_break(&mut self, label: Option<&str>, value_ty: Option<Type>, span: Span) {
+        let Some(idx) = self.break_target(label) else {
+            let msg = match label {
+                Some(l) => format!(
+                    "`break '{l}` targets a label that is not in scope here -- no enclosing `loop`, `for` or `while` is labeled '{l}"
+                ),
+                None => "`break` outside of a loop".to_string(),
+            };
+            self.diags.error("E0118", msg, span);
+            return;
+        };
+
+        let (target_label, yields, target_span) = {
+            let t = &self.label_stack[idx];
+            (t.label.clone(), t.yields, t.span)
+        };
+
+        if let Some(got) = value_ty {
+            if !yields {
+                let what = target_label
+                    .as_deref()
+                    .map(|l| format!("'{l}"))
+                    .unwrap_or_else(|| "the loop".to_string());
+                self.diags.error(
+                    "E0119",
+                    format!(
+                        "`break {what} value` cannot yield a value: {what} is a bounded loop (`for`/`while`), which has no value -- only `loop` yields one"
+                    ),
+                    span,
+                );
+                return;
+            }
+            let declared = self.label_stack[idx].value_ty.clone();
+            match declared {
+                None => self.label_stack[idx].value_ty = Some(got),
+                Some(want) => {
+                    if !Self::break_types_agree(&want, &got) {
+                        let msg = format!(
+                            "`break` value type mismatch: this loop yields `{}` (from an earlier break) but this break gives `{}`",
+                            self.type_display(&want),
+                            self.type_display(&got),
+                        );
+                        self.diags.error("E0120", msg, span);
+                    }
+                }
+            }
+        } else if yields {
+            // A value-less break into a construct that does yield leaves the
+            // value undetermined; note the shape so the construct's type can be
+            // reported honestly rather than guessed.
+            let _ = target_span;
+        }
+    }
+
+    /// `continue` may only target a loop, and a label must name one in scope.
+    fn record_continue(&mut self, label: Option<&str>, span: Span) {
+        if self.break_target(label).is_none() {
+            let msg = match label {
+                Some(l) => format!(
+                    "`continue '{l}` targets a label that is not in scope here -- no enclosing `loop`, `for` or `while` is labeled '{l}"
+                ),
+                None => "`continue` outside of a loop".to_string(),
+            };
+            self.diags.error("E0118", msg, span);
+        }
+    }
+
+    /// Index of the construct a jump targets, innermost first.
+    fn break_target(&self, label: Option<&str>) -> Option<usize> {
+        match label {
+            None => self.label_stack.len().checked_sub(1),
+            Some(l) => self
+                .label_stack
+                .iter()
+                .rposition(|t| t.label.as_deref() == Some(l)),
+        }
+    }
+
+    /// Two break payloads of the same construct must agree, but an unresolved
+    /// type is not evidence of a mismatch.
+    fn break_types_agree(a: &Type, b: &Type) -> bool {
+        match (a, b) {
+            (Type::Unknown, _) | (_, Type::Unknown) => true,
+            (Type::Int(_), Type::Int(_)) | (Type::Float(_), Type::Float(_)) => true,
+            _ => a == b,
         }
     }
 
@@ -2951,6 +3130,25 @@ impl<'a> TypeChecker<'a> {
                     self.check_stmt(s, &mut inner);
                 }
             }
+            // `loop { ... }` in value position (G08): the expression's type is
+            // the type of the value its `break` carries. Recorded by span so
+            // `infer_expr_type` can report it without re-walking the body.
+            ExprKind::Loop { label, body } => {
+                let mut inner = locals.clone();
+                self.label_stack.push(LoopTarget {
+                    label: label.clone(),
+                    yields: true,
+                    value_ty: None,
+                    span: expr.span,
+                });
+                for s in &body.stmts {
+                    self.check_stmt(s, &mut inner);
+                }
+                let target = self.label_stack.pop().expect("label frame pushed above");
+                let ty = target.value_ty.unwrap_or(Type::Unknown);
+                self.loop_value_types
+                    .insert((expr.span.start, expr.span.end), ty);
+            }
             // `?` requires `Result<T>` (E0111). This is the single gate: both
             // engines run after typeck, so neither can execute an unchecked `?`.
             // Accepted operands: `Result<T>`, an unresolvable/Unknown expression
@@ -3481,69 +3679,104 @@ impl<'a> TypeChecker<'a> {
 
     // ── Match Exhaustiveness Checking ───────────────────────────────────
 
+    /// Exhaustiveness of a `match`, reported at the match (G04).
+    ///
+    /// The diagnostic names the variant(s) that no arm handles, for a
+    /// user-defined enum and for the built-in `Result` (`Ok`/`Err`) and
+    /// `T?` (`Some`/`None`). A `_` arm — or any binding that is not a variant of
+    /// the scrutinee — makes the match exhaustive and reports nothing. When the
+    /// scrutinee's type cannot be resolved, no variant list is invented: the
+    /// diagnostic says the type is unknown and what to annotate.
     fn check_match_exhaustiveness(&mut self, subject_ty: &Type, arms: &[MatchArm], span: Span) {
-        // Check if there's a wildcard pattern
-        let has_wildcard = arms
+        // A wildcard arm swallows every value.
+        if arms
             .iter()
-            .any(|arm| matches!(&arm.pattern, Pattern::Wildcard));
-        if has_wildcard {
-            return; // Exhaustive by wildcard
+            .any(|arm| matches!(&arm.pattern, Pattern::Wildcard))
+        {
+            return;
         }
 
-        // For enum types, check that all variants are covered
-        let enum_name = match subject_ty {
-            Type::Named(name) => Some(name.clone()),
-            _ => None,
+        let ty = subject_ty.strip_qualifier().clone();
+        let (what, variants): (String, Vec<String>) = match &ty {
+            Type::Result(_) => ("Result".to_string(), vec!["Ok".into(), "Err".into()]),
+            Type::Optional(_) => ("Optional".to_string(), vec!["Some".into(), "None".into()]),
+            Type::Named(name) => match self.env.enums.get(name) {
+                Some(info) => (name.clone(), info.variants.clone()),
+                None => return, // a concrete non-enum: nothing to enumerate
+            },
+            Type::Unknown => {
+                self.report_unknown_scrutinee(arms, span);
+                return;
+            }
+            // A concrete non-enum scrutinee (int, string, ...) is matched by
+            // literals; there are no variants to name.
+            _ => return,
         };
-        if let Some(ref name) = enum_name {
-            if let Some(info) = self.env.enums.get(name) {
-                // Collect variant names and general catchall idents
-                let mut covered: Vec<String> = Vec::new();
-                let mut has_catchall_ident = false;
 
-                for arm in arms {
-                    match &arm.pattern {
-                        Pattern::Variant { name, .. } => {
-                            covered.push(name.clone());
-                        }
-                        Pattern::Ident(n) => {
-                            // If ident matches a variant name, it covers that variant
-                            if info.variants.contains(n) {
-                                covered.push(n.clone());
-                            } else {
-                                // It's a generic binding (like `x` or `other`) - acts as catchall
-                                has_catchall_ident = true;
-                            }
-                        }
-                        Pattern::Literal(_) => {
-                            // Literal patterns don't cover enum variants
-                        }
-                        _ => {}
+        let mut covered: Vec<String> = Vec::new();
+        for arm in arms {
+            match &arm.pattern {
+                Pattern::Variant { name, .. } => covered.push(name.clone()),
+                Pattern::Ident(n) => {
+                    if variants.contains(n) {
+                        // `Ok` / `Err` / `Some` / `None` written without a payload.
+                        covered.push(n.clone());
+                    } else {
+                        // A binding (`other`, `rest`) swallows every value, so
+                        // the match is exhaustive by way of a catchall.
+                        return;
                     }
                 }
-
-                if has_catchall_ident {
-                    return; // A non-variant ident acts as catchall
-                }
-
-                let missing: Vec<&String> = info
-                    .variants
-                    .iter()
-                    .filter(|v| !covered.contains(v))
-                    .collect();
-                if !missing.is_empty() {
-                    let missing_str: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
-                    self.diags.warning(
-                        "W0120",
-                        format!(
-                            "match on `{name}` is not exhaustive -- missing variant(s): {}. Add a `_` catchall or handle all variants",
-                            missing_str.join(", ")
-                        ),
-                        span,
-                    );
-                }
+                // Literal patterns cover no variant of an enum-typed scrutinee.
+                Pattern::Literal(_) | Pattern::Tuple(_) => {}
+                Pattern::Wildcard => return,
             }
         }
+
+        let missing: Vec<&String> = variants
+            .iter()
+            .filter(|v| !covered.contains(v))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let missing_str: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
+        self.diags.warning(
+            "W0120",
+            format!(
+                "match on `{what}` is not exhaustive -- missing variant(s): {}. Add a `_` catchall or handle all variants",
+                missing_str.join(", ")
+            ),
+            span,
+        );
+    }
+
+    /// Say that exhaustiveness cannot be decided, instead of guessing (G04).
+    ///
+    /// Reported only when the arms look like variant matching — the author
+    /// expected an enum and the checker has no type for the scrutinee. A match
+    /// over plain literals or over a value whose type genuinely is dynamic is
+    /// left alone: there is no rule to state about it.
+    fn report_unknown_scrutinee(&mut self, arms: &[MatchArm], span: Span) {
+        let looks_like_variants = arms.iter().any(|arm| match &arm.pattern {
+            Pattern::Variant { name, .. } => self.names_a_variant(name),
+            Pattern::Ident(n) => self.names_a_variant(n),
+            _ => false,
+        });
+        if !looks_like_variants {
+            return;
+        }
+        self.diags.warning(
+            "W0121",
+            "match exhaustiveness cannot be checked: the scrutinee's type is unknown, so no variant list can be produced -- annotate the scrutinee's type or add a `_` arm",
+            span,
+        );
+    }
+
+    /// Is `name` a variant of `Result`/`Optional` or of some declared enum?
+    fn names_a_variant(&self, name: &str) -> bool {
+        matches!(name, "Ok" | "Err" | "Some" | "None")
+            || self.env.enums.values().any(|i| i.variants.iter().any(|v| v == name))
     }
 
     /// Bind pattern variables into scope for match arm checking.
@@ -3751,6 +3984,14 @@ impl<'a> TypeChecker<'a> {
                 _ => Type::Unknown,
             },
             ExprKind::StructLit { name, .. } => Type::Named(name.clone()),
+            // G08: the value a `loop` yields is the type of its `break`
+            // payload, recorded when the body was checked. Not re-derived here
+            // — walking the body again would have to re-do label resolution.
+            ExprKind::Loop { .. } => self
+                .loop_value_types
+                .get(&(expr.span.start, expr.span.end))
+                .cloned()
+                .unwrap_or(Type::Unknown),
             _ => Type::Unknown,
         }
     }
@@ -3832,7 +4073,7 @@ impl<'a> TypeChecker<'a> {
                 }
                 StmtKind::For { body, .. }
                 | StmtKind::While { body, .. }
-                | StmtKind::Loop { body } => Self::collect_channel_vars(body, out),
+                | StmtKind::Loop { body, .. } => Self::collect_channel_vars(body, out),
                 StmtKind::WhileLet { body, .. } => Self::collect_channel_vars(body, out),
                 _ => {}
             }
@@ -3866,14 +4107,14 @@ impl<'a> TypeChecker<'a> {
             StmtKind::For { iter, body, .. } => {
                 self.expr_touches_network(iter, chans) || self.body_touches_network_in(body, chans)
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.expr_touches_network(condition, chans)
                     || self.body_touches_network_in(body, chans)
             }
             StmtKind::WhileLet { expr, body, .. } => {
                 self.expr_touches_network(expr, chans) || self.body_touches_network_in(body, chans)
             }
-            StmtKind::Loop { body } => self.body_touches_network_in(body, chans),
+            StmtKind::Loop { body, .. } => self.body_touches_network_in(body, chans),
             _ => false,
         }
     }
@@ -3966,6 +4207,7 @@ impl<'a> TypeChecker<'a> {
                 self.expr_touches_network(left, chans) || self.expr_touches_network(right, chans)
             }
             ExprKind::Block(block) => self.body_touches_network_in(block, chans),
+            ExprKind::Loop { body, .. } => self.body_touches_network_in(body, chans),
             ExprKind::If {
                 condition,
                 then_block,
@@ -4024,13 +4266,13 @@ impl<'a> TypeChecker<'a> {
             StmtKind::For { iter, body, .. } => {
                 Self::expr_uses_browser_nav(iter) || Self::body_uses_browser_navigation(body)
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 Self::expr_uses_browser_nav(condition) || Self::body_uses_browser_navigation(body)
             }
             StmtKind::WhileLet { expr, body, .. } => {
                 Self::expr_uses_browser_nav(expr) || Self::body_uses_browser_navigation(body)
             }
-            StmtKind::Loop { body } => Self::body_uses_browser_navigation(body),
+            StmtKind::Loop { body, .. } => Self::body_uses_browser_navigation(body),
             _ => false,
         }
     }
@@ -4058,6 +4300,7 @@ impl<'a> TypeChecker<'a> {
                 Self::expr_uses_browser_nav(left) || Self::expr_uses_browser_nav(right)
             }
             ExprKind::Block(block) => Self::body_uses_browser_navigation(block),
+            ExprKind::Loop { body, .. } => Self::body_uses_browser_navigation(body),
             ExprKind::If {
                 condition,
                 then_block,
@@ -6014,6 +6257,200 @@ mod tests {
         assert!(
             !has_w0120,
             "all variants covered should not warn, got: {:?}",
+            diags.items
+        );
+    }
+
+    // ── G04: exhaustiveness names the missing variant ───────────────────
+
+    #[test]
+    fn match_missing_result_variant_names_err() {
+        let (_, diags) = check(
+            r#"
+            fn name_of(r: Result<String>) -> String {
+                r match {
+                    Ok(v) -> v
+                }
+            }
+        "#,
+        );
+        let d = diags
+            .items
+            .iter()
+            .find(|d| d.code == "W0120")
+            .unwrap_or_else(|| panic!("expected W0120, got {:?}", diags.items));
+        assert!(
+            d.msg.contains("missing variant(s): Err"),
+            "the missing Result variant must be named: {}",
+            d.msg
+        );
+        assert!(
+            !d.msg.contains("Ok,"),
+            "a covered variant must not be listed as missing: {}",
+            d.msg
+        );
+    }
+
+    #[test]
+    fn match_missing_optional_variant_names_none() {
+        let (_, diags) = check(
+            r#"
+            fn unwrap_or_zero(v: i32?) -> i32 {
+                v match {
+                    Some(x) -> x
+                }
+            }
+        "#,
+        );
+        let d = diags
+            .items
+            .iter()
+            .find(|d| d.code == "W0120")
+            .unwrap_or_else(|| panic!("expected W0120, got {:?}", diags.items));
+        assert!(
+            d.msg.contains("missing variant(s): None"),
+            "the missing optional variant must be named: {}",
+            d.msg
+        );
+    }
+
+    #[test]
+    fn wildcard_arm_makes_a_result_match_exhaustive() {
+        let (_, diags) = check(
+            r#"
+            fn name_of(r: Result<String>) -> String {
+                r match {
+                    Ok(v) -> v
+                    _ -> "other"
+                }
+            }
+        "#,
+        );
+        assert!(
+            !diags.items.iter().any(|d| d.code == "W0120"),
+            "a wildcard arm must silence the report, got {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn unknown_scrutinee_is_reported_as_unknown_not_guessed() {
+        let (_, diags) = check(
+            r#"
+            fn pick() {
+                let r = nosuchmodule_call()
+                r match {
+                    Ok(v) -> v
+                    Err(e) -> e
+                }
+            }
+        "#,
+        );
+        let w0121 = diags.items.iter().find(|d| d.code == "W0121");
+        assert!(
+            w0121.is_some(),
+            "an unresolved scrutinee type must be reported as such, got {:?}",
+            diags.items
+        );
+        assert!(
+            !diags.items.iter().any(|d| d.code == "W0120"),
+            "no variant list may be produced for an unknown scrutinee, got {:?}",
+            diags.items
+        );
+    }
+
+    // ── G08: labeled break with value ───────────────────────────────────
+
+    #[test]
+    fn labeled_break_value_types_the_loop_expression() {
+        let (_, diags) = check(
+            r#"
+            fn pick() -> i32 {
+                let x = 'outer: loop {
+                    break 'outer 7
+                }
+                x
+            }
+        "#,
+        );
+        let errors: Vec<_> = diags
+            .items
+            .iter()
+            .filter(|d| d.severity == crate::error::Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "expected a clean check, got {errors:?}");
+    }
+
+    #[test]
+    fn break_to_an_out_of_scope_label_names_the_label() {
+        let (_, diags) = check(
+            r#"
+            fn pick() {
+                loop {
+                    break 'nowhere
+                }
+            }
+        "#,
+        );
+        let d = diags
+            .items
+            .iter()
+            .find(|d| d.code == "E0118")
+            .unwrap_or_else(|| panic!("expected E0118, got {:?}", diags.items));
+        assert!(
+            d.msg.contains("'nowhere"),
+            "the diagnostic must name the label: {}",
+            d.msg
+        );
+    }
+
+    #[test]
+    fn break_value_type_mismatch_is_reported_at_the_break() {
+        let (_, diags) = check(
+            r#"
+            fn pick(c: bool) -> i32 {
+                let x = 'outer: loop {
+                    if c {
+                        break 'outer 1
+                    } else {
+                        break 'outer "seven"
+                    }
+                }
+                x
+            }
+        "#,
+        );
+        let d = diags
+            .items
+            .iter()
+            .find(|d| d.code == "E0120")
+            .unwrap_or_else(|| panic!("expected E0120, got {:?}", diags.items));
+        assert!(
+            d.msg.contains("i64") && d.msg.contains("String"),
+            "the mismatch must name both types: {}",
+            d.msg
+        );
+    }
+
+    #[test]
+    fn break_value_into_a_bounded_loop_is_refused() {
+        // A labeled `for` is only writable in statement position — the parser
+        // refuses `let x = 'outer: for ..` because a bounded loop yields no
+        // value, so it cannot be an expression. The value-taking `break` is
+        // still expressible here, and E0119 is what says it cannot deliver.
+        let (_, diags) = check(
+            r#"
+            fn pick() -> i32 {
+                'outer: for i in 0..3 {
+                    break 'outer 1
+                }
+                0
+            }
+        "#,
+        );
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0119"),
+            "a `for` loop yields no value, so `break 'label v` must be refused, got {:?}",
             diags.items
         );
     }

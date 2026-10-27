@@ -338,12 +338,14 @@ struct CompileContext<'a> {
 
 /// Loop context pushed while lowering a loop body, giving `break`/`continue`
 /// their branch targets.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct LoopCtx {
     /// Loop header block — `continue` jumps here to re-evaluate the condition.
     header: ClifBlock,
     /// Loop exit block — `break` jumps here.
     exit: ClifBlock,
+    /// Loop label (`'outer: loop ...`), if the loop was labeled (G08).
+    label: Option<String>,
 }
 
 /// Whether the given block already ends in a terminator (the 0.111
@@ -431,41 +433,57 @@ impl<'a> EmitState<'a> {
                 builder.ins().return_(&[val]);
                 Ok(())
             }
-            StmtKind::Break => {
-                let ctx = self.loop_stack.last().copied().ok_or_else(|| {
-                    "break outside of a loop".to_string()
-                })?;
+            StmtKind::Break { label, value } => {
+                if value.is_some() {
+                    return Err(
+                        "labeled break with a value is not lowered by the cranelift backend; \
+                         run this program with the default backend"
+                            .to_string(),
+                    );
+                }
+                let ctx = self
+                    .loop_ctx_for(label.as_deref())
+                    .ok_or_else(|| match label {
+                        Some(l) => format!("`break '{l}`: no enclosing loop is labeled '{l}"),
+                        None => "break outside of a loop".to_string(),
+                    })?;
                 builder.ins().jump(ctx.exit, &[]);
                 self.start_dead_block(builder);
                 Ok(())
             }
-            StmtKind::Continue => {
-                let ctx = self.loop_stack.last().copied().ok_or_else(|| {
-                    "continue outside of a loop".to_string()
-                })?;
+            StmtKind::Continue { label } => {
+                let ctx = self
+                    .loop_ctx_for(label.as_deref())
+                    .ok_or_else(|| match label {
+                        Some(l) => format!("`continue '{l}`: no enclosing loop is labeled '{l}"),
+                        None => "continue outside of a loop".to_string(),
+                    })?;
                 builder.ins().jump(ctx.header, &[]);
                 self.start_dead_block(builder);
                 Ok(())
             }
-            StmtKind::While { condition, body } => {
-                self.emit_while_loop(builder, condition, body)
-            }
-            StmtKind::Loop { body } => {
+            StmtKind::While {
+                label,
+                condition,
+                body,
+            } => self.emit_while_loop(builder, condition, body, label),
+            StmtKind::Loop { label, body } => {
                 // `loop { }` is a `while true { }`.
                 let true_expr = Expr {
                     kind: ExprKind::BoolLit(true),
                     span: stmt.span.clone(),
                 };
-                self.emit_while_loop(builder, &true_expr, body)
+                self.emit_while_loop(builder, &true_expr, body, label)
             }
-            StmtKind::WhileLet { pattern, expr, body } => {
+            StmtKind::WhileLet {
+                label,
+                pattern,
+                expr,
+                body,
+            } => {
                 // `while let pat = expr { }`: evaluate `expr` and treat a
                 // truthy result as a match (binding the pattern's first ident).
-                self.emit_while_loop(
-                    builder,
-                    expr,
-                    body,
-                )?;
+                self.emit_while_loop(builder, expr, body, label)?;
                 if let Pattern::Ident(name) = pattern.as_ref() {
                     // Bind the scrutinee to the pattern variable (best-effort).
                     let subj = builder.ins().iconst(types::I64, 1);
@@ -475,9 +493,12 @@ impl<'a> EmitState<'a> {
                 }
                 Ok(())
             }
-            StmtKind::For { binding, iter, body } => {
-                self.emit_for_loop(builder, binding, iter, body)
-            }
+            StmtKind::For {
+                label,
+                binding,
+                iter,
+                body,
+            } => self.emit_for_loop(builder, binding, iter, body, label),
             StmtKind::LetDestructure { names, value } => {
                 // Lower tuple destructuring: evaluate the scrutinee once and
                 // bind each name. Without layout tables the first element is
@@ -842,6 +863,20 @@ impl<'a> EmitState<'a> {
         builder.seal_block(dead);
     }
 
+    /// Resolve a `break`/`continue` target: the innermost loop for an unlabeled
+    /// jump, the innermost loop carrying that label otherwise (G08).
+    fn loop_ctx_for(&self, label: Option<&str>) -> Option<LoopCtx> {
+        match label {
+            None => self.loop_stack.last().cloned(),
+            Some(l) => self
+                .loop_stack
+                .iter()
+                .rev()
+                .find(|ctx| ctx.label.as_deref() == Some(l))
+                .cloned(),
+        }
+    }
+
     /// Lower a `while` loop into Cranelift blocks. `continue` jumps back to the
     /// header (where the condition is re-evaluated); `break` jumps to the exit.
     /// Loop-carried variables are threaded through the SSA builder's automatic
@@ -852,6 +887,7 @@ impl<'a> EmitState<'a> {
         builder: &mut FunctionBuilder,
         condition: &Expr,
         body: &Block,
+        label: &Option<String>,
     ) -> Result<(), String> {
         let header = builder.create_block();
         let body_blk = builder.create_block();
@@ -871,7 +907,11 @@ impl<'a> EmitState<'a> {
 
         // Body.
         builder.switch_to_block(body_blk);
-        self.loop_stack.push(LoopCtx { header, exit });
+        self.loop_stack.push(LoopCtx {
+            header,
+            exit,
+            label: label.clone(),
+        });
         self.emit_block(builder, body)?;
         self.loop_stack.pop();
         if !block_is_filled(builder, builder.current_block().unwrap()) {
@@ -896,6 +936,7 @@ impl<'a> EmitState<'a> {
         binding: &str,
         iter: &Expr,
         body: &Block,
+        label: &Option<String>,
     ) -> Result<(), String> {
         if let ExprKind::Binary {
             op: BinOp::Range,
@@ -929,7 +970,11 @@ impl<'a> EmitState<'a> {
             builder.def_var(bind_var, cur2);
             self.variables
                 .insert(binding.to_string(), (bind_var, types::I64));
-            self.loop_stack.push(LoopCtx { header, exit });
+            self.loop_stack.push(LoopCtx {
+                header,
+                exit,
+                label: label.clone(),
+            });
             self.emit_block(builder, body)?;
             self.loop_stack.pop();
             if !block_is_filled(builder, builder.current_block().unwrap()) {

@@ -361,11 +361,15 @@ impl Formatter {
                 self.write("\n");
             }
             StmtKind::For {
+                label,
                 binding,
                 iter,
                 body,
             } => {
                 self.write_indent();
+                if let Some(label) = label {
+                    self.write(&format!("'{label}: "));
+                }
                 self.write("for ");
                 self.write(binding);
                 self.write(" in ");
@@ -376,8 +380,15 @@ impl Formatter {
                 self.indent -= 1;
                 self.writeln("}");
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While {
+                label,
+                condition,
+                body,
+            } => {
                 self.write_indent();
+                if let Some(label) = label {
+                    self.write(&format!("'{label}: "));
+                }
                 self.write("while ");
                 self.format_expr(condition);
                 self.write(" {\n");
@@ -387,11 +398,15 @@ impl Formatter {
                 self.writeln("}");
             }
             StmtKind::WhileLet {
+                label,
                 pattern,
                 expr,
                 body,
             } => {
                 self.write_indent();
+                if let Some(label) = label {
+                    self.write(&format!("'{label}: "));
+                }
                 self.write("while let ");
                 self.format_pattern(pattern);
                 self.write(" = ");
@@ -408,14 +423,31 @@ impl Formatter {
                 self.format_expr(expr);
                 self.write("\n");
             }
-            StmtKind::Break => {
-                self.writeln("break");
-            }
-            StmtKind::Continue => {
-                self.writeln("continue");
-            }
-            StmtKind::Loop { body } => {
+            StmtKind::Break { label, value } => {
                 self.write_indent();
+                self.write("break");
+                if let Some(label) = label {
+                    self.write(&format!(" '{label}"));
+                }
+                if let Some(value) = value {
+                    self.write(" ");
+                    self.format_expr(value);
+                }
+                self.write("\n");
+            }
+            StmtKind::Continue { label } => {
+                self.write_indent();
+                self.write("continue");
+                if let Some(label) = label {
+                    self.write(&format!(" '{label}"));
+                }
+                self.write("\n");
+            }
+            StmtKind::Loop { label, body } => {
+                self.write_indent();
+                if let Some(label) = label {
+                    self.write(&format!("'{label}: "));
+                }
                 self.write("loop {\n");
                 self.indent += 1;
                 self.format_block_body(body);
@@ -570,6 +602,17 @@ impl Formatter {
                 self.write("{\n");
                 self.indent += 1;
                 self.format_block_body(block);
+                self.indent -= 1;
+                self.write_indent();
+                self.write("}");
+            }
+            ExprKind::Loop { label, body } => {
+                if let Some(label) = label {
+                    self.write(&format!("'{label}: "));
+                }
+                self.write("loop {\n");
+                self.indent += 1;
+                self.format_block_body(body);
                 self.indent -= 1;
                 self.write_indent();
                 self.write("}");

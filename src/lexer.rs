@@ -160,6 +160,12 @@ pub enum TokenKind {
     Hash,         // #
     Underscore,   // _ (as pattern)
 
+    // ── Labels (G08) ──
+    /// A loop label, written `'name`. Only produced where a single-quoted
+    /// string could not appear: after `break`/`continue`, or as a declaration
+    /// prefix (`'name:` followed by `loop`, `for`, `while`).
+    Label(String),
+
     // ── Special ──
     Eof,
 }
@@ -260,6 +266,7 @@ impl fmt::Display for TokenKind {
             TokenKind::At => write!(f, "@"),
             TokenKind::Hash => write!(f, "#"),
             TokenKind::Underscore => write!(f, "_"),
+            TokenKind::Label(name) => write!(f, "'{name}"),
             TokenKind::Eof => write!(f, "EOF"),
         }
     }
@@ -315,6 +322,9 @@ pub struct Lexer<'src> {
     /// When true, the next token should resume scanning a string literal
     /// (after an interpolation's closing `}` was consumed).
     in_string_resume: bool,
+    /// The last token handed out, used to decide whether `'name` is a label
+    /// (G08). See [`Lexer::scan_label`].
+    prev_kind: Option<TokenKind>,
 }
 
 impl<'src> Lexer<'src> {
@@ -325,6 +335,7 @@ impl<'src> Lexer<'src> {
             pos: 0,
             interp_stack: Vec::new(),
             in_string_resume: false,
+            prev_kind: None,
         }
     }
 
@@ -375,6 +386,7 @@ impl<'src> Lexer<'src> {
                             _ => {}
                         }
                     }
+                    self.prev_kind = Some(tok.kind.clone());
                     tokens.push(tok);
                 }
                 Err(e) => {
@@ -399,8 +411,17 @@ impl<'src> Lexer<'src> {
             return self.scan_string();
         }
 
-        // ── Single-quoted string literals (no interpolation, raw) ──
+        // ── Labels (G08) ──
+        // A `'` also opens a raw single-quoted string, so it is only a label
+        // where a string cannot legitimately appear; see `scan_label`.
         if ch == b'\'' {
+            if let Some(label) = self.scan_label() {
+                let end = self.pos;
+                return Ok(Token::new(
+                    TokenKind::Label(label),
+                    Span::new(start, end),
+                ));
+            }
             return self.scan_single_quote_string();
         }
 
@@ -635,6 +656,65 @@ impl<'src> Lexer<'src> {
             TokenKind::StringLit(value),
             Span::new(start, self.pos),
         ))
+    }
+
+    /// Recognise `'name` as a label (G08) and consume it, returning the name.
+    ///
+    /// `'` is also the delimiter of a raw single-quoted string, so a label is
+    /// only recognised where such a string cannot legitimately appear:
+    ///
+    ///  * after `break` / `continue` — `break 'outer 1`. Today a string there
+    ///    is a syntax error, so nothing that lexes is taken away.
+    ///  * as a declaration prefix — `'outer:` followed (after spaces) by
+    ///    `loop`, `for`, `while` or `{`. A raw string would need its closing
+    ///    quote before any of those, so the shape cannot be a string.
+    ///
+    /// Returns `None` (leaving `pos` untouched) for every other `'`, which is
+    /// then scanned as the string literal it always was.
+    fn scan_label(&mut self) -> Option<String> {
+        let bytes = self.bytes;
+        let start = self.pos + 1; // past the quote
+        let mut i = start;
+        if i >= bytes.len() || !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+            return None;
+        }
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        let name = self.source[start..i].to_string();
+        let after = bytes.get(i).copied();
+
+        // (a) label reference: `break 'outer` / `continue 'outer`
+        let after_jump = matches!(
+            self.prev_kind,
+            Some(TokenKind::Break) | Some(TokenKind::Continue)
+        );
+        if after_jump && after != Some(b'\'') {
+            self.pos = i;
+            return Some(name);
+        }
+
+        // (b) label declaration: `'outer: loop` / `'outer: for` / `'outer: {`
+        if after == Some(b':') {
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            let rest = &self.source[j.min(self.source.len())..];
+            let declares = ["loop", "for", "while"].iter().any(|kw| {
+                rest.starts_with(kw)
+                    && rest[kw.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+            }) || rest.starts_with('{');
+            if declares {
+                self.pos = i;
+                return Some(name);
+            }
+        }
+
+        None
     }
 
     /// Scan a single-quoted string literal: `'...'`

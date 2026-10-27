@@ -329,9 +329,9 @@ impl<'a> AiActPass<'a> {
             StmtKind::For { body, .. } => self.body_has_explanation(body),
             StmtKind::While { body, .. } => self.body_has_explanation(body),
             StmtKind::WhileLet { body, .. } => self.body_has_explanation(body),
-            StmtKind::Loop { body } => self.body_has_explanation(body),
+            StmtKind::Loop { body, .. } => self.body_has_explanation(body),
             StmtKind::Bail(expr) => self.expr_has_explanation(expr),
-            StmtKind::Break | StmtKind::Continue => false,
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => false,
             StmtKind::Defer { .. } => false,
         }
     }
@@ -436,9 +436,9 @@ impl<'a> AiActPass<'a> {
             StmtKind::For { body, .. } => self.body_calls_human_approval(body),
             StmtKind::While { body, .. } => self.body_calls_human_approval(body),
             StmtKind::WhileLet { body, .. } => self.body_calls_human_approval(body),
-            StmtKind::Loop { body } => self.body_calls_human_approval(body),
+            StmtKind::Loop { body, .. } => self.body_calls_human_approval(body),
             StmtKind::Bail(expr) => self.expr_calls_human_approval(expr),
-            StmtKind::Break | StmtKind::Continue => false,
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => false,
             StmtKind::Defer { .. } => false,
         }
     }

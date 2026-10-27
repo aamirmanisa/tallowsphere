@@ -345,14 +345,14 @@ impl<'a> AgentSafetyPass<'a> {
             StmtKind::For { iter, body, .. } => {
                 self.count_external_ops_expr(iter) + self.count_external_ops(body)
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.count_external_ops_expr(condition) + self.count_external_ops(body)
             }
             StmtKind::WhileLet { expr, body, .. } => {
                 self.count_external_ops_expr(expr) + self.count_external_ops(body)
             }
-            StmtKind::Loop { body } => self.count_external_ops(body),
-            StmtKind::Break | StmtKind::Continue => 0,
+            StmtKind::Loop { body, .. } => self.count_external_ops(body),
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => 0,
             StmtKind::Defer { .. } => 0,
         }
     }
@@ -464,7 +464,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_no_external_branching(iter, info);
                 self.check_no_external_branching(body, info);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_no_external_branching(condition, info);
                 self.check_no_external_branching(body, info);
             }
@@ -472,10 +472,10 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_no_external_branching(expr, info);
                 self.check_no_external_branching(body, info);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.check_no_external_branching(body, info);
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -636,7 +636,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_no_spawn(iter, info);
                 self.check_no_spawn(body, info);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_no_spawn(condition, info);
                 self.check_no_spawn(body, info);
             }
@@ -644,10 +644,10 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_no_spawn(expr, info);
                 self.check_no_spawn(body, info);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.check_no_spawn(body, info);
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -787,7 +787,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_non_escalation(iter, parent);
                 self.check_non_escalation(body, parent);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_non_escalation(condition, parent);
                 self.check_non_escalation(body, parent);
             }
@@ -795,10 +795,10 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_non_escalation(expr, parent);
                 self.check_non_escalation(body, parent);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.check_non_escalation(body, parent);
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -1032,7 +1032,7 @@ impl<'a> AgentSafetyPass<'a> {
                 }
                 StmtKind::While { body, .. }
                 | StmtKind::WhileLet { body, .. }
-                | StmtKind::Loop { body } => {
+                | StmtKind::Loop { body, .. } => {
                     self.collect_local_vars(&body.stmts, locals);
                 }
                 _ => {}
@@ -1076,7 +1076,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_isolation(iter, module_vars, local_vars, info);
                 self.check_block_isolation(body, module_vars, local_vars, info);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_isolation(condition, module_vars, local_vars, info);
                 self.check_block_isolation(body, module_vars, local_vars, info);
             }
@@ -1084,10 +1084,10 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_isolation(expr, module_vars, local_vars, info);
                 self.check_block_isolation(body, module_vars, local_vars, info);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.check_block_isolation(body, module_vars, local_vars, info);
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -1232,7 +1232,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_spawn_bounds(iter, parent);
                 self.check_spawn_bounds(body, parent);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_spawn_bounds(condition, parent);
                 self.check_spawn_bounds(body, parent);
             }
@@ -1240,10 +1240,10 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_spawn_bounds(expr, parent);
                 self.check_spawn_bounds(body, parent);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.check_spawn_bounds(body, parent);
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -1565,7 +1565,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_trust(iter, f);
                 self.check_trust_compatibility(body, f);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_trust(condition, f);
                 self.check_trust_compatibility(body, f);
             }
@@ -1573,8 +1573,8 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_trust(expr, f);
                 self.check_trust_compatibility(body, f);
             }
-            StmtKind::Loop { body } => self.check_trust_compatibility(body, f),
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Loop { body, .. } => self.check_trust_compatibility(body, f),
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -1775,7 +1775,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_fresh_storage(iter);
                 self.check_fresh_storage(body);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_fresh_storage(condition);
                 self.check_fresh_storage(body);
             }
@@ -1783,8 +1783,8 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_fresh_storage(expr);
                 self.check_fresh_storage(body);
             }
-            StmtKind::Loop { body } => self.check_fresh_storage(body),
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Loop { body, .. } => self.check_fresh_storage(body),
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -1910,7 +1910,7 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_no_channel(iter, info);
                 self.check_no_channel_creation(body, info);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_no_channel(condition, info);
                 self.check_no_channel_creation(body, info);
             }
@@ -1918,10 +1918,10 @@ impl<'a> AgentSafetyPass<'a> {
                 self.check_expr_no_channel(expr, info);
                 self.check_no_channel_creation(body, info);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.check_no_channel_creation(body, info);
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }

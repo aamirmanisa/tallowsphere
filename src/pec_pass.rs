@@ -126,7 +126,7 @@ impl<'a> PecPass<'a> {
                     self.check_stmt(s);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr(condition);
                 for s in &body.stmts {
                     self.check_stmt(s);

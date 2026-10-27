@@ -12514,12 +12514,13 @@ fn collect_vars_and_calls(
                 binding,
                 iter,
                 body,
+                ..
             } => {
                 defined.insert(binding.clone(), true); // loop var is always "used"
                 collect_expr_calls(iter, defined, called);
                 collect_vars_and_calls(&body.stmts, defined, called, shadowed);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 collect_expr_calls(condition, defined, called);
                 collect_vars_and_calls(&body.stmts, defined, called, shadowed);
             }
@@ -15079,7 +15080,7 @@ fn stmt_has_purge(stmt: &tallow::ast::Stmt, patterns: &[&str]) -> bool {
         }
         StmtKind::Expr { expr } => expr_has_purge(expr, patterns),
         StmtKind::Return(Some(e)) => expr_has_purge(e, patterns),
-        StmtKind::While { condition, body } => {
+        StmtKind::While { condition, body, .. } => {
             expr_has_purge(condition, patterns) || block_has_purge(body, patterns)
         }
         StmtKind::For { iter, body, .. } => {

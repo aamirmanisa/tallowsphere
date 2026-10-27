@@ -262,9 +262,17 @@ pub enum Value {
     // Return sentinel — used to implement early return
     Return(Box<Value>),
 
-    // Loop control sentinels
-    Break,
-    Continue,
+    // Loop control sentinels (G08). `label` names the construct the jump
+    // targets; `None` is the innermost one, which is what an unlabeled
+    // `break`/`continue` has always meant. `value` is the payload of
+    // `break 'name v`, which the construct then evaluates to.
+    Break {
+        label: Option<String>,
+        value: Option<Box<Value>>,
+    },
+    Continue {
+        label: Option<String>,
+    },
 
     /// FIFO channel for inter-task communication.
     /// In the single-threaded interpreter this is just a queue;
@@ -371,8 +379,8 @@ fn validate_send(value: &Value) -> Result<(), String> {
         | Value::Map(_)
         | Value::Function { .. }
         | Value::Channel(_)
-        | Value::Break
-        | Value::Continue
+        | Value::Break { .. }
+        | Value::Continue { .. }
         | Value::Return(_)
         | Value::Boxed(_)
         | Value::Struct { .. }
@@ -427,16 +435,16 @@ fn collect_ident_uses_stmt(
         StmtKind::LetDestructure { value, .. } => collect_ident_uses_expr(value, out),
         StmtKind::Expr { expr } => collect_ident_uses_expr(expr, out),
         StmtKind::Return(Some(expr)) | StmtKind::Bail(expr) => collect_ident_uses_expr(expr, out),
-        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => Some(()),
+        StmtKind::Return(None) | StmtKind::Break { .. } | StmtKind::Continue { .. } => Some(()),
         StmtKind::For { iter, body, .. } => {
             collect_ident_uses_expr(iter, out)?;
             collect_ident_uses_stmts(&body.stmts, out)
         }
-        StmtKind::While { condition, body } => {
+        StmtKind::While { condition, body, .. } => {
             collect_ident_uses_expr(condition, out)?;
             collect_ident_uses_stmts(&body.stmts, out)
         }
-        StmtKind::Loop { body } | StmtKind::Defer { body } => {
+        StmtKind::Loop { body, .. } | StmtKind::Defer { body } => {
             collect_ident_uses_stmts(&body.stmts, out)
         }
         // Patterns may bind or match on arbitrary expressions; not modelled —
@@ -498,6 +506,9 @@ fn collect_ident_uses_expr(
             }
         }
         ExprKind::Block(block) => collect_ident_uses_stmts(&block.stmts, out),
+        // `loop { .. }` in value position is a labelled block (G08); the body
+        // is evaluated, so the names it uses are uses.
+        ExprKind::Loop { body, .. } => collect_ident_uses_stmts(&body.stmts, out),
         ExprKind::Array(items) => {
             for item in items {
                 collect_ident_uses_expr(item, out)?;
@@ -710,8 +721,8 @@ impl Value {
             Value::Boxed(inner) => inner.as_string(),
             Value::Provenance(inner, _) => inner.as_string(),
             Value::Return(v) => v.as_string(),
-            Value::Break => "break".to_string(),
-            Value::Continue => "continue".to_string(),
+            Value::Break { .. } => "break".to_string(),
+            Value::Continue { .. } => "continue".to_string(),
             Value::Channel(ch) => {
                 format!(
                     "<chan len={} cap={:?}>",
@@ -1180,6 +1191,60 @@ fn struct_int_field(fields: &[(String, Value)], key: &str, default: i128) -> i12
         .find(|(k, _)| k == key)
         .and_then(|(_, v)| if let Value::Int(i) = v { Some(*i) } else { None })
         .unwrap_or(default)
+}
+
+/// What one loop iteration's control sentinel means for the construct that is
+/// running it (G08).
+///
+/// `Break`/`Continue` are values, not Rust control flow, because they travel up
+/// through `exec_block`; this is where a sentinel is either consumed by the
+/// construct it names or handed back to the enclosing one.
+enum LoopStep {
+    /// Exit the construct. The payload is the construct's value (`Nil` when the
+    /// break carried none, or the construct cannot yield).
+    Break(Value),
+    /// Start the next iteration of this construct.
+    Continue,
+    /// Ordinary completion: iterate again.
+    Next,
+    /// A `return`, or a jump aimed at an *outer* construct: propagate unchanged.
+    Unwind(Value),
+}
+
+impl Interpreter {
+    /// Resolve a sentinel against the label of the construct running it.
+    ///
+    /// An unlabeled jump binds to the innermost construct, as it always has. A
+    /// labeled one binds only to the construct carrying that label, so
+    /// `break 'outer v` from inside a nested `for` leaves both loops. A
+    /// sentinel naming some other label is not ours: it unwinds untouched, and
+    /// the construct that owns the label consumes it there.
+    fn loop_step(result: Value, label: &Option<String>) -> LoopStep {
+        match result {
+            Value::Return(_) => LoopStep::Unwind(result),
+            Value::Break {
+                label: jump_label,
+                value,
+            } => {
+                if jump_label.is_none() || jump_label.as_ref() == label.as_ref() {
+                    LoopStep::Break(value.map(|v| *v).unwrap_or(Value::Nil))
+                } else {
+                    LoopStep::Unwind(Value::Break {
+                        label: jump_label,
+                        value,
+                    })
+                }
+            }
+            Value::Continue { label: jump_label } => {
+                if jump_label.is_none() || jump_label.as_ref() == label.as_ref() {
+                    LoopStep::Continue
+                } else {
+                    LoopStep::Unwind(Value::Continue { label: jump_label })
+                }
+            }
+            _ => LoopStep::Next,
+        }
+    }
 }
 
 pub struct Interpreter {
@@ -2003,7 +2068,7 @@ impl Interpreter {
             }
             // Check for early return or loop control
             match &last {
-                Value::Return(_) | Value::Break | Value::Continue => {
+                Value::Return(_) | Value::Break { .. } | Value::Continue { .. } => {
                     env.pop_scope();
                     return Ok(last);
                 }
@@ -2228,6 +2293,7 @@ impl Interpreter {
             StmtKind::Return(None) => Ok(Value::Return(Box::new(Value::Nil))),
 
             StmtKind::For {
+                label,
                 binding,
                 iter,
                 body,
@@ -2281,11 +2347,11 @@ impl Interpreter {
                                 }
                             };
                             env.pop_scope();
-                            match &result {
-                                Value::Return(_) => return Ok(result),
-                                Value::Break => break,
-                                Value::Continue => continue,
-                                _ => {}
+                            match Self::loop_step(result, &label) {
+                                LoopStep::Break(_) => break,
+                                LoopStep::Continue => continue,
+                                LoopStep::Unwind(v) => return Ok(v),
+                                LoopStep::Next => {}
                             }
                         }
                     }
@@ -2301,11 +2367,11 @@ impl Interpreter {
                                 }
                             };
                             env.pop_scope();
-                            match &result {
-                                Value::Return(_) => return Ok(result),
-                                Value::Break => break,
-                                Value::Continue => continue,
-                                _ => {}
+                            match Self::loop_step(result, &label) {
+                                LoopStep::Break(_) => break,
+                                LoopStep::Continue => continue,
+                                LoopStep::Unwind(v) => return Ok(v),
+                                LoopStep::Next => {}
                             }
                         }
                     }
@@ -2324,17 +2390,17 @@ impl Interpreter {
                                     }
                                 };
                                 env.pop_scope();
-                                match &result {
-                                    Value::Return(_) => return Ok(result),
-                                    Value::Break => break,
+                                match Self::loop_step(result, &label) {
+                                    LoopStep::Break(_) => break,
                                     // `continue` must FALL THROUGH to the increment below. Using
                                     // `continue` here skips `i += step`, so
                                     // `for i in 0..N { if c { continue } }` never advances and the
                                     // loop runs forever. Both range arms carry a manual counter
                                     // (ascending and descending); the array, string and map arms
                                     // iterate a Rust collection, where `continue` is harmless.
-                                    Value::Continue => {}
-                                    _ => {}
+                                    LoopStep::Continue => {}
+                                    LoopStep::Unwind(v) => return Ok(v),
+                                    LoopStep::Next => {}
                                 }
                                 i += step;
                             }
@@ -2351,17 +2417,17 @@ impl Interpreter {
                                     }
                                 };
                                 env.pop_scope();
-                                match &result {
-                                    Value::Return(_) => return Ok(result),
-                                    Value::Break => break,
+                                match Self::loop_step(result, &label) {
+                                    LoopStep::Break(_) => break,
                                     // `continue` must FALL THROUGH to the increment below. Using
                                     // `continue` here skips `i += step`, so
                                     // `for i in 0..N { if c { continue } }` never advances and the
                                     // loop runs forever. Both range arms carry a manual counter
                                     // (ascending and descending); the array, string and map arms
                                     // iterate a Rust collection, where `continue` is harmless.
-                                    Value::Continue => {}
-                                    _ => {}
+                                    LoopStep::Continue => {}
+                                    LoopStep::Unwind(v) => return Ok(v),
+                                    LoopStep::Next => {}
                                 }
                                 i += step;
                             }
@@ -2384,11 +2450,11 @@ impl Interpreter {
                                 }
                             };
                             env.pop_scope();
-                            match &result {
-                                Value::Return(_) => return Ok(result),
-                                Value::Break => break,
-                                Value::Continue => continue,
-                                _ => {}
+                            match Self::loop_step(result, &label) {
+                                LoopStep::Break(_) => break,
+                                LoopStep::Continue => continue,
+                                LoopStep::Unwind(v) => return Ok(v),
+                                LoopStep::Next => {}
                             }
                         }
                     }
@@ -2402,7 +2468,11 @@ impl Interpreter {
                 Ok(Value::Nil)
             }
 
-            StmtKind::While { condition, body } => {
+            StmtKind::While {
+                label,
+                condition,
+                body,
+            } => {
                 loop {
                     let cond = self.eval_expr(condition, env)?;
                     if !cond.is_truthy() {
@@ -2415,17 +2485,18 @@ impl Interpreter {
                             return Err(e);
                         }
                     };
-                    match &result {
-                        Value::Return(_) => return Ok(result),
-                        Value::Break => break,
-                        Value::Continue => continue,
-                        _ => {}
+                    match Self::loop_step(result, &label) {
+                        LoopStep::Break(_) => break,
+                        LoopStep::Continue => continue,
+                        LoopStep::Unwind(v) => return Ok(v),
+                        LoopStep::Next => {}
                     }
                 }
                 Ok(Value::Nil)
             }
 
             StmtKind::WhileLet {
+                label,
                 pattern,
                 expr,
                 body,
@@ -2445,11 +2516,11 @@ impl Interpreter {
                             }
                         };
                         env.pop_scope();
-                        match &result {
-                            Value::Return(_) => return Ok(result),
-                            Value::Break => break,
-                            Value::Continue => continue,
-                            _ => {}
+                        match Self::loop_step(result, &label) {
+                            LoopStep::Break(_) => break,
+                            LoopStep::Continue => continue,
+                            LoopStep::Unwind(v) => return Ok(v),
+                            LoopStep::Next => {}
                         }
                     } else {
                         break;
@@ -2458,7 +2529,7 @@ impl Interpreter {
                 Ok(Value::Nil)
             }
 
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { label, body } => {
                 loop {
                     let result = match self.exec_block_discarding(body, env) {
                         Ok(v) => v,
@@ -2467,18 +2538,29 @@ impl Interpreter {
                             return Err(e);
                         }
                     };
-                    match &result {
-                        Value::Return(_) => return Ok(result),
-                        Value::Break => break,
-                        Value::Continue => continue,
-                        _ => {}
+                    match Self::loop_step(result, &label) {
+                        LoopStep::Break(_) => break,
+                        LoopStep::Continue => continue,
+                        LoopStep::Unwind(v) => return Ok(v),
+                        LoopStep::Next => {}
                     }
                 }
                 Ok(Value::Nil)
             }
 
-            StmtKind::Break => Ok(Value::Break),
-            StmtKind::Continue => Ok(Value::Continue),
+            StmtKind::Break { label, value } => {
+                let value = match value {
+                    Some(expr) => Some(Box::new(self.eval_expr(expr, env)?)),
+                    None => None,
+                };
+                Ok(Value::Break {
+                    label: label.clone(),
+                    value,
+                })
+            }
+            StmtKind::Continue { label } => Ok(Value::Continue {
+                label: label.clone(),
+            }),
 
             StmtKind::Bail(expr) => {
                 let val = self.eval_expr(expr, env)?;
@@ -3592,6 +3674,17 @@ impl Interpreter {
 
             // ── Block expression ──
             ExprKind::Block(block) => self.exec_block(block, env),
+
+            // ── `loop` in value position (G08) ──
+            // The value is the payload of the `break` that leaves it.
+            ExprKind::Loop { label, body } => loop {
+                let result = self.exec_block(body, env)?;
+                match Self::loop_step(result, label) {
+                    LoopStep::Break(v) => return Ok(v),
+                    LoopStep::Unwind(v) => return Ok(v),
+                    LoopStep::Continue | LoopStep::Next => {}
+                }
+            },
 
             // ── Array literal ──
             ExprKind::Array(elements) => {
@@ -32690,8 +32783,8 @@ pub fn type_name(val: &Value) -> &'static str {
         Value::Function { .. } => "fn",
         Value::Range { .. } => "Range",
         Value::Return(_) => "return",
-        Value::Break => "break",
-        Value::Continue => "continue",
+        Value::Break { .. } => "break",
+        Value::Continue { .. } => "continue",
         Value::DbConnection(_) => "DbConnection",
         Value::KeyPair { .. } => "KeyPair",
         Value::Bytes(_) => "Bytes",
