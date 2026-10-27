@@ -14,6 +14,13 @@
     "status": "refuses"
   },
   {
+    "checked_at": "9b3e1adb551f1ffc83bc00d837826f05a11f34a1",
+    "evidence": "build failed: native backend has no lowering for method 'openapi_load' at byte offset 56 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
+    "function": "api.openapi_load(\"probe\", \"probe\")",
+    "module": "api",
+    "status": "refuses"
+  },
+  {
     "checked_at": "7040d57929793dbd53f1a9eb5e6cf11af3663e9d",
     "evidence": "build failed: native backend has no lowering for method 'discover' at byte offset 60 on this receiver (unknown method for any statically-known kind); failing loudly so the interpreter runs it",
     "function": "beehiiv.discover(\"probe\")",

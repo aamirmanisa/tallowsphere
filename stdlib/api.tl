@@ -170,3 +170,39 @@ struct ApiPathSignal {
 // test is the canonical 8-4-4-4-12 shape, case-insensitive; it checks shape
 // only, not the RFC 4122 version nibble, so a nil UUID also flags.
 native fn api.identifiers(endpoints: []ApiEndpoint) -> []ApiPathSignal
+
+// ── N21: snapshot diff ────────────────────────────────────────────────────
+
+// One changed field of a matched endpoint. `field` is "auth" or "content_type";
+// `before` and `after` are the two classes, and nil means "not declared" (which
+// is a different fact from "declared to require nothing", which renders "none").
+struct ApiEndpointChange {
+    method: String,
+    path:   String,
+    field:  String,
+    before: String?,
+    after:  String?,
+}
+
+// What changed between two snapshots. `removed` is the loud list; `breaking` is
+// true when anything was removed or any auth class changed — a content-type
+// change is reported but is not breaking on its own. `summary` renders the
+// counts as one line. Matching is by (path template, method), so document order
+// is not information and a reordered document is not a diff.
+struct ApiInventoryDiff {
+    doc_url_old:          String,
+    doc_url_new:          String,
+    added:                []ApiEndpoint,
+    removed:              []ApiEndpoint,
+    auth_changed:         []ApiEndpointChange,
+    content_type_changed: []ApiEndpointChange,
+    added_count:          Int,
+    removed_count:        Int,
+    unchanged:            Int,
+    breaking:             Bool,
+    summary:              String,
+}
+
+// Compare two inventories. Removal is the loud case; every entry names what
+// changed and both sides.
+native fn api.diff(old_inventory: ApiInventory, new_inventory: ApiInventory) -> ApiInventoryDiff

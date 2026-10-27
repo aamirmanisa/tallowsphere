@@ -62,6 +62,16 @@
 //! while a bare 32-hex digest, a truncated id, or `deadbeef-cafe` do not. Version gating would
 //! miss real ids minted by libraries that emit v7/v8 or nil.
 //!
+//! # N21 — removal is the loud case
+//!
+//! `diff` matches endpoints by `(path template, method)` — the template, so `/users/1` and
+//! `/users/2` are one endpoint — and reports endpoints added, removed, and whose auth class or
+//! content type changed. Every entry names what changed and both sides (`before` / `after`, with
+//! `nil` for "not declared"). `breaking` is true when anything was removed or any auth class
+//! changed; a content-type change is reported but is not breaking on its own. Output is sorted by
+//! `(path, method)`, so two runs over the same input are byte-identical, and a reordering of the
+//! document is not a change.
+//!
 //! # Refusals
 //!
 //! | code | when |
@@ -1277,6 +1287,111 @@ fn inventory_of(fs: &[(String, Value)], fname: &str) -> Result<Inventory, String
     })
 }
 
+// ── N21: snapshot diff ────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EndpointChange {
+    pub method: String,
+    pub path: String,
+    /// The field that changed: `auth` or `content_type`.
+    pub field: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct InventoryDiff {
+    pub doc_url_old: String,
+    pub doc_url_new: String,
+    pub added: Vec<Endpoint>,
+    pub removed: Vec<Endpoint>,
+    pub auth_changed: Vec<EndpointChange>,
+    pub content_type_changed: Vec<EndpointChange>,
+    pub unchanged: usize,
+}
+
+impl InventoryDiff {
+    /// Removal is the loud case, and so is an auth class that changed — both are how an
+    /// endpoint stops being reachable the way its callers assume it is.
+    pub fn breaking(&self) -> bool {
+        !self.removed.is_empty() || !self.auth_changed.is_empty()
+    }
+    pub fn summary(&self) -> String {
+        format!(
+            "{} added, {} removed, {} auth-changed, {} content-type-changed, {} unchanged",
+            self.added.len(),
+            self.removed.len(),
+            self.auth_changed.len(),
+            self.content_type_changed.len(),
+            self.unchanged
+        )
+    }
+}
+
+/// Compare two inventories by `(path template, method)` — the template, not a filled-in value,
+/// so `/users/1` and `/users/2` are one endpoint. Every entry names what changed and both sides.
+pub fn diff(old: &Inventory, new: &Inventory) -> InventoryDiff {
+    let keyed = |i: &Inventory| -> std::collections::BTreeMap<(String, String), Endpoint> {
+        i.endpoints
+            .iter()
+            .map(|e| ((e.path.clone(), e.method.clone()), e.clone()))
+            .collect()
+    };
+    let (o, n) = (keyed(old), keyed(new));
+    let mut d = InventoryDiff {
+        doc_url_old: old.doc_url.clone(),
+        doc_url_new: new.doc_url.clone(),
+        ..Default::default()
+    };
+    for (key, oe) in &o {
+        let Some(ne) = n.get(key) else {
+            d.removed.push(oe.clone());
+            continue;
+        };
+        d.unchanged += 1;
+        let change =
+            |field: &str, before: &Option<String>, after: &Option<String>| EndpointChange {
+                method: oe.method.clone(),
+                path: oe.path.clone(),
+                field: field.to_string(),
+                before: before.clone(),
+                after: after.clone(),
+            };
+        if oe.auth != ne.auth {
+            d.auth_changed.push(change("auth", &oe.auth, &ne.auth));
+        }
+        if oe.content_type != ne.content_type {
+            d.content_type_changed
+                .push(change("content_type", &oe.content_type, &ne.content_type));
+        }
+    }
+    for (key, ne) in &n {
+        if !o.contains_key(key) {
+            d.added.push(ne.clone());
+        }
+    }
+    d.added.sort();
+    d.removed.sort();
+    d.auth_changed
+        .sort_by(|a, b| (&a.path, &a.method).cmp(&(&b.path, &b.method)));
+    d.content_type_changed
+        .sort_by(|a, b| (&a.path, &a.method).cmp(&(&b.path, &b.method)));
+    d
+}
+
+fn change_value(c: &EndpointChange) -> Value {
+    Value::Struct {
+        name: "ApiEndpointChange".to_string(),
+        fields: vec![
+            sfield("method", &c.method),
+            sfield("path", &c.path),
+            sfield("field", &c.field),
+            ofield("before", &c.before),
+            ofield("after", &c.after),
+        ],
+    }
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────
 
 pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
@@ -1414,6 +1529,39 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
                         })
                         .collect(),
                 ))
+            }
+            "diff" => {
+                let old = inventory_of(struct_arg(&args, 0, "ApiInventory", "diff")?, "diff")?;
+                let new = inventory_of(struct_arg(&args, 1, "ApiInventory", "diff")?, "diff")?;
+                let d = diff(&old, &new);
+                Ok(Value::Struct {
+                    name: "ApiInventoryDiff".to_string(),
+                    fields: vec![
+                        sfield("doc_url_old", &d.doc_url_old),
+                        sfield("doc_url_new", &d.doc_url_new),
+                        (
+                            "added".to_string(),
+                            Value::Array(d.added.iter().map(endpoint_value).collect()),
+                        ),
+                        (
+                            "removed".to_string(),
+                            Value::Array(d.removed.iter().map(endpoint_value).collect()),
+                        ),
+                        (
+                            "auth_changed".to_string(),
+                            Value::Array(d.auth_changed.iter().map(change_value).collect()),
+                        ),
+                        (
+                            "content_type_changed".to_string(),
+                            Value::Array(d.content_type_changed.iter().map(change_value).collect()),
+                        ),
+                        ifield("added_count", d.added.len()),
+                        ifield("removed_count", d.removed.len()),
+                        ifield("unchanged", d.unchanged),
+                        ("breaking".to_string(), Value::Bool(d.breaking())),
+                        sfield("summary", &d.summary()),
+                    ],
+                })
             }
             _ => {
                 unknown = true;
@@ -1702,5 +1850,133 @@ mod intel_api_tests {
             segment_kind("0").is_some(),
             "a nil-ish numeric id is still an id"
         );
+    }
+
+    // ── N21 ──────────────────────────────────────────────────────────────
+
+    fn full_ep(m: &str, p: &str, auth: Option<&str>, ct: Option<&str>) -> Endpoint {
+        Endpoint {
+            method: m.into(),
+            path: p.into(),
+            auth: auth.map(str::to_string),
+            content_type: ct.map(str::to_string),
+            source: URL.into(),
+        }
+    }
+
+    fn snapshot(doc: &str, eps: Vec<Endpoint>) -> Inventory {
+        Inventory {
+            doc_url: doc.into(),
+            openapi_version: "3.0.0".into(),
+            endpoints: eps,
+        }
+    }
+
+    #[test]
+    fn diff_names_both_sides_and_treats_removal_as_loud() {
+        let old = snapshot(
+            "a",
+            vec![
+                full_ep("GET", "/a", Some("api_key"), Some("application/json")),
+                full_ep("GET", "/gone", None, None),
+            ],
+        );
+        let new = snapshot(
+            "b",
+            vec![
+                full_ep("GET", "/a", Some("none"), Some("application/xml")),
+                full_ep("POST", "/new", None, None),
+            ],
+        );
+        let d = diff(&old, &new);
+        assert_eq!((d.added.len(), d.removed.len(), d.unchanged), (1, 1, 1));
+        assert_eq!(d.removed[0].path, "/gone");
+        assert_eq!(d.added[0].method, "POST");
+        assert_eq!(d.auth_changed.len(), 1);
+        assert_eq!(d.auth_changed[0].field, "auth");
+        assert_eq!(d.auth_changed[0].before.as_deref(), Some("api_key"));
+        assert_eq!(d.auth_changed[0].after.as_deref(), Some("none"));
+        assert_eq!(d.content_type_changed.len(), 1);
+        assert_eq!(
+            d.content_type_changed[0].before.as_deref(),
+            Some("application/json")
+        );
+        assert_eq!(
+            d.content_type_changed[0].after.as_deref(),
+            Some("application/xml")
+        );
+        assert!(d.breaking());
+        assert_eq!((d.doc_url_old.as_str(), d.doc_url_new.as_str()), ("a", "b"));
+        assert!(d.summary().contains("1 removed"));
+    }
+
+    #[test]
+    fn identical_or_reordered_snapshots_are_not_changes() {
+        let same = snapshot("a", vec![full_ep("GET", "/a", None, None)]);
+        let d = diff(&same, &same);
+        assert!(!d.breaking());
+        assert!(d.added.is_empty() && d.removed.is_empty() && d.auth_changed.is_empty());
+        assert_eq!(d.unchanged, 1);
+        // Order in the document is not information: matching is by (path, method).
+        let reordered = snapshot(
+            "a",
+            vec![
+                full_ep("POST", "/b", None, None),
+                full_ep("GET", "/a", None, None),
+            ],
+        );
+        let d2 = diff(&same, &reordered);
+        assert_eq!((d2.added.len(), d2.removed.len(), d2.unchanged), (1, 0, 1));
+    }
+
+    #[test]
+    fn a_content_type_change_alone_is_reported_but_not_breaking() {
+        let old = snapshot(
+            "a",
+            vec![full_ep("POST", "/x", None, Some("application/json"))],
+        );
+        let new = snapshot("a", vec![full_ep("POST", "/x", None, Some("text/csv"))]);
+        let d = diff(&old, &new);
+        assert_eq!(d.content_type_changed.len(), 1);
+        assert!(!d.breaking(), "a media type change is not a removal");
+    }
+
+    #[test]
+    fn diff_round_trips_through_the_value_layer() {
+        let old = inventory_value(&snapshot(
+            "a",
+            vec![full_ep("GET", "/a", Some("api_key"), None)],
+        ));
+        let new = inventory_value(&snapshot("b", vec![full_ep("GET", "/a", None, None)]));
+        let Value::Struct { name, fields } = dispatch("diff", vec![old, new]).unwrap().unwrap()
+        else {
+            panic!("expected an ApiInventoryDiff")
+        };
+        assert_eq!(name, "ApiInventoryDiff");
+        let auth = fields
+            .iter()
+            .find(|(k, _)| k == "auth_changed")
+            .map(|(_, v)| v)
+            .unwrap();
+        let Value::Array(rows) = auth else {
+            panic!("expected an array")
+        };
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            sv(&container(rows, 0), "before").as_deref(),
+            Some("api_key")
+        );
+        assert_eq!(
+            sv(&container(rows, 0), "after"),
+            None,
+            "undeclared renders nil, not an empty string"
+        );
+    }
+
+    fn container(rows: &[Value], i: usize) -> Vec<(String, Value)> {
+        match &rows[i] {
+            Value::Struct { fields, .. } => fields.clone(),
+            other => panic!("expected a struct, got {}", type_name(other)),
+        }
     }
 }
