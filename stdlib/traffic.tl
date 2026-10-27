@@ -207,3 +207,37 @@ struct DnsTunnelSignal {
 // []TrafficFlow for a capture-derived list. A flow carries no qname, so entropy
 // comes back nil and the row says so.
 native fn traffic.dns_tunnel_signal(items: any) -> []DnsTunnelSignal
+
+// ── N30: egress-plane attribution ─────────────────────────────────────────
+//
+// `direct` is only ever a *reported* plane: a row marked direct is one whose
+// record said so. A flow with no plane, an empty plane, or a word outside the four
+// is `unknown`, and the row carries the note explaining why. Assuming direct for
+// an unlabelled flow is the one error that would make an anonymous run look like
+// it left from this box, so it is not an inference this module can make.
+struct TrafficPlaneRow {
+    index: Int,
+    src:   String,
+    dst:   String,
+    // "direct", "tor", "mesh" or "unknown".
+    plane: String,
+    exit:  String?,
+    note:  String,
+}
+
+// Per-plane counts, the distinct exit identities, one row per flow and a one-line
+// summary.
+struct TrafficPlanes {
+    total:   Int,
+    direct:  Int,
+    tor:     Int,
+    mesh:    Int,
+    unknown: Int,
+    exits:   []String,
+    rows:    []TrafficPlaneRow,
+    summary: String,
+}
+
+// Summarise which plane carried each flow, and the exit identity where one was
+// recorded.
+native fn traffic.planes(flows: []TrafficFlow) -> TrafficPlanes

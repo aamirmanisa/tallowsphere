@@ -1,4 +1,4 @@
-//! `tallow.traffic` — offline traffic observation (N27, N28, N29).
+//! `tallow.traffic` — offline traffic observation (N27, N28, N29, N30).
 //!
 //! **Offline by construction.** Every byte this module sees was handed to it: a capture file on
 //! local disk, or a record list the caller built. It opens no socket, starts no capture, sends no
@@ -17,7 +17,7 @@
 //!
 //! A flow with **zero packets** is refused (`traffic:empty-flow`) rather than recorded: a row with
 //! no packets has no duration, no bytes and no direction, and every statistic downstream (the rate
-//! in N29) would be computed over a fiction. There is no partial credit
+//! in N29, the plane counts in N30) would be computed over a fiction. There is no partial credit
 //! for a flow that was never observed.
 //!
 //! `payload_sig` is the one field the brief's shape does not list, and it is here because N28
@@ -124,6 +124,15 @@
 //! `0.40·entropy + 0.35·rate + 0.25·ratio` renormalised over the measured components — a shape for
 //! ranking, not a probability.
 //!
+//! # N30 — an absent plane is unknown, never direct
+//!
+//! `planes` counts flows per plane (`direct`, `tor`, `mesh`, `unknown`) and collects the distinct
+//! exit identities. A flow whose `plane` is missing, empty, or a word outside those four renders
+//! `unknown` and carries the note explaining why. **`direct` is only ever a reported plane**: a row
+//! this module marks `direct` is one whose record said so. Assuming direct for an unlabelled flow
+//! is the single error that would make an anonymous run look like it left from this box, so it is
+//! not an inference the code can make.
+//!
 //! # Refusals
 //!
 //! | code | when |
@@ -150,6 +159,11 @@ pub const CODE_PCAPNG: &str = "traffic:pcapng-unsupported";
 
 /// The signal label N29 emits. A description of a shape, never a verdict.
 pub const SIGNAL_DNS_TUNNEL: &str = "dns-tunnelling";
+
+pub const PLANE_DIRECT: &str = "direct";
+pub const PLANE_TOR: &str = "tor";
+pub const PLANE_MESH: &str = "mesh";
+pub const PLANE_UNKNOWN: &str = "unknown";
 
 // N29 thresholds. See the module docs for the reasoning behind each number.
 pub const ENTROPY_MIN: f64 = 3.9;
@@ -1002,6 +1016,89 @@ pub fn dns_tunnel_signal(queries: &[Query]) -> Vec<TunnelSignal> {
         .collect()
 }
 
+// ── N30: egress planes ────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlaneRow {
+    pub index: usize,
+    pub src: String,
+    pub dst: String,
+    pub plane: String,
+    pub exit: Option<String>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Planes {
+    pub total: usize,
+    pub direct: usize,
+    pub tor: usize,
+    pub mesh: usize,
+    pub unknown: usize,
+    pub exits: Vec<String>,
+    pub rows: Vec<PlaneRow>,
+    pub summary: String,
+}
+
+/// Attribute each flow to a plane. A flow with no plane, an empty plane, or a word outside the four
+/// known ones is `unknown` — never `direct`.
+pub fn planes(flows: &[Flow]) -> Planes {
+    let mut out = Planes {
+        total: flows.len(),
+        ..Default::default()
+    };
+    let mut exits: Vec<String> = Vec::new();
+    for (index, f) in flows.iter().enumerate() {
+        let (plane, note) = match f.plane.as_deref() {
+            None | Some("") => (
+                PLANE_UNKNOWN,
+                "no plane was recorded on this flow; an absent plane is unknown, never direct"
+                    .to_string(),
+            ),
+            Some(p) if p == PLANE_DIRECT || p == PLANE_TOR || p == PLANE_MESH => (p, String::new()),
+            Some(PLANE_UNKNOWN) => (
+                PLANE_UNKNOWN,
+                "the record states the plane was not known".to_string(),
+            ),
+            Some(other) => (
+                PLANE_UNKNOWN,
+                format!("plane `{other}` is not one of direct/tor/mesh; recorded as unknown"),
+            ),
+        };
+        match plane {
+            PLANE_DIRECT => out.direct += 1,
+            PLANE_TOR => out.tor += 1,
+            PLANE_MESH => out.mesh += 1,
+            _ => out.unknown += 1,
+        }
+        if let Some(e) = f.exit.as_deref().filter(|e| !e.is_empty()) {
+            if !exits.iter().any(|x| x == e) {
+                exits.push(e.to_string());
+            }
+        }
+        out.rows.push(PlaneRow {
+            index,
+            src: f.src.clone(),
+            dst: f.dst.clone(),
+            plane: plane.to_string(),
+            exit: f.exit.clone().filter(|e| !e.is_empty()),
+            note,
+        });
+    }
+    exits.sort();
+    out.summary = format!(
+        "{} flow(s): {} direct, {} tor, {} mesh, {} unknown; {} distinct exit(s)",
+        out.total,
+        out.direct,
+        out.tor,
+        out.mesh,
+        out.unknown,
+        exits.len()
+    );
+    out.exits = exits;
+    out
+}
+
 // ── Value plumbing ────────────────────────────────────────────────────────
 
 fn sf(name: &str, v: &str) -> (String, Value) {
@@ -1106,6 +1203,43 @@ fn signal_value(s: &TunnelSignal) -> Value {
             ff("score", Some(s.score)),
             ("fires".to_string(), Value::Bool(s.fires)),
             sf("reason", &s.reason),
+        ],
+    }
+}
+
+fn planes_value(p: &Planes) -> Value {
+    Value::Struct {
+        name: "TrafficPlanes".to_string(),
+        fields: vec![
+            nf("total", p.total as i128),
+            nf("direct", p.direct as i128),
+            nf("tor", p.tor as i128),
+            nf("mesh", p.mesh as i128),
+            nf("unknown", p.unknown as i128),
+            (
+                "exits".to_string(),
+                Value::Array(p.exits.iter().cloned().map(Value::String).collect()),
+            ),
+            (
+                "rows".to_string(),
+                Value::Array(
+                    p.rows
+                        .iter()
+                        .map(|r| Value::Struct {
+                            name: "TrafficPlaneRow".to_string(),
+                            fields: vec![
+                                nf("index", r.index as i128),
+                                sf("src", &r.src),
+                                sf("dst", &r.dst),
+                                sf("plane", &r.plane),
+                                of("exit", &r.exit),
+                                sf("note", &r.note),
+                            ],
+                        })
+                        .collect(),
+                ),
+            ),
+            sf("summary", &p.summary),
         ],
     }
 }
@@ -1420,6 +1554,7 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
                         .collect(),
                 ))
             }
+            "planes" => Ok(planes_value(&planes(&arg_flows(&args, 0, "planes")?))),
             _ => {
                 unknown = true;
                 Ok(Value::Nil)
@@ -1767,6 +1902,38 @@ mod intel_traffic_tests {
         assert_eq!(shannon_bits_per_char("aaaa"), Some(0.0));
         assert!((shannon_bits_per_char("ab").unwrap() - 1.0).abs() < 1e-9);
         assert!((shannon_bits_per_char("abcd").unwrap() - 2.0).abs() < 1e-9);
+    }
+
+    // ── N30 ──
+
+    #[test]
+    fn n30_an_absent_plane_is_unknown_never_direct() {
+        let p = planes(&[flow("a", "b", 443, None)]);
+        assert_eq!((p.direct, p.tor, p.mesh, p.unknown), (0, 0, 0, 1));
+        assert_eq!(p.rows[0].plane, "unknown");
+        assert!(
+            p.rows[0].note.contains("never direct"),
+            "{}",
+            p.rows[0].note
+        );
+    }
+
+    #[test]
+    fn n30_planes_and_exits_are_counted_and_a_foreign_word_is_unknown() {
+        let mut tor = flow("a", "b", 443, None);
+        tor.plane = Some("tor".to_string());
+        tor.exit = Some("exit.example".to_string());
+        let mut mesh = flow("c", "d", 443, None);
+        mesh.plane = Some("mesh".to_string());
+        let mut vpn = flow("e", "f", 443, None);
+        vpn.plane = Some("vpn".to_string());
+        let mut direct = flow("g", "h", 443, None);
+        direct.plane = Some("direct".to_string());
+        let p = planes(&[tor.clone(), mesh, vpn, direct]);
+        assert_eq!((p.direct, p.tor, p.mesh, p.unknown), (1, 1, 1, 1));
+        assert_eq!(p.exits, vec!["exit.example".to_string()]);
+        assert!(p.rows[2].note.contains("`vpn`"), "{}", p.rows[2].note);
+        assert!(p.summary.contains("1 tor"), "{}", p.summary);
     }
 
     // ── the dispatch surface ──
