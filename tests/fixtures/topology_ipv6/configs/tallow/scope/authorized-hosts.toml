@@ -1,0 +1,32 @@
+# Tallowsphere — outbound authorization register (N09 test fixture)
+#
+# This is a test-scoped copy of configs/tallow/scope/authorized-hosts.toml. The
+# scope gate resolves the register relative to the process working directory,
+# and the IPv6 tests run the tallow binary with this directory as its cwd so the
+# gate sees an IPv6 grant. The workspace register is deliberately NOT edited:
+# whether ::1 is scannable is the operator's decision, not a test's.
+#
+# Deny-by-default still holds here: 2001:db8::1 is absent on purpose, and the
+# unauthorized-target test asserts it is refused before a probe.
+# ---------------------------------------------------------------------------
+
+[[authorized]]
+host = "::1"
+basis = "self-hosted"
+granted_by = "operator (IPv6 loopback on this host)"
+granted_at = "2026-10-26"
+expires_at = "2027-10-26"
+evidence = "IPv6 loopback interface (::1/128) on this host"
+methods = ["GET", "HEAD"]
+notes = "N09 fixture target: the IPv6 half of the loopback grant"
+
+# A named loopback alias, so a v6 target can also be authorised by name.
+[[authorized]]
+host = "localhost"
+basis = "self-hosted"
+granted_by = "operator (workspace default)"
+granted_at = "2026-10-16"
+expires_at = "2027-10-16"
+evidence = "loopback interface on this host"
+methods = ["GET", "HEAD"]
+notes = "local development and health checks"

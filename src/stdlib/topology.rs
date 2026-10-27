@@ -12,21 +12,27 @@
 //!    refusal, exactly as `tallow scope check` would report it. The scanner is
 //!    not a second, weaker door.
 //! 2. **The governor is the only thing that paces traffic.** No fixed sleep, no
-//!    global rps: a token bucket per target and per IPv4 /24, so one host
-//!    cannot be hammered because another host in the same run is idle.
+//!    global rps: a token bucket per target and per prefix (/24 for IPv4, /64
+//!    for IPv6), so one host cannot be hammered because another host in the
+//!    same run is idle.
 //! 3. **Every result says how it was obtained.** A port is `open`, `closed` or
 //!    `filtered`, and the technique that produced the verdict travels with the
 //!    result — a SYN verdict and a connect verdict are not interchangeable, and
 //!    the reconciliation step (N12) will need that distinction.
 //!
-//! Only IPv4 is scanned today; `plan` says so rather than silently ignoring an
-//! IPv6 target.
+//! IPv4 supports every technique here. IPv6 (N09) supports the unprivileged
+//! paths — `v6_connect_scan` and `v6_discover` (ICMPv6 echo) — and refuses the
+//! raw ones by name: a raw TCP SYN over IPv6 needs `IPV6_HDRINCL`, which this
+//! build does not set, so `syn_scan` on a literal says so and points at
+//! `v6_connect_scan` instead of returning an empty scan.
 
 use super::StdlibResult;
 use crate::interp::Value;
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{
+    IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpStream, ToSocketAddrs,
+};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -209,6 +215,33 @@ struct Governor {
     buckets: HashMap<String, Bucket>,
 }
 
+/// The two governor keys for an IPv4 target: the host itself, and its /24.
+fn v4_keys(target: Ipv4Addr) -> [String; 2] {
+    let o = target.octets();
+    [
+        format!("host:{target}"),
+        format!("prefix:{}.{}.{}", o[0], o[1], o[2]),
+    ]
+}
+
+/// The two governor keys for an IPv6 target: the host itself, and its /64.
+///
+/// A /64, not a /24: IPv6 has no /24 worth speaking of (a single subnet is a
+/// /64, and one host is routinely delegated 2^64 addresses), so keying on a
+/// prefix that narrow would give every host its own prefix bucket and let a
+/// whole /64 be swept at full rate. The /64 is the smallest unit that is
+/// actually an operator's allotment.
+fn v6_keys(target: Ipv6Addr) -> [String; 2] {
+    let s = target.segments();
+    [
+        format!("host:{target}"),
+        format!(
+            "prefix:{}/64",
+            Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0)
+        ),
+    ]
+}
+
 impl Governor {
     fn new(rps: f64) -> Self {
         Self {
@@ -219,13 +252,21 @@ impl Governor {
 
     /// Block until one token is available for both `target` and its /24.
     fn acquire(&mut self, target: Ipv4Addr) {
+        self.acquire_keys(v4_keys(target));
+    }
+
+    /// Block until one token is available for both `target` and its /64.
+    fn acquire_v6(&mut self, target: Ipv6Addr) {
+        self.acquire_keys(v6_keys(target));
+    }
+
+    /// Block until one token is available on every key.
+    fn acquire_keys(&mut self, keys: [String; 2]) {
         loop {
             let now = Instant::now();
-            let per_target = format!("host:{target}");
-            let prefix = format!("prefix:{}.{}.{}", target.octets()[0], target.octets()[1], target.octets()[2]);
             let mut ok = true;
-            for key in [per_target.clone(), prefix.clone()] {
-                let bucket = self.buckets.entry(key).or_insert_with(|| Bucket {
+            for key in &keys {
+                let bucket = self.buckets.entry(key.clone()).or_insert_with(|| Bucket {
                     tokens: self.rps,
                     last: now,
                 });
@@ -237,8 +278,8 @@ impl Governor {
                 }
             }
             if ok {
-                for key in [per_target, prefix] {
-                    if let Some(b) = self.buckets.get_mut(&key) {
+                for key in &keys {
+                    if let Some(b) = self.buckets.get_mut(key) {
                         b.tokens -= 1.0;
                     }
                 }
@@ -261,6 +302,12 @@ fn governor_acquire(target: Ipv4Addr, rps: f64) {
     let mut guard = GOVERNOR.lock().unwrap();
     let gov = guard.get_or_insert_with(|| Governor::new(rps));
     gov.acquire(target);
+}
+
+fn governor_acquire_v6(target: Ipv6Addr, rps: f64) {
+    let mut guard = GOVERNOR.lock().unwrap();
+    let gov = guard.get_or_insert_with(|| Governor::new(rps));
+    gov.acquire_v6(target);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -334,7 +381,7 @@ fn resolve_v4(target: &str) -> Result<Ipv4Addr, String> {
         }
     }
     Err(format!(
-        "topology: '{target}' has no IPv4 address; this build scans IPv4 only"
+        "topology: '{target}' has no IPv4 address; this build scans IPv4 only (IPv6 has its own unprivileged paths: topology.v6_connect_scan and topology.v6_discover)"
     ))
 }
 
@@ -348,6 +395,125 @@ fn connect_probe(target: Ipv4Addr, port: u16, timeout: Duration) -> PortState {
     }
 }
 
+// ── IPv6 targets (N09) ────────────────────────────────────────────
+
+/// A resolved IPv6 destination, with the link-local scope id kept separate.
+///
+/// `SocketAddrV6` needs a numeric scope id, so `fe80::1%eth0` has to have its
+/// zone resolved to an interface index before a socket can be addressed. The
+/// literal is kept for reporting: two targets that differ only by zone are
+/// different destinations, and the result must not collapse them.
+struct V6Target {
+    addr: Ipv6Addr,
+    scope_id: u32,
+    display: String,
+}
+
+/// Parse `::1`, `2001:db8::1`, `[::1]`, or `fe80::1%eth0`.
+///
+/// Brackets are accepted because that is how a literal appears in a URL and in
+/// a `SocketAddr` rendering; the zone is returned separately rather than
+/// dropped, because dropping it would silently retarget a link-local probe.
+fn parse_v6_literal(target: &str) -> Option<(Ipv6Addr, Option<String>)> {
+    let t = target.trim();
+    let t = match t.strip_prefix('[') {
+        Some(rest) => rest.strip_suffix(']').unwrap_or(rest),
+        None => t,
+    };
+    let (addr, zone) = match t.split_once('%') {
+        Some((a, z)) => (a, Some(z.to_string())),
+        None => (t, None),
+    };
+    addr.parse::<Ipv6Addr>().ok().map(|a| (a, zone))
+}
+
+/// Resolve a zone name (`eth0`) or numeric scope id to an interface index.
+fn scope_id_for(zone: &str) -> Result<u32, String> {
+    if let Ok(n) = zone.parse::<u32>() {
+        return Ok(n);
+    }
+    let name = std::ffi::CString::new(zone.to_string())
+        .map_err(|_| format!("topology: invalid IPv6 scope id '{zone}'"))?;
+    let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+    if index == 0 {
+        return Err(format!(
+            "topology: IPv6 scope id '{zone}' names no interface on this host"
+        ));
+    }
+    Ok(index)
+}
+
+fn resolve_v6(target: &str) -> Result<V6Target, String> {
+    if let Some((addr, zone)) = parse_v6_literal(target) {
+        let scope_id = match zone.as_deref() {
+            Some(z) => scope_id_for(z)?,
+            None => 0,
+        };
+        let display = match &zone {
+            Some(z) => format!("{addr}%{z}"),
+            None => addr.to_string(),
+        };
+        return Ok(V6Target {
+            addr,
+            scope_id,
+            display,
+        });
+    }
+    // A name: keep its first AAAA record, and carry the kernel's scope id so a
+    // link-local name resolves to the interface that owns it.
+    let addrs = (target, 0u16)
+        .to_socket_addrs()
+        .map_err(|e| format!("topology: cannot resolve '{target}': {e}"))?;
+    for addr in addrs {
+        if let SocketAddr::V6(v6) = addr {
+            return Ok(V6Target {
+                addr: *v6.ip(),
+                scope_id: v6.scope_id(),
+                display: v6.ip().to_string(),
+            });
+        }
+    }
+    Err(format!("topology: '{target}' has no IPv6 address"))
+}
+
+fn connect_probe_v6(target: &V6Target, port: u16, timeout: Duration) -> PortState {
+    let sock = SocketAddr::V6(SocketAddrV6::new(target.addr, port, 0, target.scope_id));
+    match TcpStream::connect_timeout(&sock, timeout) {
+        Ok(_) => PortState::Open,
+        Err(e) => match e.kind() {
+            std::io::ErrorKind::ConnectionRefused => PortState::Closed,
+            _ => PortState::Filtered,
+        },
+    }
+}
+
+/// The refusal a raw-socket technique owes an IPv6 caller.
+///
+/// A raw TCP segment over IPv6 needs `IPV6_HDRINCL` (and CAP_NET_RAW), which
+/// this build does not set: there is no IPv6 equivalent of the IPv4
+/// `IP_HDRINCL` path below. Returning an empty scan would claim "nothing is
+/// open", which is a measurement that was never taken, so the request is
+/// refused and the working alternative is named.
+fn v6_raw_refusal(technique: Technique, target: &str) -> String {
+    format!(
+        "topology.{}: '{target}' is an IPv6 target and a raw {} probe over IPv6 needs IPV6_HDRINCL, which this build does not set; use topology.v6_connect_scan(target, ports, timeout_ms, rps) — the unprivileged connect path works over IPv6",
+        match technique {
+            Technique::Syn => "syn_scan".to_string(),
+            Technique::Evasion(f) => format!("{}_scan", f.as_str()),
+            Technique::Connect => "connect_scan".to_string(),
+        },
+        match technique {
+            Technique::Syn => "TCP SYN",
+            Technique::Evasion(f) => match f {
+                EvasionFlags::Fin => "FIN",
+                EvasionFlags::Null => "NULL",
+                EvasionFlags::Xmas => "Xmas",
+            },
+            Technique::Connect => "connect",
+        }
+    )
+}
+
 // ── Raw SYN probe (Linux) ─────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
@@ -355,7 +521,7 @@ mod raw {
     use super::PortState;
     use std::io;
     use std::mem;
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::os::unix::io::RawFd;
     use std::time::{Duration, Instant};
 
@@ -386,6 +552,142 @@ mod raw {
             sum = (sum & 0xffff) + (sum >> 16);
         }
         !(sum as u16)
+    }
+
+    /// One ICMPv6 echo request (type 128), returning the round-trip time when
+    /// the matching echo reply (type 129) comes back (N09).
+    ///
+    /// The checksum is computed over the IPv6 pseudo-header (RFC 8200 §8.1)
+    /// from the source address the route selects, because a raw ICMPv6 packet
+    /// with a zero or wrong checksum is dropped by the peer silently — which is
+    /// indistinguishable from a filtered host. The kernel also computes it for
+    /// ICMPv6 sockets; writing the same value is harmless, and writing it means
+    /// the probe is correct on a stack that expects the sender to.
+    ///
+    /// The reply is matched on our id, sequence and payload marker, so a
+    /// concurrent ping from another process is not credited to this one.
+    pub fn icmpv6_echo(
+        dst: Ipv6Addr,
+        scope_id: u32,
+        timeout: Duration,
+    ) -> io::Result<Option<u128>> {
+        unsafe {
+            let fd = libc::socket(libc::AF_INET6, libc::SOCK_RAW, libc::IPPROTO_ICMPV6);
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let tv = libc::timeval {
+                tv_sec: timeout.as_secs() as libc::time_t,
+                tv_usec: timeout.subsec_micros() as libc::suseconds_t,
+            };
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                &tv as *const _ as *const libc::c_void,
+                mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
+
+            // The source address for the pseudo-header: a connected UDP socket
+            // makes the routing decision without putting a packet on the wire.
+            let src = match udp_source_v6(dst, scope_id) {
+                Ok(a) => a,
+                Err(e) => {
+                    libc::close(fd);
+                    return Err(e);
+                }
+            };
+
+            let id = (std::process::id() & 0xffff) as u16;
+            let seq: u16 = 1;
+            let payload = b"tallow-n09";
+            let mut packet = vec![0u8; 8 + payload.len()];
+            packet[0] = 128; // ICMPv6 echo request
+            packet[1] = 0;
+            packet[4..6].copy_from_slice(&id.to_be_bytes());
+            packet[6..8].copy_from_slice(&seq.to_be_bytes());
+            packet[8..].copy_from_slice(payload);
+
+            let mut pseudo = Vec::with_capacity(40 + packet.len());
+            pseudo.extend_from_slice(&src.octets());
+            pseudo.extend_from_slice(&dst.octets());
+            pseudo.extend_from_slice(&(packet.len() as u32).to_be_bytes());
+            pseudo.extend_from_slice(&[0, 0, 0, libc::IPPROTO_ICMPV6 as u8]);
+            pseudo.extend_from_slice(&packet);
+            let ck = checksum(&pseudo);
+            packet[2..4].copy_from_slice(&ck.to_be_bytes());
+
+            let sa = libc::sockaddr_in6 {
+                sin6_family: libc::AF_INET6 as libc::sa_family_t,
+                sin6_port: 0,
+                sin6_flowinfo: 0,
+                sin6_addr: libc::in6_addr {
+                    s6_addr: dst.octets(),
+                },
+                sin6_scope_id: scope_id,
+            };
+            let started = Instant::now();
+            let sent = libc::sendto(
+                fd,
+                packet.as_ptr() as *const libc::c_void,
+                packet.len(),
+                0,
+                &sa as *const _ as *const libc::sockaddr,
+                mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            );
+            if sent < 0 {
+                let err = io::Error::last_os_error();
+                libc::close(fd);
+                return Err(err);
+            }
+
+            // Linux hands a raw ICMPv6 socket the ICMPv6 message without the
+            // IPv6 header, so the buffer starts at the type byte.
+            let deadline = Instant::now() + timeout;
+            let mut buf = [0u8; 2048];
+            while Instant::now() < deadline {
+                let n = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
+                if n < 0 {
+                    let err = io::Error::last_os_error();
+                    if err.kind() == io::ErrorKind::WouldBlock
+                        || err.kind() == io::ErrorKind::TimedOut
+                    {
+                        break;
+                    }
+                    libc::close(fd);
+                    return Err(err);
+                }
+                let n = n as usize;
+                if n < 8 + payload.len() {
+                    continue;
+                }
+                if buf[0] == 129
+                    && u16::from_be_bytes([buf[4], buf[5]]) == id
+                    && u16::from_be_bytes([buf[6], buf[7]]) == seq
+                    && &buf[8..8 + payload.len()] == payload
+                {
+                    let rtt = started.elapsed().as_millis();
+                    libc::close(fd);
+                    return Ok(Some(rtt));
+                }
+                // Some other ICMPv6 message (a neighbour solicitation, another
+                // process's ping): not ours, keep listening until the deadline.
+            }
+            libc::close(fd);
+            Ok(None)
+        }
+    }
+
+    /// The IPv6 source address a datagram to `dst` would leave from.
+    fn udp_source_v6(dst: Ipv6Addr, scope_id: u32) -> io::Result<Ipv6Addr> {
+        let sock = std::net::UdpSocket::bind("[::]:0")?;
+        sock.connect(std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
+            dst, 53, 0, scope_id,
+        )))?;
+        match sock.local_addr()?.ip() {
+            IpAddr::V6(v6) => Ok(v6),
+            _ => Err(io::Error::new(io::ErrorKind::Other, "no IPv6 source")),
+        }
     }
 
     impl RawSyn {
@@ -687,6 +989,17 @@ mod raw {
 
     pub struct RawSyn;
 
+    pub fn icmpv6_echo(
+        _dst: std::net::Ipv6Addr,
+        _scope_id: u32,
+        _timeout: std::time::Duration,
+    ) -> io::Result<Option<u128>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "IPv6 host discovery over ICMPv6 needs raw sockets, which this build does not implement on this platform (Linux only)",
+        ))
+    }
+
     impl RawSyn {
         pub fn icmp_echo(
             _dst: std::net::Ipv4Addr,
@@ -760,6 +1073,16 @@ fn discover_fn(args: Vec<Value>) -> StdlibResult {
     // The register is consulted on the literal target before the resolver
     // runs: a DNS query is a packet, and an unauthorized name must not be
     // looked up at all.
+    require_authorized(&target)?;
+
+    // An IPv6 literal has its own discovery path; pointing at it is more use
+    // than the generic "no IPv4 address" refusal.
+    if parse_v6_literal(&target).is_some() {
+        return Err(format!(
+            "topology.discover: '{target}' is an IPv6 target; the ICMPv4/TCP-SYN union here is IPv4-only — use topology.v6_discover(target, timeout_ms), which sends an ICMPv6 echo request"
+        ));
+    }
+
     require_authorized(&target)?;
     let dst = resolve_v4(&target)?;
     let timeout = Duration::from_millis(timeout_ms);
@@ -884,6 +1207,181 @@ fn discover_fn(args: Vec<Value>) -> StdlibResult {
             ("target".to_string(), Value::String(dst.to_string())),
             ("alive".to_string(), Value::Bool(alive)),
             ("confidence".to_string(), Value::Float(confidence)),
+            ("methods".to_string(), Value::Array(method_values)),
+            (
+                "unsupported".to_string(),
+                Value::Array(
+                    unsupported
+                        .iter()
+                        .map(|m| Value::String(m.clone()))
+                        .collect(),
+                ),
+            ),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
+// IPv6 scanning (N09)
+// ══════════════════════════════════════════════════════════════════
+
+/// Unprivileged IPv6 connect scan.
+///
+/// `connect()` needs no raw socket, so it is the one port-scan technique that
+/// works over IPv6 on an unprivileged process. The verdicts are the same three
+/// a v4 connect scan produces, from the same evidence: the kernel's connect
+/// either completed, was refused, or did not.
+fn v6_connect_scan_fn(args: Vec<Value>) -> StdlibResult {
+    let target = arg_str(&args, 0, "target")?;
+    let ports = parse_ports(&arg_str(&args, 1, "ports")?)?;
+    let timeout_ms = arg_u64(&args, 2, 1000);
+    let rps = arg_u64(&args, 3, 20).max(1) as f64;
+
+    // The gate comes before resolution as well as before the first probe: a
+    // name target would otherwise put a DNS query on the wire first.
+    require_authorized(&target)?;
+    let dst = resolve_v6(&target)?;
+
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = Instant::now();
+    let mut open = Vec::new();
+    let mut closed = Vec::new();
+    let mut filtered = Vec::new();
+    let mut sent = 0usize;
+
+    for port in &ports {
+        governor_acquire_v6(dst.addr, rps);
+        sent += 1;
+        match connect_probe_v6(&dst, *port, timeout) {
+            PortState::Open => open.push(*port),
+            PortState::Closed => closed.push(*port),
+            // A connect probe cannot be undecided; anything other than a
+            // completed or refused connect is a filtered path.
+            PortState::Filtered | PortState::OpenOrFiltered => filtered.push(*port),
+        }
+    }
+
+    open.sort_unstable();
+    closed.sort_unstable();
+    filtered.sort_unstable();
+
+    Ok(Value::Struct {
+        name: "ScanResult".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(dst.display)),
+            (
+                "technique".to_string(),
+                Value::String(Technique::Connect.as_str().to_string()),
+            ),
+            (
+                "open".to_string(),
+                Value::Array(open.iter().map(|p| Value::Int(*p as i128)).collect()),
+            ),
+            (
+                "closed".to_string(),
+                Value::Array(closed.iter().map(|p| Value::Int(*p as i128)).collect()),
+            ),
+            (
+                "filtered".to_string(),
+                Value::Array(filtered.iter().map(|p| Value::Int(*p as i128)).collect()),
+            ),
+            ("open_or_filtered".to_string(), Value::Array(Vec::new())),
+            // A connect scan cannot be undecided, so it carries no caveat; the
+            // evidence field is what distinguishes it from a SYN verdict.
+            ("caveat".to_string(), Value::String(String::new())),
+            // The link-local scope id actually used (0 when the target needed
+            // none): evidence that the zone was resolved rather than dropped.
+            ("scope_id".to_string(), Value::Int(dst.scope_id as i128)),
+            ("sent".to_string(), Value::Int(sent as i128)),
+            (
+                "duration_ms".to_string(),
+                Value::Int(started.elapsed().as_millis() as i128),
+            ),
+        ],
+    })
+}
+
+/// IPv6 host discovery over ICMPv6 echo (type 128 / reply 129).
+///
+/// Confidence is reported the way v4 discovery reports it: a reply proves
+/// presence (0.9), silence proves little (0.2) because a host or a path that
+/// drops ICMPv6 is indistinguishable from an absent one. NDP is stronger on
+/// link but only sees an on-link host, so it is not claimed here.
+fn v6_discover_fn(args: Vec<Value>) -> StdlibResult {
+    let target = arg_str(&args, 0, "target")?;
+    let timeout_ms = arg_u64(&args, 1, 500);
+
+    require_authorized(&target)?;
+    let dst = resolve_v6(&target)?;
+
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = Instant::now();
+    let mut results: Vec<MethodResult> = Vec::new();
+    let mut unsupported: Vec<String> = Vec::new();
+
+    governor_acquire_v6(dst.addr, 20.0);
+    match raw::icmpv6_echo(dst.addr, dst.scope_id, timeout) {
+        Ok(rtt) => results.push(MethodResult {
+            name: "icmpv6_echo",
+            alive: rtt.is_some(),
+            rtt_ms: rtt,
+            confidence: if rtt.is_some() { 0.9 } else { 0.2 },
+        }),
+        // A raw socket may be denied (CAP_NET_RAW): say so rather than
+        // reporting the host down on the strength of a probe never sent.
+        Err(e) => unsupported.push(format!("icmpv6_echo: {e}")),
+    }
+
+    let alive = results.iter().any(|r| r.alive);
+    let rtt_ms = results.iter().find_map(|r| r.rtt_ms);
+    let confidence = if alive {
+        results
+            .iter()
+            .filter(|r| r.alive)
+            .map(|r| r.confidence)
+            .fold(0.0_f64, f64::max)
+    } else if results.is_empty() {
+        0.0
+    } else {
+        0.6
+    };
+
+    let method_values: Vec<Value> = results
+        .iter()
+        .map(|r| Value::Struct {
+            name: "DiscoveryMethod".to_string(),
+            fields: vec![
+                ("name".to_string(), Value::String(r.name.to_string())),
+                ("alive".to_string(), Value::Bool(r.alive)),
+                (
+                    "rtt_ms".to_string(),
+                    match r.rtt_ms {
+                        Some(ms) => Value::Int(ms as i128),
+                        None => Value::Nil,
+                    },
+                ),
+                ("confidence".to_string(), Value::Float(r.confidence)),
+            ],
+        })
+        .collect();
+
+    Ok(Value::Struct {
+        name: "DiscoveryResult".to_string(),
+        fields: vec![
+            ("target".to_string(), Value::String(dst.display)),
+            ("alive".to_string(), Value::Bool(alive)),
+            ("confidence".to_string(), Value::Float(confidence)),
+            (
+                "rtt_ms".to_string(),
+                match rtt_ms {
+                    Some(ms) => Value::Int(ms as i128),
+                    None => Value::Nil,
+                },
+            ),
             ("methods".to_string(), Value::Array(method_values)),
             (
                 "unsupported".to_string(),
@@ -2151,7 +2649,9 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "fin_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Fin))),
         "null_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Null))),
         "xmas_scan" => Some(scan(args, Technique::Evasion(EvasionFlags::Xmas))),
+        "v6_connect_scan" => Some(v6_connect_scan_fn(args)),
         "discover" => Some(discover_fn(args)),
+        "v6_discover" => Some(v6_discover_fn(args)),
         "tls_posture" => Some(tls_posture_fn(args)),
         "banner" => Some(banner_fn(args)),
         "ja4" => Some(ja4_fn(args)),
@@ -2184,17 +2684,38 @@ fn plan_fn(args: Vec<Value>) -> StdlibResult {
     let rps = arg_u64(&args, 3, 20).max(1) as f64;
     let timeout_ms = arg_u64(&args, 4, 1000);
 
-    // The register is consulted on the literal target before the resolver
-    // runs: a DNS query is a packet, and an unauthorized name must not be
-    // looked up at all.
-    require_authorized(&target)?;
-    let host = resolve_v4(&target)?;
+    let host = match parse_v6_literal(&target) {
+        Some((addr, zone)) => {
+            // Authorize the literal target first, as at every other entry
+            // point: a plan is not a packet, but an unlisted target is refused
+            // the same way here as it would be at the scan site.
+            require_authorized(&target)?;
+            // A plan for a raw IPv6 technique would promise packets this build
+            // cannot send; refusing names the alternative once, here, rather
+            // than at the scan site.
+            if technique != Technique::Connect {
+                return Err(v6_raw_refusal(technique, &target));
+            }
+            match zone {
+                Some(z) => format!("{addr}%{z}"),
+                None => addr.to_string(),
+            }
+        }
+        None => {
+            // The register is consulted on the literal target before the
+            // resolver runs: a DNS query is a packet, and an unauthorized name
+            // must not be looked up at all.
+            require_authorized(&target)?;
+            let host = resolve_v4(&target)?;
+            host.to_string()
+        }
+    };
     let plan = make_plan(1, ports.len(), technique, rps, timeout_ms);
 
     Ok(Value::Struct {
         name: "ScanPlan".to_string(),
         fields: vec![
-            ("target".to_string(), Value::String(host.to_string())),
+            ("target".to_string(), Value::String(host)),
             ("technique".to_string(), Value::String(plan.technique.as_str().to_string())),
             (
                 "ports".to_string(),
@@ -2522,6 +3043,15 @@ fn reconcile_fn(args: Vec<Value>) -> StdlibResult {
 
 fn scan(args: Vec<Value>, technique: Technique) -> StdlibResult {
     let target = arg_str(&args, 0, "target")?;
+    // An IPv6 target: connect has a working unprivileged path, and every raw
+    // technique is refused by name — an empty ScanResult would read as "nothing
+    // is open", which is a claim no packet here supports.
+    if parse_v6_literal(&target).is_some() {
+        return match technique {
+            Technique::Connect => v6_connect_scan_fn(args),
+            other => Err(v6_raw_refusal(other, &target)),
+        };
+    }
     let ports = parse_ports(&arg_str(&args, 1, "ports")?)?;
     let timeout_ms = arg_u64(&args, 2, 1000);
     let rps = arg_u64(&args, 3, 20).max(1) as f64;
@@ -2766,5 +3296,59 @@ mod tests {
         ]);
         assert!(!merged[0].disagreement);
         assert!((merged[0].confidence - 0.95).abs() < 1e-9);
+    }
+
+    // ── N09: IPv6 ────────────────────────────────────────────────
+
+    #[test]
+    fn ipv6_literals_parse_with_and_without_a_zone() {
+        assert_eq!(parse_v6_literal("::1").unwrap().0, Ipv6Addr::LOCALHOST);
+        assert_eq!(parse_v6_literal("[::1]").unwrap().0, Ipv6Addr::LOCALHOST);
+        let (addr, zone) = parse_v6_literal("fe80::1%eth0").unwrap();
+        assert_eq!(addr, "fe80::1".parse::<Ipv6Addr>().unwrap());
+        assert_eq!(zone.as_deref(), Some("eth0"));
+        let (addr, zone) = parse_v6_literal("2001:db8::1").unwrap();
+        assert_eq!(addr, "2001:db8::1".parse::<Ipv6Addr>().unwrap());
+        assert_eq!(zone, None);
+        // Not literals: an IPv4 address and a name must not be mistaken for one.
+        assert!(parse_v6_literal("203.0.113.7").is_none());
+        assert!(parse_v6_literal("example.com").is_none());
+    }
+
+    #[test]
+    fn v4_governor_keys_are_unchanged_by_the_ipv6_work() {
+        assert_eq!(
+            v4_keys(Ipv4Addr::new(10, 0, 0, 1)),
+            ["host:10.0.0.1".to_string(), "prefix:10.0.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_governor_keys_ipv6_on_the_64() {
+        let mut g = Governor::new(20.0);
+        let a: Ipv6Addr = "2001:db8:1:2::1".parse().unwrap();
+        let b: Ipv6Addr = "2001:db8:1:2::2".parse().unwrap();
+        let other: Ipv6Addr = "2001:db8:1:3::1".parse().unwrap();
+        g.acquire_v6(a);
+        g.acquire_v6(b);
+        g.acquire_v6(other);
+        assert!(g.buckets.contains_key("host:2001:db8:1:2::1"));
+        // Two hosts in one /64 share a single prefix bucket: the ceiling is the
+        // subnet, which is what stops a sweep of that subnet outrunning it.
+        assert!(g.buckets.contains_key("prefix:2001:db8:1:2::/64"));
+        // A different /64 is a different bucket.
+        assert!(g.buckets.contains_key("prefix:2001:db8:1:3::/64"));
+        // No /24-style key was invented for IPv6.
+        assert!(!g.buckets.keys().any(|k| k == "prefix:2001:db8:1"));
+    }
+
+    #[test]
+    fn a_raw_ipv6_technique_is_refused_by_name_not_left_empty() {
+        let msg = v6_raw_refusal(Technique::Syn, "::1");
+        assert!(msg.contains("syn_scan"), "{msg}");
+        assert!(msg.contains("IPV6_HDRINCL"), "{msg}");
+        assert!(msg.contains("v6_connect_scan"), "{msg}");
+        let fin = v6_raw_refusal(Technique::Evasion(EvasionFlags::Fin), "::1");
+        assert!(fin.contains("fin_scan") && fin.contains("v6_connect_scan"), "{fin}");
     }
 }
