@@ -102,8 +102,8 @@ fn default_methods() -> Vec<String> {
 
 impl ScopeEntry {
     fn matches_host(&self, host: &str) -> bool {
-        let entry = self.host.trim().to_ascii_lowercase();
-        let host = host.trim().to_ascii_lowercase();
+        let entry = normalize_key(&self.host);
+        let host = normalize_key(host);
         if let Some(suffix) = entry.strip_prefix("*.") {
             // Explicit, opt-in subdomain grant. The apex itself is NOT covered:
             // `*.example.com` does not authorise `example.com`, because they are
@@ -308,6 +308,91 @@ fn host_key(authority: &str) -> &str {
     authority.split(':').next().unwrap_or("")
 }
 
+/// The one spelling both a register entry and a target are reduced to.
+///
+/// A grant that is written one way and matched another can never fire: a
+/// bracketed IPv6 entry (`[::1]`) never equals a bare target (`::1`), and an
+/// FQDN written with its root dot (`example.com.`) never equals the same name
+/// without it. Both sides go through this, so those are the same key.
+fn normalize_key(s: &str) -> String {
+    let mut k = host_key(s.trim()).trim().to_ascii_lowercase();
+    while k.ends_with('.') {
+        k.pop();
+    }
+    k
+}
+
+/// `YYYY-MM-DD`, checked field by field.
+///
+/// Expiry is compared as text, so a value that is not a date silently never
+/// lapses: `"soon"` sorts after every real date, and a grant carrying it would
+/// be permanent. An unparseable date is a malformed register, not a grant.
+fn is_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return false;
+    }
+    if !(b[..4].iter().all(u8::is_ascii_digit)
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && b[8..].iter().all(u8::is_ascii_digit))
+    {
+        return false;
+    }
+    let month: u32 = s[5..7].parse().unwrap_or(0);
+    let day: u32 = s[8..10].parse().unwrap_or(0);
+    (1..=12).contains(&month) && (1..=31).contains(&day)
+}
+
+/// The host part of an authority, with a port suffix either validated or
+/// refused.
+///
+/// Dropping an unparseable suffix is worse than refusing it: `host:99999`
+/// would be answered as `host`, so the allow would be reported against a target
+/// nobody spelled.
+fn authority_host<'a>(authority: &'a str, input: &str) -> Result<&'a str, Refusal> {
+    let bad = || Refusal::HostMalformed {
+        input: input.to_string(),
+    };
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (inner, tail) = rest.split_once(']').ok_or_else(bad)?;
+        check_port_suffix(tail, input)?;
+        return Ok(inner);
+    }
+    // A bare IPv6 literal (optionally with a zone) contains colons but no port.
+    if authority.parse::<std::net::Ipv6Addr>().is_ok() {
+        return Ok(authority);
+    }
+    if let Some((addr, zone)) = authority.split_once('%') {
+        if !zone.is_empty() && addr.parse::<std::net::Ipv6Addr>().is_ok() {
+            return Ok(authority);
+        }
+    }
+    match authority.rsplit_once(':') {
+        Some((h, port)) => {
+            check_port_suffix(&format!(":{port}"), input)?;
+            Ok(h)
+        }
+        None => Ok(authority),
+    }
+}
+
+fn check_port_suffix(tail: &str, input: &str) -> Result<(), Refusal> {
+    let bad = || Refusal::HostMalformed {
+        input: input.to_string(),
+    };
+    if tail.is_empty() {
+        return Ok(());
+    }
+    let port = tail.strip_prefix(':').ok_or_else(bad)?;
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    match port.parse::<u32>() {
+        Ok(n) if (1..=65535).contains(&n) => Ok(()),
+        _ => Err(bad()),
+    }
+}
+
 /// Extract `(host, path)` from a bare host or a URL.
 ///
 /// Hand-rolled rather than pulling a URL parser in: this module must be usable
@@ -341,8 +426,9 @@ fn split_host_path(input: &str) -> Result<(String, String), Refusal> {
         ),
         None => (authority_and_rest, String::new()),
     };
-    // Drop port and any query/fragment left attached to the authority.
-    let host = host_key(authority).trim().to_ascii_lowercase();
+    // Drop the port — validating it rather than discarding it — and take the
+    // rest as the host key.
+    let host = authority_host(authority, input)?.trim().to_ascii_lowercase();
     if host.is_empty() || host.contains(char::is_whitespace) {
         return Err(Refusal::HostMalformed {
             input: input.to_string(),
@@ -409,7 +495,43 @@ impl ScopeRegister {
         };
         let mut entries = BTreeMap::new();
         for e in parsed.authorized {
-            let key = e.host.trim().to_ascii_lowercase();
+            let key = normalize_key(&e.host);
+            // A defective entry invalidates the register rather than being
+            // skipped: authorising the sound siblings of a file the operator
+            // got wrong grants a subset nobody chose, and `scope verify` would
+            // call the same file defective. Both must agree, and the safe
+            // reading of "this file is wrong" is "authorise nothing".
+            if e.basis.requires_evidence()
+                && e.evidence.as_deref().unwrap_or("").trim().is_empty()
+            {
+                return Self {
+                    path,
+                    entries: BTreeMap::new(),
+                    load_failure: Some(Refusal::RegisterMalformed {
+                        path: display,
+                        detail: format!(
+                            "entry for '{}' claims basis '{}' but carries no evidence pointer",
+                            e.host, e.basis.as_str()
+                        ),
+                    }),
+                };
+            }
+            if let Some(expires) = e.expires_at.as_deref() {
+                if !is_iso_date(expires.trim()) {
+                    return Self {
+                        path,
+                        entries: BTreeMap::new(),
+                        load_failure: Some(Refusal::RegisterMalformed {
+                            path: display,
+                            detail: format!(
+                                "entry for '{}' has an unparseable expires_at '{expires}' \
+                                 (expected YYYY-MM-DD); a grant that cannot be dated cannot lapse",
+                                e.host
+                            ),
+                        }),
+                    };
+                }
+            }
             if key.is_empty() {
                 return Self {
                     path,

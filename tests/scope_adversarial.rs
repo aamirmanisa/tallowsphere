@@ -182,15 +182,26 @@ fn unparseable_expiry_does_not_load_the_register() {
 
 /// An evidence-less written-consent entry must not authorise its host, and the
 /// register it sits in is a defective artifact.
-/// MEASURED: the host is refused `scope:evidence-missing` (the security half
-/// holds), but the file still loads and its honoured neighbours are authorised
-/// around it — `check` and `verify` disagree on whether the register is usable.
-/// The second assertion is the defect and fails on purpose.
+/// MEASURED before the fix: the host was refused `scope:evidence-missing` (the
+/// security half held) but the file still loaded and its honoured neighbours
+/// were authorised around it, so `check` and `verify` disagreed about the same
+/// file. After the fix the defective entry invalidates the register: both the
+/// assertion and its sound neighbour are refused `scope:register-malformed`,
+/// and the message names the entry and the missing pointer.
 #[test]
 fn written_consent_without_evidence_does_not_load_the_register() {
     let reg = register("written_consent_no_evidence.toml");
     let asserted = check(&reg, "https://asserted.example/");
-    assert_refused(&asserted, "scope:evidence-missing", "evidence-less consent");
+    assert_refused(
+        &asserted,
+        "scope:register-malformed",
+        "evidence-less consent (register refused whole)",
+    );
+    assert!(
+        asserted.stderr.contains("carries no evidence pointer"),
+        "the refusal must name the missing pointer, not just say malformed:\n{}",
+        asserted.dump()
+    );
     let sibling = check(&reg, "https://neighbour.example/");
     assert_refused(
         &sibling,
