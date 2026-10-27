@@ -158,7 +158,12 @@ pub fn channel_bytes_to_value(bytes: &[u8]) -> Result<crate::interp::Value, Stri
 }
 
 /// Convert interpreter Value → serde_json::Value.
-fn value_to_json(val: &crate::interp::Value) -> Result<serde_json::Value, String> {
+///
+/// Shared with the generic stdlib bridge (`src/runtime/stdlib_bridge_ffi.rs`),
+/// which marshals bridged arguments and results with these exact rules so a
+/// value that goes out and comes back keeps its shape. `Struct` carries its
+/// type name under `__type`, which is what makes the round trip type-preserving.
+pub(crate) fn value_to_json(val: &crate::interp::Value) -> Result<serde_json::Value, String> {
     use crate::interp::Value;
 
     match val {
@@ -207,7 +212,7 @@ impl HashCode for std::mem::Discriminant<crate::interp::Value> {
 }
 
 /// Convert serde_json::Value → interpreter Value.
-fn json_to_value(json: &serde_json::Value) -> Result<crate::interp::Value, String> {
+pub(crate) fn json_to_value(json: &serde_json::Value) -> Result<crate::interp::Value, String> {
     use crate::interp::Value;
 
     match json {

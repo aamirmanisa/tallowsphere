@@ -102,6 +102,24 @@ impl LLType {
 
 // ── Function Signature ──────────────────────────────────────────────────────
 
+/// Whether the generic stdlib bridge may lower a module with no hand-written
+/// emitter (`emit_stdlib_module_call` returning `None`).
+///
+/// On by default. `TALLOW_GENERIC_STDLIB_BRIDGE=0` (or `false` / `off`)
+/// restores the pre-bridge behaviour — a build-time refusal naming the method —
+/// so a bisect can point at this arm instead of a whole release. This is read
+/// per call site, not cached, so one `tallow build` honours the env it was
+/// started with (a field would freeze it at codegen construction).
+fn generic_stdlib_bridge_enabled() -> bool {
+    match std::env::var("TALLOW_GENERIC_STDLIB_BRIDGE") {
+        Ok(value) => !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => true,
+    }
+}
+
 /// Compile-time value of a constant expression during collection
 /// (`const X = 1 + 2 * 3`, `const FLAG = 1 < 2`, etc.).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1841,6 +1859,14 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_last_error()\n");
         ir.push_str("declare void @tallow_check_string(ptr)\n");
         ir.push_str("declare void @tallow_free_string(ptr)\n");
+        // Generic stdlib bridge (src/runtime/stdlib_bridge_ffi.rs). One entry
+        // point for modules with no hand-written emitter; see
+        // `emit_stdlib_bridge_call` in this file for the call-site contract.
+        ir.push_str("declare ptr @tallow_stdlib_call(ptr, ptr, i64, ptr)\n");
+        ir.push_str("declare void @tallow_stdlib_bridge_abort()\n");
+        ir.push_str("declare ptr @tallow_json_i64(i64)\n");
+        ir.push_str("declare ptr @tallow_json_f64(double)\n");
+        ir.push_str("declare ptr @tallow_json_bool(i32)\n");
         ir.push('\n');
 
         // Crypto + Transfer FFI declarations
@@ -9178,7 +9204,28 @@ void tallow_async_runtime_shutdown(void) {
                          failing loudly so the interpreter runs it"
                     ));
                 }
-                _ => {}
+                // ── Generic stdlib bridge (last resort) ─────────────────────
+                //
+                // Every arm above is a hand-written lowering and keeps its code
+                // path: this arm is reached only for an ident that is not one of
+                // those modules at all. A module the interpreter's router knows
+                // (`stdlib::is_registered_module`) is then called through
+                // `tallow_stdlib_call`, which runs the interpreter's *own*
+                // dispatch — so the semantics are the interpreter's by
+                // construction, and there is no second implementation to drift.
+                //
+                // Gated: `TALLOW_GENERIC_STDLIB_BRIDGE=0` (or `false`/`off`)
+                // restores the old refusal, so a bisect can attribute any
+                // behaviour change to this arm. A fallback that cannot be turned
+                // off is not a fallback.
+                other => {
+                    if !self.variables.contains_key(other)
+                        && crate::stdlib::is_registered_module(other)
+                        && generic_stdlib_bridge_enabled()
+                    {
+                        return self.emit_stdlib_bridge_call(other, method, args);
+                    }
+                }
             }
         }
 
@@ -22930,6 +22977,153 @@ impl<'a> CodeGen<'a> {
             "llm" | "Llm" => self.emit_stdlib_llm(method, args),
             "Mesh" | "mesh" => self.emit_stdlib_mesh(method, args),
             _ => Ok(None),
+        }
+    }
+
+    /// Emit a call through the generic stdlib bridge
+    /// (`src/runtime/stdlib_bridge_ffi.rs`).
+    ///
+    /// Rust side contract (see `tallow_stdlib_call`):
+    /// `ptr @tallow_stdlib_call(ptr module, ptr method, i64 argc, ptr argv)`.
+    /// `argv` is an `alloca`'d `ptr` array of marshalled arguments: a `String`
+    /// (I8Ptr) is passed through unchanged, scalars go through
+    /// `tallow_json_{i64,f64,bool}`, and anything this backend cannot marshal is
+    /// refused here rather than passed as a reinterpreted pointer.
+    ///
+    /// The result is returned as `I8Ptr`: a bridged `String` is a normal C
+    /// string, and any other value is a `\x1fJ`-prefixed JSON text that can be
+    /// handed straight back to another bridged call. A NULL result means the
+    /// dispatch failed; the emitted code branches to
+    /// `tallow_stdlib_bridge_abort` (the interpreter raises at the same point).
+    fn emit_stdlib_bridge_call(
+        &mut self,
+        module: &str,
+        method: &str,
+        args: &[CallArg],
+    ) -> Result<LLValue, String> {
+        let module_ptr = self.intern_string(module);
+        let method_ptr = self.intern_string(method);
+
+        // Marshal every argument first so a refusal happens before any IR for
+        // the call is emitted (a partial call would leave a malformed block).
+        let mut marshalled: Vec<(String, bool)> = Vec::with_capacity(args.len());
+        for arg in args {
+            let value = self.emit_expr(&arg.value)?;
+            marshalled.push(self.emit_stdlib_bridge_arg(&value, module, method)?);
+        }
+
+        let argv_reg = if marshalled.is_empty() {
+            "null".to_string()
+        } else {
+            let slot = self.fresh_reg();
+            self.emit_line(&format!("{slot} = alloca ptr, i64 {}", marshalled.len()));
+            for (index, (reg, _)) in marshalled.iter().enumerate() {
+                let element = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{element} = getelementptr ptr, ptr {slot}, i64 {index}"
+                ));
+                self.emit_line(&format!("store ptr {reg}, ptr {element}"));
+            }
+            slot
+        };
+
+        let result = self.fresh_reg();
+        self.emit_line(&format!(
+            "{result} = call ptr @tallow_stdlib_call(ptr {module_ptr}, ptr {method_ptr}, \
+             i64 {}, ptr {argv_reg})",
+            marshalled.len()
+        ));
+
+        // The marshalled scalars are ours: free them now. Strings passed in were
+        // the program's own and must not be freed here.
+        for (reg, owned) in &marshalled {
+            if *owned {
+                self.emit_line(&format!("call void @tallow_free_string(ptr {reg})"));
+            }
+        }
+
+        let failed = self.fresh_reg();
+        self.emit_line(&format!("{failed} = icmp eq ptr {result}, null"));
+        let fail_label = self.fresh_label("bridge.fail");
+        let ok_label = self.fresh_label("bridge.ok");
+        self.emit_line(&format!(
+            "br i1 {failed}, label %{fail_label}, label %{ok_label}"
+        ));
+        self.emit_line(&format!("{fail_label}:"));
+        self.emit_line("call void @tallow_stdlib_bridge_abort()");
+        self.emit_line("unreachable");
+        self.emit_line(&format!("{ok_label}:"));
+
+        Ok(LLValue::new(result, LLType::I8Ptr))
+    }
+
+    /// Marshal one argument for the generic stdlib bridge.
+    ///
+    /// Returns `(register, owned)` — `owned` says the emitted code must free the
+    /// string after the call. A non-`String` shape the bridge cannot represent
+    /// (optional, map, native array, `Result`) is refused by name: passing a
+    /// pointer of one representation where the runtime expects another would be
+    /// a silent wrong answer, which is the failure mode this backend refuses
+    /// everywhere else.
+    fn emit_stdlib_bridge_arg(
+        &mut self,
+        value: &LLValue,
+        module: &str,
+        method: &str,
+    ) -> Result<(String, bool), String> {
+        match &value.ty {
+            // A String — or a value a previous bridged call returned. The
+            // runtime tells them apart by the `\x1fJ` prefix; either way it is
+            // the program's own allocation and is not freed here.
+            LLType::I8Ptr => Ok((value.reg.clone(), false)),
+            LLType::I1 => {
+                let widened = self.fresh_reg();
+                self.emit_line(&format!("{widened} = zext i1 {} to i32", value.reg));
+                let encoded = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{encoded} = call ptr @tallow_json_bool(i32 {widened})"
+                ));
+                Ok((encoded, true))
+            }
+            LLType::I8 => {
+                let widened = self.fresh_reg();
+                self.emit_line(&format!("{widened} = sext i8 {} to i64", value.reg));
+                let encoded = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{encoded} = call ptr @tallow_json_i64(i64 {widened})"
+                ));
+                Ok((encoded, true))
+            }
+            LLType::I32 => {
+                let widened = self.fresh_reg();
+                self.emit_line(&format!("{widened} = sext i32 {} to i64", value.reg));
+                let encoded = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{encoded} = call ptr @tallow_json_i64(i64 {widened})"
+                ));
+                Ok((encoded, true))
+            }
+            LLType::I64 => {
+                let encoded = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{encoded} = call ptr @tallow_json_i64(i64 {})",
+                    value.reg
+                ));
+                Ok((encoded, true))
+            }
+            LLType::F64 => {
+                let encoded = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{encoded} = call ptr @tallow_json_f64(double {})",
+                    value.reg
+                ));
+                Ok((encoded, true))
+            }
+            other => Err(format!(
+                "the generic stdlib bridge cannot marshal a `{other:?}` argument for \
+                 {module}.{method}: only String, Int, Float and Bool are representable at \
+                 a bridged call site so far; failing loudly so the interpreter runs it"
+            )),
         }
     }
 

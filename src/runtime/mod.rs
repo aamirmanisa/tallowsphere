@@ -46,6 +46,7 @@ pub mod net_ffi;
 pub mod diag_ffi;
 pub mod process_ffi;
 pub mod regex_ffi;
+pub mod stdlib_bridge_ffi;
 pub mod sync_ffi;
 pub mod structured_data_ffi;
 pub mod time_ffi;
