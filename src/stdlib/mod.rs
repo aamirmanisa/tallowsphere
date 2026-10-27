@@ -64,6 +64,10 @@ pub mod rand;
 pub mod regex;
 pub mod rmdb_store;
 pub mod sync;
+/// Declared result types for `stdlib/*.tl` module calls (the generic bridge's
+/// missing type information). See the module docs for where they come from and
+/// what codegen does with each kind.
+pub mod signatures;
 pub mod time;
 pub mod transfer;
 pub mod transfer_net;

@@ -52,13 +52,20 @@
 //!
 //! The prefix is how the call site tells "a string the program should use" from
 //! "a value that must go back to the bridge unchanged". It is a *runtime*
-//! discriminator because codegen has no declared return type for stdlib module
-//! calls: `import tallow.*` declarations are dropped during import resolution
-//! (src/codegen.rs `resolve_imports`), so the bridge result is a bare `ptr`.
-//! [FINDING — spike] a `String` whose first two bytes are `\x1fJ` is therefore
-//! indistinguishable from a bridged value when passed back into a bridged call.
-//! The sound fix is a distinct static kind (`LLType::JsonPtr`) so the decision
-//! is made by the compiler, not by byte sniffing; see the spike report.
+//! discriminator, and on its own it is not a type: [FINDING — spike] a `String`
+//! whose first two bytes are `\x1fJ` would be indistinguishable from a bridged
+//! value when passed back into a bridged call.
+//!
+//! # Where the type comes from now
+//!
+//! `src/stdlib/signatures.rs` reads the declaration (`native fn ip.lookup(…) ->
+//! AsnMatch`) out of the `stdlib/*.tl` sources the build script embeds, and
+//! codegen maps it onto a representation: `Int`/`Float`/`Bool` are unboxed by
+//! [`tallow_json_as_i64`] / [`tallow_json_as_f64`] / [`tallow_json_as_bool`],
+//! `String` and structs keep the pointer, and a kind this pass does not decode
+//! (`T?`, `[]T`, `Map<K,V>`, `Result<T>`) becomes `LLType::BridgeOpaque`, whose
+//! only legal consumer is another bridged call — the bytes are never sniffed to
+//! decide what a value is.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -242,6 +249,135 @@ fn json_cstring(json: &str) -> *mut c_char {
         Ok(cstring) => cstring.into_raw(),
         // JSON text and the prefix are ASCII and contain no NUL.
         Err(_) => std::ptr::null_mut(),
+    }
+}
+
+// ── Result unboxing ─────────────────────────────────────────────────────────
+//
+// These are the missing half of the bridge. Codegen used to have no declared
+// return type for a stdlib module call, so a bridged `Int` came back as a `ptr`
+// and `print` rendered the marshalled form (`\x1fJ1`). `stdlib/signatures.rs`
+// now reads the declaration and the emitted code calls one of these three.
+//
+// Contract, shared by all three:
+//
+// * the pointer is **taken and freed** — it is the value `tallow_stdlib_call`
+//   returned and nothing else aliases it;
+// * `what` is the interned `module.method` label, used only in the message;
+// * a payload that is not the declared scalar **aborts**, naming the call and
+//   what arrived. It never returns 0/false as a default: a bridge that answers
+//   0 for a failed decode is the defect the runtime removed from `len()`.
+
+/// Decode a bridged result as an `Int` (`i64`). Aborts on anything else.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_json_as_i64(value: *mut c_char, what: *const c_char) -> i64 {
+    let json = take_json(value, what, "Int");
+    match json.as_i64() {
+        Some(number) => number,
+        None => abort_expected(what, "Int", &json),
+    }
+}
+
+/// Decode a bridged result as a `Float` (`f64`). Aborts on anything else.
+///
+/// A JSON *integer* payload is accepted and widens exactly — it is a number, and
+/// `serde_json`'s `as_f64` cannot lose it. A non-numeric payload (a string, an
+/// object, `null`) aborts rather than becoming `0.0`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_json_as_f64(value: *mut c_char, what: *const c_char) -> f64 {
+    let json = take_json(value, what, "Float");
+    match json.as_f64() {
+        Some(number) => number,
+        None => abort_expected(what, "Float", &json),
+    }
+}
+
+/// Decode a bridged result as a `Bool`, returned as `i32` (`0`/`1`) because the
+/// emitted code narrows it with `icmp ne i32 …, 0`. Aborts on anything else.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_json_as_bool(value: *mut c_char, what: *const c_char) -> i32 {
+    let json = take_json(value, what, "Bool");
+    match json.as_bool() {
+        Some(flag) => i32::from(flag),
+        None => abort_expected(what, "Bool", &json),
+    }
+}
+
+/// Take ownership of a bridged result and decode it as prefixed JSON.
+///
+/// Aborts — naming the call — when the pointer is NULL, when it is not a
+/// marshalled (`\x1fJ`) value at all (a plain `String` result reaching a call
+/// site that declared `Int`), or when the bytes are not JSON.
+fn take_json(value: *mut c_char, what: *const c_char, expected: &str) -> serde_json::Value {
+    if value.is_null() {
+        abort_expected_raw(what, expected, "the call returned no value (null)");
+    }
+    // SAFETY: `value` came from `tallow_stdlib_call` (or an equivalent
+    // `CString::into_raw`) and is handed to us exactly once; `from_raw` takes
+    // ownership so the allocation is released on every path out of here.
+    let cstring = unsafe { CString::from_raw(value) };
+    let bytes = cstring.as_bytes();
+    let Some(json_bytes) = bytes.strip_prefix(RAW_PREFIX) else {
+        let shown = lossy_preview(bytes);
+        abort_expected_raw(
+            what,
+            expected,
+            &format!("the bridge returned the plain string `{shown}`"),
+        );
+    };
+    match serde_json::from_slice::<serde_json::Value>(json_bytes) {
+        Ok(json) => json,
+        Err(error) => abort_expected_raw(
+            what,
+            expected,
+            &format!("the bridged payload is not valid JSON: {error}"),
+        ),
+    }
+}
+
+/// A short, printable rendering of a bridged payload for a diagnostic.
+fn lossy_preview(bytes: &[u8]) -> String {
+    const LIMIT: usize = 64;
+    let text = String::from_utf8_lossy(bytes).replace('\n', "\\n");
+    if text.chars().count() <= LIMIT {
+        text
+    } else {
+        let head: String = text.chars().take(LIMIT).collect();
+        format!("{head}…")
+    }
+}
+
+/// The payload decoded, but not to the scalar the declaration promised.
+fn abort_expected(what: *const c_char, expected: &str, got: &serde_json::Value) -> ! {
+    abort_expected_raw(what, expected, &format!("the bridge returned {got}"))
+}
+
+/// Print the standard task-and-reason sentence and abort.
+///
+/// The interpreter raises at the same point, so failing loudly here keeps the
+/// two planes' *verdicts* aligned even though the native plane has no exception
+/// mechanism.
+fn abort_expected_raw(what: *const c_char, expected: &str, reason: &str) -> ! {
+    let call = if what.is_null() {
+        "a bridged stdlib call".to_string()
+    } else {
+        // SAFETY: `what` is the interned literal the emitted code passed.
+        unsafe { CStr::from_ptr(what) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    eprintln!(
+        "runtime error: {call} declared a{} {expected} result, but {reason}",
+        expected_article(expected)
+    );
+    std::process::abort();
+}
+
+/// `a`/`an` for the type name, so the sentence reads as English.
+fn expected_article(expected: &str) -> &'static str {
+    match expected.as_bytes().first() {
+        Some(b'A' | b'E' | b'I' | b'O' | b'U') => "n",
+        _ => "",
     }
 }
 

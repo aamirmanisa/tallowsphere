@@ -48,6 +48,15 @@ enum LLType {
     /// dispatch on the type has to tell them apart (see
     /// docs/optional-representation.md).
     Optional,
+    /// A generic-bridge result whose declared type this backend does not decode
+    /// (`T?`, `[]T`, `Map<K,V>`, `Result<T>`). It is a `ptr` to the bridge's
+    /// marshalled value: it may be handed straight back to another bridged call
+    /// (which is a legitimate round trip), and it may **not** be printed,
+    /// compared, branched on, indexed or coerced — each of those would render the
+    /// marshalled form as if it were the value, which is the wrong-answer-wearing-
+    /// a-plausible-shape class this backend refuses everywhere else. The string is
+    /// the declaration's own spelling, so the refusal can name what it refused.
+    BridgeOpaque(String),
     Void,
 }
 
@@ -63,6 +72,7 @@ impl LLType {
             LLType::ResultPtr => "ptr",
             LLType::Tagged => "ptr",
             LLType::Optional => "ptr",
+            LLType::BridgeOpaque(_) => "ptr",
             LLType::Void => "void",
         }
     }
@@ -78,6 +88,7 @@ impl LLType {
             LLType::ResultPtr => "null",
             LLType::Tagged => "null",
             LLType::Optional => "null",
+            LLType::BridgeOpaque(_) => "null",
             LLType::Void => "",
         }
     }
@@ -95,6 +106,10 @@ impl LLType {
             LLType::Tagged => "0", // statically-typed path never sees a Tagged (runtime-dispatched)
             // An optional is a pointer; a present value is never a bare tag here.
             LLType::Optional => "2",
+            // Never reaches the dynamically-tagged path: `coerce` refuses to box a
+            // bridged value it cannot decode. Spelled as a string tag so that a
+            // future boxing does not silently claim it is an integer.
+            LLType::BridgeOpaque(_) => "1",
             LLType::Void => "4",
         }
     }
@@ -1867,6 +1882,14 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_json_i64(i64)\n");
         ir.push_str("declare ptr @tallow_json_f64(double)\n");
         ir.push_str("declare ptr @tallow_json_bool(i32)\n");
+        // Result unboxing (src/runtime/stdlib_bridge_ffi.rs). Each takes the
+        // bridge's returned pointer plus the interned `module.method` label,
+        // *owns* the pointer, and aborts — naming the call — when the payload is
+        // not the declared scalar. A default of 0 here would be the `len()`
+        // defect the runtime already removed once.
+        ir.push_str("declare i64 @tallow_json_as_i64(ptr, ptr)\n");
+        ir.push_str("declare double @tallow_json_as_f64(ptr, ptr)\n");
+        ir.push_str("declare i32 @tallow_json_as_bool(ptr, ptr)\n");
         ir.push('\n');
 
         // Crypto + Transfer FFI declarations
@@ -7749,6 +7772,9 @@ void tallow_async_runtime_shutdown(void) {
     /// of `Value::is_truthy`). Never yields a non-`i1` register, so the caller
     /// can always emit `br i1 …`.
     fn emit_truthy_i1(&mut self, val: &LLValue) -> Result<String, String> {
+        // The catch-all at the bottom reads "non-null pointer ⇒ truthy", which is
+        // exactly how a bridged `Bool` used to answer `true` for `false`.
+        self.refuse_bridge_opaque(&val.ty, "an `if`/`while` condition")?;
         match &val.ty {
             // An optional is a pointer, but "non-null" is not truthiness: a box
             // holding `false`, `0` or "" is present and falsy. The box's kind tag
@@ -13544,6 +13570,17 @@ void tallow_async_runtime_shutdown(void) {
         }
 
         match &val.ty {
+            // A bridged value this backend cannot decode prints the marshalled
+            // form if it reaches `%s`, which is a wrong answer rather than a
+            // rendering. Refused by the declaration's own spelling instead.
+            LLType::BridgeOpaque(spelling) => {
+                return Err(format!(
+                    "a bridged stdlib call declared a `{spelling}` result, and the native backend \
+                     does not decode that kind yet, so it cannot be used as a value for `print`; \
+                     String, Int, Float, Bool and struct results are usable in compiled code — pass \
+                     this value to another bridged call, or run the program in the interpreter"
+                ));
+            }
             LLType::I64 => {
                 let reg = self.fresh_reg();
                 self.emit_line(&format!(
@@ -21797,7 +21834,28 @@ void tallow_async_runtime_shutdown(void) {
         Ok(boxed)
     }
 
+    /// Refuse to consume a bridged value this backend cannot decode.
+    ///
+    /// The value is a `ptr` to the bridge's marshalled JSON. Every consumer that
+    /// treats it as a Tallow value — `print`, `+`, `==`, an `if` condition, a
+    /// coercion — would render or compare the *marshalled form*. That is a wrong
+    /// answer, not an approximation, so it is refused here, by the declaration's
+    /// own spelling. The pointer stays legal as an argument to another bridged
+    /// call (`emit_stdlib_bridge_arg`): that round trip is what it exists for.
+    fn refuse_bridge_opaque(&self, ty: &LLType, consumer: &str) -> Result<(), String> {
+        if let LLType::BridgeOpaque(spelling) = ty {
+            return Err(format!(
+                "a bridged stdlib call declared a `{spelling}` result, and the native backend \
+                 does not decode that kind yet, so it cannot be used as a value for {consumer}; \
+                 String, Int, Float, Bool and struct results are usable in compiled code — pass \
+                 this value to another bridged call, or run the program in the interpreter"
+            ));
+        }
+        Ok(())
+    }
+
     fn coerce(&mut self, val: &LLValue, target: &LLType) -> Result<String, String> {
+        self.refuse_bridge_opaque(&val.ty, "a coercion to a concrete type")?;
         if val.ty == *target {
             return Ok(val.reg.clone());
         }
@@ -21891,6 +21949,7 @@ void tallow_async_runtime_shutdown(void) {
     }
 
     fn coerce_to_i1(&mut self, val: &LLValue) -> Result<String, String> {
+        self.refuse_bridge_opaque(&val.ty, "a truth test")?;
         match &val.ty {
             LLType::I1 => Ok(val.reg.clone()),
             LLType::I64 => {
@@ -22081,6 +22140,7 @@ void tallow_async_runtime_shutdown(void) {
     }
 
     fn coerce_to_string(&mut self, val: &LLValue) -> Result<String, String> {
+        self.refuse_bridge_opaque(&val.ty, "string conversion")?;
         match &val.ty {
             // A Result value stringifies as `Ok(..)` / `Err(..)`, matching the
             // interpreter's display. Without this arm a Result interpolated into
@@ -23054,7 +23114,62 @@ impl<'a> CodeGen<'a> {
         self.emit_line("unreachable");
         self.emit_line(&format!("{ok_label}:"));
 
-        Ok(LLValue::new(result, LLType::I8Ptr))
+        // ── Result type: unbox, or refuse to pretend ────────────────────────
+        //
+        // The bridge hands back a `ptr` (raw UTF-8 for a String, prefixed JSON
+        // for everything else). Without a declared type codegen could only pass
+        // that pointer around, so an `Int` result printed `\x1fJ1` where the
+        // interpreter printed `1`. `stdlib/signatures.rs` reads the declaration
+        // (`native fn finance.roa(...) -> Float`) and this match turns it into a
+        // representation: a scalar is decoded by a runtime entry point that
+        // *aborts* on a payload that is not that scalar (never a default of 0 —
+        // the `len()` defect), String and struct keep the pointer the rest of the
+        // backend already handles, and a kind this pass does not decode becomes
+        // `LLType::BridgeOpaque`, which only a bridged call may consume.
+        let kind = crate::stdlib::signatures::declared_return(module, method);
+        let what = self.intern_string(&format!("{module}.{method}"));
+        match kind {
+            Some(crate::stdlib::signatures::RetKind::Int) => {
+                let decoded = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{decoded} = call i64 @tallow_json_as_i64(ptr {result}, ptr {what})"
+                ));
+                Ok(LLValue::new(decoded, LLType::I64))
+            }
+            Some(crate::stdlib::signatures::RetKind::Float) => {
+                let decoded = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{decoded} = call double @tallow_json_as_f64(ptr {result}, ptr {what})"
+                ));
+                Ok(LLValue::new(decoded, LLType::F64))
+            }
+            Some(crate::stdlib::signatures::RetKind::Bool) => {
+                let wide = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{wide} = call i32 @tallow_json_as_bool(ptr {result}, ptr {what})"
+                ));
+                let narrow = self.fresh_reg();
+                self.emit_line(&format!("{narrow} = icmp ne i32 {wide}, 0"));
+                Ok(LLValue::new(narrow, LLType::I1))
+            }
+            Some(crate::stdlib::signatures::RetKind::Opaque(spelling)) => {
+                // Refused at the *use*, not at the call: a value that can only be
+                // handed back to another bridged call is a legitimate round trip
+                // (that is how a struct-returning module feeds a consuming one),
+                // and refusing the call outright would also refuse a program that
+                // never reads the result. Every consumer refuses by name.
+                Ok(LLValue::new(result, LLType::BridgeOpaque(spelling)))
+            }
+            // `String`, a named struct, an explicit `()`, and "no declaration
+            // found" all keep the pre-existing pointer: a String is a C string and
+            // a struct round-trips through the `__type` tag (tests/api_parity_native.rs).
+            // An undeclared method is *not* guessed at — it gets the same untyped
+            // pointer this arm always gave it.
+            Some(crate::stdlib::signatures::RetKind::Str)
+            | Some(crate::stdlib::signatures::RetKind::Named(_))
+            | Some(crate::stdlib::signatures::RetKind::Void)
+            | None => Ok(LLValue::new(result, LLType::I8Ptr)),
+        }
     }
 
     /// Marshal one argument for the generic stdlib bridge.
@@ -23076,6 +23191,11 @@ impl<'a> CodeGen<'a> {
             // runtime tells them apart by the `\x1fJ` prefix; either way it is
             // the program's own allocation and is not freed here.
             LLType::I8Ptr => Ok((value.reg.clone(), false)),
+            // A bridged value this backend cannot decode: passing it straight
+            // back into another bridged call is the round trip the JSON
+            // representation exists for, and it is the *only* thing it is good
+            // for (`refuse_bridge_opaque` guards every other consumer).
+            LLType::BridgeOpaque(_) => Ok((value.reg.clone(), false)),
             LLType::I1 => {
                 let widened = self.fresh_reg();
                 self.emit_line(&format!("{widened} = zext i1 {} to i32", value.reg));
