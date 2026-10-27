@@ -36,7 +36,11 @@ def page_methods() -> list[str]:
     for i in range(start, len(lines)):
         line = lines[i]
         depth += line.count("{") - line.count("}")
-        m = re.match(r"\s*fn\s+([a-z_0-9]+)\s*\(", line)
+        # The surface is written `native fn …`; a plain `fn` pattern matched
+        # nothing here and the script reported "checked 1 … 0 mismatch(es)" — a
+        # clean-looking result from a scan that found almost nothing. Fail closed
+        # below instead of trusting an empty scan.
+        m = re.match(r"\s*(?:native\s+)?fn\s+([a-z_0-9]+)\s*\(", line)
         if m and depth >= 1:
             found.append(m.group(1))
         if i > start and depth <= 0:
@@ -46,6 +50,9 @@ def page_methods() -> list[str]:
 
 def main() -> int:
     methods = page_methods()
+    if not methods:
+        print("FAIL: parsed 0 Page methods from stdlib/browser.tl — the parse broke, not the surface")
+        return 2
     codegen = (ROOT / "src/codegen.rs").read_text()
     interp = (ROOT / "src/interp.rs").read_text()
 

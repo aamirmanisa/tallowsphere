@@ -91,6 +91,17 @@ def main() -> int:
             if f'"{name}"' not in haystack and name not in haystack:
                 unmentioned.append(f"{tl.relative_to(ROOT)}: {ty}.{name}")
 
+    impl_blocks = sum(len(re.findall(r"impl\s+(\w+)\s*\{", strip_comments(t.read_text(errors="replace"))))
+                      for t in STDLIB.rglob("*.tl"))
+    if declarations == 0 and impl_blocks:
+        # A zero-declaration scan is a broken instrument, not a clean surface: the
+        # manifest writes `native fn … { // native: … }`, and once that comment is
+        # stripped the body is not empty, so this script's "empty body" rule matches
+        # nothing. Fail closed instead of printing a reassuring zero.
+        print(f"FAIL: parsed 0 empty-bodied declarations from {impl_blocks} impl blocks — "
+              f"the body rule does not match the manifest's current form")
+        return 2
+
     for line in unmentioned:
         print(f"UNMENTIONED  {line}")
     print(
