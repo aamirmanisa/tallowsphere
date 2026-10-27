@@ -1,0 +1,15 @@
+# A written-consent grant with no evidence pointer, next to a sound grant.
+
+[[authorized]]
+host = "asserted.example"
+basis = "written-consent"
+granted_by = "someone"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "neighbour.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"

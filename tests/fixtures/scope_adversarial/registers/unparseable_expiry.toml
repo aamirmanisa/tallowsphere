@@ -1,0 +1,15 @@
+# An expiry that is not a date. `expires_at` is an optional string and is
+
+[[authorized]]
+host = "unparseable-expiry.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "soon"
+
+[[authorized]]
+host = "neighbour.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"

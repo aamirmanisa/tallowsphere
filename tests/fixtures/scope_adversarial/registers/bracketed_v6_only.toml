@@ -1,0 +1,8 @@
+# Only the bracketed spelling of the IPv6 loopback is granted. RFC 3986 says
+
+[[authorized]]
+host = "[::1]"
+basis = "self-hosted"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"

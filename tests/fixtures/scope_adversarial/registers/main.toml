@@ -1,0 +1,28 @@
+# Well-formed register: a name, a wildcard, and one granted IPv6 literal.
+[[authorized]]
+host = "example.com"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "*.wild.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "2001:db8::1"
+basis = "self-hosted"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+
+[[authorized]]
+host = "::1"
+basis = "self-hosted"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"

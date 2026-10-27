@@ -1,0 +1,2 @@
+# Not TOML. A register that cannot be parsed authorises nothing.
+authorized = [ this is not toml
