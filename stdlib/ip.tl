@@ -238,3 +238,49 @@ native fn ip.cluster(observations: []IpObservation, opts: IpClusterOptions?) -> 
 // Render a report as pretty-printed JSON, evidence lines included. Deterministic:
 // the same report renders byte-identically every run.
 native fn ip.cluster_json(report: IpClusterReport) -> String
+
+// ── N34: geolocation with uncertainty ───────────────────────────────────────
+
+// A loaded geolocation table. Process-local handle, like every handle here; the
+// table format is `start, end, country, region[, city[, accuracy_km]]`.
+struct IpGeoTable {
+    handle: Int,
+    source: String,
+    rows:   Int,
+}
+
+// A location and the qualification it carries. `country` and `region` are
+// always present. `city` is present **only** when the row also carried an
+// accuracy radius: a bare city name reads as exact and is not, so an
+// unqualified city is dropped and the answer falls back to country/region with
+// `code` = `ip:geo-city-unqualified`. The mirror case, a radius with no city to
+// qualify, drops the radius and says `ip:geo-radius-unqualified`. `code` is nil
+// when nothing was downgraded.
+//
+// `confidence` is derived from the radius, never invented per call: <=5 km
+// 0.95, <=25 km 0.80, <=100 km 0.55, <=500 km 0.35, wider 0.15, and no radius
+// at all 0.20 — deliberately below every radius-qualified band.
+struct GeoAnswer {
+    country:     String,
+    region:      String,
+    city:        String?,
+    accuracy_km: Float?,
+    confidence:  Float,
+    source:      String,
+    code:        String?,
+}
+
+// Load a geolocation table: explicit path, then `TALLOW_GEO`, then
+// `/usr/share/tallow/geo-ip.tsv`. A missing file refuses (`ip:table-missing`,
+// naming the path and the step that chose it); a malformed row refuses the
+// whole table with `ip:table-malformed` and `source:line`, because a
+// half-loaded geo table mislabels every range the lost line covered.
+native fn ip.geo_load(path: String?) -> IpGeoTable
+
+// Longest-prefix geolocation. Refuses `ip:not-in-table` for an address no row
+// covers, `ip:bad-address`, `ip:unsupported-family` (the table is IPv4 only),
+// and `ip:table-unknown` for a handle this process did not issue.
+native fn ip.geo_lookup(table: IpGeoTable, ip: String) -> GeoAnswer
+
+// Render a geolocation answer as pretty-printed JSON.
+native fn ip.geo_json(answer: GeoAnswer) -> String

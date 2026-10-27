@@ -132,6 +132,7 @@ struct Registry {
     next_id: u64,
     tables: HashMap<u64, AsnTable>,
     caches: HashMap<u64, Cache>,
+    geos: HashMap<u64, GeoTable>,
 }
 
 fn registry() -> MutexGuard<'static, Registry> {
@@ -865,6 +866,370 @@ fn value_json(v: &Value) -> serde_json::Value {
     }
 }
 
+// ── N34: geolocation with uncertainty ───────────────────────────────────────
+
+/// Environment variable naming the geolocation table, honoured when no explicit
+/// path is given — the same shape as [`ENV_TABLE`], so one box needs one pair of
+/// settings rather than two conventions.
+pub const ENV_GEO: &str = "TALLOW_GEO";
+/// Documented default location for the geolocation table.
+pub const DEFAULT_GEO_TABLE: &str = "/usr/share/tallow/geo-ip.tsv";
+
+pub const CODE_GEO_CITY_UNQUALIFIED: &str = "ip:geo-city-unqualified";
+pub const CODE_GEO_RADIUS_UNQUALIFIED: &str = "ip:geo-radius-unqualified";
+
+// A confidence is *derived* from the accuracy radius a row carries, never
+// invented per call. The bands are flat steps rather than a curve because the
+// inputs are themselves bands: a table saying "45 km" does not know the answer
+// to 44.8 km, and a smooth interpolation would dress that ignorance as
+// precision. Both the thresholds and the confidences they produce are exported,
+// so a reader who disagrees with a number can change it and re-run the tests.
+//
+//   radius <=   5 km -> 0.95   the row is claiming street level
+//   radius <=  25 km -> 0.80   city level
+//   radius <= 100 km -> 0.55   metro / region level
+//   radius <= 500 km -> 0.35   country level, roughly
+//   wider            -> 0.15   "somewhere on this continent"
+//   no radius        -> 0.20   country/region only — deliberately *below* every
+//                              radius-qualified band, because an answer that
+//                              names no radius makes no distance claim at all
+pub const GEO_KM_TIGHT: f64 = 5.0;
+pub const GEO_KM_CITY: f64 = 25.0;
+pub const GEO_KM_REGION: f64 = 100.0;
+pub const GEO_KM_COUNTRY: f64 = 500.0;
+
+pub const GEO_CONF_TIGHT: f64 = 0.95;
+pub const GEO_CONF_CITY: f64 = 0.80;
+pub const GEO_CONF_REGION: f64 = 0.55;
+pub const GEO_CONF_COUNTRY: f64 = 0.35;
+pub const GEO_CONF_CONTINENT: f64 = 0.15;
+pub const GEO_CONF_ADMIN: f64 = 0.20;
+
+/// One geolocation row: an IPv4 range plus the administrative answer for it.
+/// `city` and `accuracy_km` are independent `None`s, never sentinels — an empty
+/// city column is not the string "" and an absent radius is not 0 km.
+#[derive(Clone, Debug)]
+struct GeoRow {
+    start: u32,
+    end: u32,
+    country: String,
+    region: String,
+    city: Option<String>,
+    accuracy_km: Option<f64>,
+}
+
+impl GeoRow {
+    fn prefix_len(&self) -> u32 {
+        (self.start ^ self.end).leading_zeros()
+    }
+
+    fn covers(&self, key: u32) -> bool {
+        self.start <= key && key <= self.end
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GeoTable {
+    source: String,
+    rows: Vec<GeoRow>,
+}
+
+/// The answer, with the qualification that produced it. `code` is `Some` exactly
+/// when the answer was downgraded from what the row literally contained.
+#[derive(Clone, Debug)]
+struct GeoAnswer {
+    country: String,
+    region: String,
+    city: Option<String>,
+    accuracy_km: Option<f64>,
+    confidence: f64,
+    source: String,
+    code: Option<&'static str>,
+}
+
+fn geo_confidence(accuracy_km: Option<f64>) -> f64 {
+    match accuracy_km {
+        None => GEO_CONF_ADMIN,
+        Some(km) if km <= GEO_KM_TIGHT => GEO_CONF_TIGHT,
+        Some(km) if km <= GEO_KM_CITY => GEO_CONF_CITY,
+        Some(km) if km <= GEO_KM_REGION => GEO_CONF_REGION,
+        Some(km) if km <= GEO_KM_COUNTRY => GEO_CONF_COUNTRY,
+        Some(_) => GEO_CONF_CONTINENT,
+    }
+}
+
+fn register_geo_table(table: GeoTable) -> u64 {
+    let mut reg = registry();
+    reg.next_id += 1;
+    let id = reg.next_id;
+    reg.geos.insert(id, table);
+    id
+}
+
+fn geo_by_handle(id: u64) -> Result<GeoTable, String> {
+    registry().geos.get(&id).cloned().ok_or_else(|| {
+        format!(
+            "{CODE_TABLE_UNKNOWN}: no geolocation table with handle {id} in this process — a \
+             handle is process-local and is not data, so it cannot be reconstructed from a \
+             serialised value"
+        )
+    })
+}
+
+/// Parse a geolocation TSV: `start, end, country, region[, city[, accuracy_km]]`.
+///
+/// Fail-closed exactly as the ASN table is: the first malformed data line voids
+/// the whole load with `source:line`, because a half-loaded geo table mislabels
+/// every range the lost line covered — and unlike an ASN, a wrong country is a
+/// claim about a place and a person.
+fn parse_geo_table(text: &str, source: &str) -> Result<GeoTable, String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut rows = Vec::new();
+    let mut seen_data = false;
+    for (idx, raw) in text.lines().enumerate() {
+        let line_no = idx + 1;
+        let line = raw.trim_end_matches('\r');
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let ncols = line.split('\t').count();
+        let looks_like_header = !seen_data
+            && trimmed.to_ascii_uppercase().contains("COUNTRY")
+            && parse_v4(line.split('\t').next().unwrap_or("").trim()).is_err();
+        if ncols < 4 || looks_like_header {
+            if looks_like_header {
+                continue;
+            }
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: expected 4 to 6 tab-separated \
+                 fields (start, end, country, region[, city[, accuracy_km]]), got {ncols} — `{}`",
+                excerpt(line)
+            ));
+        }
+        let mut cols = line.splitn(6, '\t');
+        let start = cols.next().unwrap_or("").trim();
+        let end = cols.next().unwrap_or("").trim();
+        let country = cols.next().unwrap_or("").trim();
+        let region = cols.next().unwrap_or("").trim();
+        let city = cols.next().unwrap_or("").trim();
+        let accuracy = cols.next().unwrap_or("").trim();
+        let (Ok(start), Ok(end)) = (parse_v4(start), parse_v4(end)) else {
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: fields 1 and 2 must be IPv4 \
+                 addresses (start, end) — `{}`",
+                excerpt(line)
+            ));
+        };
+        if start > end {
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: range start {start} is after end \
+                 {end} — a reversed range is not a range"
+            ));
+        }
+        if country.is_empty() || region.is_empty() {
+            // Country and region are always reported, so a row that cannot
+            // supply them cannot answer anything this module is willing to say.
+            return Err(format!(
+                "{CODE_TABLE_MALFORMED}: {source}:{line_no}: country and region are required \
+                 (they are the answer when the city is unqualified) — `{}`",
+                excerpt(line)
+            ));
+        }
+        let accuracy_km = if accuracy.is_empty() {
+            None
+        } else {
+            match accuracy.parse::<f64>() {
+                Ok(km) if km.is_finite() && km >= 0.0 => Some(km),
+                _ => {
+                    return Err(format!(
+                        "{CODE_TABLE_MALFORMED}: {source}:{line_no}: field 6 `{accuracy}` is not \
+                         a non-negative accuracy radius in km — `{}`",
+                        excerpt(line)
+                    ));
+                }
+            }
+        };
+        seen_data = true;
+        rows.push(GeoRow {
+            start,
+            end,
+            country: country.to_string(),
+            region: region.to_string(),
+            city: (!city.is_empty()).then(|| city.to_string()),
+            accuracy_km,
+        });
+    }
+    if rows.is_empty() {
+        return Err(format!(
+            "{CODE_TABLE_EMPTY}: {source}: the file parsed to zero rows, so it locates nothing; \
+             an empty table must not look like a loaded one"
+        ));
+    }
+    Ok(GeoTable {
+        source: source.to_string(),
+        rows,
+    })
+}
+
+fn resolve_geo_source(explicit: Option<&str>, env: Option<&str>) -> (String, &'static str) {
+    if let Some(p) = explicit.map(str::trim).filter(|p| !p.is_empty()) {
+        return (p.to_string(), "explicit");
+    }
+    if let Some(p) = env.map(str::trim).filter(|p| !p.is_empty()) {
+        return (p.to_string(), "env:TALLOW_GEO");
+    }
+    (DEFAULT_GEO_TABLE.to_string(), "default")
+}
+
+fn load_geo_table(explicit: Option<&str>) -> Result<GeoTable, String> {
+    let env = std::env::var(ENV_GEO).ok();
+    let (path, origin) = resolve_geo_source(explicit, env.as_deref());
+    load_geo_path(&path, origin)
+}
+
+fn load_geo_path(path: &str, origin: &str) -> Result<GeoTable, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_geo_table(&text, path),
+        Err(e) => Err(format!(
+            "{CODE_TABLE_MISSING}: {path} (chosen by {origin}) could not be read: {e} — set \
+             {ENV_GEO} to a geo-ip.tsv or pass an explicit path; a location is reported as \
+             unknown, never guessed"
+        )),
+    }
+}
+
+/// Longest-prefix geolocation, then *qualification* of what the row can honestly
+/// claim.
+///
+/// A city is served only when the same row carries an accuracy radius to go with
+/// it. A bare city name renders as `Paris` and reads as exact, which is the
+/// defect this item exists to prevent, so an unqualified city is dropped and the
+/// answer falls back to country/region with `ip:geo-city-unqualified` attached.
+/// The mirror case — a radius with no city to qualify — drops the radius (there
+/// is no point for it to be a radius *of*) and says
+/// `ip:geo-radius-unqualified`.
+fn geo_lookup_row(table: &GeoTable, ip: &str) -> Result<GeoAnswer, String> {
+    let addr: IpAddr = ip.trim().parse().map_err(|_| {
+        format!("{CODE_BAD_ADDRESS}: `{ip}` is not an IPv4 or IPv6 address literal")
+    })?;
+    let key = match addr {
+        IpAddr::V4(v4) => u32::from(v4),
+        IpAddr::V6(_) => {
+            return Err(format!(
+                "{CODE_UNSUPPORTED_FAMILY}: {ip} is IPv6, but the loaded table {} is IPv4 \
+                 ranges only; there is no honest v6 answer here",
+                table.source
+            ));
+        }
+    };
+    let mut best: Option<&GeoRow> = None;
+    for row in &table.rows {
+        if row.covers(key) && best.is_none_or(|b| row.prefix_len() > b.prefix_len()) {
+            best = Some(row);
+        }
+    }
+    let Some(row) = best else {
+        return Err(format!(
+            "{CODE_NOT_IN_TABLE}: {ip} is not covered by any of the {} entries in {} — absence \
+             from the table is not a location",
+            table.rows.len(),
+            table.source
+        ));
+    };
+    let (city, accuracy_km, code) = match (row.city.as_deref(), row.accuracy_km) {
+        (Some(city), Some(km)) => (Some(city.to_string()), Some(km), None),
+        (Some(_), None) => (None, None, Some(CODE_GEO_CITY_UNQUALIFIED)),
+        (None, Some(_)) => (None, None, Some(CODE_GEO_RADIUS_UNQUALIFIED)),
+        (None, None) => (None, None, None),
+    };
+    Ok(GeoAnswer {
+        country: row.country.clone(),
+        region: row.region.clone(),
+        city,
+        accuracy_km,
+        confidence: geo_confidence(accuracy_km),
+        source: table.source.clone(),
+        code,
+    })
+}
+
+fn geo_table_value(id: u64, table: &GeoTable) -> Value {
+    Value::Struct {
+        name: "IpGeoTable".to_string(),
+        fields: vec![
+            ("handle".to_string(), Value::Int(id as i128)),
+            ("source".to_string(), Value::String(table.source.clone())),
+            ("rows".to_string(), Value::Int(table.rows.len() as i128)),
+        ],
+    }
+}
+
+fn geo_answer_value(a: &GeoAnswer) -> Value {
+    Value::Struct {
+        name: "GeoAnswer".to_string(),
+        fields: vec![
+            ("country".to_string(), Value::String(a.country.clone())),
+            ("region".to_string(), Value::String(a.region.clone())),
+            (
+                "city".to_string(),
+                match &a.city {
+                    Some(c) => Value::String(c.clone()),
+                    None => Value::Nil,
+                },
+            ),
+            (
+                "accuracy_km".to_string(),
+                match a.accuracy_km {
+                    Some(km) => Value::Float(km),
+                    None => Value::Nil,
+                },
+            ),
+            ("confidence".to_string(), Value::Float(a.confidence)),
+            ("source".to_string(), Value::String(a.source.clone())),
+            (
+                "code".to_string(),
+                match a.code {
+                    Some(c) => Value::String(c.to_string()),
+                    None => Value::Nil,
+                },
+            ),
+        ],
+    }
+}
+
+fn geo_load_dispatch(args: Vec<Value>) -> StdlibResult {
+    let explicit = opt_str_arg(&args, 0, "geo_load")?;
+    let table = load_geo_table(explicit.as_deref())?;
+    let id = register_geo_table(table.clone());
+    Ok(geo_table_value(id, &table))
+}
+
+fn geo_lookup_dispatch(args: Vec<Value>) -> StdlibResult {
+    let id = handle_arg(&args, 0, "IpGeoTable", "geo_lookup")?;
+    let ip = str_arg(&args, 1, "geo_lookup")?;
+    let table = geo_by_handle(id)?;
+    Ok(geo_answer_value(&geo_lookup_row(&table, &ip)?))
+}
+
+fn geo_json_dispatch(args: Vec<Value>) -> StdlibResult {
+    let v = args
+        .first()
+        .ok_or_else(|| "ip.geo_json: missing argument 1 (GeoAnswer)".to_string())?;
+    match v {
+        Value::Struct { name, .. } if name == "GeoAnswer" => {}
+        other => {
+            return Err(format!(
+                "ip.geo_json: argument 1 expected GeoAnswer, got {}",
+                value_label(other)
+            ));
+        }
+    }
+    serde_json::to_string_pretty(&value_json(v))
+        .map(Value::String)
+        .map_err(|e| format!("ip.geo_json: {e}"))
+}
+
 // ── Value plumbing ──────────────────────────────────────────────────────────
 
 fn field<'a>(fields: &'a [(String, Value)], name: &str) -> Option<&'a Value> {
@@ -1002,6 +1367,9 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "cluster" => Some(cluster_dispatch(args)),
         "observation" => Some(observation_dispatch(args)),
         "cluster_json" => Some(cluster_json_dispatch(args)),
+        "geo_load" => Some(geo_load_dispatch(args)),
+        "geo_lookup" => Some(geo_lookup_dispatch(args)),
+        "geo_json" => Some(geo_json_dispatch(args)),
         _ => None,
     }
 }
@@ -1475,7 +1843,6 @@ mod intel_ip_tests {
     }
 
     #[test]
-    #[test]
     fn an_unlinked_observation_is_reported_as_unclustered_not_dropped() {
         let obs = vec![
             ob("10.0.0.1", Some(64500), Some("AA11"), None, None),
@@ -1493,6 +1860,7 @@ mod intel_ip_tests {
         );
     }
 
+    #[test]
     fn a_shared_asn_alone_never_clusters_and_never_links() {
         // The exact case the design exists to prevent: every Cloudflare-fronted
         // site shares AS13335 and none of them is one operator.
@@ -1736,5 +2104,162 @@ mod intel_ip_tests {
         )
         .unwrap_err();
         assert!(err.starts_with(CODE_CLUSTER_DUPLICATE), "{err}");
+    }
+
+    // ── N34: geolocation with uncertainty ───────────────────────────────────
+
+    // A nested /16 inside a /8 so the fixture also pins longest-prefix order.
+    const GEO_TSV: &str = "\
+# start\tend\tcountry\tregion\tcity\taccuracy_km\n\
+10.0.0.0\t10.255.255.255\tDE\tBavaria\tBerlin\t400\n\
+10.1.0.0\t10.1.255.255\tDE\tBavaria\tMunich\t10\n";
+
+    const GEO_NO_ACCURACY: &str = "\
+10.1.0.0\t10.1.255.255\tDE\tBavaria\tMunich\n";
+
+    fn geo() -> GeoTable {
+        parse_geo_table(GEO_TSV, "geo.tsv").expect("fixture parses")
+    }
+
+    #[test]
+    fn a_row_with_an_accuracy_radius_returns_city_radius_and_confidence() {
+        let a = geo_lookup_row(&geo(), "10.1.2.3").expect("located");
+        assert_eq!(a.country, "DE");
+        assert_eq!(a.region, "Bavaria");
+        assert_eq!(a.city.as_deref(), Some("Munich"));
+        assert_eq!(a.accuracy_km, Some(10.0));
+        // 10 km sits in the city band, and the confidence is the constant that
+        // band names — not a number invented at the call site.
+        assert_eq!(a.confidence, GEO_CONF_CITY);
+        assert_eq!(a.code, None);
+        assert_eq!(a.source, "geo.tsv");
+        // The /16 wins over the /8 that also covers this address.
+        let coarse = geo_lookup_row(&geo(), "10.9.9.9").expect("located");
+        assert_eq!(coarse.city.as_deref(), Some("Berlin"));
+        assert_eq!(coarse.confidence, GEO_CONF_COUNTRY);
+    }
+
+    #[test]
+    fn a_city_without_an_accuracy_radius_is_refused_and_downgraded() {
+        let table = parse_geo_table(GEO_NO_ACCURACY, "no-acc.tsv").expect("fixture parses");
+        let a = geo_lookup_row(&table, "10.1.2.3").expect("located");
+        // Country and region always; the bare city name is *gone*, because a
+        // city with no radius reads as exact and is not.
+        assert_eq!(a.country, "DE");
+        assert_eq!(a.region, "Bavaria");
+        assert_eq!(a.city, None, "an unqualified city must not be printed");
+        assert_eq!(a.accuracy_km, None);
+        assert_eq!(a.code, Some(CODE_GEO_CITY_UNQUALIFIED));
+        assert_eq!(a.confidence, GEO_CONF_ADMIN);
+        assert!(
+            a.confidence < GEO_CONF_COUNTRY,
+            "an unqualified answer must not outrank a radius-qualified one"
+        );
+    }
+
+    #[test]
+    fn an_accuracy_radius_without_a_city_is_refused_the_other_way() {
+        let table = parse_geo_table("10.1.0.0\t10.1.255.255\tDE\tBavaria\t\t10\n", "r.tsv")
+            .expect("fixture parses");
+        let a = geo_lookup_row(&table, "10.1.2.3").expect("located");
+        assert_eq!(a.city, None);
+        assert_eq!(a.accuracy_km, None, "a radius of no point is not a radius");
+        assert_eq!(a.code, Some(CODE_GEO_RADIUS_UNQUALIFIED));
+    }
+
+    #[test]
+    fn geo_unknown_address_and_bad_input_are_coded_refusals() {
+        let err = geo_lookup_row(&geo(), "203.0.113.9").unwrap_err();
+        assert!(err.starts_with(CODE_NOT_IN_TABLE), "{err}");
+        let err = geo_lookup_row(&geo(), "2001:db8::1").unwrap_err();
+        assert!(err.starts_with(CODE_UNSUPPORTED_FAMILY), "{err}");
+        let err = geo_lookup_row(&geo(), "not-an-ip").unwrap_err();
+        assert!(err.starts_with(CODE_BAD_ADDRESS), "{err}");
+    }
+
+    #[test]
+    fn geo_malformed_row_names_its_line_and_voids_the_table() {
+        let bad = "10.0.0.0\t10.255.255.255\tDE\tBavaria\tBerlin\t800\n\
+                   10.1.0.0\t10.1.255.255\tDE\tBavaria\tMunich\twide\n";
+        let err = parse_geo_table(bad, "bad.tsv").unwrap_err();
+        assert!(err.starts_with(CODE_TABLE_MALFORMED), "{err}");
+        assert!(err.contains("bad.tsv:2:"), "must name source:line: {err}");
+        assert!(err.contains("wide"), "must quote the field: {err}");
+    }
+
+    #[test]
+    fn geo_missing_table_refuses_and_names_the_path() {
+        let path = "/nonexistent/tallow-geo-does-not-exist.tsv";
+        let err = load_geo_path(path, "explicit").unwrap_err();
+        assert!(err.starts_with(CODE_TABLE_MISSING), "{err}");
+        assert!(err.contains(path), "{err}");
+        assert!(err.contains("explicit"), "{err}");
+    }
+
+    #[test]
+    fn the_confidence_mapping_is_the_documented_one() {
+        let cases = [
+            (None, GEO_CONF_ADMIN),
+            (Some(0.0), GEO_CONF_TIGHT),
+            (Some(GEO_KM_TIGHT), GEO_CONF_TIGHT),
+            (Some(GEO_KM_TIGHT + 0.1), GEO_CONF_CITY),
+            (Some(GEO_KM_CITY), GEO_CONF_CITY),
+            (Some(GEO_KM_CITY + 0.1), GEO_CONF_REGION),
+            (Some(GEO_KM_REGION), GEO_CONF_REGION),
+            (Some(GEO_KM_COUNTRY), GEO_CONF_COUNTRY),
+            (Some(GEO_KM_COUNTRY + 1.0), GEO_CONF_CONTINENT),
+        ];
+        for (km, expected) in cases {
+            assert_eq!(geo_confidence(km), expected, "radius {km:?}");
+        }
+    }
+
+    #[test]
+    fn geo_dispatch_loads_looks_up_and_refuses_a_foreign_handle() {
+        let table = geo();
+        let id = register_geo_table(table.clone());
+        let out = dispatch(
+            "ip.geo_lookup",
+            vec![
+                geo_table_value(id, &table),
+                Value::String("10.1.2.3".into()),
+            ],
+        )
+        .expect("routed")
+        .expect("located");
+        match &out {
+            Value::Struct { name, fields } => {
+                assert_eq!(name, "GeoAnswer");
+                assert!(matches!(
+                    field(fields, "city"),
+                    Some(Value::String(c)) if c == "Munich"
+                ));
+                assert!(
+                    matches!(field(fields, "confidence"), Some(Value::Float(f)) if *f == GEO_CONF_CITY)
+                );
+            }
+            other => panic!("expected struct, got {}", type_name(other)),
+        }
+        let json = dispatch("ip.geo_json", vec![out])
+            .expect("routed")
+            .expect("json");
+        match json {
+            Value::String(s) => {
+                assert!(s.contains("\"city\": \"Munich\""), "{s}");
+                assert!(s.contains("\"accuracy_km\": 10.0"), "{s}");
+            }
+            other => panic!("expected String, got {}", type_name(&other)),
+        }
+        let bogus = Value::Struct {
+            name: "IpGeoTable".to_string(),
+            fields: vec![("handle".to_string(), Value::Int(999_999))],
+        };
+        let err = dispatch(
+            "ip.geo_lookup",
+            vec![bogus, Value::String("10.1.2.3".into())],
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(err.starts_with(CODE_TABLE_UNKNOWN), "{err}");
     }
 }
