@@ -319,23 +319,42 @@ pub enum StmtKind {
     },
     Return(Option<Expr>),
     For {
+        /// Loop label (`'outer: for ...`), if any (G08).
+        label: Option<String>,
         binding: String,
         iter: Expr,
         body: Block,
     },
     While {
+        /// Loop label (`'outer: while ...`), if any (G08).
+        label: Option<String>,
         condition: Expr,
         body: Block,
     },
     WhileLet {
+        /// Loop label (`'outer: while let ...`), if any (G08).
+        label: Option<String>,
         pattern: Box<Pattern>,
         expr: Expr,
         body: Block,
     },
     Bail(Expr),
-    Break,
-    Continue,
+    /// `break` / `break 'label` / `break 'label value` (G08).
+    ///
+    /// `label: None` is today's unlabeled `break`. A `value` is only accepted
+    /// when it names a construct that yields one (`loop`, or a labeled block);
+    /// typeck reports the type of the target against the type of `value`.
+    Break {
+        label: Option<String>,
+        value: Option<Expr>,
+    },
+    /// `continue` / `continue 'label` (G08).
+    Continue {
+        label: Option<String>,
+    },
     Loop {
+        /// Loop label (`'outer: loop ...`), if any (G08).
+        label: Option<String>,
         body: Block,
     },
     Defer {
@@ -417,6 +436,15 @@ pub enum ExprKind {
         arms: Vec<MatchArm>,
     },
     Block(Block),
+
+    /// `loop { ... }` / `'name: loop { ... }` in value position (G08).
+    ///
+    /// Statement-position `loop` stays [`StmtKind::Loop`]; this is the form
+    /// whose `break 'name v` has somewhere to deliver `v`.
+    Loop {
+        label: Option<String>,
+        body: Block,
+    },
 
     // Collections
     Array(Vec<Expr>),

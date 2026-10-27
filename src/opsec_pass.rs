@@ -142,7 +142,7 @@ impl<'a> OpsecPass<'a> {
             StmtKind::Return(Some(e)) => {
                 self.walk_expr(e, caller_name, caller_profile, profile_map);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.walk_expr(condition, caller_name, caller_profile, profile_map);
                 self.walk_block(body, caller_name, caller_profile, profile_map);
             }
@@ -154,10 +154,10 @@ impl<'a> OpsecPass<'a> {
                 self.walk_expr(iter, caller_name, caller_profile, profile_map);
                 self.walk_block(body, caller_name, caller_profile, profile_map);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.walk_block(body, caller_name, caller_profile, profile_map);
             }
-            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Return(None) | StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }

@@ -1040,27 +1040,57 @@ impl Parser {
             TokenKind::Let => self.parse_let_stmt(),
             TokenKind::Var => self.parse_var_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
-            TokenKind::For => self.parse_for_stmt(),
-            TokenKind::While => self.parse_while_stmt(),
+            TokenKind::For => self.parse_for_stmt(None),
+            TokenKind::While => self.parse_while_stmt(None),
             TokenKind::Bail => self.parse_bail_stmt(),
             TokenKind::BailIf => self.parse_bail_if_stmt(),
             TokenKind::Break => {
                 self.advance();
+                let label = self.take_label();
+                // `break 'outer value` (G08). An unlabeled `break` keeps
+                // today's meaning and never takes a value.
+                let value = if label.is_some()
+                    && !self.check(TokenKind::Semi)
+                    && !self.check(TokenKind::RBrace)
+                {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
                 self.eat(TokenKind::Semi);
                 Ok(Stmt {
-                    kind: StmtKind::Break,
+                    kind: StmtKind::Break { label, value },
                     span: Span::new(start.start, self.prev_span().end),
                 })
             }
             TokenKind::Continue => {
                 self.advance();
+                let label = self.take_label();
                 self.eat(TokenKind::Semi);
                 Ok(Stmt {
-                    kind: StmtKind::Continue,
+                    kind: StmtKind::Continue { label },
                     span: Span::new(start.start, self.prev_span().end),
                 })
             }
-            TokenKind::Loop => self.parse_loop_stmt(),
+            TokenKind::Loop => self.parse_loop_stmt(None),
+            // `'name: <loop statement>` (G08). A label is only lexed where a
+            // loop or a block follows the colon, so the alternatives here are
+            // exactly those.
+            TokenKind::Label(_) => {
+                let label = self.expect_label()?;
+                self.expect(TokenKind::Colon)?;
+                match self.peek_kind() {
+                    TokenKind::Loop => self.parse_loop_stmt(Some(label)),
+                    TokenKind::For => self.parse_for_stmt(Some(label)),
+                    TokenKind::While => self.parse_while_stmt(Some(label)),
+                    TokenKind::LBrace => Err(self.error(
+                        "a labeled block is a value: bind it (`let x = 'name: { ... }`) instead of using it as a statement",
+                    )),
+                    other => Err(self.error(format!(
+                        "expected `loop`, `for` or `while` after label '{label}', found {other}"
+                    ))),
+                }
+            }
             TokenKind::Defer => {
                 self.advance();
                 let body = if self.check(TokenKind::LBrace) {
@@ -1179,7 +1209,7 @@ impl Parser {
         })
     }
 
-    fn parse_for_stmt(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_for_stmt(&mut self, label: Option<String>) -> Result<Stmt, ParseError> {
         let start = self.span();
         self.expect(TokenKind::For)?;
         let binding = if self.check(TokenKind::LParen) {
@@ -1202,6 +1232,7 @@ impl Parser {
 
         Ok(Stmt {
             kind: StmtKind::For {
+                label,
                 binding,
                 iter,
                 body,
@@ -1210,7 +1241,7 @@ impl Parser {
         })
     }
 
-    fn parse_while_stmt(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_while_stmt(&mut self, label: Option<String>) -> Result<Stmt, ParseError> {
         let start = self.span();
         self.expect(TokenKind::While)?;
 
@@ -1224,6 +1255,7 @@ impl Parser {
 
             return Ok(Stmt {
                 kind: StmtKind::WhileLet {
+                    label,
                     pattern: Box::new(pattern),
                     expr,
                     body,
@@ -1236,18 +1268,45 @@ impl Parser {
         let body = self.parse_block()?;
 
         Ok(Stmt {
-            kind: StmtKind::While { condition, body },
+            kind: StmtKind::While {
+                label,
+                condition,
+                body,
+            },
             span: Span::new(start.start, self.prev_span().end),
         })
     }
 
-    fn parse_loop_stmt(&mut self) -> Result<Stmt, ParseError> {
+    /// Consume a `'name` token if the next token is one, returning the name.
+    fn take_label(&mut self) -> Option<String> {
+        if let TokenKind::Label(name) = self.peek_kind() {
+            let name = name.clone();
+            self.advance();
+            Some(name)
+        } else {
+            None
+        }
+    }
+
+    /// Consume `'name`, or fail — used where the lexer already proved a label.
+    fn expect_label(&mut self) -> Result<String, ParseError> {
+        match self.peek_kind() {
+            TokenKind::Label(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(name)
+            }
+            other => Err(self.error(format!("expected a label, found {other}"))),
+        }
+    }
+
+    fn parse_loop_stmt(&mut self, label: Option<String>) -> Result<Stmt, ParseError> {
         let start = self.span();
         self.expect(TokenKind::Loop)?;
         let body = self.parse_block()?;
 
         Ok(Stmt {
-            kind: StmtKind::Loop { body },
+            kind: StmtKind::Loop { label, body },
             span: Span::new(start.start, self.prev_span().end),
         })
     }
@@ -1756,6 +1815,39 @@ impl Parser {
 
             // Prefix match expression
             TokenKind::Match => self.parse_match_expr(),
+
+            // `loop { ... }` in value position (G08). The statement form is
+            // StmtKind::Loop; this one is an expression, so the value carried
+            // by `break 'name v` has somewhere to go.
+            TokenKind::Loop => {
+                self.advance();
+                let body = self.parse_block()?;
+                Ok(Expr::new(
+                    ExprKind::Loop { label: None, body },
+                    Span::new(start.start, self.prev_span().end),
+                ))
+            }
+
+            // `'name: loop { ... }` in value position (G08).
+            TokenKind::Label(_) => {
+                let label = self.expect_label()?;
+                self.expect(TokenKind::Colon)?;
+                if self.check(TokenKind::Loop) {
+                    self.advance();
+                    let body = self.parse_block()?;
+                    Ok(Expr::new(
+                        ExprKind::Loop {
+                            label: Some(label),
+                            body,
+                        },
+                        Span::new(start.start, self.prev_span().end),
+                    ))
+                } else {
+                    Err(self.error(
+                        "a label in value position must label a `loop` -- only a `loop` yields a value",
+                    ))
+                }
+            }
 
             // Map literal, closure, or block expression
             TokenKind::LBrace => {
@@ -4344,7 +4436,7 @@ mod tests {
             panic!()
         };
         if let StmtKind::For { ref body, .. } = f.body.stmts[0].kind {
-            assert!(matches!(body.stmts[0].kind, StmtKind::Continue));
+            assert!(matches!(body.stmts[0].kind, StmtKind::Continue { .. }));
         }
     }
 
@@ -4354,9 +4446,84 @@ mod tests {
         let Item::Fn(ref f) = program.items[0] else {
             panic!()
         };
-        if let StmtKind::Loop { ref body } = f.body.stmts[0].kind {
-            assert!(matches!(body.stmts[0].kind, StmtKind::Break));
+        if let StmtKind::Loop { ref body, .. } = f.body.stmts[0].kind {
+            assert!(matches!(body.stmts[0].kind, StmtKind::Break { .. }));
         }
+    }
+
+    // ── G08: labels ─────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_labeled_break_with_value() {
+        let program = parse("fn main() { loop { break 'outer 5 } }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::Loop { ref body, .. } = f.body.stmts[0].kind else {
+            panic!("expected loop");
+        };
+        match &body.stmts[0].kind {
+            StmtKind::Break { label, value } => {
+                assert_eq!(label.as_deref(), Some("outer"));
+                assert!(
+                    matches!(value, Some(Expr { kind: ExprKind::IntLit(5), .. })),
+                    "the break payload must be parsed as its own expression"
+                );
+            }
+            other => panic!("expected break, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unlabeled_break_keeps_its_old_shape() {
+        let program = parse("fn main() { loop { break } }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::Loop { ref body, .. } = f.body.stmts[0].kind else {
+            panic!("expected loop");
+        };
+        assert!(
+            matches!(
+                body.stmts[0].kind,
+                StmtKind::Break {
+                    label: None,
+                    value: None
+                }
+            ),
+            "got {:?}",
+            body.stmts[0].kind
+        );
+    }
+
+    #[test]
+    fn parse_labeled_loop_in_value_position() {
+        let program = parse("fn main() { let x = 'outer: loop { break 'outer 1 } }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::Let { ref value, .. } = f.body.stmts[0].kind else {
+            panic!("expected let");
+        };
+        match &value.kind {
+            ExprKind::Loop { label, .. } => assert_eq!(label.as_deref(), Some("outer")),
+            other => panic!("expected a loop expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_single_quoted_string_is_still_a_string() {
+        // The label lexing must not steal `'...'` strings (which is how JS and
+        // CSS are embedded) — including one after `break`, which stays a
+        // parse error rather than silently becoming a label.
+        let program = parse("fn main() { let s = 'document.querySelector(\"a\")' }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::Let { ref value, .. } = f.body.stmts[0].kind else {
+            panic!("expected let");
+        };
+        assert!(matches!(value.kind, ExprKind::StringLit(_)));
     }
 
     // ── Extended Parser Tests ───────────────────────────────────────────
@@ -4855,12 +5022,12 @@ mod tests {
         let Item::Fn(ref f) = program.items[0] else {
             panic!()
         };
-        let StmtKind::Loop { ref body } = f.body.stmts[0].kind else {
+        let StmtKind::Loop { ref body, .. } = f.body.stmts[0].kind else {
             panic!("expected loop");
         };
         // body has at least 2 stmts: if-break and continue
         assert!(body.stmts.len() >= 2);
-        assert!(matches!(body.stmts[1].kind, StmtKind::Continue));
+        assert!(matches!(body.stmts[1].kind, StmtKind::Continue { .. }));
     }
 
     // 15. bail statement desugars to Return(Err(...))

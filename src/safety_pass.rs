@@ -211,7 +211,7 @@ impl<'a> SafetyPass<'a> {
                     self.check_stmt_calls(s, caller_name, caller_level, has_downgrade, downgrade_has_reason);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.walk_expr_calls(condition, caller_name, caller_level, has_downgrade, downgrade_has_reason);
                 for s in &body.stmts {
                     self.check_stmt_calls(s, caller_name, caller_level, has_downgrade, downgrade_has_reason);
@@ -223,7 +223,7 @@ impl<'a> SafetyPass<'a> {
                     self.check_stmt_calls(s, caller_name, caller_level, has_downgrade, downgrade_has_reason);
                 }
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 for s in &body.stmts {
                     self.check_stmt_calls(s, caller_name, caller_level, has_downgrade, downgrade_has_reason);
                 }
@@ -231,7 +231,7 @@ impl<'a> SafetyPass<'a> {
             StmtKind::Bail(expr) => {
                 self.walk_expr_calls(expr, caller_name, caller_level, has_downgrade, downgrade_has_reason);
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -516,7 +516,7 @@ impl<'a> SafetyPass<'a> {
                 self.walk_expr_no_heap(iter, fn_name, fn_span);
                 for s in &body.stmts { self.walk_stmt_no_heap(s, fn_name, fn_span); }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.walk_expr_no_heap(condition, fn_name, fn_span);
                 for s in &body.stmts { self.walk_stmt_no_heap(s, fn_name, fn_span); }
             }
@@ -524,7 +524,7 @@ impl<'a> SafetyPass<'a> {
                 self.walk_expr_no_heap(expr, fn_name, fn_span);
                 for s in &body.stmts { self.walk_stmt_no_heap(s, fn_name, fn_span); }
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 for s in &body.stmts { self.walk_stmt_no_heap(s, fn_name, fn_span); }
             }
             StmtKind::Bail(expr) => {
@@ -719,7 +719,7 @@ impl<'a> SafetyPass<'a> {
                 self.walk_expr_for_call(iter, target, found);
                 self.walk_stmts_for_call(&body.stmts, target, found);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.walk_expr_for_call(condition, target, found);
                 self.walk_stmts_for_call(&body.stmts, target, found);
             }
@@ -727,7 +727,7 @@ impl<'a> SafetyPass<'a> {
                 self.walk_expr_for_call(expr, target, found);
                 self.walk_stmts_for_call(&body.stmts, target, found);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.walk_stmts_for_call(&body.stmts, target, found);
             }
             StmtKind::Bail(expr) => {
@@ -836,11 +836,11 @@ impl<'a> SafetyPass<'a> {
                 self.collect_callees_from_expr(iter, callees);
                 self.collect_callees_from_stmts(&body.stmts, callees);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.collect_callees_from_expr(condition, callees);
                 self.collect_callees_from_stmts(&body.stmts, callees);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.collect_callees_from_stmts(&body.stmts, callees);
             }
             StmtKind::Bail(expr) => {
@@ -942,7 +942,7 @@ impl<'a> SafetyPass<'a> {
     fn walk_stmt_bounded_by(&mut self, stmt: &Stmt, fn_name: &str) {
         match &stmt.kind {
             // `while <condition>` — check if condition is always true (unbounded)
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 if self.is_always_true(condition) {
                     self.diags.error(
                         "E2604",
@@ -957,7 +957,7 @@ impl<'a> SafetyPass<'a> {
                 for s in &body.stmts { self.walk_stmt_bounded_by(s, fn_name); }
             }
             // `loop {}` is always unbounded
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.diags.error(
                     "E2604",
                     format!(

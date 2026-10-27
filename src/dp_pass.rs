@@ -216,7 +216,7 @@ impl<'a> DPBudgetPass<'a> {
             }
             StmtKind::Expr { expr } => self.expr_uses_add_noise(expr),
             StmtKind::Return(Some(e)) => self.expr_uses_add_noise(e),
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.expr_uses_add_noise(condition) || self.body_uses_add_noise(body)
             }
             StmtKind::For { iter, body, .. } => {
@@ -281,7 +281,7 @@ impl<'a> DPBudgetPass<'a> {
             StmtKind::Return(Some(e)) => {
                 self.collect_callees_from_expr(e, callees);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.collect_callees_from_expr(condition, callees);
                 for s in &body.stmts {
                     self.collect_callees_from_stmt(s, callees);

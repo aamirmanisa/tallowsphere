@@ -173,7 +173,7 @@ impl<'a> ConstTimePass<'a> {
             StmtKind::Return(Some(expr)) => {
                 self.check_expr(expr, tainted, fn_name);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 // E1202: secret-dependent loop bound
                 if Self::expr_references_tainted(condition, tainted) {
                     self.diags.push(Diagnostic::error(
@@ -208,7 +208,7 @@ impl<'a> ConstTimePass<'a> {
                 self.check_expr(expr, tainted, fn_name);
                 self.check_block(body, tainted, fn_name);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.check_block(body, tainted, fn_name);
             }
             StmtKind::Bail(expr) => {

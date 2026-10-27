@@ -329,8 +329,8 @@ fn variant_label(v: &Value) -> &'static str {
         Value::KeyPair { .. } => "KeyPair",
         Value::BrowserObject(..) => "BrowserObject",
         Value::Brain(_) => "Brain",
-        Value::Break => "Break",
-        Value::Continue => "Continue",
+        Value::Break { .. } => "Break",
+        Value::Continue { .. } => "Continue",
         _ => "Value",
     }
 }

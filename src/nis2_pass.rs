@@ -429,7 +429,7 @@ impl<'a> Nis2Pass<'a> {
                     Self::collect_stmt_crypto(s, fn_name, usages);
                 }
             }
-            StmtKind::While { condition, body } | StmtKind::WhileLet { expr: condition, body, .. } => {
+            StmtKind::While { condition, body, .. } | StmtKind::WhileLet { expr: condition, body, .. } => {
                 Self::collect_expr_crypto(condition, fn_name, usages);
                 for s in &body.stmts {
                     Self::collect_stmt_crypto(s, fn_name, usages);
@@ -533,7 +533,7 @@ impl<'a> Nis2Pass<'a> {
                     self.check_stmt(s, f);
                 }
             }
-            StmtKind::While { condition, body } | StmtKind::WhileLet { expr: condition, body, .. } => {
+            StmtKind::While { condition, body, .. } | StmtKind::WhileLet { expr: condition, body, .. } => {
                 self.check_expr(condition, f);
                 for s in &body.stmts {
                     self.check_stmt(s, f);

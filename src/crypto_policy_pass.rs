@@ -117,7 +117,7 @@ fn collect_crypto_usages_in_stmt(stmt: &Stmt, fn_name: &str, usages: &mut Vec<Cr
                 collect_crypto_usages_in_stmt(s, fn_name, usages);
             }
         }
-        StmtKind::While { condition, body } => {
+        StmtKind::While { condition, body, .. } => {
             collect_crypto_usages_in_expr(condition, fn_name, usages);
             for s in &body.stmts {
                 collect_crypto_usages_in_stmt(s, fn_name, usages);
@@ -339,7 +339,7 @@ impl<'a> CryptoPolicyPass<'a> {
                     self.check_stmt(s, fn_name);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr(condition, fn_name);
                 for s in &body.stmts {
                     self.check_stmt(s, fn_name);

@@ -227,7 +227,7 @@ impl<'a> MpcPass<'a> {
             StmtKind::Return(Some(expr)) => {
                 self.walk_expr_purity(expr, fn_name);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.walk_expr_purity(condition, fn_name);
                 for s in &body.stmts {
                     self.check_stmt_purity(s, fn_name);

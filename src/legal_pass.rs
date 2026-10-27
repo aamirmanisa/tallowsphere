@@ -480,7 +480,7 @@ impl<'a> LegalPass<'a> {
                 Self::collect_browser_ops_expr(iter, methods, ops);
                 Self::collect_browser_ops_block(body, methods, ops);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 Self::collect_browser_ops_expr(condition, methods, ops);
                 Self::collect_browser_ops_block(body, methods, ops);
             }

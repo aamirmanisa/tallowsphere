@@ -144,6 +144,20 @@ impl LLValue {
     }
 }
 
+/// One enclosing loop, for `break`/`continue` and for the value a `loop`
+/// expression yields (G08).
+#[derive(Debug, Clone)]
+struct LoopFrame {
+    continue_label: String,
+    break_label: String,
+    /// `'name`, when the loop is labeled.
+    label: Option<String>,
+    /// Alloca holding the value a `break 'name v` delivers to a `loop`
+    /// expression, plus that value's type. Created on the first valued break,
+    /// because the type is whatever the break carries.
+    value_slot: Option<(String, LLType)>,
+}
+
 // ── Struct Layout ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -526,8 +540,8 @@ pub struct CodeGen<'a> {
     /// external object, not a function this module emits.
     native_fns: std::collections::HashSet<String>,
 
-    // Loop context stack: (continue_label, break_label)
-    loop_stack: Vec<(String, String)>,
+    // Enclosing loops, innermost last.
+    loop_stack: Vec<LoopFrame>,
 
     // Struct layouts: name → layout (BTreeMap for deterministic IR emission order)
     struct_layouts: BTreeMap<String, StructLayout>,
@@ -3824,11 +3838,11 @@ void tallow_async_runtime_shutdown(void) {
                 self.collect_generic_calls_expr(&iter.kind, generic_fns, specs, seen);
                 self.collect_generic_calls(body, generic_fns, specs, seen);
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.collect_generic_calls_expr(&condition.kind, generic_fns, specs, seen);
                 self.collect_generic_calls(body, generic_fns, specs, seen);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 self.collect_generic_calls(body, generic_fns, specs, seen);
             }
             _ => {}
@@ -5568,20 +5582,26 @@ void tallow_async_runtime_shutdown(void) {
             }
 
             StmtKind::For {
+                label,
                 binding,
                 iter,
                 body,
             } => {
-                self.emit_for_loop(binding, iter, body)?;
+                self.emit_for_loop(binding, iter, body, label)?;
                 Ok(None)
             }
 
-            StmtKind::While { condition, body } => {
-                self.emit_while_loop(condition, body)?;
+            StmtKind::While {
+                label,
+                condition,
+                body,
+            } => {
+                self.emit_while_loop(condition, body, label)?;
                 Ok(None)
             }
 
             StmtKind::WhileLet {
+                label,
                 pattern,
                 expr,
                 body,
@@ -5683,8 +5703,12 @@ void tallow_async_runtime_shutdown(void) {
                     }
                 }
 
-                self.loop_stack
-                    .push((cond_label.clone(), end_label.clone()));
+                self.loop_stack.push(LoopFrame {
+                    continue_label: cond_label.clone(),
+                    break_label: end_label.clone(),
+                    label: label.clone(),
+                    value_slot: None,
+                });
                 self.emit_block(body)?;
                 self.loop_stack.pop();
                 self.emit_line(&format!("br label %{cond_label}"));
@@ -5711,20 +5735,45 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(None)
             }
 
-            StmtKind::Break => {
-                if let Some((_, break_label)) = self.loop_stack.last() {
-                    self.emit_line(&format!("br label %{break_label}"));
-                    let unreachable = self.fresh_label("after.break");
-                    self.body.push_str(&format!("{unreachable}:\n"));
+            StmtKind::Break { label, value } => {
+                let Some(idx) = self.loop_frame_index(label.as_deref()) else {
+                    return Err(match label {
+                        Some(l) => format!("`break '{l}`: no enclosing loop is labeled '{l}"),
+                        None => "break outside of a loop".to_string(),
+                    });
+                };
+                if let Some(value) = value {
+                    let v = self.emit_expr(value)?;
+                    let existing = self.loop_stack[idx].value_slot.clone();
+                    let (slot, slot_ty) = match existing {
+                        Some((slot, ty)) => (slot, ty),
+                        None => {
+                            let slot = self.fresh_reg();
+                            self.emit_line(&format!("{slot} = alloca {}", v.ty.to_ir()));
+                            self.loop_stack[idx].value_slot = Some((slot.clone(), v.ty.clone()));
+                            (slot, v.ty.clone())
+                        }
+                    };
+                    let stored = self.coerce(&v, &slot_ty)?;
+                    self.emit_line(&format!("store {} {stored}, ptr {slot}", slot_ty.to_ir()));
                 }
+                let break_label = self.loop_stack[idx].break_label.clone();
+                self.emit_line(&format!("br label %{break_label}"));
+                let unreachable = self.fresh_label("after.break");
+                self.body.push_str(&format!("{unreachable}:\n"));
                 Ok(None)
             }
-            StmtKind::Continue => {
-                if let Some((continue_label, _)) = self.loop_stack.last() {
-                    self.emit_line(&format!("br label %{continue_label}"));
-                    let unreachable = self.fresh_label("after.continue");
-                    self.body.push_str(&format!("{unreachable}:\n"));
-                }
+            StmtKind::Continue { label } => {
+                let Some(idx) = self.loop_frame_index(label.as_deref()) else {
+                    return Err(match label {
+                        Some(l) => format!("`continue '{l}`: no enclosing loop is labeled '{l}"),
+                        None => "continue outside of a loop".to_string(),
+                    });
+                };
+                let continue_label = self.loop_stack[idx].continue_label.clone();
+                self.emit_line(&format!("br label %{continue_label}"));
+                let unreachable = self.fresh_label("after.continue");
+                self.body.push_str(&format!("{unreachable}:\n"));
                 Ok(None)
             }
             StmtKind::Defer { body } => {
@@ -5734,15 +5783,19 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(None)
             }
 
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { label, body } => {
                 // Infinite loop — must have a break inside
                 let body_label = self.fresh_label("loop.body");
                 let end_label = self.fresh_label("loop.end");
 
                 self.emit_line(&format!("br label %{body_label}"));
                 self.body.push_str(&format!("{body_label}:\n"));
-                self.loop_stack
-                    .push((body_label.clone(), end_label.clone()));
+                self.loop_stack.push(LoopFrame {
+                    continue_label: body_label.clone(),
+                    break_label: end_label.clone(),
+                    label: label.clone(),
+                    value_slot: None,
+                });
                 self.emit_block(body)?;
                 self.loop_stack.pop();
                 self.emit_line(&format!("br label %{body_label}"));
@@ -6517,6 +6570,38 @@ void tallow_async_runtime_shutdown(void) {
             ExprKind::Block(block) => {
                 let val = self.emit_block(block)?;
                 Ok(val.unwrap_or(LLValue::new("0".into(), LLType::I64)))
+            }
+
+            // ── `loop` in value position (G08) ──────────────────────────
+            // The value is whatever a `break 'name v` stored. The store slot is
+            // created by the first valued break, because the type is the type
+            // that break carries.
+            ExprKind::Loop { label, body } => {
+                let body_label = self.fresh_label("loopx.body");
+                let end_label = self.fresh_label("loopx.end");
+
+                self.emit_line(&format!("br label %{body_label}"));
+                self.body.push_str(&format!("{body_label}:\n"));
+                self.loop_stack.push(LoopFrame {
+                    continue_label: body_label.clone(),
+                    break_label: end_label.clone(),
+                    label: label.clone(),
+                    value_slot: None,
+                });
+                self.emit_block(body)?;
+                let frame = self.loop_stack.pop();
+                self.emit_line(&format!("br label %{body_label}"));
+                self.body.push_str(&format!("{end_label}:\n"));
+                match frame.and_then(|f| f.value_slot) {
+                    Some((slot, ty)) => {
+                        let out = self.fresh_reg();
+                        self.emit_line(&format!("{out} = load {}, ptr {slot}", ty.to_ir()));
+                        Ok(LLValue::new(out, ty))
+                    }
+                    // No valued break: the loop either never exits or exits
+                    // through `break` with no payload, so the value is unused.
+                    None => Ok(LLValue::new("0".into(), LLType::I64)),
+                }
             }
 
             // ── Array ───────────────────────────────────────────────────
@@ -15291,7 +15376,25 @@ void tallow_async_runtime_shutdown(void) {
 
     // ── Loop Emission ───────────────────────────────────────────────────────
 
-    fn emit_for_loop(&mut self, binding: &str, iter: &Expr, body: &Block) -> Result<(), String> {
+    /// Index of the loop a `break`/`continue` targets: the innermost for an
+    /// unlabeled jump, the innermost carrying that label otherwise (G08).
+    fn loop_frame_index(&self, label: Option<&str>) -> Option<usize> {
+        match label {
+            None => self.loop_stack.len().checked_sub(1),
+            Some(l) => self
+                .loop_stack
+                .iter()
+                .rposition(|f| f.label.as_deref() == Some(l)),
+        }
+    }
+
+    fn emit_for_loop(
+        &mut self,
+        binding: &str,
+        iter: &Expr,
+        body: &Block,
+        label: &Option<String>,
+    ) -> Result<(), String> {
         // Check for range pattern: start..end
         if let ExprKind::Binary {
             op: BinOp::Range,
@@ -15330,7 +15433,12 @@ void tallow_async_runtime_shutdown(void) {
 
             // Body
             self.body.push_str(&format!("{body_label}:\n"));
-            self.loop_stack.push((inc_label.clone(), end_label.clone()));
+            self.loop_stack.push(LoopFrame {
+                continue_label: inc_label.clone(),
+                break_label: end_label.clone(),
+                label: label.clone(),
+                value_slot: None,
+            });
             self.emit_block(body)?;
             self.loop_stack.pop();
             self.emit_line(&format!("br label %{inc_label}"));
@@ -15409,7 +15517,12 @@ void tallow_async_runtime_shutdown(void) {
         let inc_label = self.fresh_label("forarr.inc");
         let end_label = self.fresh_label("forarr.end");
 
-        self.loop_stack.push((inc_label.clone(), end_label.clone()));
+        self.loop_stack.push(LoopFrame {
+            continue_label: inc_label.clone(),
+            break_label: end_label.clone(),
+            label: label.clone(),
+            value_slot: None,
+        });
         self.emit_line(&format!("br label %{cond_label}"));
 
         // Condition: idx < len
@@ -15488,7 +15601,12 @@ void tallow_async_runtime_shutdown(void) {
         Ok(())
     }
 
-    fn emit_while_loop(&mut self, condition: &Expr, body: &Block) -> Result<(), String> {
+    fn emit_while_loop(
+        &mut self,
+        condition: &Expr,
+        body: &Block,
+        label: &Option<String>,
+    ) -> Result<(), String> {
         let cond_label = self.fresh_label("while.cond");
         let body_label = self.fresh_label("while.body");
         let end_label = self.fresh_label("while.end");
@@ -15505,8 +15623,12 @@ void tallow_async_runtime_shutdown(void) {
 
         // Body
         self.body.push_str(&format!("{body_label}:\n"));
-        self.loop_stack
-            .push((cond_label.clone(), end_label.clone()));
+        self.loop_stack.push(LoopFrame {
+            continue_label: cond_label.clone(),
+            break_label: end_label.clone(),
+            label: label.clone(),
+            value_slot: None,
+        });
         self.emit_block(body)?;
         self.loop_stack.pop();
         self.emit_line(&format!("br label %{cond_label}"));
@@ -27442,31 +27564,46 @@ fn substitute_stmt(stmt: &Stmt, subst: &HashMap<String, String>) -> Stmt {
         StmtKind::Return(Some(expr)) => StmtKind::Return(Some(substitute_expr(expr, subst))),
         StmtKind::Return(None) => StmtKind::Return(None),
         StmtKind::For {
+            label,
             binding,
             iter,
             body,
         } => StmtKind::For {
+            label: label.clone(),
             binding: binding.clone(),
             iter: substitute_expr(iter, subst),
             body: substitute_block(body, subst),
         },
-        StmtKind::While { condition, body } => StmtKind::While {
+        StmtKind::While {
+            label,
+            condition,
+            body,
+        } => StmtKind::While {
+            label: label.clone(),
             condition: substitute_expr(condition, subst),
             body: substitute_block(body, subst),
         },
         StmtKind::WhileLet {
+            label,
             pattern,
             expr,
             body,
         } => StmtKind::WhileLet {
+            label: label.clone(),
             pattern: pattern.clone(),
             expr: substitute_expr(expr, subst),
             body: substitute_block(body, subst),
         },
         StmtKind::Bail(expr) => StmtKind::Bail(substitute_expr(expr, subst)),
-        StmtKind::Break => StmtKind::Break,
-        StmtKind::Continue => StmtKind::Continue,
-        StmtKind::Loop { body } => StmtKind::Loop {
+        StmtKind::Break { label, value } => StmtKind::Break {
+            label: label.clone(),
+            value: value.as_ref().map(|v| substitute_expr(v, subst)),
+        },
+        StmtKind::Continue { label } => StmtKind::Continue {
+            label: label.clone(),
+        },
+        StmtKind::Loop { label, body } => StmtKind::Loop {
+            label: label.clone(),
             body: substitute_block(body, subst),
         },
         StmtKind::Defer { body } => StmtKind::Defer {
@@ -28144,7 +28281,7 @@ fn collect_free_vars_stmt(
                 collect_free_vars_stmt(s, bound, builtins, free, seen);
             }
         }
-        StmtKind::While { condition, body } => {
+        StmtKind::While { condition, body, .. } => {
             collect_free_vars_expr(condition, bound, builtins, free, seen);
             for s in &body.stmts {
                 collect_free_vars_stmt(s, bound, builtins, free, seen);
@@ -28156,7 +28293,7 @@ fn collect_free_vars_stmt(
                 collect_free_vars_stmt(s, bound, builtins, free, seen);
             }
         }
-        StmtKind::Loop { body } => {
+        StmtKind::Loop { body, .. } => {
             for s in &body.stmts {
                 collect_free_vars_stmt(s, bound, builtins, free, seen);
             }
@@ -41558,7 +41695,7 @@ fn optional_let_value<'a>(block: &'a Block, name: &str) -> Option<&'a Expr> {
         match &stmt.kind {
             StmtKind::Let { name: n, value, .. } if n == name => return Some(value),
             StmtKind::Var { name: n, value, .. } if n == name => return Some(value),
-            StmtKind::For { body, .. } | StmtKind::While { body, .. } | StmtKind::Loop { body } => {
+            StmtKind::For { body, .. } | StmtKind::While { body, .. } | StmtKind::Loop { body, .. } => {
                 if let Some(v) = optional_let_value(body, name) {
                     return Some(v);
                 }

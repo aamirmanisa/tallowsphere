@@ -178,7 +178,7 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_write(s);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_no_write(condition);
                 for s in &body.stmts {
                     self.check_stmt_no_write(s);
@@ -190,12 +190,12 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_write(s);
                 }
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 for s in &body.stmts {
                     self.check_stmt_no_write(s);
                 }
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -299,7 +299,7 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_network(s);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_no_network(condition);
                 for s in &body.stmts {
                     self.check_stmt_no_network(s);
@@ -311,12 +311,12 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_network(s);
                 }
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 for s in &body.stmts {
                     self.check_stmt_no_network(s);
                 }
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -422,7 +422,7 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_spawn(s);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_no_spawn(condition);
                 for s in &body.stmts {
                     self.check_stmt_no_spawn(s);
@@ -434,12 +434,12 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_spawn(s);
                 }
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 for s in &body.stmts {
                     self.check_stmt_no_spawn(s);
                 }
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -545,7 +545,7 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_execute(s);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_no_execute(condition);
                 for s in &body.stmts {
                     self.check_stmt_no_execute(s);
@@ -557,12 +557,12 @@ impl<'a> AgentPass<'a> {
                     self.check_stmt_no_execute(s);
                 }
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 for s in &body.stmts {
                     self.check_stmt_no_execute(s);
                 }
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }

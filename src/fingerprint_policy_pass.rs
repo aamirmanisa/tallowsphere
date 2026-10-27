@@ -388,12 +388,12 @@ fn walk_stmt<F: FnMut(&Expr)>(stmt: &Stmt, f: &mut F) {
         | StmtKind::Bail(value) => walk_expr(value, f),
         StmtKind::Expr { expr } => walk_expr(expr, f),
         StmtKind::Return(Some(expr)) => walk_expr(expr, f),
-        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+        StmtKind::Return(None) | StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
         StmtKind::For { iter, body, .. } => {
             walk_expr(iter, f);
             walk_block(body, f);
         }
-        StmtKind::While { condition, body } => {
+        StmtKind::While { condition, body, .. } => {
             walk_expr(condition, f);
             walk_block(body, f);
         }
@@ -401,7 +401,7 @@ fn walk_stmt<F: FnMut(&Expr)>(stmt: &Stmt, f: &mut F) {
             walk_expr(expr, f);
             walk_block(body, f);
         }
-        StmtKind::Loop { body } | StmtKind::Defer { body } => walk_block(body, f),
+        StmtKind::Loop { body, .. } | StmtKind::Defer { body } => walk_block(body, f),
     }
 }
 
@@ -466,6 +466,9 @@ fn walk_expr<F: FnMut(&Expr)>(expr: &Expr, f: &mut F) {
             }
         }
         ExprKind::Block(b) => walk_block(b, f),
+        // `loop { .. }` in value position is a labelled block (G08): its body
+        // runs, so anything inside it is reachable and must be walked.
+        ExprKind::Loop { body, .. } => walk_block(body, f),
         ExprKind::Array(elems) => {
             for e in elems {
                 walk_expr(e, f);

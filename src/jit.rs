@@ -297,8 +297,8 @@ pub fn type_tag(value: &Value) -> u8 {
         Value::Brain(_) => 22,
         Value::Boxed(_) => 23,
         Value::Return(_) => 24,
-        Value::Break => 25,
-        Value::Continue => 26,
+        Value::Break { .. } => 25,
+        Value::Continue { .. } => 26,
         Value::Channel(_) => 27,
     }
 }
@@ -1075,8 +1075,8 @@ impl TracingJIT {
                     | StmtKind::For { .. }
                     | StmtKind::Loop { .. }
                     | StmtKind::Return(_)
-                    | StmtKind::Break
-                    | StmtKind::Continue
+                    | StmtKind::Break { .. }
+                    | StmtKind::Continue { .. }
                     | StmtKind::Bail(_)
             );
 

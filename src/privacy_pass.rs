@@ -118,6 +118,7 @@ impl<'a> PrivacyPass<'a> {
                 binding,
                 iter,
                 body,
+                ..
             } => {
                 self.check_expr_privacy(iter, locals);
                 let mut inner = locals.clone();
@@ -126,7 +127,7 @@ impl<'a> PrivacyPass<'a> {
                     self.check_stmt(s, &mut inner);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_privacy(condition, locals);
                 let mut inner = locals.clone();
                 for s in &body.stmts {
@@ -143,13 +144,13 @@ impl<'a> PrivacyPass<'a> {
             StmtKind::Bail(expr) => {
                 self.check_expr_privacy(expr, locals);
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 let mut inner = locals.clone();
                 for s in &body.stmts {
                     self.check_stmt(s, &mut inner);
                 }
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             // `defer` runs its block on scope exit, so it is a sink site like
             // any other: a `print(secret)` in a deferred block still prints.
             StmtKind::Defer { body } => {
@@ -279,6 +280,14 @@ impl<'a> PrivacyPass<'a> {
             ExprKind::Block(block) => {
                 let mut inner = locals.clone();
                 for s in &block.stmts {
+                    self.check_stmt(s, &mut inner);
+                }
+            }
+            // `loop { .. }` in value position is a labelled block (G08): its body
+            // runs, so a `print(secret)` inside it is a sink site like any other.
+            ExprKind::Loop { body, .. } => {
+                let mut inner = locals.clone();
+                for s in &body.stmts {
                     self.check_stmt(s, &mut inner);
                 }
             }

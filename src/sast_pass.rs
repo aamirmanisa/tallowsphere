@@ -667,7 +667,7 @@ impl<'a> SastPass<'a> {
                 }
             }
 
-            StmtKind::While { condition, body } => {
+            StmtKind::While { condition, body, .. } => {
                 self.check_expr_sinks(condition, tainted, fn_name, fn_map, impl_fn_map, depth);
                 for s in &body.stmts {
                     self.analyze_stmt(s, tainted, fn_name, fn_map, impl_fn_map, depth);
@@ -685,13 +685,13 @@ impl<'a> SastPass<'a> {
                 self.check_expr_sinks(expr, tainted, fn_name, fn_map, impl_fn_map, depth);
             }
 
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 for s in &body.stmts {
                     self.analyze_stmt(s, tainted, fn_name, fn_map, impl_fn_map, depth);
                 }
             }
 
-            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Return(None) | StmtKind::Break { .. } | StmtKind::Continue { .. } => {}
             StmtKind::Defer { .. } => {}
         }
     }
@@ -1158,6 +1158,14 @@ impl<'a> SastPass<'a> {
 
             ExprKind::Block(block) => {
                 for s in &block.stmts {
+                    self.analyze_stmt(s, &mut tainted.clone(), fn_name, fn_map, impl_fn_map, depth);
+                }
+            }
+
+            // `loop { .. }` in value position is a labelled block (G08): its body
+            // runs, so a sink inside it is reachable and must be analysed.
+            ExprKind::Loop { body, .. } => {
+                for s in &body.stmts {
                     self.analyze_stmt(s, &mut tainted.clone(), fn_name, fn_map, impl_fn_map, depth);
                 }
             }
