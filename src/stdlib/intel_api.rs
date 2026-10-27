@@ -26,6 +26,42 @@
 //! keys for 3.x), so the string is stable across runs and a `$ref` body yields `nil` rather than
 //! a guess.
 //!
+//! # N14 — SDL and introspection produce one shape
+//!
+//! `graphql_from_sdl` and `graphql_from_introspection` both produce types → fields → args with
+//! the same kind vocabulary (`object`, `interface`, `input`, `enum`, `scalar`, `union`), so a
+//! schema captured before a release can be compared with the same schema captured after it by a
+//! different mechanism.
+//!
+//! SDL is read by a **tokenizer**, not a regex: GraphQL argument types nest
+//! (`f(filter: Filter { a: Int }): T`) and a pattern that stops at the first `}` truncates the
+//! field list silently. Field type text is kept as written (`[User!]!`) and compared as text, so
+//! `[User]` → `[User!]` is a change rather than a normalisation to equality. Descriptions,
+//! comments and directives are skipped; `extend type` merges into the type rather than replacing
+//! it. Introspection skips `__`-prefixed meta-types — they are the mechanism, not the schema.
+//!
+//! A removed field is the breaking case and is reported in `removed_fields`, separately from
+//! `removed_types`. A field whose *type* changed is **both** a removal and an addition: it
+//! appears in `removed_fields`, in `added_fields`, and again in `type_changes` with both sides
+//! named — so a reader counting removals is not told the field vanished, nor one counting
+//! additions that it merely arrived. Same rule for a changed argument type, named
+//! `Type.field(arg)`. A changed *kind* (object → interface) is a removed type and an added type.
+//!
+//! # N20 — an exposure signal, not a finding
+//!
+//! `identifiers` reports endpoints whose path holds a literal numeric or UUID segment. Every row
+//! says `signal: "object-id-in-path"` and names the segment and its 0-based position. It does not
+//! say `vulnerable`, `BOLA`, or `IDOR`, and must not be read as one: an id in a path is ordinary
+//! REST design, and whether it is an authorization defect depends on a request the caller has not
+//! made. A templated segment (`{id}`) carries no value and is not flagged — the template is the
+//! safe shape, a filled-in value is the one worth a second look.
+//!
+//! The UUID test is the named pattern [`UUID_PATTERN`]: the canonical 8-4-4-4-12 hex shape,
+//! case-insensitive. Its known weakness is deliberate — it checks shape only, not the RFC 4122
+//! version nibble or variant bits, so a nil UUID and a hand-written non-RFC value both flag,
+//! while a bare 32-hex digest, a truncated id, or `deadbeef-cafe` do not. Version gating would
+//! miss real ids minted by libraries that emit v7/v8 or nil.
+//!
 //! # Refusals
 //!
 //! | code | when |
@@ -34,6 +70,8 @@
 //! | `api:openapi-malformed` | not JSON, `paths` is not an object, or a path key does not begin with `/` |
 //! | `api:openapi-ref-unsupported` | a path item is a `$ref`; resolving one needs a file or a network this module does not have |
 //! | `api:openapi-no-evidence` | `doc_url` is empty — an inventory without a source is not evidence |
+//! | `api:graphql-parse` | SDL the tokenizer/parser cannot read (unterminated string, unbalanced delimiter, unexpected definition) |
+//! | `api:graphql-introspection-malformed` | JSON that is not an introspection result (no `__schema`, a type without name/kind) |
 //! | `api:bad-argument` | an argument is missing, of the wrong type, or a struct of the wrong shape |
 
 use super::StdlibResult;
@@ -44,7 +82,15 @@ pub const CODE_VERSION_UNSUPPORTED: &str = "api:openapi-version-unsupported";
 pub const CODE_OPENAPI_MALFORMED: &str = "api:openapi-malformed";
 pub const CODE_OPENAPI_REF: &str = "api:openapi-ref-unsupported";
 pub const CODE_NO_EVIDENCE: &str = "api:openapi-no-evidence";
+pub const CODE_GRAPHQL_PARSE: &str = "api:graphql-parse";
+pub const CODE_INTROSPECTION: &str = "api:graphql-introspection-malformed";
 pub const CODE_ARG: &str = "api:bad-argument";
+
+/// Canonical 8-4-4-4-12 UUID shape. See the module docs for the known weakness.
+pub const UUID_PATTERN: &str =
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+/// The signal label every `identifiers` row carries — a description, not a severity.
+pub const SIGNAL_OBJECT_ID: &str = "object-id-in-path";
 
 const METHODS: [&str; 8] = [
     "get", "put", "post", "delete", "options", "head", "patch", "trace",
@@ -207,6 +253,873 @@ pub fn parse_openapi(doc_json: &str, doc_url: &str) -> Result<Inventory, String>
         openapi_version: version,
         endpoints,
     })
+}
+
+// ── N14: GraphQL SDL + introspection ──────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GArg {
+    pub name: String,
+    pub type_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GField {
+    pub name: String,
+    pub type_name: String,
+    pub args: Vec<GArg>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GType {
+    pub name: String,
+    pub kind: String,
+    pub fields: Vec<GField>,
+}
+
+/// types → fields → args, sorted by name at every level.
+pub type GSchema = std::collections::BTreeMap<String, GType>;
+
+#[derive(Clone, Debug, PartialEq)]
+enum Tok {
+    Name(String),
+    /// A string or block string. It carries no text (nothing here reads one), but it must
+    /// stay a *single* token: a default value like `= "me"` has to be consumed as one value.
+    Str,
+    Punct(char),
+}
+
+/// SDL → tokens. A tokenizer rather than a regex because GraphQL argument types nest:
+/// `f(filter: Filter { a: Int }): T` breaks any pattern that stops at the first `}`.
+/// Strings (descriptions, default values) and `#` comments are dropped; `,` is insignificant.
+fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
+    let cs: Vec<char> = src.chars().collect();
+    let (mut i, mut line) = (0usize, 1usize);
+    let mut out = Vec::new();
+    while i < cs.len() {
+        let c = cs[i];
+        match c {
+            '\n' => {
+                line += 1;
+                i += 1;
+            }
+            ' ' | '\t' | '\r' | ',' | '\u{feff}' => i += 1,
+            '#' => {
+                while i < cs.len() && cs[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '"' if i + 2 < cs.len() && cs[i + 1] == '"' && cs[i + 2] == '"' => {
+                i += 3;
+                loop {
+                    if i + 2 >= cs.len() {
+                        return Err(format!(
+                            "{CODE_GRAPHQL_PARSE}: unterminated block string at line {line}"
+                        ));
+                    }
+                    if cs[i] == '"' && cs[i + 1] == '"' && cs[i + 2] == '"' {
+                        i += 3;
+                        break;
+                    }
+                    line += usize::from(cs[i] == '\n');
+                    i += 1;
+                }
+                out.push(Tok::Str);
+            }
+            '"' => {
+                i += 1;
+                loop {
+                    if i >= cs.len() {
+                        return Err(format!(
+                            "{CODE_GRAPHQL_PARSE}: unterminated string at line {line}"
+                        ));
+                    }
+                    if cs[i] == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if cs[i] == '"' {
+                        i += 1;
+                        break;
+                    }
+                    line += usize::from(cs[i] == '\n');
+                    i += 1;
+                }
+                out.push(Tok::Str);
+            }
+            _ if c.is_alphabetic() || c == '_' => {
+                let start = i;
+                while i < cs.len() && (cs[i].is_alphanumeric() || cs[i] == '_') {
+                    i += 1;
+                }
+                out.push(Tok::Name(cs[start..i].iter().collect()));
+            }
+            // Numbers are never inspected (they only appear in defaults), so one opaque
+            // token is enough to let the default-skipping path walk over them.
+            _ if c.is_ascii_digit() || c == '-' => {
+                let start = i;
+                while i < cs.len() && (cs[i].is_ascii_alphanumeric() || "+-.eE".contains(cs[i])) {
+                    i += 1;
+                }
+                out.push(Tok::Name(cs[start..i].iter().collect()));
+            }
+            '{' | '}' | '(' | ')' | '[' | ']' | ':' | '=' | '!' | '@' | '|' | '&' | '$' | '.' => {
+                out.push(Tok::Punct(c));
+                i += 1;
+            }
+            other => {
+                return Err(format!(
+                    "{CODE_GRAPHQL_PARSE}: unexpected character {other:?} at line {line}"
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+struct P<'a> {
+    t: &'a [Tok],
+    i: usize,
+}
+
+impl<'a> P<'a> {
+    fn peek(&self) -> Option<&Tok> {
+        self.t.get(self.i)
+    }
+    fn next(&mut self) -> Option<Tok> {
+        let v = self.t.get(self.i).cloned();
+        if v.is_some() {
+            self.i += 1;
+        }
+        v
+    }
+    fn eof(&self) -> bool {
+        self.i >= self.t.len()
+    }
+    fn eat(&mut self, c: char) -> bool {
+        if matches!(self.peek(), Some(Tok::Punct(p)) if *p == c) {
+            self.i += 1;
+            true
+        } else {
+            false
+        }
+    }
+    fn expect(&mut self, c: char) -> Result<(), String> {
+        if self.eat(c) {
+            Ok(())
+        } else {
+            Err(self.err(&format!("expected '{c}'")))
+        }
+    }
+    fn err(&self, msg: &str) -> String {
+        format!(
+            "{CODE_GRAPHQL_PARSE}: {msg} at token {} of {}",
+            self.i,
+            self.t.len()
+        )
+    }
+    fn name(&mut self) -> Result<String, String> {
+        match self.next() {
+            Some(Tok::Name(n)) => Ok(n),
+            _ => Err(self.err("expected a name")),
+        }
+    }
+    fn peek_name(&self) -> Option<&str> {
+        match self.peek() {
+            Some(Tok::Name(n)) => Some(n.as_str()),
+            _ => None,
+        }
+    }
+}
+
+fn skip_balanced(p: &mut P, open: char, close: char) -> Result<(), String> {
+    let mut depth = 1i32;
+    while let Some(t) = p.next() {
+        match t {
+            Tok::Punct(c) if c == open => depth += 1,
+            Tok::Punct(c) if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(());
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(p.err(&format!("unbalanced '{open}'")))
+}
+
+/// Consume exactly one default value. A GraphQL const value is one scalar token, a string, or a
+/// balanced `[...]` / `{...}`; anything wider would swallow the following argument, because the
+/// tokenizer drops the commas that separate them.
+fn skip_value(p: &mut P) {
+    match p.peek() {
+        Some(Tok::Punct('[')) => {
+            p.next();
+            let _ = skip_balanced(p, '[', ']');
+        }
+        Some(Tok::Punct('{')) => {
+            p.next();
+            let _ = skip_balanced(p, '{', '}');
+        }
+        Some(_) => {
+            p.next();
+        }
+        None => {}
+    }
+}
+
+fn skip_directive(p: &mut P) -> Result<(), String> {
+    p.name()?;
+    if p.peek() == Some(&Tok::Punct('(')) {
+        p.next();
+        skip_balanced(p, '(', ')')?;
+    }
+    Ok(())
+}
+
+fn type_ref(p: &mut P) -> Result<String, String> {
+    let mut s = if p.eat('[') {
+        let inner = type_ref(p)?;
+        p.expect(']')?;
+        format!("[{inner}]")
+    } else {
+        p.name()?
+    };
+    if p.eat('!') {
+        s.push('!');
+    }
+    Ok(s)
+}
+
+fn parse_fields(
+    p: &mut P,
+    input: bool,
+) -> Result<std::collections::BTreeMap<String, GField>, String> {
+    p.expect('{')?;
+    let mut out = std::collections::BTreeMap::new();
+    while !p.eat('}') {
+        if p.eof() {
+            return Err(p.err("unbalanced '{' in field list"));
+        }
+        let name = p.name()?;
+        let mut args: Vec<GArg> = Vec::new();
+        if !input && p.eat('(') {
+            while !p.eat(')') {
+                if p.eof() {
+                    return Err(p.err("unbalanced '(' in argument list"));
+                }
+                let aname = p.name()?;
+                p.expect(':')?;
+                let aty = type_ref(p)?;
+                if p.eat('=') {
+                    skip_value(p);
+                }
+                while p.eat('@') {
+                    skip_directive(p)?;
+                }
+                args.push(GArg {
+                    name: aname,
+                    type_name: aty,
+                });
+            }
+        }
+        p.expect(':')?;
+        let ty = type_ref(p)?;
+        if p.eat('=') {
+            skip_value(p);
+        }
+        while p.eat('@') {
+            skip_directive(p)?;
+        }
+        args.sort_by(|a, b| a.name.cmp(&b.name));
+        out.insert(
+            name.clone(),
+            GField {
+                name,
+                type_name: ty,
+                args,
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn parse_enum_values(p: &mut P) -> Result<std::collections::BTreeMap<String, GField>, String> {
+    p.expect('{')?;
+    let mut out = std::collections::BTreeMap::new();
+    while !p.eat('}') {
+        if p.eof() {
+            return Err(p.err("unbalanced '{' in enum body"));
+        }
+        let v = p.name()?;
+        while p.eat('@') {
+            skip_directive(p)?;
+        }
+        out.insert(
+            v.clone(),
+            GField {
+                name: v,
+                // `"enum"` on both capture paths, so a diff never invents a type change.
+                type_name: "enum".to_string(),
+                args: Vec::new(),
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn skip_directive_def(p: &mut P) -> Result<(), String> {
+    p.expect('@')?;
+    p.name()?;
+    if p.peek() == Some(&Tok::Punct('(')) {
+        p.next();
+        skip_balanced(p, '(', ')')?;
+    }
+    if p.peek_name() == Some("repeatable") {
+        p.name()?;
+    }
+    if p.peek_name() != Some("on") {
+        return Err(p.err("directive definition without `on`"));
+    }
+    p.name()?;
+    while p.peek_name().is_some() {
+        p.name()?;
+        if !p.eat('|') {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Add fields to a type, merging into an existing definition so `extend type` behaves like
+/// an extension rather than a replacement.
+fn merge_fields(
+    schema: &mut GSchema,
+    name: &str,
+    kind: &str,
+    fields: std::collections::BTreeMap<String, GField>,
+) {
+    let t = schema.entry(name.to_string()).or_insert_with(|| GType {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        fields: Vec::new(),
+    });
+    for f in fields.into_values() {
+        match t.fields.iter_mut().find(|e| e.name == f.name) {
+            Some(slot) => *slot = f,
+            None => t.fields.push(f),
+        }
+    }
+    t.fields.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
+fn parse_definition(p: &mut P, head: &str, schema: &mut GSchema) -> Result<(), String> {
+    match head {
+        // `schema { query: Query }` names root operations; they are not types.
+        "schema" => {
+            p.expect('{')?;
+            skip_balanced(p, '{', '}')
+        }
+        "directive" => skip_directive_def(p),
+        "scalar" | "union" => {
+            let n = p.name()?;
+            while p.eat('@') {
+                skip_directive(p)?;
+            }
+            if head == "union" && p.eat('=') {
+                while p.peek_name().is_some() {
+                    p.name()?;
+                    if !p.eat('|') {
+                        break;
+                    }
+                }
+            }
+            schema.entry(n.clone()).or_insert_with(|| GType {
+                name: n,
+                kind: head.to_string(),
+                fields: Vec::new(),
+            });
+            Ok(())
+        }
+        "enum" => {
+            let n = p.name()?;
+            while p.eat('@') {
+                skip_directive(p)?;
+            }
+            let values = match p.peek() == Some(&Tok::Punct('{')) {
+                true => parse_enum_values(p)?,
+                false => std::collections::BTreeMap::new(),
+            };
+            merge_fields(schema, &n, "enum", values);
+            Ok(())
+        }
+        "type" | "interface" | "input" => {
+            let kind = match head {
+                "type" => "object",
+                "interface" => "interface",
+                _ => "input",
+            };
+            let n = p.name()?;
+            if p.peek_name() == Some("implements") {
+                p.name()?;
+                while p.peek_name().is_some() {
+                    p.name()?;
+                    if !p.eat('&') {
+                        break;
+                    }
+                }
+            }
+            while p.eat('@') {
+                skip_directive(p)?;
+            }
+            let fields = match p.peek() == Some(&Tok::Punct('{')) {
+                true => parse_fields(p, head == "input")?,
+                false => std::collections::BTreeMap::new(),
+            };
+            merge_fields(schema, &n, kind, fields);
+            Ok(())
+        }
+        other => Err(p.err(&format!("unexpected top-level definition `{other}`"))),
+    }
+}
+
+/// Parse GraphQL SDL into the shared schema shape.
+pub fn parse_sdl(src: &str) -> Result<GSchema, String> {
+    let toks = tokenize(src)?;
+    let mut p = P { t: &toks, i: 0 };
+    let mut schema = GSchema::new();
+    while !p.eof() {
+        // A description is a string token in front of the definition it documents.
+        while matches!(p.peek(), Some(Tok::Str)) {
+            p.next();
+        }
+        if p.eof() {
+            break;
+        }
+        let head = p.name()?;
+        if head == "extend" {
+            let inner = p.name()?;
+            parse_definition(&mut p, &inner, &mut schema)?;
+        } else {
+            parse_definition(&mut p, &head, &mut schema)?;
+        }
+    }
+    Ok(schema)
+}
+
+fn intro_kind(k: &str) -> String {
+    match k {
+        "OBJECT" => "object",
+        "INTERFACE" => "interface",
+        "INPUT_OBJECT" => "input",
+        "ENUM" => "enum",
+        "SCALAR" => "scalar",
+        "UNION" => "union",
+        other => return other.to_ascii_lowercase(),
+    }
+    .to_string()
+}
+
+/// Render an introspection `__Type` as the text an SDL author would write. Depth-capped so a
+/// nested `ofType` chain cannot exhaust the stack.
+fn intro_type_ref(t: &J, depth: usize) -> String {
+    if depth > 32 {
+        return "?".to_string();
+    }
+    let inner = |d: usize| intro_type_ref(t.get("ofType").unwrap_or(&J::Null), d);
+    match t.get("kind").and_then(J::as_str) {
+        Some("NON_NULL") => format!("{}!", inner(depth + 1)),
+        Some("LIST") => format!("[{}]", inner(depth + 1)),
+        _ => t.get("name").and_then(J::as_str).unwrap_or("").to_string(),
+    }
+}
+
+/// Parse an introspection response (`{data:{__schema:{types:[…]}}}` or a bare `{__schema:…}`).
+/// The `__`-prefixed meta-types are skipped: they are the introspection mechanism, not the
+/// schema under test.
+pub fn parse_introspection(src: &str) -> Result<GSchema, String> {
+    let doc: J =
+        serde_json::from_str(src).map_err(|e| format!("{CODE_INTROSPECTION}: not JSON: {e}"))?;
+    let schema = doc
+        .get("data")
+        .and_then(|d| d.get("__schema"))
+        .or_else(|| doc.get("__schema"))
+        .ok_or_else(|| {
+            format!(
+                "{CODE_INTROSPECTION}: no `__schema` — looked at `data.__schema` and `__schema`"
+            )
+        })?;
+    let types = schema.get("types").and_then(J::as_array).ok_or_else(|| {
+        format!("{CODE_INTROSPECTION}: `__schema.types` is missing or is not an array")
+    })?;
+    let mut out = GSchema::new();
+    for t in types {
+        let Some(name) = t.get("name").and_then(J::as_str) else {
+            return Err(format!(
+                "{CODE_INTROSPECTION}: a type in `__schema.types` has no name"
+            ));
+        };
+        if name.starts_with("__") {
+            continue;
+        }
+        let Some(kind) = t.get("kind").and_then(J::as_str) else {
+            return Err(format!("{CODE_INTROSPECTION}: type {name:?} has no `kind`"));
+        };
+        let mut fields: Vec<GField> = Vec::new();
+        let list = t
+            .get("fields")
+            .and_then(J::as_array)
+            .or_else(|| t.get("inputFields").and_then(J::as_array))
+            .or_else(|| t.get("enumValues").and_then(J::as_array));
+        for f in list.into_iter().flatten() {
+            let Some(fname) = f.get("name").and_then(J::as_str) else {
+                return Err(format!(
+                    "{CODE_INTROSPECTION}: a field of type {name:?} has no name"
+                ));
+            };
+            let mut args: Vec<GArg> = Vec::new();
+            for a in f.get("args").and_then(J::as_array).into_iter().flatten() {
+                let Some(aname) = a.get("name").and_then(J::as_str) else {
+                    return Err(format!(
+                        "{CODE_INTROSPECTION}: an argument of {name}.{fname} has no name"
+                    ));
+                };
+                args.push(GArg {
+                    name: aname.to_string(),
+                    type_name: a
+                        .get("type")
+                        .map(|ty| intro_type_ref(ty, 0))
+                        .unwrap_or_default(),
+                });
+            }
+            args.sort_by(|a, b| a.name.cmp(&b.name));
+            fields.push(GField {
+                name: fname.to_string(),
+                // An enum value carries only a name in introspection.
+                type_name: f
+                    .get("type")
+                    .map(|ty| intro_type_ref(ty, 0))
+                    .unwrap_or_else(|| "enum".to_string()),
+                args,
+            });
+        }
+        fields.sort_by(|a, b| a.name.cmp(&b.name));
+        out.insert(
+            name.to_string(),
+            GType {
+                name: name.to_string(),
+                kind: intro_kind(kind),
+                fields,
+            },
+        );
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GTypeChange {
+    pub type_name: String,
+    pub field: String,
+    pub old_type: String,
+    pub new_type: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GqlDiff {
+    pub added_types: Vec<String>,
+    pub removed_types: Vec<String>,
+    pub added_fields: Vec<String>,
+    pub removed_fields: Vec<String>,
+    pub added_args: Vec<String>,
+    pub removed_args: Vec<String>,
+    pub type_changes: Vec<GTypeChange>,
+}
+
+impl GqlDiff {
+    pub fn breaking(&self) -> bool {
+        !self.removed_types.is_empty()
+            || !self.removed_fields.is_empty()
+            || !self.removed_args.is_empty()
+    }
+}
+
+fn arg_type<'a>(f: &'a GField, name: &str) -> Option<&'a str> {
+    f.args
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| a.type_name.as_str())
+}
+
+/// Compare two schemas. A changed type is reported as a removal **and** an addition, plus a
+/// `type_changes` row naming both sides.
+pub fn graphql_diff(old: &GSchema, new: &GSchema) -> GqlDiff {
+    use std::collections::BTreeSet;
+    let mut d = GqlDiff::default();
+    let (mut at, mut rt, mut af, mut rf, mut aa, mut ra) = (
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::new(),
+    );
+    // One pass over the union: `chain` would visit a name present in both sides twice, and a
+    // type change recorded twice is a diff a reader cannot count.
+    let mut names: BTreeSet<&String> = old.keys().collect();
+    names.extend(new.keys());
+    for name in names {
+        let (Some(o), Some(n)) = (old.get(name), new.get(name)) else {
+            if old.contains_key(name) {
+                rt.insert(name.clone());
+            } else {
+                at.insert(name.clone());
+            }
+            continue;
+        };
+        if o.kind != n.kind {
+            // The type as declared changed: a removal and an addition, not a field edit.
+            at.insert(name.clone());
+            rt.insert(name.clone());
+        }
+        let mut fnames: BTreeSet<&str> = o.fields.iter().map(|f| f.name.as_str()).collect();
+        fnames.extend(n.fields.iter().map(|f| f.name.as_str()));
+        for fname in fnames {
+            let label = format!("{name}.{fname}");
+            let (of, nf) = (
+                o.fields.iter().find(|f| f.name == fname),
+                n.fields.iter().find(|f| f.name == fname),
+            );
+            let (Some(of), Some(nf)) = (of, nf) else {
+                match of.is_some() {
+                    true => rf.insert(label),
+                    false => af.insert(label),
+                };
+                continue;
+            };
+            if of.type_name != nf.type_name {
+                af.insert(label.clone());
+                rf.insert(label.clone());
+                d.type_changes.push(GTypeChange {
+                    type_name: name.clone(),
+                    field: fname.to_string(),
+                    old_type: of.type_name.clone(),
+                    new_type: nf.type_name.clone(),
+                });
+            }
+            let mut anames: BTreeSet<&str> = of.args.iter().map(|a| a.name.as_str()).collect();
+            anames.extend(nf.args.iter().map(|a| a.name.as_str()));
+            for aname in anames {
+                let alabel = format!("{label}({aname})");
+                match (arg_type(of, aname), arg_type(nf, aname)) {
+                    (None, Some(_)) => {
+                        aa.insert(alabel);
+                    }
+                    (Some(_), None) => {
+                        ra.insert(alabel);
+                    }
+                    (Some(oa), Some(na)) if oa != na => {
+                        aa.insert(alabel.clone());
+                        ra.insert(alabel.clone());
+                        d.type_changes.push(GTypeChange {
+                            type_name: name.clone(),
+                            field: format!("{fname}({aname})"),
+                            old_type: oa.to_string(),
+                            new_type: na.to_string(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    d.added_types = at.into_iter().collect();
+    d.removed_types = rt.into_iter().collect();
+    d.added_fields = af.into_iter().collect();
+    d.removed_fields = rf.into_iter().collect();
+    d.added_args = aa.into_iter().collect();
+    d.removed_args = ra.into_iter().collect();
+    d
+}
+
+// ── N20: object ids in paths ──────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PathSignal {
+    pub signal: String,
+    pub method: String,
+    pub path: String,
+    pub segment: String,
+    pub index: usize,
+    pub kind: String,
+}
+
+fn uuid_re() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(UUID_PATTERN).expect("UUID_PATTERN compiles"))
+}
+
+fn segment_kind(seg: &str) -> Option<&'static str> {
+    if !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit()) {
+        return Some("numeric");
+    }
+    match uuid_re().is_match(seg) {
+        true => Some("uuid"),
+        false => None,
+    }
+}
+
+/// Flag endpoints whose path carries a literal numeric or UUID segment. Deterministic: sorted
+/// by `(path, method, index)`.
+pub fn identifiers(endpoints: &[Endpoint]) -> Vec<PathSignal> {
+    let mut out = Vec::new();
+    for ep in endpoints {
+        // A template (`{id}`) is not a value and is deliberately not flagged: the safe shape
+        // is the template, the worth-a-look shape is a literal value.
+        for (index, seg) in ep.path.split('/').filter(|s| !s.is_empty()).enumerate() {
+            let Some(kind) = segment_kind(seg) else {
+                continue;
+            };
+            out.push(PathSignal {
+                signal: SIGNAL_OBJECT_ID.to_string(),
+                method: ep.method.clone(),
+                path: ep.path.clone(),
+                segment: seg.to_string(),
+                index,
+                kind: kind.to_string(),
+            });
+        }
+    }
+    out.sort_by(|a, b| (&a.path, &a.method, a.index).cmp(&(&b.path, &b.method, b.index)));
+    out
+}
+
+// ── GraphQL/SDL value plumbing ────────────────────────────────────────────
+
+fn array_field<'a>(fs: &'a [(String, Value)], k: &str) -> Option<&'a [Value]> {
+    match fs.iter().find(|(n, _)| n == k).map(|(_, v)| v) {
+        Some(Value::Array(a)) => Some(a),
+        _ => None,
+    }
+}
+
+fn schema_of(v: &Value, fname: &str) -> Result<GSchema, String> {
+    let Value::Struct { name, fields } = v else {
+        return Err(bad(
+            fname,
+            &format!("expected GraphqlSchema, got {}", type_name(v)),
+        ));
+    };
+    if name != "GraphqlSchema" {
+        return Err(bad(
+            fname,
+            &format!("expected GraphqlSchema, got struct {name}"),
+        ));
+    }
+    let types = array_field(fields, "types")
+        .ok_or_else(|| bad(fname, "GraphqlSchema without a `types` array"))?;
+    let mut out = GSchema::new();
+    for t in types {
+        let Value::Struct { name, fields: tf } = t else {
+            return Err(bad(fname, "a GraphqlSchema type is not a struct"));
+        };
+        if name != "GraphqlType" {
+            return Err(bad(
+                fname,
+                &format!("expected GraphqlType, got struct {name}"),
+            ));
+        }
+        let tname = sv(tf, "name").ok_or_else(|| bad(fname, "GraphqlType without a `name`"))?;
+        let mut gfields: Vec<GField> = Vec::new();
+        for f in array_field(tf, "fields").unwrap_or_default() {
+            let Value::Struct { fields: ff, .. } = f else {
+                return Err(bad(fname, "a GraphqlType field is not a struct"));
+            };
+            let fname_ =
+                sv(ff, "name").ok_or_else(|| bad(fname, "GraphqlField without a `name`"))?;
+            let mut args: Vec<GArg> = Vec::new();
+            for a in array_field(ff, "args").unwrap_or_default() {
+                let Value::Struct { fields: af, .. } = a else {
+                    return Err(bad(fname, "a GraphqlField arg is not a struct"));
+                };
+                args.push(GArg {
+                    name: sv(af, "name").unwrap_or_default(),
+                    type_name: sv(af, "type_name").unwrap_or_default(),
+                });
+            }
+            args.sort_by(|a, b| a.name.cmp(&b.name));
+            gfields.push(GField {
+                name: fname_,
+                type_name: sv(ff, "type_name").unwrap_or_default(),
+                args,
+            });
+        }
+        gfields.sort_by(|a, b| a.name.cmp(&b.name));
+        out.insert(
+            tname.clone(),
+            GType {
+                name: tname,
+                kind: sv(tf, "kind").unwrap_or_else(|| "object".to_string()),
+                fields: gfields,
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn field_value(f: &GField) -> Value {
+    Value::Struct {
+        name: "GraphqlField".to_string(),
+        fields: vec![
+            sfield("name", &f.name),
+            sfield("type_name", &f.type_name),
+            (
+                "args".to_string(),
+                Value::Array(
+                    f.args
+                        .iter()
+                        .map(|a| Value::Struct {
+                            name: "GraphqlArg".to_string(),
+                            fields: vec![
+                                sfield("name", &a.name),
+                                sfield("type_name", &a.type_name),
+                            ],
+                        })
+                        .collect(),
+                ),
+            ),
+        ],
+    }
+}
+
+fn schema_value(s: &GSchema, origin: &str) -> Value {
+    let types: Vec<Value> = s
+        .values()
+        .map(|t| Value::Struct {
+            name: "GraphqlType".to_string(),
+            fields: vec![
+                sfield("name", &t.name),
+                sfield("kind", &t.kind),
+                (
+                    "fields".to_string(),
+                    Value::Array(t.fields.iter().map(field_value).collect()),
+                ),
+            ],
+        })
+        .collect();
+    Value::Struct {
+        name: "GraphqlSchema".to_string(),
+        fields: vec![
+            sfield("origin", origin),
+            ifield("type_count", types.len()),
+            ("types".to_string(), Value::Array(types)),
+        ],
+    }
+}
+
+fn strings(v: &[String]) -> Value {
+    Value::Array(v.iter().cloned().map(Value::String).collect())
 }
 
 // ── Value plumbing ────────────────────────────────────────────────────────
@@ -429,6 +1342,79 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
                     endpoints,
                 }))
             }
+            "graphql_from_sdl" => Ok(schema_value(
+                &parse_sdl(&str_arg(&args, 0, "graphql_from_sdl")?)?,
+                "sdl",
+            )),
+            "graphql_from_introspection" => Ok(schema_value(
+                &parse_introspection(&str_arg(&args, 0, "graphql_from_introspection")?)?,
+                "introspection",
+            )),
+            "graphql_diff" => {
+                let old = schema_of(
+                    args.get(0)
+                        .ok_or_else(|| bad("graphql_diff", "missing argument 1"))?,
+                    "graphql_diff",
+                )?;
+                let new = schema_of(
+                    args.get(1)
+                        .ok_or_else(|| bad("graphql_diff", "missing argument 2"))?,
+                    "graphql_diff",
+                )?;
+                let d = graphql_diff(&old, &new);
+                Ok(Value::Struct {
+                    name: "GraphqlDiff".to_string(),
+                    fields: vec![
+                        ("added_types".to_string(), strings(&d.added_types)),
+                        ("removed_types".to_string(), strings(&d.removed_types)),
+                        ("added_fields".to_string(), strings(&d.added_fields)),
+                        ("removed_fields".to_string(), strings(&d.removed_fields)),
+                        ("added_args".to_string(), strings(&d.added_args)),
+                        ("removed_args".to_string(), strings(&d.removed_args)),
+                        (
+                            "type_changes".to_string(),
+                            Value::Array(
+                                d.type_changes
+                                    .iter()
+                                    .map(|c| Value::Struct {
+                                        name: "GraphqlTypeChange".to_string(),
+                                        fields: vec![
+                                            sfield("type_name", &c.type_name),
+                                            sfield("field", &c.field),
+                                            sfield("old_type", &c.old_type),
+                                            sfield("new_type", &c.new_type),
+                                        ],
+                                    })
+                                    .collect(),
+                            ),
+                        ),
+                        ("breaking".to_string(), Value::Bool(d.breaking())),
+                    ],
+                })
+            }
+            "identifiers" => {
+                let eps = endpoints_of(
+                    args.get(0)
+                        .ok_or_else(|| bad("identifiers", "missing argument 1"))?,
+                    "identifiers",
+                )?;
+                Ok(Value::Array(
+                    identifiers(&eps)
+                        .into_iter()
+                        .map(|s| Value::Struct {
+                            name: "ApiPathSignal".to_string(),
+                            fields: vec![
+                                sfield("signal", &s.signal),
+                                sfield("method", &s.method),
+                                sfield("path", &s.path),
+                                sfield("segment", &s.segment),
+                                ifield("index", s.index),
+                                sfield("kind", &s.kind),
+                            ],
+                        })
+                        .collect(),
+                ))
+            }
             _ => {
                 unknown = true;
                 Ok(Value::Nil)
@@ -575,5 +1561,146 @@ mod intel_api_tests {
         assert_eq!(back.endpoints[0].method, "GET"); // constructor normalises the verb
         assert_eq!(back.endpoints[0].path, "/a/{id}");
         assert_eq!(back.endpoints[0].auth.as_deref(), Some("api_key"));
+    }
+
+    // ── N14 ──────────────────────────────────────────────────────────────
+
+    const SDL: &str = r#"
+        """the user"""
+        type User implements Node @cache(ttl: 60) {
+          id: ID!
+          posts(first: Int = 10, filter: PostFilter): [Post!]!
+        }
+        input PostFilter { author: String = "me", tags: [String!] }
+        enum Role { ADMIN @deprecated GUEST }
+        scalar DateTime
+        extend type User { email: String }
+    "#;
+
+    #[test]
+    fn sdl_handles_nested_input_types_descriptions_and_extends() {
+        let s = parse_sdl(SDL).unwrap();
+        let user = &s["User"];
+        assert_eq!(user.kind, "object");
+        let posts = user.fields.iter().find(|f| f.name == "posts").unwrap();
+        assert_eq!(posts.type_name, "[Post!]!");
+        assert_eq!(posts.args.len(), 2);
+        let filter = posts.args.iter().find(|a| a.name == "filter").unwrap();
+        assert_eq!(filter.type_name, "PostFilter");
+        // `extend` merged, it did not replace.
+        assert!(user.fields.iter().any(|f| f.name == "email"));
+        assert!(user.fields.iter().any(|f| f.name == "id"));
+        assert_eq!(s["PostFilter"].kind, "input");
+        assert_eq!(s["Role"].kind, "enum");
+        assert!(s["Role"].fields.iter().any(|f| f.name == "ADMIN"));
+        assert_eq!(s["DateTime"].kind, "scalar");
+    }
+
+    #[test]
+    fn introspection_and_sdl_share_one_shape() {
+        let sdl = parse_sdl("type User { id: ID! name: String }").unwrap();
+        let intro = json!({"data":{"__schema":{"types":[
+            {"kind":"OBJECT","name":"User","fields":[
+                {"name":"id","type":{"kind":"NON_NULL","ofType":{"kind":"SCALAR","name":"ID"}},"args":[]},
+                {"name":"name","type":{"kind":"SCALAR","name":"String"},"args":[]}]},
+            {"kind":"OBJECT","name":"__Type","fields":[]}]}}})
+        .to_string();
+        let parsed = parse_introspection(&intro).unwrap();
+        assert_eq!(sdl, parsed, "the two capture paths must agree");
+        assert!(!parsed.contains_key("__Type"), "meta-types are skipped");
+        let e = parse_introspection(r#"{"data":{}}"#).unwrap_err();
+        assert!(e.starts_with(CODE_INTROSPECTION), "{e}");
+        let e = parse_sdl("type X { a: [Int! }").unwrap_err();
+        assert!(e.starts_with(CODE_GRAPHQL_PARSE), "{e}");
+        let e = parse_sdl("frobnicate X").unwrap_err();
+        assert!(
+            e.starts_with(CODE_GRAPHQL_PARSE) && e.contains("frobnicate"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_changed_field_type_is_both_a_removal_and_an_addition() {
+        let old = parse_sdl("type User { id: ID! }").unwrap();
+        let new = parse_sdl("type User { id: String }").unwrap();
+        let d = graphql_diff(&old, &new);
+        assert_eq!(d.removed_fields, vec!["User.id"]);
+        assert_eq!(d.added_fields, vec!["User.id"]);
+        assert_eq!(d.type_changes.len(), 1);
+        assert_eq!(d.type_changes[0].old_type, "ID!");
+        assert_eq!(d.type_changes[0].new_type, "String");
+        assert!(d.breaking());
+    }
+
+    #[test]
+    fn removed_field_type_and_arg_are_reported_separately() {
+        let old = parse_sdl("type Q { f(a: Int): Int name: String } type Gone { x: Int }").unwrap();
+        let new = parse_sdl("type Q { f(a: String): Int }").unwrap();
+        let d = graphql_diff(&old, &new);
+        assert_eq!(d.removed_types, vec!["Gone"]);
+        assert_eq!(d.removed_fields, vec!["Q.name"]);
+        assert_eq!(d.removed_args, vec!["Q.f(a)"]);
+        assert_eq!(d.added_args, vec!["Q.f(a)"]);
+        assert_eq!(d.type_changes[0].field, "f(a)");
+        assert!(d.added_types.is_empty(), "a removal must not invent a type");
+    }
+
+    // ── N20 ──────────────────────────────────────────────────────────────
+
+    fn ep(m: &str, p: &str) -> Endpoint {
+        Endpoint {
+            method: m.into(),
+            path: p.into(),
+            auth: None,
+            content_type: None,
+            source: URL.into(),
+        }
+    }
+
+    #[test]
+    fn identifiers_flag_literals_only_and_sort() {
+        let eps = vec![
+            ep(
+                "GET",
+                "/users/42/orders/9f8e7d6c-5b4a-4392-8170-0f1e2d3c4b5a",
+            ),
+            ep("GET", "/users/{id}"),
+            ep("GET", "/v1/health"),
+            ep("POST", "/users/42"),
+        ];
+        let rows = identifiers(&eps);
+        let labels: Vec<String> = rows
+            .iter()
+            .map(|r| format!("{} {} #{} {}", r.method, r.path, r.index, r.kind))
+            .collect();
+        // Sorted by (path, method, index) — and a path may hold more than one signal.
+        assert_eq!(
+            labels,
+            vec![
+                "POST /users/42 #1 numeric".to_string(),
+                "GET /users/42/orders/9f8e7d6c-5b4a-4392-8170-0f1e2d3c4b5a #1 numeric".to_string(),
+                "GET /users/42/orders/9f8e7d6c-5b4a-4392-8170-0f1e2d3c4b5a #3 uuid".to_string(),
+            ]
+        );
+        assert!(rows.iter().all(|r| r.signal == SIGNAL_OBJECT_ID));
+        // A signal is not a finding: no verdict word appears anywhere in the row.
+        for r in &rows {
+            let s = format!("{r:?}").to_lowercase();
+            assert!(!s.contains("vulnerable") && !s.contains("bola") && !s.contains("idor"));
+        }
+    }
+
+    #[test]
+    fn hex_garbage_is_not_a_uuid() {
+        assert!(segment_kind("9f8e7d6c-5b4a-4392-8170-0f1e2d3c4b5a").is_some());
+        assert!(segment_kind("9F8E7D6C-5B4A-4392-8170-0F1E2D3C4B5A").is_some());
+        assert!(segment_kind("9f8e7d6c5b4a439281700f1e2d3c4b5a").is_none());
+        assert!(segment_kind("9f8e7d6c-5b4a-4392-8170").is_none());
+        assert!(segment_kind("deadbeef-cafe").is_none());
+        assert!(segment_kind("v1").is_none());
+        assert!(
+            segment_kind("0").is_some(),
+            "a nil-ish numeric id is still an id"
+        );
     }
 }
