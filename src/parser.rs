@@ -2491,6 +2491,60 @@ impl Parser {
 
     // ── String Interpolation ────────────────────────────────────────────
 
+    /// Consume `:spec` after an interpolated expression and refuse it by name.
+    ///
+    /// The specifier was parsed and then thrown away here (the "Skip format
+    /// specifier if present" arm this replaces), so `print("{x:.2f}")` printed
+    /// `x` unformatted: syntax that claimed a feature neither plane had. Width,
+    /// alignment (`<`, `>`, `^`), fill, precision (`.N`) and radix (`hex`,
+    /// `bin`, `oct`) are not implemented — the value is formatted by
+    /// `src/interp.rs` and by `src/codegen.rs`'s `emit_interpolation`, and
+    /// neither knows a spec exists — so the only honest answer is a diagnostic
+    /// that names the spec. Progress is guaranteed: the colon is consumed and
+    /// the spec tokens are consumed before the error is returned, so recovery
+    /// mode resumes after the interpolation rather than looping on the `:`.
+    ///
+    /// The code rides in the message because `ParseError` carries no code
+    /// field and the CLI renders parse errors as `error[line:col]: <msg>`;
+    /// the message therefore leads with `E0001`, the first front-end code.
+    fn parse_format_spec(&mut self) -> Result<(), ParseError> {
+        const SPEC_CODE: &str = "E0001";
+        let colon = self.span();
+        self.advance(); // consume ':'
+
+        // Rebuild the spec text from the tokens the lexer produced inside the
+        // interpolation. Every character a spec can be made of is a token that
+        // displays as itself: `.2f` lexes as Dot IntLit(2) Ident(f).
+        let mut spec = String::new();
+        while !matches!(
+            self.peek_kind(),
+            TokenKind::StringMid(_) | TokenKind::StringEnd(_)
+        ) && !self.at_eof()
+        {
+            spec.push_str(&self.peek_kind().to_string());
+            self.advance();
+        }
+        let span = Span::new(colon.start, self.prev_span().end);
+
+        if spec.is_empty() {
+            return Err(ParseError::new(
+                format!(
+                    "{SPEC_CODE}: empty format spec — `{{expr:}}` formats nothing; \
+                     write `{{expr}}`"
+                ),
+                span,
+            ));
+        }
+
+        Err(ParseError::new(
+            format!(
+                "{SPEC_CODE}: format spec `{spec}` is not implemented — `{{expr}}` prints \
+                 the value unformatted; format the value before interpolating it"
+            ),
+            span,
+        ))
+    }
+
     /// Parse an interpolated string. We've already consumed StringStart(first_text).
     /// Tokens alternate: [expr tokens] StringMid [expr tokens] ... StringEnd
     fn parse_interpolated_string(
@@ -2509,18 +2563,9 @@ impl Parser {
             let expr = self.parse_expr()?;
             parts.push(StringPart::Expr(Box::new(expr)));
 
-            // Skip format specifier if present: {expr:.2f}, {expr:>10}, etc.
-            // Format spec starts with `:` followed by non-`}` tokens until StringMid/StringEnd
+            // Format specifier: {expr:spec}. Refused by name, never skipped.
             if self.check(TokenKind::Colon) {
-                self.advance(); // consume :
-                // Consume format tokens until we hit StringMid or StringEnd
-                while !matches!(
-                    self.peek_kind(),
-                    TokenKind::StringMid(_) | TokenKind::StringEnd(_)
-                ) && !self.at_eof()
-                {
-                    self.advance();
-                }
+                self.parse_format_spec()?;
             }
 
             // Next token must be StringMid or StringEnd
@@ -2574,16 +2619,9 @@ impl Parser {
                     loop {
                         let expr = self.parse_expr()?;
                         parts.push(StringPart::Expr(Box::new(expr)));
-                        // Skip format specifier: {expr:.1}, {expr:>10}
+                        // Format specifier: {expr:spec}. Refused by name, never skipped.
                         if self.check(TokenKind::Colon) {
-                            self.advance();
-                            while !matches!(
-                                self.peek_kind(),
-                                TokenKind::StringMid(_) | TokenKind::StringEnd(_)
-                            ) && !self.at_eof()
-                            {
-                                self.advance();
-                            }
+                            self.parse_format_spec()?;
                         }
                         match self.peek_kind() {
                             TokenKind::StringMid(text) => {
