@@ -37387,7 +37387,7 @@ mod tests {
                 let page = browser.new_page()
                 page.add_script_tag("window.x = 1")
                 page.add_init_script("window.y = 1")
-                page.add_style_tag("body { color: red }")
+                page.add_style_tag("body {{ color: red }}")
                 page.throttle_cpu(2.0)
                 page.capture_console()
                 browser.close()
