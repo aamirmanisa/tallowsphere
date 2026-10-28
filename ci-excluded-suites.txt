@@ -21,3 +21,7 @@
 
 compiler_bench | perf | alden | needs `cargo test --release` and a larger stack: in a debug build the interpreted fibonacci case overflows the default test stack (RUST_MIN_STACK=64M fixes it) and blake3/1MB measures 54 MB/s against a threshold set for release builds — 14/15 pass, the failure is the build profile, not the code | 2027-01-31
 timing_aead | perf | alden | dudect-style distribution measurement; needs an idle host, runs on demand with --ignored | 2027-01-31
+stdlib_native_lowering | perf | alden | builds one native binary per stdlib module (81 probes, ~10 min on 8 cores, longer on a 2-core runner); it is a census, not a per-commit gate — run before a release and when a stdlib module is added | 2027-03-31
+topology_scan | host | alden | raw SYN scanning needs CAP_NET_RAW and a loopback fixture service; GitHub-hosted runners do not grant raw sockets | 2027-03-31
+topology_adversarial | host | alden | same privileged raw-socket requirement as topology_scan | 2027-03-31
+topology_ipv6 | host | alden | ICMPv6 echo and v6 connect scans need raw v6 sockets and a ::1 grant | 2027-03-31

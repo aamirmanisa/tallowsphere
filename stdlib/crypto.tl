@@ -1065,56 +1065,56 @@ impl Cnsa2 {
 
 // HPKE (RFC 9180): DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM,
 // base mode. Hex in, hex out, like the rest of this module.
-fn hpke_suite() -> String
-fn hpke_generate_keypair() -> HpkeKeypair
-fn hpke_seal(recipient_pk_hex: String, info_hex: String, aad_hex: String, plaintext_hex: String) -> HpkeCiphertext
-fn hpke_open(recipient_sk_hex: String, enc_hex: String, info_hex: String, aad_hex: String, ciphertext_hex: String) -> String
+native fn hpke_suite() -> String
+native fn hpke_generate_keypair() -> HpkeKeypair
+native fn hpke_seal(recipient_pk_hex: String, info_hex: String, aad_hex: String, plaintext_hex: String) -> HpkeCiphertext
+native fn hpke_open(recipient_sk_hex: String, enc_hex: String, info_hex: String, aad_hex: String, ciphertext_hex: String) -> String
 
 // age (C2SP) file format: real container, interoperable with age(1).
-fn age_keygen() -> AgeKeypair
-fn age_encrypt(recipient: String, plaintext_hex: String) -> String
-fn age_decrypt(identity: String, ciphertext_hex: String) -> String
+native fn age_keygen() -> AgeKeypair
+native fn age_encrypt(recipient: String, plaintext_hex: String) -> String
+native fn age_decrypt(identity: String, ciphertext_hex: String) -> String
 
 // OPAQUE (RFC 9807): real message-passing PAKE via opaque-ke.
 // Hex strings throughout; each step returns the next message plus the state the
 // caller must carry forward.
-fn opaque_suite() -> String
-fn opaque_setup() -> String
-fn opaque_register_start(password: String) -> OpaqueRegistration
-fn opaque_register_respond(setup: String, request: String, credential_id: String) -> OpaqueRegistrationResponse
-fn opaque_register_finish(state: String, password: String, response: String) -> OpaqueRegistrationUpload
-fn opaque_register_store(upload: String) -> String
-fn opaque_login_start(password: String) -> OpaqueLoginRequest
-fn opaque_login_respond(setup: String, record: String, request: String, credential_id: String) -> OpaqueLoginResponse
-fn opaque_login_finish(state: String, password: String, response: String) -> OpaqueLoginResult
-fn opaque_login_server_finish(state: String, finalization: String) -> String
+native fn opaque_suite() -> String
+native fn opaque_setup() -> String
+native fn opaque_register_start(password: String) -> OpaqueRegistration
+native fn opaque_register_respond(setup: String, request: String, credential_id: String) -> OpaqueRegistrationResponse
+native fn opaque_register_finish(state: String, password: String, response: String) -> OpaqueRegistrationUpload
+native fn opaque_register_store(upload: String) -> String
+native fn opaque_login_start(password: String) -> OpaqueLoginRequest
+native fn opaque_login_respond(setup: String, record: String, request: String, credential_id: String) -> OpaqueLoginResponse
+native fn opaque_login_finish(state: String, password: String, response: String) -> OpaqueLoginResult
+native fn opaque_login_server_finish(state: String, finalization: String) -> String
 
 // MLS (RFC 9420) — requires a build with --features mls; otherwise each call
 // refuses by name. Group state is in-process: handles do not survive the run.
-fn mls_key_package(identity: String) -> MlsKeyPackage
-fn mls_create_group(identity: String) -> MlsKeyPackage
-fn mls_add_member(handle: String, key_package: String) -> MlsWelcome
-fn mls_join(pending_handle: String, welcome: String) -> MlsJoined
-fn mls_encrypt(handle: String, plaintext_hex: String) -> MlsMessage
-fn mls_process(handle: String, message: String) -> MlsIncoming
-fn mls_info(handle: String) -> MlsGroupInfo
+native fn mls_key_package(identity: String) -> MlsKeyPackage
+native fn mls_create_group(identity: String) -> MlsKeyPackage
+native fn mls_add_member(handle: String, key_package: String) -> MlsWelcome
+native fn mls_join(pending_handle: String, welcome: String) -> MlsJoined
+native fn mls_encrypt(handle: String, plaintext_hex: String) -> MlsMessage
+native fn mls_process(handle: String, message: String) -> MlsIncoming
+native fn mls_info(handle: String) -> MlsGroupInfo
 
 // Zero-knowledge range proofs (P6) — requires a build with --features zk;
 // otherwise each call refuses by name. `blinding` is 32 bytes of hex and is the
 // caller's secret: reuse links proofs, so generate a fresh one per proof.
-fn zk_range_prove(value: Int, bits: Int, blinding: String) -> ZkRangeProof
-fn zk_range_verify(proof: String, commitment: String, bits: Int) -> Bool
+native fn zk_range_prove(value: Int, bits: Int, blinding: String) -> ZkRangeProof
+native fn zk_range_verify(proof: String, commitment: String, bits: Int) -> Bool
 
 // Fully homomorphic encryption over 8-bit integers (P6) — requires a build with
 // --features fhe; otherwise each call refuses by name. The client key lives in
 // this process: `handle` does not survive the run. Arithmetic is modular:
 // 200 + 100 = 44, which is what an unsigned byte means, not saturation.
-fn fhe_keygen() -> FheSession
-fn fhe_encrypt(handle: String, value: Int) -> String
-fn fhe_add(handle: String, a: String, b: String) -> String
-fn fhe_decrypt(handle: String, ciphertext: String) -> Int
+native fn fhe_keygen() -> FheSession
+native fn fhe_encrypt(handle: String, value: Int) -> String
+native fn fhe_add(handle: String, a: String, b: String) -> String
+native fn fhe_decrypt(handle: String, ciphertext: String) -> Int
 
 // Chunked, resumable transfer: a directory of ordinary age containers plus a
 // manifest. Resume re-encrypts only the parts that are missing.
-fn age_encrypt_dir(recipient: String, src: String, out_dir: String, chunk_bytes: Int) -> AgeStreamEncrypted
-fn age_decrypt_dir(identity: String, in_dir: String, dst: String) -> AgeStreamDecrypted
+native fn age_encrypt_dir(recipient: String, src: String, out_dir: String, chunk_bytes: Int) -> AgeStreamEncrypted
+native fn age_decrypt_dir(identity: String, in_dir: String, dst: String) -> AgeStreamDecrypted

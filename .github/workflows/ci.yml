@@ -380,6 +380,17 @@ jobs:
           --test optional_implicit_wrap
           --test optional_match_unwrap
           --test script_mode
+          --test api_parity_native
+          --test checker_diagnostics
+          --test effect_rows
+          --test intel_ip_fixtures
+          --test language_ergonomics
+          --test len_scalar_parity
+          --test module_value
+          --test named_default_parity
+          --test scope_adversarial
+          --test scope_grant_runtime
+          --test stdlib_bridge_returns
           -- --test-threads=2
 
   conformance:
