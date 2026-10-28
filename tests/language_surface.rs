@@ -473,14 +473,14 @@ fn stdlib_counts_and_routing() {
     // that runs with its feature or refuses by name without it), and concurrent
     // work in this tree added the rest. The gate's rule is unchanged: a name is
     // declared only with an executable or explicitly-refusing path behind it.
-    // 1225, measured 2026-10-28 by this test's own counting rule: the api /
+    // 1227, measured 2026-10-28 after N18 added two `intel/api` declarations; the api /
     // traffic / net lanes declared five more functions after the 1220 figure was
     // taken, and did not update this gate. They are not phantom declarations —
     // `tallow doctor --stdlib-drift` reports reachable_count 1225 with
     // `unreachable: []` at the same revision, which is the evidence this rule
     // requires. The figure is a measurement, not a target: the next lane that
     // declares a name updates it in the same commit.
-    assert_eq!(fns, 1225, "stdlib function declarations");
+    assert_eq!(fns, 1227, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both
