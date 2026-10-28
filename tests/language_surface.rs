@@ -107,7 +107,7 @@ const OPERATORS: &[(&str, TokenKind)] = &[
     ("_", TokenKind::Underscore),
 ];
 
-/// 176 diagnostic codes, spec §5.
+/// 195 diagnostic codes, spec §5.
 // The seventeen codes added 2026-10-27 were emitted by the engine and absent from
 // this list: the effect-row family (E0118–E0123), E0124 (named/default argument
 // binding, G03), and the E0141–E0150 run (capability, scope, budget, redaction,
@@ -139,6 +139,7 @@ const ERROR_CODES: &[&str] = &[
     "E0122",
     "E0123",
     "E0124",
+    "E0125",
     "E0141",
     "E0142",
     "E0143",
@@ -149,6 +150,7 @@ const ERROR_CODES: &[&str] = &[
     "E0148",
     "E0149",
     "E0150",
+    "E0151",
     "E0200",
     "E0201",
     "E0202",
@@ -319,9 +321,9 @@ fn kinds(src: &str) -> Vec<TokenKind> {
 fn published_counts_match_the_tables() {
     assert_eq!(KEYWORDS.len(), 36, "keyword table size");
     assert_eq!(OPERATORS.len(), 51, "operator table size");
-    assert_eq!(ERROR_CODES.len(), 193, "error catalogue size");
+    assert_eq!(ERROR_CODES.len(), 195, "error catalogue size");
     let dup: BTreeSet<&str> = ERROR_CODES.iter().copied().collect();
-    assert_eq!(dup.len(), 193, "duplicate code in the catalogue");
+    assert_eq!(dup.len(), 195, "duplicate code in the catalogue");
 }
 
 #[test]
@@ -381,7 +383,7 @@ fn error_catalogue_equals_what_the_engine_emits() {
     let unemitted: Vec<_> = catalogue.difference(&found).cloned().collect();
     assert!(undocumented.is_empty(), "codes emitted but not in the catalogue: {undocumented:?}");
     assert!(unemitted.is_empty(), "codes in the catalogue that no source file emits: {unemitted:?}");
-    assert_eq!(found.len(), 193, "engine emits {} distinct codes", found.len());
+    assert_eq!(found.len(), 195, "engine emits {} distinct codes", found.len());
 }
 
 /// `"E1234"` string literals only — a code is emitted by passing the literal to
@@ -468,7 +470,14 @@ fn stdlib_counts_and_routing() {
     // that runs with its feature or refuses by name without it), and concurrent
     // work in this tree added the rest. The gate's rule is unchanged: a name is
     // declared only with an executable or explicitly-refusing path behind it.
-    assert_eq!(fns, 1220, "stdlib function declarations");
+    // 1225, measured 2026-10-28 by this test's own counting rule: the api /
+    // traffic / net lanes declared five more functions after the 1220 figure was
+    // taken, and did not update this gate. They are not phantom declarations —
+    // `tallow doctor --stdlib-drift` reports reachable_count 1225 with
+    // `unreachable: []` at the same revision, which is the evidence this rule
+    // requires. The figure is a measurement, not a target: the next lane that
+    // declares a name updates it in the same commit.
+    assert_eq!(fns, 1225, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both

@@ -378,6 +378,7 @@ jobs:
           --test fs_read_file_native
           --test native_fn_decl
           --test optional_implicit_wrap
+          --test optional_exhaustiveness
           --test optional_match_unwrap
           --test script_mode
           --test api_parity_native

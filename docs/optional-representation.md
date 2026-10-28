@@ -11,8 +11,17 @@ gaps were closed on 2026-10-21:
   the callee's declared `-> T?` return type or the binding's annotation, `Some(x)`
   binds the payload with that type, `None` takes the absent branch. There is no
   `??` operator in the language.
-- **#136 — binding.** `let v: i64 = <T?>` is now `E0116`, not a program that
-  passes `tallow check` and then fails on both planes.
+- **#136 — binding.** `E0116` refuses an optional at every plain destination:
+  `let`/`var`, assignment, `return` (explicit or the tail expression) and an
+  argument to a plain parameter. A `nil` check that *dominates* the use is the
+  unwrap for this rule — `if v == nil { return }` then `let x: i64 = v`, or
+  `if v != nil { .. }` inside the branch — and only an immutable binding is
+  narrowed, because a `var` can be reassigned. `tests/optional_exhaustiveness.rs`.
+  Measured before the rule at `b205b51`: the `let` position was refused, but
+  `return maybe_i64()` from `-> i64` and `take(maybe_i64())` passed `tallow
+  check`; the native plane then refused them at codegen while the interpreter
+  ran them and printed `nil` for an `i64`. The two planes now agree on the
+  refusal, at check time.
 
 Arithmetic on an optional is not a gap: the type checker rejects it on both
 planes with `E0110 left operand of + must be numeric, got i64?`, so there is no

@@ -359,6 +359,16 @@ pub struct VarInfo {
     /// to the value, and [`TypeChecker::check_call`] forwards it at every call
     /// through a local.
     pub effects: Vec<EffectReq>,
+    /// This binding is known to be non-`nil` for the rest of its scope, because
+    /// a `nil` test that dominates the use has already excluded the absent
+    /// case (register #136).
+    ///
+    /// Recorded on the *binding* rather than re-derived at each use: the guard
+    /// is a statement, and only the statement walk knows that the code after it
+    /// is reached solely when the test failed. Only an immutable binding is
+    /// ever narrowed — a `var` can be reassigned to a fresh optional, and the
+    /// evidence would then be stale, so `var` never narrows.
+    pub non_nil: bool,
 }
 
 // ── Type Environment ─────────────────────────────────────────────────────────
@@ -1414,6 +1424,7 @@ impl<'a> TypeChecker<'a> {
                     ty,
                     mutable: false,
                     effects: Vec::new(),
+                    non_nil: false,
                 },
             );
         }
@@ -1520,6 +1531,8 @@ impl<'a> TypeChecker<'a> {
             if let Some(last) = f.body.stmts.last() {
                 if let StmtKind::Expr { expr } = &last.kind {
                     self.check_capability_slot(&declared, expr, &locals, "return");
+                    // Register #136: the tail expression is a return slot too.
+                    self.check_optional_binding(&declared, expr, &locals, "return", expr.span);
                 }
             }
         }
@@ -1541,6 +1554,7 @@ impl<'a> TypeChecker<'a> {
                 ty: Type::Named(target.to_string()),
                 mutable: false,
                 effects: Vec::new(),
+                non_nil: false,
             },
         );
         for p in &method.params {
@@ -1552,6 +1566,7 @@ impl<'a> TypeChecker<'a> {
                         ty,
                         mutable: false,
                         effects: Vec::new(),
+                        non_nil: false,
                     },
                 );
             }
@@ -1602,6 +1617,8 @@ impl<'a> TypeChecker<'a> {
             if let Some(last) = method.body.stmts.last() {
                 if let StmtKind::Expr { expr } = &last.kind {
                     self.check_capability_slot(&declared, expr, &locals, "return");
+                    // Register #136: the tail expression is a return slot too.
+                    self.check_optional_binding(&declared, expr, &locals, "return", expr.span);
                 }
             }
         }
@@ -2463,7 +2480,7 @@ impl<'a> TypeChecker<'a> {
                     self.infer_expr_type(value, locals)
                 };
                 if ty.is_some() {
-                    self.check_optional_binding(&resolved, value, locals, value.span);
+                    self.check_optional_binding(&resolved, value, locals, "bind", value.span);
                     self.check_declared_literal(&resolved, value, value.span);
                     self.check_grant_binding(&resolved, value, locals, value.span);
                     // G01 P0.3: `let f: fn() = worker` is a slot, and a
@@ -2483,6 +2500,7 @@ impl<'a> TypeChecker<'a> {
                         ty: resolved,
                         mutable: false,
                         effects,
+                        non_nil: false,
                     },
                 );
             }
@@ -2494,7 +2512,7 @@ impl<'a> TypeChecker<'a> {
                     self.infer_expr_type(value, locals)
                 };
                 if ty.is_some() {
-                    self.check_optional_binding(&resolved, value, locals, value.span);
+                    self.check_optional_binding(&resolved, value, locals, "bind", value.span);
                     self.check_declared_literal(&resolved, value, value.span);
                     self.check_grant_binding(&resolved, value, locals, value.span);
                     // G01 P0.3: `let f: fn() = worker` is a slot, and a
@@ -2512,6 +2530,7 @@ impl<'a> TypeChecker<'a> {
                         ty: resolved,
                         mutable: true,
                         effects,
+                        non_nil: false,
                     },
                 );
             }
@@ -2525,12 +2544,16 @@ impl<'a> TypeChecker<'a> {
                             ty: Type::Unknown,
                             mutable: false,
                             effects: Vec::new(),
+                            non_nil: false,
                         },
                     );
                 }
             }
             StmtKind::Expr { expr } => {
                 self.check_expr(expr, locals);
+                // Register #136: a `nil` test that leaves the function on one
+                // branch narrows the variable for every statement after it.
+                self.apply_optional_narrowing(expr, locals);
                 // G01 P0.3 (audit N-7): `var f = nop; f = worker` — the row a
                 // binding carries follows the value it holds. Handled at
                 // statement position, which is the only place an assignment can
@@ -2559,6 +2582,15 @@ impl<'a> TypeChecker<'a> {
                 if self.closure_depth == 0 {
                     if let Some(declared) = self.current_return_type.clone() {
                         self.check_capability_slot(&declared, expr, locals, "return");
+                        // Register #136: an explicit `return` is a slot, exactly
+                        // like the tail expression it is equivalent to.
+                        self.check_optional_binding(
+                            &declared,
+                            expr,
+                            locals,
+                            "return",
+                            expr.span,
+                        );
                     }
                 }
             }
@@ -2582,6 +2614,7 @@ impl<'a> TypeChecker<'a> {
                         ty: elem_ty,
                         mutable: false,
                         effects: Vec::new(),
+                        non_nil: false,
                     },
                 );
                 self.label_stack.push(LoopTarget {
@@ -2768,26 +2801,236 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// `T?` may flow into a `T?` slot (it is wrapped implicitly), but it may not
-    /// flow into a `T` slot: that is an unwrap with no check, and neither plane
-    /// can run it (register #136).
+    /// `T?` may flow into a `T?` slot (it is wrapped implicitly, register #135),
+    /// but it may not flow into a `T` slot. Register #136: an optional reaches a
+    /// plain slot only through an explicit unwrap, or through a `nil` check that
+    /// dominates the use.
+    ///
+    /// `T` into `T?` is implicit and stays implicit (register #135, the wrap
+    /// direction); this is the other direction, and it is a *type error* at the
+    /// destination. Both execution planes refuse the unchecked form — the native
+    /// plane at codegen, the interpreter by answering `nil` where a plain value
+    /// was declared — so a `tallow check` that accepted it was the worst of the
+    /// three positions: statically "fine", unbuildable on the plane that ships,
+    /// and silently wrong on the fallback plane.
+    ///
+    /// The message names the destination type, the source expression and its
+    /// optional type, and the fix, because "type mismatch" would leave the
+    /// reader to discover on their own that the answer is an unwrap and not a
+    /// cast. `position` is the verb phrase the refusal is phrased with:
+    /// `"bind"`, `"assign to"`, `"return"`, `"pass as an argument"`.
     fn check_optional_binding(
         &mut self,
         declared: &Type,
         value: &Expr,
         locals: &HashMap<String, VarInfo>,
+        position: &str,
         span: Span,
     ) {
-        if matches!(declared, Type::Optional(_)) {
+        // A `T?` destination accepts everything a `T` destination does; an
+        // unknown destination is inference's placeholder, not evidence.
+        if matches!(declared, Type::Optional(_) | Type::Unknown) {
             return;
         }
-        if matches!(self.infer_expr_type(value, locals), Type::Optional(_)) {
-            self.diags.error(
-                "E0116",
-                "cannot bind `T?` to a `T` without a check -- test it (`== nil`) or match on it"
-                    .to_string(),
-                span,
-            );
+        // A dominating `if v == nil { .. }` has excluded the absent case before
+        // this use, so `v` is the payload here, not the optional. Only an
+        // immutable binding is ever narrowed (see `VarInfo::non_nil`).
+        if let ExprKind::Ident(name) = &value.kind {
+            if locals.get(name).is_some_and(|info| info.non_nil) {
+                return;
+            }
+        }
+        let got = self.infer_expr_type(value, locals);
+        if !matches!(got, Type::Optional(_)) {
+            return;
+        }
+        let msg = format!(
+            "cannot {position} `{}` where `{}` is required: `{}` is an optional and may be nil -- unwrap after checking for nil",
+            self.type_display(&got),
+            self.type_display(declared),
+            Self::expr_label(value),
+        );
+        self.diags.push(
+            crate::error::Diagnostic::error("E0116", msg, span).with_help(
+                "unwrap after checking for nil: `if v == nil { return }` and use `v` after the guard, or `match v { Some(x) => .., None => .. }`",
+            ),
+        );
+    }
+
+    /// The spelling a diagnostic uses for the expression that produced a value.
+    ///
+    /// Only the shapes an author actually writes are rendered; anything else is
+    /// described rather than printed, because a half-right reconstruction of an
+    /// expression is worse than naming it generically.
+    fn expr_label(expr: &Expr) -> String {
+        match &expr.kind {
+            ExprKind::Ident(name) => name.clone(),
+            ExprKind::FieldAccess { object, field } => {
+                format!("{}.{field}", Self::expr_label(object))
+            }
+            ExprKind::Index { object, .. } => format!("{}[..]", Self::expr_label(object)),
+            ExprKind::Call { callee, args } => {
+                let head = Self::expr_label(callee);
+                if args.is_empty() {
+                    format!("{head}()")
+                } else {
+                    format!("{head}(..)")
+                }
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+            } => {
+                let head = format!("{}.{method}", Self::expr_label(object));
+                if args.is_empty() {
+                    format!("{head}()")
+                } else {
+                    format!("{head}(..)")
+                }
+            }
+            ExprKind::Nil => "nil".to_string(),
+            _ => "this expression".to_string(),
+        }
+    }
+
+    /// `Some((variable, tests_for_nil))` when `cond` is a `nil` test on a plain
+    /// local: `v == nil` / `nil == v` (tests for nil) or `v != nil` /
+    /// `nil != v` (tests for present).
+    fn nil_test(cond: &Expr) -> Option<(&str, bool)> {
+        let ExprKind::Binary { op, left, right } = &cond.kind else {
+            return None;
+        };
+        let tests_for_nil = match op {
+            BinOp::Eq => true,
+            BinOp::Neq => false,
+            _ => return None,
+        };
+        let name = match (&left.kind, &right.kind) {
+            (ExprKind::Ident(name), ExprKind::Nil) | (ExprKind::Nil, ExprKind::Ident(name)) => name,
+            _ => return None,
+        };
+        Some((name.as_str(), tests_for_nil))
+    }
+
+    /// Record the narrowing a guard establishes for the code *after* it.
+    ///
+    /// Called at statement position, once the statement has been walked: an `if`
+    /// whose condition is a `nil` test and whose branch leaves the function
+    /// proves, for every later statement, that the variable is present. The
+    /// narrowing is recorded only for an immutable binding, so it can never be
+    /// invalidated by a later assignment.
+    fn apply_optional_narrowing(&mut self, stmt_expr: &Expr, locals: &mut HashMap<String, VarInfo>) {
+        match &stmt_expr.kind {
+            // `if v == nil { return }` → v is present afterwards.
+            // `if v != nil { return }` → taken branch returns, so reaching here
+            // also means v is present; the test is the negation of the above.
+            ExprKind::If {
+                condition,
+                then_block,
+                else_branch,
+            } => {
+                let Some((name, tests_for_nil)) = Self::nil_test(condition) else {
+                    return;
+                };
+                let then_returns = Self::block_never_falls_through(then_block);
+                let else_returns = match else_branch.as_ref() {
+                    Some(ElseBranch::Block(block)) => Self::block_never_falls_through(block),
+                    Some(ElseBranch::ElseIf(expr)) => Self::expr_never_falls_through(expr),
+                    None => false,
+                };
+                // The guard establishes "present" when the branch that does
+                // *not* prove presence is the one that leaves the function.
+                let establishes = if tests_for_nil {
+                    then_returns
+                } else {
+                    else_returns
+                };
+                if establishes {
+                    Self::narrow_binding(locals, name);
+                }
+            }
+            // A reassignment is a fresh value; `var` never narrows, but clear
+            // the flag anyway so no future widening of the rule inherits stale
+            // evidence.
+            ExprKind::Assign { target, .. } => {
+                if let ExprKind::Ident(name) = &target.kind {
+                    if let Some(info) = locals.get_mut(name) {
+                        info.non_nil = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Mark `name` as present in this map, if it is an immutable binding.
+    ///
+    /// A `var` is never narrowed: it can be reassigned to a fresh optional, and
+    /// the evidence would then be stale.
+    fn narrow_binding(locals: &mut HashMap<String, VarInfo>, name: &str) {
+        if let Some(info) = locals.get_mut(name) {
+            if !info.mutable {
+                info.non_nil = true;
+            }
+        }
+    }
+
+    /// Does this block leave before reaching its end, on every path?
+    ///
+    /// Only `return` / `bail` / `break` / `continue`, and an `if` whose both
+    /// arms leave, count. A `while` or a `for` never does: falling past it is
+    /// always possible, so it can prove nothing about the code after it.
+    fn block_never_falls_through(block: &Block) -> bool {
+        block
+            .stmts
+            .iter()
+            .any(|stmt| Self::stmt_never_falls_through(stmt))
+    }
+
+    fn stmt_never_falls_through(stmt: &Stmt) -> bool {
+        match &stmt.kind {
+            StmtKind::Return(_) | StmtKind::Bail(_) | StmtKind::Break { .. } | StmtKind::Continue { .. } => {
+                true
+            }
+            StmtKind::Expr { expr } => Self::expr_never_falls_through(expr),
+            _ => false,
+        }
+    }
+
+    fn expr_never_falls_through(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::If {
+                then_block,
+                else_branch,
+                ..
+            } => {
+                let then_leaves = Self::block_never_falls_through(then_block);
+                let else_leaves = match else_branch.as_ref() {
+                    Some(ElseBranch::Block(block)) => Self::block_never_falls_through(block),
+                    Some(ElseBranch::ElseIf(inner)) => Self::expr_never_falls_through(inner),
+                    None => false,
+                };
+                then_leaves && else_leaves
+            }
+            ExprKind::Block(block) => Self::block_never_falls_through(block),
+            _ => false,
+        }
+    }
+
+    /// The same rule, applied to a call's arguments (register #136): a `T?`
+    /// argument to a `T` parameter is an unwrap with no check, exactly like a
+    /// binding. Folded next to [`Self::check_capability_args`] so every
+    /// parameter slot goes through one place.
+    fn check_optional_args(
+        &mut self,
+        params: &[(String, Type)],
+        args: &[CallArg],
+        locals: &HashMap<String, VarInfo>,
+        position: &str,
+    ) {
+        for (arg, (_, declared)) in args.iter().zip(params.iter()) {
+            self.check_optional_binding(declared, &arg.value, locals, position, arg.value.span);
         }
     }
 
@@ -3393,6 +3636,8 @@ impl<'a> TypeChecker<'a> {
             // to be entirely unchecked (audit F-7).
             if let Some(params) = self.env.functions.get(name).map(|s| s.params.clone()) {
                 self.check_capability_args(&params, args, locals, "pass as an argument");
+                // Register #136: a parameter is a slot for an optional too.
+                self.check_optional_args(&params, args, locals, "pass as an argument");
             }
             // Check privacy: print/log with private/secret arg
             if name == "print" || name == "log" {
@@ -3658,6 +3903,8 @@ impl<'a> TypeChecker<'a> {
                 // free function's.
                 if let Some(params) = method_params {
                     self.check_capability_args(&params, args, locals, "pass as an argument");
+                    // Register #136: same rule for an `impl` method's parameters.
+                    self.check_optional_args(&params, args, locals, "pass as an argument");
                 }
                 // E0950: Scanner.scan requires ScanScope as first argument
                 if method == "scan" {
@@ -3710,7 +3957,16 @@ impl<'a> TypeChecker<'a> {
                         condition.span,
                     );
                 }
+                // Register #136: `if v != nil { .. }` is the branch where the
+                // payload is known present, exactly as `if v == nil { return }`
+                // is the fall-through after the guard.
+                let nil_test = Self::nil_test(condition);
                 let mut inner = locals.clone();
+                if let Some((name, tests_for_nil)) = nil_test {
+                    if !tests_for_nil {
+                        Self::narrow_binding(&mut inner, name);
+                    }
+                }
                 for s in &then_block.stmts {
                     self.check_stmt(s, &mut inner);
                 }
@@ -3718,6 +3974,11 @@ impl<'a> TypeChecker<'a> {
                     match eb {
                         ElseBranch::Block(block) => {
                             let mut inner = locals.clone();
+                            if let Some((name, tests_for_nil)) = nil_test {
+                                if tests_for_nil {
+                                    Self::narrow_binding(&mut inner, name);
+                                }
+                            }
                             for s in &block.stmts {
                                 self.check_stmt(s, &mut inner);
                             }
@@ -3885,7 +4146,7 @@ impl<'a> TypeChecker<'a> {
                 if let ExprKind::Ident(name) = &target.kind {
                     if let Some(var_info) = locals.get(name) {
                         let declared = var_info.ty.clone();
-                        self.check_optional_binding(&declared, value, locals, value.span);
+                        self.check_optional_binding(&declared, value, locals, "assign to", value.span);
                         // G10: an assignment is a slot. `var id = UserId("x");
                         // id = "y"` must not turn a `UserId` into a `String`.
                         self.check_newtype_slot(&declared, value, locals, "assign to");
@@ -3989,6 +4250,7 @@ impl<'a> TypeChecker<'a> {
                             ty,
                             mutable: false,
                             effects: Vec::new(),
+                            non_nil: false,
                         },
                     );
                 }
@@ -4040,6 +4302,7 @@ impl<'a> TypeChecker<'a> {
                                 ty: Type::Unknown,
                                 mutable: false,
                                 effects: Vec::new(),
+                                non_nil: false,
                             },
                         );
                     }
@@ -4455,6 +4718,7 @@ impl<'a> TypeChecker<'a> {
                             ty: Type::Unknown,
                             mutable: false,
                             effects: Vec::new(),
+                            non_nil: false,
                         },
                     );
                 }
