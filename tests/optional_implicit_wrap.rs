@@ -7,10 +7,10 @@
 //! natural program fail on the plane that ships. Boxing is now implicit on both
 //! planes.
 //!
-//! What is *not* covered here, and is still open (register #136): binding a
-//! `T?` to a `T` passes `tallow check` even though the native plane refuses it
-//! at codegen and the interpreter fails at run time. That is a type-checker
-//! hole, not a wrapping problem, so it is tracked rather than asserted here.
+//! What is *not* covered here, because it is the other direction (register
+//! #136): a `T?` reaching a `T` destination. That is a type-checker rule, not a
+//! wrapping problem, and it is asserted in `tests/optional_exhaustiveness.rs`
+//! — including the two planes agreeing on the refusal.
 
 const WRAP: &str = r#"
 fn show(v: i64?) {
