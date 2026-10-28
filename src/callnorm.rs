@@ -67,10 +67,10 @@
 //!
 //! So the relation is checked once, at declaration time, before any call is
 //! walked. The graph has a node per function and an edge `F -> G` when some
-//! default of `F` calls `G` in a way this pass will splice (a bare-name call
-//! to a non-`native` function that leaves at least one of `G`'s defaulted
-//! parameters unbound — the only shape that re-enters `rewrite`). A cycle in
-//! that graph is refused as **E0125**, naming the path:
+//! default of `F` calls `G` in a way this pass will splice (a call whose callee
+//! resolves to a non-`native` function that leaves at least one of `G`'s
+//! defaulted parameters unbound — the shapes that re-enter `rewrite`). A cycle
+//! in that graph is refused as **E0125**, naming the path:
 //!
 //! ```text
 //! error[E0125]: default parameter cycle: f -> g -> f
@@ -79,15 +79,24 @@
 //! A depth limit was the alternative and is not what is implemented: it turns
 //! an abort into a refusal at an arbitrary depth, on inputs whose expansion is
 //! unbounded, so the same declaration would be legal or illegal depending on
-//! how many other defaults happened to sit between the call site and the cycle.
-//! The graph rule is a property of the declarations alone.
+//! how many other defaults happened to sit between the call site and the
+//! cycle. The graph rule is a property of the declarations alone.
 //!
-//! The walk carries a second, redundant guard: the names of the functions
-//! whose defaults are being expanded right now (`Normalizer::expanding`). A
-//! call to a name already on that stack does not splice. With the declaration
-//! check in place this can never fire; it exists so that a future shape the
-//! graph fails to model still terminates instead of aborting, and if it ever
-//! does fire it reports E0125 rather than silently dropping a default.
+//! The graph is built by the *same* traversal `rewrite` uses
+//! ([`WalkPurpose`]), not by a second hand-written mirror of it. A shape the
+//! rewrite walk reaches — the `else` branch of an `if let`, the value of a
+//! `break`, a call through a `let` alias — is an edge in the graph for exactly
+//! that reason, so a cycle through it is refused at the declaration and not
+//! only where some call site happens to expand it.
+//!
+//! The walk keeps a second, redundant guard: the names of the functions whose
+//! defaults are being expanded right now (`Normalizer::expanding`). A call to a
+//! name already on that stack does not splice. With the shared traversal in
+//! place this is not reachable on a shape the graph models; it exists so that a
+//! shape neither walk models still terminates instead of aborting, and if it
+//! ever does fire it reports E0125 rather than silently dropping a default. The
+//! two producers de-duplicate on the cycle, not on the code, so a program with
+//! two cycles is refused for both.
 //!
 //! # Calls through a function value
 //!
@@ -128,6 +137,12 @@ struct Shape {
     defaults: Vec<Option<Expr>>,
     /// `native fn` — shape is validated, defaults are not spliced.
     native: bool,
+    /// The file this declaration came from, when it is not the entry file.
+    ///
+    /// A default's span is an offset into *its own* source, so a diagnostic
+    /// raised while expanding an imported function's default has to carry the
+    /// file or it renders against unrelated text in the entry file (audit N-9).
+    imported_from: Option<std::path::PathBuf>,
 }
 
 /// Rewrite `program` in place and return the refusals.
@@ -142,6 +157,9 @@ pub fn normalize(program: &mut Program) -> Diagnostics {
         diags: Diagnostics::new(),
         scopes: Vec::new(),
         expanding: Vec::new(),
+        edges: Vec::new(),
+        reported_cycles: HashSet::new(),
+        used_spans: HashSet::new(),
     };
     pass.check_defaults(program);
     pass.check_default_cycles(program);
@@ -157,7 +175,7 @@ pub fn normalize(program: &mut Program) -> Diagnostics {
             }
             // A default expression is spliced at call sites, so it is normal
             // there too: `fn f(x: Int, y: Int = g(tls: false))`.
-            pass.walk_block(&mut f.body);
+            pass.walk_block(&mut f.body, WalkPurpose::Rewrite);
             pass.pop_scope();
         }
     }
@@ -174,6 +192,7 @@ fn collect_shapes(program: &Program) -> HashMap<String, Shape> {
                 params: f.params.iter().map(|p| p.name.clone()).collect(),
                 defaults: f.params.iter().map(|p| p.default.clone()).collect(),
                 native: f.is_native,
+                imported_from: f.imported_from.clone(),
             });
         }
     }
@@ -197,6 +216,41 @@ struct Normalizer {
     /// a name already on this stack does not splice, so the walk cannot outlive
     /// the declaration-time cycle check even if a shape slips past it.
     expanding: Vec<String>,
+    /// Edges found by the last [`WalkPurpose::Collect`] traversal.
+    ///
+    /// Scratch space for the cycle-graph builder: the graph grows one node at a
+    /// time, and the traversal is the same one `rewrite` uses, so the calls it
+    /// reports are exactly the calls the walk would re-enter.
+    edges: Vec<(String, Span)>,
+    /// Canonical keys of the cycles already reported, by either producer.
+    ///
+    /// The de-duplication key is the cycle, not the diagnostic code: a program
+    /// with two different cycles is refused for both, while the walk's guard
+    /// does not repeat a cycle the declaration check already named (with a
+    /// different span).
+    reported_cycles: HashSet<String>,
+    /// `(start, end)` of every span already used by an E0125.
+    ///
+    /// The driver collapses diagnostics that agree on both code and span
+    /// (`Diagnostics::dedupe_same_site`). Two cycles that share an edge also
+    /// share the call that closes them, so the second one is anchored on an
+    /// earlier edge of its own path rather than being silently dropped.
+    used_spans: HashSet<(usize, usize)>,
+}
+
+/// What a traversal is being run for.
+///
+/// The *traversal* — which nodes are visited, in what order, and how `let`
+/// bindings are tracked — is one function so the declaration graph and
+/// `rewrite` cannot disagree about a shape. Only the action at a call node
+/// differs: the graph records the calls that would splice; the rewrite walk
+/// splices and rewrites them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkPurpose {
+    /// Read-only: collect the calls in a default that would splice.
+    Collect,
+    /// The normalising walk: bind arguments and splice defaults.
+    Rewrite,
 }
 
 impl Normalizer {
@@ -251,6 +305,9 @@ impl Normalizer {
     /// is legal and is not an edge.
     fn check_default_cycles(&mut self, program: &Program) {
         let mut graph: HashMap<String, Vec<(String, Span)>> = HashMap::new();
+        // The declaration each node's edges belong to: an edge's span is inside
+        // that function's default, so that is the file the diagnostic names.
+        let mut owners: HashMap<String, Option<std::path::PathBuf>> = HashMap::new();
         for item in &program.items {
             let Item::Fn(f) = item else { continue };
             // A `native fn`'s defaults are the dispatcher's rule: this pass
@@ -258,35 +315,61 @@ impl Normalizer {
             if f.is_native {
                 continue;
             }
-            let mut edges = Vec::new();
+            // The graph walks a clone of each default with the *same* traversal
+            // `rewrite` uses. Nothing here is rewritten (`WalkPurpose::Collect`
+            // records instead of splicing), but every shape the walk can reach
+            // — `if let`'s else branch, `break <value>`, a call through a `let`
+            // alias — is an edge, so a cycle in it is refused at the
+            // declaration rather than only where some call site happens to
+            // expand it.
+            self.edges.clear();
             for param in &f.params {
-                if let Some(default) = &param.default {
-                    collect_splicing_calls(default, &self.sigs, &mut edges);
-                }
+                let Some(default) = &param.default else {
+                    continue;
+                };
+                // Each default is spliced on its own, in the caller's scope; a
+                // `let` inside one cannot name anything inside another.
+                self.push_scope();
+                let mut default = default.clone();
+                self.walk_expr(&mut default, WalkPurpose::Collect);
+                self.pop_scope();
             }
-            if !edges.is_empty() {
-                graph.entry(f.name.clone()).or_default().extend(edges);
+            if !self.edges.is_empty() {
+                graph
+                    .entry(f.name.clone())
+                    .or_default()
+                    .extend(self.edges.drain(..));
+                owners.insert(f.name.clone(), f.imported_from.clone());
             }
         }
 
         // Iterative depth-first search: an explicit stack so that a long chain
         // of defaulted declarations cannot overflow this one.
-        let mut completed: HashSet<String> = HashSet::new();
-        let mut reported: HashSet<String> = HashSet::new();
-        // Sorted, so the order the search happens to reach a cycle in is not
-        // visible to the user (the message is rotated to a fixed start anyway).
-        let mut starts: Vec<String> = graph.keys().cloned().collect();
+        //
+        // There is deliberately no global `completed` set. A node shared by two
+        // cycles can be popped from one branch and then reached again from
+        // another; marking it *completed* made the second cycle invisible, so
+        // whether two cycles were disclosed depended on which names sorted
+        // first (§7.3 of the audit). Restricting each search to names not
+        // smaller than its start still reaches every cycle from its
+        // alphabetically first node, and the canonical key de-duplicates the
+        // rotations, so the set of reported cycles is a property of the graph.
+        let mut starts: Vec<String> = capable_nodes(&graph).into_iter().collect();
         starts.sort();
-        for start in starts {
-            if completed.contains(&start) {
-                continue;
-            }
-            let mut stack: Vec<(String, usize)> = vec![(start.clone(), 0)];
-            let mut on_stack: HashSet<String> = HashSet::from([start]);
-            while let Some((node, index)) = stack.last().cloned() {
+        let rank: HashMap<&str, usize> = starts
+            .iter()
+            .enumerate()
+            .map(|(at, name)| (name.as_str(), at))
+            .collect();
+        for start in starts.iter() {
+            let start_rank = rank[start.as_str()];
+            // Each frame keeps the span of the edge that entered it, so a cycle
+            // can be anchored on a call of its own path (see `report_cycle`).
+            let mut stack: Vec<(String, usize, Span)> = vec![(start.clone(), 0, Span::new(0, 0))];
+            let mut on_stack: HashSet<String> = HashSet::from([start.clone()]);
+            while let Some((node, index, _)) = stack.last().cloned() {
                 let edges = graph.get(&node).cloned().unwrap_or_default();
                 if index >= edges.len() {
-                    completed.insert(node.clone());
                     on_stack.remove(&node);
                     stack.pop();
                     continue;
@@ -296,27 +379,63 @@ impl Normalizer {
                 if on_stack.contains(&target) {
                     let from = stack
                         .iter()
-                        .position(|(name, _)| *name == target)
+                        .position(|(name, _, _)| *name == target)
                         .expect("an on-stack name has a frame");
-                    let path: Vec<String> =
-                        stack[from..].iter().map(|(name, _)| name.clone()).collect();
+                    let path: Vec<String> = stack[from..]
+                        .iter()
+                        .map(|(name, _, _)| name.clone())
+                        .collect();
+                    // The calls on the cycle: the edge that entered each frame
+                    // after the start, then the closing call.
+                    let spans: Vec<Span> = stack[from + 1..]
+                        .iter()
+                        .map(|(_, _, span)| *span)
+                        .chain(std::iter::once(span))
+                        .collect();
                     let cycle = closed_cycle(&path);
-                    if reported.insert(canonical_cycle(&cycle)) {
-                        self.diags.push(
-                            Diagnostic::error("E0125", cycle_message(&cycle), span).with_help(
-                                "a default is spliced at the call site, so these defaults would \
-                                 expand without end; give one of them a value that does not call \
-                                 into the cycle, or make the parameter required and pass it at \
-                                 each call instead",
-                            ),
-                        );
-                    }
-                } else if !completed.contains(&target) {
+                    // The closing call sits inside `node`'s default, so the
+                    // span is an offset into `node`'s file.
+                    let file = owners.get(&node).cloned().flatten();
+                    self.report_cycle(&cycle, &spans, file);
+                } else if rank
+                    .get(target.as_str())
+                    .is_some_and(|at| *at >= start_rank)
+                {
                     on_stack.insert(target.clone());
-                    stack.push((target, 0));
+                    stack.push((target, 0, span));
                 }
             }
         }
+    }
+
+    /// Report one cycle, anchored on a call that belongs to it.
+    ///
+    /// The closing call is the natural anchor and the one every non-colliding
+    /// cycle uses. Two cycles can share their closing call (they share an
+    /// edge), and the driver collapses diagnostics that agree on code *and*
+    /// span — so once a span has been claimed, the next cycle is anchored on
+    /// the latest earlier call of its own path instead of being lost. Both
+    /// anchors name a call inside the cycle, so the location stays true.
+    fn report_cycle(&mut self, cycle: &[String], spans: &[Span], file: Option<std::path::PathBuf>) {
+        if !self.reported_cycles.insert(canonical_cycle(cycle)) {
+            return;
+        }
+        let chosen = spans
+            .iter()
+            .rev()
+            .find(|span| !self.used_spans.contains(&(span.start, span.end)))
+            .copied()
+            .unwrap_or_else(|| spans.first().copied().unwrap_or(Span::new(0, 0)));
+        self.used_spans.insert((chosen.start, chosen.end));
+        let mut diag = Diagnostic::error("E0125", cycle_message(cycle), chosen).with_help(
+            "a default is spliced at the call site, so these defaults would expand without \
+             end; give one of them a value that does not call into the cycle, or make the \
+             parameter required and pass it at each call instead",
+        );
+        if let Some(path) = file {
+            diag = diag.with_file(path);
+        }
+        self.diags.push(diag);
     }
 
     // ── Local bindings ────────────────────────────────────────────────────
@@ -395,37 +514,39 @@ impl Normalizer {
 
     // ── The walk ──────────────────────────────────────────────────────────
 
-    fn walk_block(&mut self, block: &mut Block) {
+    fn walk_block(&mut self, block: &mut Block, purpose: WalkPurpose) {
         self.push_scope();
         for stmt in &mut block.stmts {
-            self.walk_stmt(stmt);
+            self.walk_stmt(stmt, purpose);
         }
         self.pop_scope();
     }
 
-    fn walk_stmt(&mut self, stmt: &mut Stmt) {
+    fn walk_stmt(&mut self, stmt: &mut Stmt, purpose: WalkPurpose) {
         match &mut stmt.kind {
             StmtKind::Let { name, value, .. } => {
-                self.walk_expr(value);
+                self.walk_expr(value, purpose);
                 // `let g = conn` is the one binding shape that keeps a
                 // signature statically known through the local name.
                 let target = self.expr_alias(value);
                 self.bind(name, target);
             }
             StmtKind::Var { name, value, .. } => {
-                self.walk_expr(value);
+                self.walk_expr(value, purpose);
                 // A `var` may be assigned later; the alias is not a promise.
                 self.bind(name, None);
             }
             StmtKind::LetDestructure { names, value } => {
-                self.walk_expr(value);
+                self.walk_expr(value, purpose);
                 let names: Vec<String> = names.clone();
                 for name in &names {
                     self.bind(name, None);
                 }
             }
-            StmtKind::Expr { expr: value } | StmtKind::Bail(value) => self.walk_expr(value),
-            StmtKind::Return(Some(value)) => self.walk_expr(value),
+            StmtKind::Expr { expr: value } | StmtKind::Bail(value) => {
+                self.walk_expr(value, purpose)
+            }
+            StmtKind::Return(Some(value)) => self.walk_expr(value, purpose),
             StmtKind::Return(None) => {}
             StmtKind::For {
                 binding,
@@ -433,18 +554,18 @@ impl Normalizer {
                 body,
                 ..
             } => {
-                self.walk_expr(iter);
+                self.walk_expr(iter, purpose);
                 let binding = binding.clone();
                 self.push_scope();
                 self.bind(&binding, None);
-                self.walk_block(body);
+                self.walk_block(body, purpose);
                 self.pop_scope();
             }
             StmtKind::While {
                 condition, body, ..
             } => {
-                self.walk_expr(condition);
-                self.walk_block(body);
+                self.walk_expr(condition, purpose);
+                self.walk_block(body, purpose);
             }
             StmtKind::WhileLet {
                 pattern,
@@ -452,27 +573,29 @@ impl Normalizer {
                 body,
                 ..
             } => {
-                self.walk_expr(expr);
+                self.walk_expr(expr, purpose);
                 let mut names = Vec::new();
                 pattern_names(pattern, &mut names);
                 self.push_scope();
                 for name in &names {
                     self.bind(name, None);
                 }
-                self.walk_block(body);
+                self.walk_block(body, purpose);
                 self.pop_scope();
             }
             StmtKind::Break { value, .. } => {
                 if let Some(v) = value {
-                    self.walk_expr(v);
+                    self.walk_expr(v, purpose);
                 }
             }
             StmtKind::Continue { .. } => {}
-            StmtKind::Loop { body, .. } | StmtKind::Defer { body } => self.walk_block(body),
+            StmtKind::Loop { body, .. } | StmtKind::Defer { body } => {
+                self.walk_block(body, purpose)
+            }
         }
     }
 
-    fn walk_expr(&mut self, expr: &mut Expr) {
+    fn walk_expr(&mut self, expr: &mut Expr, purpose: WalkPurpose) {
         match &mut expr.kind {
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
@@ -483,16 +606,32 @@ impl Normalizer {
             | ExprKind::DotIdent(_) => {}
 
             ExprKind::Binary { left, right, .. } => {
-                self.walk_expr(left);
-                self.walk_expr(right);
+                self.walk_expr(left, purpose);
+                self.walk_expr(right, purpose);
             }
-            ExprKind::Unary { operand, .. } => self.walk_expr(operand),
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, purpose),
 
             ExprKind::Call { callee, args } => {
                 // Resolve the callee before rewriting. Only a bare identifier
                 // can name a declaration — directly, or through a local that
                 // still holds one — so every other callee shape is left alone.
                 let span = expr.span;
+                if purpose == WalkPurpose::Collect {
+                    // Read-only: record the calls `rewrite` would splice. The
+                    // resolution is `callee_shape`, the same one the rewrite
+                    // uses, so an alias is an edge here for exactly the reason
+                    // it is spliced there.
+                    if let Some((name, shape)) = self.callee_shape(callee) {
+                        if splices_default(&shape, args) {
+                            self.edges.push((name, span));
+                        }
+                    }
+                    self.walk_expr(callee, purpose);
+                    for arg in args.iter_mut() {
+                        self.walk_expr(&mut arg.value, purpose);
+                    }
+                    return;
+                }
                 let spliced = match self.callee_shape(callee) {
                     Some((name, shape)) => {
                         let spliced = self.rewrite(&name, &shape, args, span);
@@ -506,36 +645,36 @@ impl Normalizer {
                     }
                     None => false,
                 };
-                self.walk_expr(callee);
+                self.walk_expr(callee, purpose);
                 for arg in args.iter_mut() {
-                    self.walk_expr(&mut arg.value);
+                    self.walk_expr(&mut arg.value, purpose);
                 }
                 if spliced {
                     self.expanding.pop();
                 }
             }
             ExprKind::MethodCall { object, args, .. } => {
-                self.walk_expr(object);
+                self.walk_expr(object, purpose);
                 for arg in args.iter_mut() {
-                    self.walk_expr(&mut arg.value);
+                    self.walk_expr(&mut arg.value, purpose);
                 }
             }
-            ExprKind::FieldAccess { object, .. } => self.walk_expr(object),
+            ExprKind::FieldAccess { object, .. } => self.walk_expr(object, purpose),
             ExprKind::Index { object, index } => {
-                self.walk_expr(object);
-                self.walk_expr(index);
+                self.walk_expr(object, purpose);
+                self.walk_expr(index, purpose);
             }
             ExprKind::If {
                 condition,
                 then_block,
                 else_branch,
             } => {
-                self.walk_expr(condition);
-                self.walk_block(then_block);
+                self.walk_expr(condition, purpose);
+                self.walk_block(then_block, purpose);
                 if let Some(else_branch) = else_branch {
                     match else_branch {
-                        ElseBranch::Block(b) => self.walk_block(b),
-                        ElseBranch::ElseIf(e) => self.walk_expr(e),
+                        ElseBranch::Block(b) => self.walk_block(b, purpose),
+                        ElseBranch::ElseIf(e) => self.walk_expr(e, purpose),
                     }
                 }
             }
@@ -545,42 +684,42 @@ impl Normalizer {
                 else_branch,
                 ..
             } => {
-                self.walk_expr(scrutinee);
-                self.walk_block(then_block);
+                self.walk_expr(scrutinee, purpose);
+                self.walk_block(then_block, purpose);
                 if let Some(else_branch) = else_branch {
                     match else_branch {
-                        ElseBranch::Block(b) => self.walk_block(b),
-                        ElseBranch::ElseIf(e) => self.walk_expr(e),
+                        ElseBranch::Block(b) => self.walk_block(b, purpose),
+                        ElseBranch::ElseIf(e) => self.walk_expr(e, purpose),
                     }
                 }
             }
             ExprKind::Match { subject, arms } => {
-                self.walk_expr(subject);
+                self.walk_expr(subject, purpose);
                 for arm in arms {
                     // A pattern literal is an expression node too, but it holds
                     // no call: literals are the only pattern payload.
-                    self.walk_expr(&mut arm.body);
+                    self.walk_expr(&mut arm.body, purpose);
                 }
             }
-            ExprKind::Block(b) => self.walk_block(b),
-            ExprKind::Loop { body, .. } => self.walk_block(body),
+            ExprKind::Block(b) => self.walk_block(b, purpose),
+            ExprKind::Loop { body, .. } => self.walk_block(body, purpose),
             ExprKind::Array(elements) => {
                 for element in elements {
-                    self.walk_expr(element);
+                    self.walk_expr(element, purpose);
                 }
             }
             ExprKind::MapLit(entries) => {
                 for (key, value) in entries {
-                    self.walk_expr(key);
-                    self.walk_expr(value);
+                    self.walk_expr(key, purpose);
+                    self.walk_expr(value, purpose);
                 }
             }
             ExprKind::Try(inner) | ExprKind::Await(inner) | ExprKind::Bail(inner) => {
-                self.walk_expr(inner)
+                self.walk_expr(inner, purpose)
             }
             ExprKind::Assign { target, value } => {
-                self.walk_expr(target);
-                self.walk_expr(value);
+                self.walk_expr(target, purpose);
+                self.walk_expr(value, purpose);
                 // `let g = conn; g = other` — the alias is gone from here on.
                 if let ExprKind::Ident(name) = &target.kind {
                     let name = name.clone();
@@ -589,17 +728,17 @@ impl Normalizer {
             }
             ExprKind::StructLit { fields, spread, .. } => {
                 for field in fields {
-                    self.walk_expr(&mut field.value);
+                    self.walk_expr(&mut field.value, purpose);
                 }
                 if let Some(spread) = spread {
-                    self.walk_expr(spread);
+                    self.walk_expr(spread, purpose);
                 }
             }
-            ExprKind::Cast { expr: inner, .. } => self.walk_expr(inner),
+            ExprKind::Cast { expr: inner, .. } => self.walk_expr(inner, purpose),
             ExprKind::Interpolation(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
-                        self.walk_expr(e);
+                        self.walk_expr(e, purpose);
                     }
                 }
             }
@@ -610,29 +749,29 @@ impl Normalizer {
                     self.bind(name, None);
                 }
                 for stmt in body {
-                    self.walk_stmt(stmt);
+                    self.walk_stmt(stmt, purpose);
                 }
                 self.pop_scope();
             }
             ExprKind::Spawn { func, args } => {
-                self.walk_expr(func);
+                self.walk_expr(func, purpose);
                 for arg in args {
-                    self.walk_expr(arg);
+                    self.walk_expr(arg, purpose);
                 }
             }
             ExprKind::Select { cases, default } => {
                 for case in cases {
                     match &mut case.op {
-                        SelectOp::Recv(ch) => self.walk_expr(ch),
+                        SelectOp::Recv(ch) => self.walk_expr(ch, purpose),
                         SelectOp::Send { ch, val } => {
-                            self.walk_expr(ch);
-                            self.walk_expr(val);
+                            self.walk_expr(ch, purpose);
+                            self.walk_expr(val, purpose);
                         }
                     }
-                    self.walk_expr(&mut case.body);
+                    self.walk_expr(&mut case.body, purpose);
                 }
                 if let Some(default) = default {
-                    self.walk_expr(default);
+                    self.walk_expr(default, purpose);
                 }
             }
         }
@@ -763,18 +902,18 @@ impl Normalizer {
                         let cycle = closed_cycle(&self.expanding[from..].to_vec());
                         // The declaration-time check has almost certainly
                         // already refused this program; report the walk's own
-                        // view only when it has not, so one cycle is not
-                        // reported twice with two different spans.
-                        if !self.diags.items.iter().any(|d| d.code == "E0125") {
-                            self.diags.push(
-                                Diagnostic::error("E0125", cycle_message(&cycle), span).with_help(
-                                    "a default is spliced at the call site, so these defaults \
-                                     would expand without end; give one of them a value that does \
-                                     not call into the cycle, or make the parameter required and \
-                                     pass it at each call instead",
-                                ),
-                            );
-                        }
+                        // view only when it has not *already named this cycle*,
+                        // so one cycle is not reported twice with two different
+                        // spans, while a second, different cycle is still
+                        // disclosed.
+                        //
+                        // The closing call is read from the default of the
+                        // innermost function being expanded, so *that*
+                        // declaration owns the span (audit N-9).
+                        let file = self.expanding.last().and_then(|owner| {
+                            self.sigs.get(owner).and_then(|s| s.imported_from.clone())
+                        });
+                        self.report_cycle(&cycle, &[span], file);
                         return false;
                     }
                     slots[slot] = Some(default.clone());
@@ -906,6 +1045,84 @@ fn canonical_cycle(cycle: &[String]) -> String {
     rotated.join(" -> ")
 }
 
+/// The names that can lie on a cycle: a self-loop, or a member of a strongly
+/// connected component with more than one node.
+///
+/// The all-cycles search below runs without a global `completed` set (that is
+/// what made a second cycle sharing a node invisible), so without this bound a
+/// large *acyclic* fan-out of defaults would be walked once per distinct path.
+/// A node outside every cycle cannot appear in a report, so it is not searched.
+fn capable_nodes(graph: &HashMap<String, Vec<(String, Span)>>) -> HashSet<String> {
+    let mut nodes: Vec<&str> = graph.keys().map(|name| name.as_str()).collect();
+    nodes.sort_unstable();
+
+    // Kosaraju, first pass: finishing order over the forward edges. Iterative,
+    // because a long chain of defaulted declarations must not overflow.
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut order: Vec<&str> = Vec::new();
+    for root in &nodes {
+        if !seen.insert(*root) {
+            continue;
+        }
+        let mut stack: Vec<(&str, usize)> = vec![(*root, 0)];
+        while let Some((node, index)) = stack.last().copied() {
+            let edges = graph.get(node).map(|edges| edges.as_slice()).unwrap_or(&[]);
+            if index < edges.len() {
+                stack.last_mut().expect("frame was just read").1 = index + 1;
+                let target = edges[index].0.as_str();
+                if seen.insert(target) {
+                    stack.push((target, 0));
+                }
+            } else {
+                order.push(node);
+                stack.pop();
+            }
+        }
+    }
+
+    // Second pass over the reversed edges, labelling each component.
+    let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (node, edges) in graph {
+        for (target, _) in edges {
+            reverse
+                .entry(target.as_str())
+                .or_default()
+                .push(node.as_str());
+        }
+    }
+    let mut component: HashMap<&str, usize> = HashMap::new();
+    let mut sizes: Vec<usize> = Vec::new();
+    for root in order.iter().rev().copied() {
+        if component.contains_key(root) {
+            continue;
+        }
+        let id = sizes.len();
+        let mut size = 0usize;
+        let mut stack: Vec<&str> = vec![root];
+        component.insert(root, id);
+        while let Some(node) = stack.pop() {
+            size += 1;
+            for source in reverse.get(node).into_iter().flatten().copied() {
+                if !component.contains_key(source) {
+                    component.insert(source, id);
+                    stack.push(source);
+                }
+            }
+        }
+        sizes.push(size);
+    }
+
+    let mut capable = HashSet::new();
+    for (node, edges) in graph {
+        let in_nontrivial = sizes[component[node.as_str()]] > 1;
+        let self_loop = edges.iter().any(|(target, _)| target == node);
+        if in_nontrivial || self_loop {
+            capable.insert(node.clone());
+        }
+    }
+    capable
+}
+
 /// Whether `rewrite` would splice a default into this call.
 ///
 /// Exactly the decision `rewrite` makes at its slot-filling step: a defaulted
@@ -933,179 +1150,6 @@ fn splices_default(shape: &Shape, args: &[CallArg]) -> bool {
         .iter()
         .enumerate()
         .any(|(slot, _)| !bound[slot] && shape.defaults[slot].is_some())
-}
-
-/// Every call in `expr` that would splice a default, with the span of the call.
-///
-/// The traversal mirrors `collect_idents` deliberately: the question is asked
-/// of the text, not of a resolution.
-fn collect_splicing_calls(
-    expr: &Expr,
-    sigs: &HashMap<String, Shape>,
-    out: &mut Vec<(String, Span)>,
-) {
-    match &expr.kind {
-        ExprKind::Call { callee, args } => {
-            if let ExprKind::Ident(target) = &callee.kind {
-                if let Some(shape) = sigs.get(target) {
-                    if splices_default(shape, args) {
-                        out.push((target.clone(), expr.span));
-                    }
-                }
-            }
-            collect_splicing_calls(callee, sigs, out);
-            for arg in args {
-                collect_splicing_calls(&arg.value, sigs, out);
-            }
-        }
-        ExprKind::Binary { left, right, .. } => {
-            collect_splicing_calls(left, sigs, out);
-            collect_splicing_calls(right, sigs, out);
-        }
-        ExprKind::Unary { operand, .. } => collect_splicing_calls(operand, sigs, out),
-        ExprKind::MethodCall { object, args, .. } => {
-            collect_splicing_calls(object, sigs, out);
-            for arg in args {
-                collect_splicing_calls(&arg.value, sigs, out);
-            }
-        }
-        ExprKind::FieldAccess { object, .. } => collect_splicing_calls(object, sigs, out),
-        ExprKind::Index { object, index } => {
-            collect_splicing_calls(object, sigs, out);
-            collect_splicing_calls(index, sigs, out);
-        }
-        ExprKind::If {
-            condition,
-            then_block,
-            else_branch,
-        } => {
-            collect_splicing_calls(condition, sigs, out);
-            collect_splicing_calls_in_block(then_block, sigs, out);
-            if let Some(ElseBranch::ElseIf(e)) = else_branch {
-                collect_splicing_calls(e, sigs, out);
-            } else if let Some(ElseBranch::Block(b)) = else_branch {
-                collect_splicing_calls_in_block(b, sigs, out);
-            }
-        }
-        ExprKind::Block(b) => collect_splicing_calls_in_block(b, sigs, out),
-        ExprKind::Loop { body, .. } => collect_splicing_calls_in_block(body, sigs, out),
-        ExprKind::Array(elements) => {
-            for element in elements {
-                collect_splicing_calls(element, sigs, out);
-            }
-        }
-        ExprKind::MapLit(entries) => {
-            for (key, value) in entries {
-                collect_splicing_calls(key, sigs, out);
-                collect_splicing_calls(value, sigs, out);
-            }
-        }
-        ExprKind::Try(inner) | ExprKind::Await(inner) | ExprKind::Bail(inner) => {
-            collect_splicing_calls(inner, sigs, out)
-        }
-        ExprKind::Assign { target, value } => {
-            collect_splicing_calls(target, sigs, out);
-            collect_splicing_calls(value, sigs, out);
-        }
-        ExprKind::StructLit { fields, spread, .. } => {
-            for field in fields {
-                collect_splicing_calls(&field.value, sigs, out);
-            }
-            if let Some(spread) = spread {
-                collect_splicing_calls(spread, sigs, out);
-            }
-        }
-        ExprKind::Cast { expr, .. } => collect_splicing_calls(expr, sigs, out),
-        ExprKind::Interpolation(parts) => {
-            for part in parts {
-                if let StringPart::Expr(e) = part {
-                    collect_splicing_calls(e, sigs, out);
-                }
-            }
-        }
-        ExprKind::Match { subject, arms } => {
-            collect_splicing_calls(subject, sigs, out);
-            for arm in arms {
-                collect_splicing_calls(&arm.body, sigs, out);
-            }
-        }
-        ExprKind::Closure { body, .. } => {
-            for stmt in body {
-                collect_splicing_calls_in_stmt(stmt, sigs, out);
-            }
-        }
-        ExprKind::IfLet {
-            expr, then_block, ..
-        } => {
-            collect_splicing_calls(expr, sigs, out);
-            collect_splicing_calls_in_block(then_block, sigs, out);
-        }
-        ExprKind::Spawn { func, args } => {
-            collect_splicing_calls(func, sigs, out);
-            for arg in args {
-                collect_splicing_calls(arg, sigs, out);
-            }
-        }
-        ExprKind::Select { cases, default } => {
-            for case in cases {
-                match &case.op {
-                    SelectOp::Recv(ch) => collect_splicing_calls(ch, sigs, out),
-                    SelectOp::Send { ch, val } => {
-                        collect_splicing_calls(ch, sigs, out);
-                        collect_splicing_calls(val, sigs, out);
-                    }
-                }
-                collect_splicing_calls(&case.body, sigs, out);
-            }
-            if let Some(default) = default {
-                collect_splicing_calls(default, sigs, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_splicing_calls_in_block(
-    block: &Block,
-    sigs: &HashMap<String, Shape>,
-    out: &mut Vec<(String, Span)>,
-) {
-    for stmt in &block.stmts {
-        collect_splicing_calls_in_stmt(stmt, sigs, out);
-    }
-}
-
-fn collect_splicing_calls_in_stmt(
-    stmt: &Stmt,
-    sigs: &HashMap<String, Shape>,
-    out: &mut Vec<(String, Span)>,
-) {
-    match &stmt.kind {
-        StmtKind::Let { value, .. }
-        | StmtKind::Var { value, .. }
-        | StmtKind::LetDestructure { value, .. }
-        | StmtKind::Expr { expr: value }
-        | StmtKind::Bail(value) => collect_splicing_calls(value, sigs, out),
-        StmtKind::Return(Some(v)) => collect_splicing_calls(v, sigs, out),
-        StmtKind::For { iter, body, .. } => {
-            collect_splicing_calls(iter, sigs, out);
-            collect_splicing_calls_in_block(body, sigs, out);
-        }
-        StmtKind::While {
-            condition, body, ..
-        } => {
-            collect_splicing_calls(condition, sigs, out);
-            collect_splicing_calls_in_block(body, sigs, out);
-        }
-        StmtKind::WhileLet { expr, body, .. } => {
-            collect_splicing_calls(expr, sigs, out);
-            collect_splicing_calls_in_block(body, sigs, out);
-        }
-        StmtKind::Loop { body, .. } | StmtKind::Defer { body } => {
-            collect_splicing_calls_in_block(body, sigs, out)
-        }
-        _ => {}
-    }
 }
 
 /// `a`, `a,b`, `a, b and c` — the parameter names as the source spells them.

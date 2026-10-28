@@ -142,9 +142,16 @@ fn write_program(tag: &str, source: &str) -> PathBuf {
 /// `<tallow> <args...> <program>`, with a hard wall-clock bound.
 fn run_program(tag: &str, args: &[&str], source: &str) -> Run {
     let path = write_program(tag, source);
+    let run = run_file(args, &path);
+    let _ = std::fs::remove_file(&path);
+    run
+}
+
+/// The same invocation against an existing path, for multi-file programs.
+fn run_file(args: &[&str], path: &std::path::Path) -> Run {
     let mut child = Command::new(tallow_bin())
         .args(args)
-        .arg(&path)
+        .arg(path)
         // The run path gates direct egress on the command, not on the program.
         .env("TALLOW_ALLOW_DIRECT", "1")
         .stdout(Stdio::piped())
@@ -179,7 +186,6 @@ fn run_program(tag: &str, args: &[&str], source: &str) -> Run {
     if let Some(mut pipe) = child.stderr.take() {
         let _ = pipe.read_to_string(&mut stderr);
     }
-    let _ = std::fs::remove_file(&path);
 
     use std::os::unix::process::ExitStatusExt;
     let (code, signal) = match status {
@@ -1071,4 +1077,241 @@ fn main() { print(go(c: 3)) }
         run.stderr
     );
     assert!(run.stdout.is_empty(), "the program ran anyway");
+}
+
+// ── 8. Shapes the declaration graph used to miss ─────────────────────────
+//
+// The audit's §5: the cycle graph walked defaults with its own traversal,
+// which dropped `IfLet.else_branch`, dropped `Break.value`, and resolved a
+// callee without `rewrite`'s `let`-alias rule. Those cycles were therefore
+// refused only when a call site happened to expand them — the exact
+// call-site-dependent refusal the module docs say the graph rule exists to
+// avoid. `check_default_cycles` now uses the same traversal as `rewrite`, so
+// each of these is an edge and each program is refused at the declaration,
+// with or without a call.
+
+/// One declared cycle: refused, names `f -> g -> f`, terminates, and does so
+/// both when a call site expands it and when nothing calls `f` at all.
+fn assert_declaration_cycle(tag: &str, declarations: &str) {
+    let uncalled = format!("{declarations}\nfn main() {{ }}\n");
+    let called = format!("{declarations}\nfn main() {{ print(f(1)) }}\n");
+    for (label, source) in [("uncalled", &uncalled), ("called", &called)] {
+        let run = check(&format!("{tag}-{label}"), source);
+        assert!(
+            !run.timed_out,
+            "{tag} ({label}) did not terminate within {CHILD_TIMEOUT:?}"
+        );
+        assert!(
+            !run.stderr.contains("has overflowed its stack"),
+            "{tag} ({label}) aborted with a stack overflow ({}):\n{}",
+            run.how(),
+            run.stderr
+        );
+        assert_eq!(
+            run.code,
+            Some(COMPILE_ERROR),
+            "{tag} ({label}), expected a refusal ({}):\n{}",
+            run.how(),
+            run.stderr
+        );
+        let cycles: Vec<&str> = run
+            .stderr
+            .lines()
+            .filter(|line| line.contains("error[E0125]:"))
+            .collect();
+        assert_eq!(
+            cycles.len(),
+            1,
+            "{tag} ({label}): one cycle must be reported once, and no other cycle exists:\n{}",
+            run.stderr
+        );
+        assert!(
+            cycles[0].contains("default parameter cycle: f -> g -> f"),
+            "{tag} ({label}) must name `f -> g -> f`: {}",
+            cycles[0]
+        );
+        assert!(run.stdout.is_empty(), "{tag} ({label}) ran anyway");
+    }
+}
+
+/// §5(i): a cycle closed by the `else` branch of an `if let` default.
+#[test]
+fn if_let_else_cycle_is_refused_at_the_declaration() {
+    assert_declaration_cycle(
+        "cycle-iflet-else",
+        "fn f(a: Int, b: Int = if let x = opt { 1 } else { g() }) -> Int { return b; }
+fn g(c: Int = f(2)) -> Int { return c; }",
+    );
+}
+
+/// §5(ii): a cycle closed by the value of a `break`.
+#[test]
+fn break_value_cycle_is_refused_at_the_declaration() {
+    assert_declaration_cycle(
+        "cycle-break-value",
+        "fn f(a: Int, b: Int = loop { break g() }) -> Int { return b; }
+fn g(c: Int = f(2)) -> Int { return c; }",
+    );
+}
+
+/// §5(iii): a cycle reached through a `let` alias inside a default — the same
+/// rule that makes `let g = conn; g(\"h\")` callable by name.
+#[test]
+fn let_alias_cycle_is_refused_at_the_declaration() {
+    assert_declaration_cycle(
+        "cycle-let-alias",
+        "fn f(a: Int, b: Int = { let h = g; h(1) }) -> Int { return b; }
+fn g(a: Int, b: Int = f(1)) -> Int { return b; }",
+    );
+}
+
+// ── 9. Disclosure: every cycle, not every code ───────────────────────────
+
+/// Two cycles that share an edge must both be reported, and renaming the same
+/// shape so that the shared node sorts first must not change the count.
+///
+/// The audit (§7.3) measured 1 message for the first shape and 2 for the
+/// renamed one: the DFS marked a shared node `completed` after one branch, so
+/// the second cycle disappeared whenever its names sorted later. The refusal
+/// was stable, the disclosure was not. The graph now reports on the cycle's
+/// canonical key, so the set of cycles is a property of the graph.
+#[test]
+fn two_cycles_sharing_an_edge_are_both_disclosed() {
+    let declaration_order =
+        "fn aa_f(a: Int, b: Int = bb_a(1), c: Int = cc_b(1)) -> Int { return b; }
+fn bb_a(a: Int, b: Int = dd_g(1)) -> Int { return b; }
+fn cc_b(a: Int, b: Int = dd_g(1)) -> Int { return b; }
+fn dd_g(a: Int, b: Int = aa_f(1)) -> Int { return b; }
+fn main() { }
+";
+    // The same graph with the shared node sorting first.
+    let renamed = "fn z(p: Int, q: Int = b1(1), r: Int = b2(1)) -> Int { return q; }
+fn b1(p: Int, q: Int = a(1)) -> Int { return q; }
+fn b2(p: Int, q: Int = a(1)) -> Int { return q; }
+fn a(p: Int, q: Int = z(1)) -> Int { return q; }
+fn main() { }
+";
+
+    let first = check("cycle-shared-edge", declaration_order);
+    let second = check("cycle-shared-edge-renamed", renamed);
+
+    let cases: [(&str, &Run, [&str; 2]); 2] = [
+        (
+            "declaration order",
+            &first,
+            [
+                "default parameter cycle: aa_f -> bb_a -> dd_g -> aa_f",
+                "default parameter cycle: aa_f -> cc_b -> dd_g -> aa_f",
+            ],
+        ),
+        (
+            "renamed",
+            &second,
+            [
+                "default parameter cycle: a -> z -> b1 -> a",
+                "default parameter cycle: a -> z -> b2 -> a",
+            ],
+        ),
+    ];
+
+    let mut counts = Vec::new();
+    for (label, run, expected) in cases {
+        assert_eq!(
+            run.code,
+            Some(COMPILE_ERROR),
+            "{label}: expected a refusal ({}):\n{}",
+            run.how(),
+            run.stderr
+        );
+        let cycles: Vec<&str> = run
+            .stderr
+            .lines()
+            .filter(|line| line.contains("error[E0125]:"))
+            .collect();
+        assert_eq!(
+            cycles.len(),
+            2,
+            "{label}: two cycles exist and both must be disclosed:\n{}",
+            run.stderr
+        );
+        for message in expected {
+            assert!(
+                cycles.iter().any(|line| line.contains(message)),
+                "{label}: `{message}` was not reported:\n{}",
+                run.stderr
+            );
+        }
+        counts.push(cycles.len());
+    }
+    assert_eq!(
+        counts[0], counts[1],
+        "renaming the same graph changed how many cycles are disclosed"
+    );
+}
+
+// ── 10. The span's file ──────────────────────────────────────────────────
+
+/// A cycle whose closing call lives in an imported module must render its
+/// `-->` against *that* file. The path was always right; the location was an
+/// offset from `lib.tl` read against the entry file (audit §6.5).
+#[test]
+fn a_cycle_closing_in_an_imported_module_names_that_module() {
+    let entry = "import lib
+
+fn f(a: Int, b: Int = g()) -> Int { return b; }
+fn main() { }
+";
+    let lib = "fn g(c: Int = f(2)) -> Int { return c; }
+";
+    let (entry_path, _lib_path) = write_import_pair("cycle-import", entry, lib);
+    let run = run_file(&["check"], &entry_path);
+    let _ = std::fs::remove_dir_all(entry_path.parent().expect("entry has a parent"));
+
+    assert_eq!(
+        run.code,
+        Some(COMPILE_ERROR),
+        "expected a refusal ({}):\n{}",
+        run.how(),
+        run.stderr
+    );
+    let after = run
+        .stderr
+        .split("error[E0125]")
+        .nth(1)
+        .unwrap_or_else(|| panic!("expected E0125:\n{}", run.stderr));
+    assert!(
+        after.lines().next().unwrap_or("").contains("f -> g -> f")
+            || after.contains("default parameter cycle: f -> g -> f"),
+        "the refusal must name the cycle:\n{}",
+        run.stderr
+    );
+    let location = after
+        .lines()
+        .find(|line| line.trim_start().starts_with("-->"))
+        .unwrap_or_else(|| panic!("E0125 has no location line:\n{}", run.stderr));
+    assert!(
+        location.contains("lib.tl"),
+        "the `-->` line must name the imported file, got: {location}"
+    );
+    assert!(
+        !location.contains("entry.tl"),
+        "the `-->` line names the entry file for a span from lib.tl: {location}"
+    );
+}
+
+/// The two-file program used above: `entry.tl` imports `lib` by bare name,
+/// which the resolver looks for beside the entry file.
+fn write_import_pair(tag: &str, entry: &str, lib: &str) -> (PathBuf, PathBuf) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    tag.hash(&mut hasher);
+    entry.hash(&mut hasher);
+    lib.hash(&mut hasher);
+    let dir = std::env::temp_dir().join(format!("tallow-callnorm-import-{:016x}", hasher.finish()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let entry_path = dir.join("entry.tl");
+    let lib_path = dir.join("lib.tl");
+    std::fs::write(&entry_path, entry).expect("write entry");
+    std::fs::write(&lib_path, lib).expect("write lib");
+    (entry_path, lib_path)
 }
