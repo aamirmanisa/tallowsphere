@@ -760,6 +760,11 @@ pub struct CodeGen<'a> {
     /// One frame per emitted block: the bridge-owned bindings declared in it,
     /// released at the end of that block when they provably do not escape.
     bridge_scopes: Vec<Vec<BridgeBinding>>,
+    /// Index of the statement `emit_stmt` is currently lowering in the
+    /// enclosing `emit_block`. A bridge binding records it so the escape scan
+    /// can tell the `let`/`var` that *declares* the binding from a later one
+    /// that rebinds or shadows the same name (F1).
+    bridge_stmt_index: usize,
     /// `String` bindings whose bytes the compiler knows contain an interior NUL
     /// (they came from a literal): variable → (storage slot, the
     /// `RAW_PREFIX`+JSON global that carries their full byte length across the
@@ -773,6 +778,12 @@ pub struct CodeGen<'a> {
 /// whatever the binding holds at the end of the block.
 struct BridgeBinding {
     name: String,
+    /// The `let`/`var` statement in the declaring block that created this
+    /// binding. The escape scan skips exactly that statement: the declaration
+    /// itself names the binding, and treating it as a use made *every* binding
+    /// escape, so nothing was ever released (measured: 32 KiB leaked per
+    /// bridged call, F1).
+    decl_stmt: usize,
     slot: String,
 }
 
@@ -856,6 +867,7 @@ impl<'a> CodeGen<'a> {
             agent_task_request_limits: HashMap::new(),
             bridge_result_regs: HashSet::new(),
             bridge_scopes: Vec::new(),
+            bridge_stmt_index: 0,
             bridge_nul_strings: HashMap::new(),
         };
         // Layouts for structs the ENGINE returns (stdlib .tl declares them, but
@@ -4847,6 +4859,9 @@ void tallow_async_runtime_shutdown(void) {
             // Results handed to a bridge/scalar call and not bound belong to no
             // block frame: whatever this statement leaves behind was discarded.
             self.bridge_result_regs.clear();
+            // The declaring statement a bridge binding records, so the escape
+            // scan can skip it (F1).
+            self.bridge_stmt_index = i;
             last_val = self.emit_stmt(stmt)?;
             // A `Result` thrown away mid-block is checked (#133). The *last*
             // statement of a block is the block's value — a tail `try_parse(s)`
@@ -4893,7 +4908,7 @@ void tallow_async_runtime_shutdown(void) {
     /// ended (its last statement returned) takes no instructions.
     fn emit_bridge_releases(&mut self, block: &Block, bindings: Vec<BridgeBinding>) {
         for binding in bindings {
-            if bridge_binding_escapes(block, &binding.name) {
+            if bridge_binding_escapes(block, &binding.name, binding.decl_stmt) {
                 continue;
             }
             if self.block_already_terminated() {
@@ -4908,6 +4923,10 @@ void tallow_async_runtime_shutdown(void) {
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<Option<LLValue>, String> {
         match &stmt.kind {
             StmtKind::Let { name, value, ty } | StmtKind::Var { name, value, ty } => {
+                // The statement that declares a bridged result is recorded on the
+                // binding: the escape scan must not count the declaration itself
+                // as a use (F1).
+                let decl_stmt = self.bridge_stmt_index;
                 // Track "this binding is a String": `if s` must test emptiness,
                 // not pointer non-null (register #122).
                 let is_string = match ty {
@@ -5620,6 +5639,7 @@ void tallow_async_runtime_shutdown(void) {
                     if let Some(frame) = self.bridge_scopes.last_mut() {
                         frame.push(BridgeBinding {
                             name: name.clone(),
+                            decl_stmt,
                             slot: alloca,
                         });
                     }
@@ -23101,12 +23121,22 @@ fn bridge_string_read_only_method(method: &str) -> bool {
 }
 
 /// True when `name` might still be read after `block` ends.
-fn bridge_binding_escapes(block: &Block, name: &str) -> bool {
+///
+/// `decl_stmt` is the index of the statement that declared the binding in
+/// `block`; that statement is the binding's own declaration and not a use.
+/// Every nested block passes [`NOT_DECLARED_HERE`]: a `let` for the same name
+/// inside it shadows this binding, and the conservative answer (treat it as an
+/// escape) costs a leak at worst.
+fn bridge_binding_escapes(block: &Block, name: &str, decl_stmt: usize) -> bool {
     block
         .stmts
         .iter()
-        .any(|stmt| bridge_stmt_escapes(stmt, name))
+        .enumerate()
+        .any(|(index, stmt)| index != decl_stmt && bridge_stmt_escapes(stmt, name))
 }
+
+/// "This block did not declare the binding whose escape is being scanned."
+const NOT_DECLARED_HERE: usize = usize::MAX;
 
 fn bridge_stmt_escapes(stmt: &Stmt, name: &str) -> bool {
     match &stmt.kind {
@@ -23120,17 +23150,20 @@ fn bridge_stmt_escapes(stmt: &Stmt, name: &str) -> bool {
         StmtKind::Expr { expr } => bridge_expr_escapes(expr, name, false),
         StmtKind::Return(Some(value)) => bridge_expr_escapes(value, name, false),
         StmtKind::For { iter, body, .. } => {
-            bridge_expr_escapes(iter, name, false) || bridge_binding_escapes(body, name)
+            bridge_expr_escapes(iter, name, false)
+                || bridge_binding_escapes(body, name, NOT_DECLARED_HERE)
         }
         // A loop or branch condition only tests the value.
         StmtKind::While { condition, body, .. } => {
-            bridge_expr_escapes(condition, name, true) || bridge_binding_escapes(body, name)
+            bridge_expr_escapes(condition, name, true)
+                || bridge_binding_escapes(body, name, NOT_DECLARED_HERE)
         }
         StmtKind::WhileLet { expr, body, .. } => {
-            bridge_expr_escapes(expr, name, false) || bridge_binding_escapes(body, name)
+            bridge_expr_escapes(expr, name, false)
+                || bridge_binding_escapes(body, name, NOT_DECLARED_HERE)
         }
         StmtKind::Loop { body, .. } | StmtKind::Defer { body } => {
-            bridge_binding_escapes(body, name)
+            bridge_binding_escapes(body, name, NOT_DECLARED_HERE)
         }
         StmtKind::Bail(expr) => bridge_expr_escapes(expr, name, false),
         StmtKind::Break {
@@ -23202,7 +23235,7 @@ fn bridge_expr_escapes(expr: &Expr, name: &str, read_position: bool) -> bool {
             else_branch,
         } => {
             bridge_expr_escapes(condition, name, true)
-                || bridge_binding_escapes(then_block, name)
+                || bridge_binding_escapes(then_block, name, NOT_DECLARED_HERE)
                 || bridge_else_escapes(else_branch, name)
         }
         ExprKind::IfLet {
@@ -23212,7 +23245,7 @@ fn bridge_expr_escapes(expr: &Expr, name: &str, read_position: bool) -> bool {
             ..
         } => {
             bridge_expr_escapes(scrutinee, name, false)
-                || bridge_binding_escapes(then_block, name)
+                || bridge_binding_escapes(then_block, name, NOT_DECLARED_HERE)
                 || bridge_else_escapes(else_branch, name)
         }
         ExprKind::Match { subject, arms } => {
@@ -23222,7 +23255,7 @@ fn bridge_expr_escapes(expr: &Expr, name: &str, read_position: bool) -> bool {
                     .any(|arm| bridge_expr_escapes(&arm.body, name, false))
         }
         ExprKind::Block(block) | ExprKind::Loop { body: block, .. } => {
-            bridge_binding_escapes(block, name)
+            bridge_binding_escapes(block, name, NOT_DECLARED_HERE)
         }
         // `x = <expr mentioning the binding>` stores into a *different* slot
         // (an assignment to the binding itself is a different pointer, so it is
@@ -23239,7 +23272,9 @@ fn bridge_expr_escapes(expr: &Expr, name: &str, read_position: bool) -> bool {
 
 fn bridge_else_escapes(branch: &Option<ElseBranch>, name: &str) -> bool {
     match branch {
-        Some(ElseBranch::Block(block)) => bridge_binding_escapes(block, name),
+        Some(ElseBranch::Block(block)) => {
+            bridge_binding_escapes(block, name, NOT_DECLARED_HERE)
+        }
         Some(ElseBranch::ElseIf(expr)) => bridge_expr_escapes(expr, name, false),
         None => false,
     }
