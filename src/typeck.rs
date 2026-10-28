@@ -2964,6 +2964,44 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// The `locals` a branch of an `if` sees, given the condition.
+    ///
+    /// [`Self::nil_test`] names a plain local; the branch that test selects
+    /// sees the payload instead of the optional, exactly as
+    /// [`Self::apply_optional_narrowing`] narrows the code *after* a dominating
+    /// guard (register #136). `want_present` picks the branch: `true` for the
+    /// then-branch of `v != nil`, or the else-branch of `v == nil`.
+    ///
+    /// `None` means the branch sees the enclosing scope unchanged — the common
+    /// case, so no map is copied. Only an immutable local of optional type
+    /// narrows, and only at the name itself: `nil_test` matches a bare
+    /// identifier, so a field or an index is never narrowed, and a `var` is
+    /// excluded because a later assignment would make the evidence stale.
+    fn branch_locals(
+        condition: &Expr,
+        locals: &HashMap<String, VarInfo>,
+        want_present: bool,
+    ) -> Option<HashMap<String, VarInfo>> {
+        let (name, tests_for_nil) = Self::nil_test(condition)?;
+        // The test proves presence in the branch it *does not* take.
+        if want_present == tests_for_nil {
+            return None;
+        }
+        let payload = match locals.get(name) {
+            Some(info) if !info.mutable => match &info.ty {
+                Type::Optional(inner) => (**inner).clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let mut inner = locals.clone();
+        if let Some(info) = inner.get_mut(name) {
+            info.ty = payload;
+            info.non_nil = true;
+        }
+        Some(inner)
+    }
+
     /// Mark `name` as present in this map, if it is an immutable binding.
     ///
     /// A `var` is never narrowed: it can be reassigned to a fresh optional, and
@@ -3957,28 +3995,26 @@ impl<'a> TypeChecker<'a> {
                         condition.span,
                     );
                 }
-                // Register #136: `if v != nil { .. }` is the branch where the
-                // payload is known present, exactly as `if v == nil { return }`
-                // is the fall-through after the guard.
-                let nil_test = Self::nil_test(condition);
-                let mut inner = locals.clone();
-                if let Some((name, tests_for_nil)) = nil_test {
-                    if !tests_for_nil {
-                        Self::narrow_binding(&mut inner, name);
-                    }
-                }
+                // Register #136: a `nil` test narrows the local inside the
+                // branch it selects — `if v != nil { .. }` is the branch where
+                // the payload is known present, exactly as `if v == nil
+                // { return }` is the fall-through after the guard. The same
+                // helper narrows the arm's *type* for [`Self::infer_expr_type`],
+                // so the two readings of a guard cannot drift apart.
+                let mut inner = match Self::branch_locals(condition, locals, true) {
+                    Some(narrowed) => narrowed,
+                    None => locals.clone(),
+                };
                 for s in &then_block.stmts {
                     self.check_stmt(s, &mut inner);
                 }
                 if let Some(eb) = else_branch {
                     match eb {
                         ElseBranch::Block(block) => {
-                            let mut inner = locals.clone();
-                            if let Some((name, tests_for_nil)) = nil_test {
-                                if tests_for_nil {
-                                    Self::narrow_binding(&mut inner, name);
-                                }
-                            }
+                            let mut inner = match Self::branch_locals(condition, locals, false) {
+                                Some(narrowed) => narrowed,
+                                None => locals.clone(),
+                            };
                             for s in &block.stmts {
                                 self.check_stmt(s, &mut inner);
                             }
@@ -4844,18 +4880,31 @@ impl<'a> TypeChecker<'a> {
             },
             ExprKind::Await(inner) => self.infer_expr_type(inner, locals),
             ExprKind::If {
+                condition,
                 then_block,
                 else_branch,
-                ..
             } => {
                 // G01 P0.3 (audit N-8): `let f = if c { worker } else { nop }`
                 // picks a value at run time, so the joined type carries the
                 // union of the arms' rows — one rowless arm does not make the
                 // call safe.
-                let then_ty = self.block_tail_type(then_block, locals);
+                //
+                // Register #136: a `nil` test narrows its local inside the
+                // branch it selects, so that arm's type is the payload rather
+                // than the optional. Without it `if m != nil { m } else { 0 }`
+                // joined to `i64?` and was refused, although both planes run
+                // it.
+                let then_locals = Self::branch_locals(condition, locals, true);
+                let else_locals = Self::branch_locals(condition, locals, false);
+                let then_ty =
+                    self.block_tail_type(then_block, then_locals.as_ref().unwrap_or(locals));
                 let else_ty = match else_branch.as_ref() {
-                    Some(ElseBranch::Block(block)) => self.block_tail_type(block, locals),
-                    Some(ElseBranch::ElseIf(expr)) => self.infer_expr_type(expr, locals),
+                    Some(ElseBranch::Block(block)) => {
+                        self.block_tail_type(block, else_locals.as_ref().unwrap_or(locals))
+                    }
+                    Some(ElseBranch::ElseIf(expr)) => {
+                        self.infer_expr_type(expr, else_locals.as_ref().unwrap_or(locals))
+                    }
                     None => Type::Void,
                 };
                 Self::join_branch_types(then_ty, else_ty)
@@ -4952,10 +5001,12 @@ impl<'a> TypeChecker<'a> {
 
     /// Join the types of two branches of an `if` (G01 P0.3, audit N-8).
     ///
-    /// Two function types join to one carrying the union of their rows. Every
-    /// other shape keeps the pre-existing rule — the then-branch's type wins —
-    /// except that `Unknown` (inference's placeholder) defers to the branch
-    /// that knows something.
+    /// Two function types join to one carrying the union of their rows. An arm
+    /// that can still be `nil` makes the join optional, because `T` wraps into
+    /// `T?` (register #135) and so `T?` is the wider of the two: a narrowed arm
+    /// must not erase the other arm's absence. Every other shape keeps the
+    /// pre-existing rule — the then-branch's type wins — except that `Unknown`
+    /// (inference's placeholder) defers to the branch that knows something.
     fn join_branch_types(then_ty: Type, else_ty: Type) -> Type {
         match (then_ty, else_ty) {
             (
@@ -4974,6 +5025,9 @@ impl<'a> TypeChecker<'a> {
                 effects: Self::union_rows(&effects, &else_effects),
             },
             (Type::Unknown, other) => other,
+            // `if m != nil { m } else { m }` can still yield the absent value;
+            // only the guard in the condition narrows, and it narrows one arm.
+            (ty, other @ Type::Optional(_)) if !matches!(ty, Type::Optional(_)) => other,
             (then_ty, _) => then_ty,
         }
     }

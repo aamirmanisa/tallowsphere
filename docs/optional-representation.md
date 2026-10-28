@@ -16,17 +16,39 @@ gaps were closed on 2026-10-21:
   argument to a plain parameter. A `nil` check that *dominates* the use is the
   unwrap for this rule — `if v == nil { return }` then `let x: i64 = v`, or
   `if v != nil { .. }` inside the branch — and only an immutable binding is
-  narrowed, because a `var` can be reassigned. `tests/optional_exhaustiveness.rs`.
+  narrowed, because a `var` can be reassigned. The narrowing is also what the
+  two arms of an `if` *expression* join with: `let v: i64 = if m != nil { m }
+  else { 0 }` checks, because the then-arm is `i64`, while
+  `if m != nil { m } else { m }` is still refused, because the else-arm is
+  reached exactly when `m` is absent and stays `i64?`. The join of `T` and `T?`
+  is `T?`, which is the wrap direction of #135 read as a lattice.
+  `tests/optional_exhaustiveness.rs`.
   Measured before the rule at `b205b51`: the `let` position was refused, but
   `return maybe_i64()` from `-> i64` and `take(maybe_i64())` passed `tallow
   check`; the native plane then refused them at codegen while the interpreter
   ran them and printed `nil` for an `i64`. The two planes now agree on the
-  refusal, at check time.
+  refusal, at check time. Measured at `61b18b5` for the arm join: `tallow check`
+  refused the program, while `tallow run --interpret` printed `5` and `tallow
+  run --require-native` printed `0` — the emitter's PHI saw one boxed optional
+  arm and one `i64` arm and answered `0 i64`, so fixing the checker needed the
+  emitter to read the payload in the branch the test proves present.
 
 Arithmetic on an optional is not a gap: the type checker rejects it on both
 planes with `E0110 left operand of + must be numeric, got i64?`, so there is no
 divergence to fix. Operator chose the boxed encoding (option 1 of three in
 register #119) on 2026-10-18.
+
+**The limit that remains, named.** Narrowing reaches the emitter for the *arm*
+of an `if` expression and not yet for a statement that follows a dominating
+guard. `let x: i64 = v` after `if v == nil { return }` still binds the box on
+the native plane: `print(x)` reads the payload and prints the value, but
+`x + 1` refuses at codegen with `cannot use an optional where a plain value is
+expected (Optional -> I64)`, while the interpreter runs it and prints `6`
+(measured 2026-10-28 on `run/2.0-20261031-armjoin`, with `m` bound from
+`fn maybe_i64(n: i64) -> i64?`). The
+refusal is loud, so it is a missing capability rather than a wrong answer; the
+fix is the same shape as the arm rule — carry the narrowed name through
+`emit_block`'s statement walk.
 
 ## The defect it fixes
 

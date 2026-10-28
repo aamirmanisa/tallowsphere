@@ -282,6 +282,112 @@ fn a_guarded_program_prints_identical_stdout_on_both_planes() {
     }
 }
 
+/// The measured residual: the join of the two arms must consult the narrowing
+/// the condition established. Inside `if m != nil { .. }` the visible type of
+/// `m` is `i64`, so the true arm yields `i64` and the join with the `0` arm
+/// yields `i64` — a plain slot. Both values are exercised, so the test proves
+/// the program runs, not merely that the checker smiled.
+const ARM_NARROWS: &str = r#"
+fn maybe_i64(n: i64) -> i64? {
+    if n == 0 { return nil }
+    return n
+}
+
+fn main() {
+    let a = maybe_i64(5)
+    let va: i64 = if a != nil { a } else { 0 }
+    print(va)
+    let b = maybe_i64(0)
+    let vb: i64 = if b != nil { b } else { 0 }
+    print(vb)
+}
+"#;
+
+/// The narrowing is a property of one arm, so it does not survive the join:
+/// the else-branch is reached exactly when `m` is nil, and its `m` is the
+/// optional again. Accepting this would be the runtime hole the rule exists to
+/// close.
+const ELSE_DOES_NOT_NARROW: &str = r#"
+fn maybe_i64(n: i64) -> i64? {
+    if n == 0 { return nil }
+    return n
+}
+
+fn main() {
+    let m = maybe_i64(5)
+    let v: i64 = if m != nil { m } else { m }
+    print(v)
+}
+"#;
+
+/// The documented restriction: `var` never narrows, because the binding can be
+/// reassigned to a fresh optional and the evidence would then be stale.
+const VAR_DOES_NOT_NARROW: &str = r#"
+fn maybe_i64(n: i64) -> i64? {
+    if n == 0 { return nil }
+    return n
+}
+
+fn main() {
+    var m = maybe_i64(5)
+    let v: i64 = if m != nil { m } else { 0 }
+    print(v)
+}
+"#;
+
+#[test]
+fn the_nil_check_narrows_the_arm_so_the_join_is_plain() {
+    let out = check(ARM_NARROWS, "arm-narrows");
+    assert!(
+        out.status.success(),
+        "`if m != nil {{ m }} else {{ 0 }}` must fill an `i64` slot: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let want = "5\n0\n";
+    let native = run(ARM_NARROWS, "arm-narrows-native", &["run", "--require-native"]);
+    let interp = run(ARM_NARROWS, "arm-narrows-interp", &["run", "--interpret"]);
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        want,
+        "native plane: refused={} stderr={}",
+        !native.status.success(),
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "interpreter: refused={} stderr={}",
+        !interp.status.success(),
+        String::from_utf8_lossy(&interp.stderr)
+    );
+}
+
+#[test]
+fn the_else_arm_is_not_narrowed_by_the_condition() {
+    let out = check(ELSE_DOES_NOT_NARROW, "else-not-narrowed");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the else-branch is reached when `m` is nil, so the join is `i64?`: {err}"
+    );
+    assert!(err.contains("E0116"), "the rule's code must be named: {err}");
+    assert!(
+        err.contains("`i64?`") && err.contains("where `i64` is required"),
+        "the message must name both types: {err}"
+    );
+}
+
+#[test]
+fn a_var_is_not_narrowed_by_the_branch_condition() {
+    let out = check(VAR_DOES_NOT_NARROW, "var-not-narrowed");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a `var` may be reassigned, so the branch must not narrow it: {err}"
+    );
+    assert!(err.contains("E0116"), "the rule's code must be named: {err}");
+}
+
 fn check(program: &str, tag: &str) -> std::process::Output {
     run(program, tag, &["check"])
 }

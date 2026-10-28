@@ -14437,13 +14437,18 @@ void tallow_async_runtime_shutdown(void) {
         // Then block
         self.body.push_str(&format!("{then_label}:\n"));
         let then_val = self.emit_block(then_block)?;
-        let then_result = then_val.unwrap_or(LLValue::new("0".into(), LLType::I64));
+        let mut then_result = then_val.unwrap_or(LLValue::new("0".into(), LLType::I64));
+        if then_result.ty == LLType::Optional {
+            if let Some(arm) = Self::narrowed_arm(then_block, condition, true) {
+                then_result = self.unbox_present(&then_result, arm)?;
+            }
+        }
         let then_exit_label = self.current_label();
         self.emit_line(&format!("br label %{merge_label}"));
 
         // Else block
         self.body.push_str(&format!("{else_label}:\n"));
-        let else_result = if let Some(branch) = else_branch {
+        let mut else_result = if let Some(branch) = else_branch {
             match branch {
                 ElseBranch::Block(block) => {
                     let v = self.emit_block(block)?;
@@ -14454,6 +14459,13 @@ void tallow_async_runtime_shutdown(void) {
         } else {
             LLValue::new("0".into(), LLType::I64)
         };
+        if else_result.ty == LLType::Optional {
+            if let Some(ElseBranch::Block(block)) = else_branch {
+                if let Some(arm) = Self::narrowed_arm(block, condition, false) {
+                    else_result = self.unbox_present(&else_result, arm)?;
+                }
+            }
+        }
         let else_exit_label = self.current_label();
         self.emit_line(&format!("br label %{merge_label}"));
 
@@ -14675,6 +14687,103 @@ void tallow_async_runtime_shutdown(void) {
             }),
             _ => None,
         }
+    }
+
+    /// The arm value a `nil` test in an `if` condition has already narrowed.
+    ///
+    /// Register #136 narrows the bound name inside the branch the test selects,
+    /// so `if m != nil { m } else { 0 }` has a then-arm of type `i64`, not
+    /// `i64?` — the checker says so, and this is the emitter's half of the same
+    /// rule. Without it the arm stayed a boxed optional, the two incoming PHI
+    /// values had different LLVM types, and a value-less merge answered `0 i64`:
+    /// a silent wrong answer where the interpreter printed the payload.
+    ///
+    /// Only a bare local is narrowed, and only when it is the arm's value: the
+    /// condition names it, the branch is the one the test proves present, and
+    /// the binding is an optional on this plane. `in_then` selects the branch
+    /// (`if m != nil { m }` narrows the then-arm, `if m == nil { .. } else { m }`
+    /// the else-arm).
+    fn narrowed_arm<'blk>(block: &'blk Block, condition: &Expr, in_then: bool) -> Option<&'blk Expr> {
+        let Stmt {
+            kind: StmtKind::Expr { expr },
+            ..
+        } = block.stmts.last()?
+        else {
+            return None;
+        };
+        let ExprKind::Ident(name) = &expr.kind else {
+            return None;
+        };
+        let ExprKind::Binary { op, left, right } = &condition.kind else {
+            return None;
+        };
+        let tests_for_nil = match op {
+            BinOp::Eq => true,
+            BinOp::Neq => false,
+            _ => return None,
+        };
+        let tested = match (&left.kind, &right.kind) {
+            (ExprKind::Ident(n), ExprKind::Nil) | (ExprKind::Nil, ExprKind::Ident(n)) => n,
+            _ => return None,
+        };
+        // The test proves presence in the branch it does not take.
+        if tested != name || in_then == tests_for_nil {
+            return None;
+        }
+        Some(expr)
+    }
+
+    /// The payload of a box the enclosing `nil` test proved present.
+    ///
+    /// `boxed` is the `%struct.Optional` pointer; the caller is inside the
+    /// branch where it is known non-null, so the load is safe. The payload type
+    /// has to come from the program (a declared `-> T?` return, or the binding's
+    /// annotation) because the box stores it as a plain `i64`; when it cannot be
+    /// established the emitter refuses rather than guessing, since guessing here
+    /// is exactly how an optional came to be printed as `0`.
+    fn unbox_present(&mut self, boxed: &LLValue, arm: &Expr) -> Result<LLValue, String> {
+        let name = match &arm.kind {
+            ExprKind::Ident(name) => name.as_str(),
+            _ => "this expression",
+        };
+        let inner = self
+            .optional_inner_type(arm, 0)
+            .or_else(|| self.param_optional_inner(name))
+            .ok_or_else(|| {
+                format!(
+                    "cannot type the narrowed arm `{name}` on the native plane: a local narrowed \
+                     by a `nil` test must come from a function declared `-> T?`, a `let x: T?` \
+                     binding, or an optional parameter; annotate it, or run with --interpret"
+                )
+            })?;
+        let pay_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{pay_gep} = getelementptr inbounds %struct.Optional, ptr {}, i32 0, i32 1",
+            boxed.reg
+        ));
+        let raw = self.fresh_reg();
+        self.emit_line(&format!("{raw} = load i64, ptr {pay_gep}"));
+        let reg = self.payload_as_type(&raw, &inner);
+        Ok(LLValue::new(reg, inner))
+    }
+
+    /// The payload type of an optional *parameter* of the function being
+    /// emitted, for [`Self::unbox_present`]: `fn f(m: i64?)` declares the type
+    /// of `m` even though no initialiser binds it.
+    fn param_optional_inner(&self, name: &str) -> Option<LLType> {
+        let current = self.current_fn_name.as_deref()?;
+        self.merged_items.iter().find_map(|item| match item {
+            Item::Fn(f) if f.name == current => f.params.iter().find_map(|p| {
+                if p.name != name {
+                    return None;
+                }
+                match &p.ty.kind {
+                    TypeExprKind::Optional(inner) => Some(self.resolve_type(inner)),
+                    _ => None,
+                }
+            }),
+            _ => None,
+        })
     }
 
     /// `match opt { Some(x) -> …, None -> … }` on the compiled plane.
