@@ -170,6 +170,111 @@ fn bare_string_where_a_newtype_is_required_names_newtype_and_constructor() {
     );
 }
 
+/// The same refusal has to hold when the newtype's name is also a built-in
+/// private-type name. `Email`, `Name` and `SSN` are listed in `PRIVATE_TYPES`,
+/// and before G10's parameter-position fix a declaration of that name was
+/// silently re-wrapped as `Private(String)` — the nominal identity survived
+/// everywhere except a parameter, which is exactly where it is load-bearing.
+#[test]
+fn bare_value_where_a_newtype_named_like_a_private_type_is_required_is_refused() {
+    for name in ["UserId", "Email", "Name", "SSN"] {
+        let source = format!(
+            "newtype {name} = String\n\
+             fn send(to: {name}) -> String {{ return \"sent\" }}\n\
+             fn main() {{ print(send(\"bare-string\")) }}\n"
+        );
+        let out = check_source(&format!("shadowed-{name}"), &source);
+        assert_ne!(out.rc, 0, "`{name}` must not accept a bare String");
+        assert!(
+            out.stderr.contains("E0117"),
+            "{name}: stderr:\n{}",
+            out.stderr
+        );
+        assert!(
+            out.stderr.contains(&format!("newtype `{name}`")),
+            "{name}: the refusal must name the expected newtype, got:\n{}",
+            out.stderr
+        );
+        assert!(
+            out.stderr.contains(&format!("{name}(<String>)")),
+            "{name}: the refusal must name the constructor, got:\n{}",
+            out.stderr
+        );
+    }
+}
+
+/// The other direction for the shadowed names: the constructor is accepted.
+/// A fix that simply disabled the private-type heuristic outright would pass
+/// the refusal test above and this one; a fix that refused the constructor
+/// would pass only the first.
+#[test]
+fn a_newtype_named_like_a_private_type_still_accepts_its_constructor() {
+    for name in ["UserId", "Email", "Name", "SSN"] {
+        let source = format!(
+            "newtype {name} = String\n\
+             fn send(to: {name}) -> String {{ return \"sent\" }}\n\
+             fn main() {{ print(send({name}(\"x\"))) }}\n"
+        );
+        let out = check_source(&format!("constructor-{name}"), &source);
+        assert_eq!(
+            out.rc, 0,
+            "`{name}(..)` must fill a `{name}` slot; stderr:\n{}",
+            out.stderr
+        );
+    }
+}
+
+/// The shadowed-name newtype in the outbound direction: a value of it does not
+/// become its target, and the refusal names `.inner`.
+#[test]
+fn newtype_named_like_a_private_type_does_not_flow_into_its_target() {
+    for name in ["UserId", "Email", "Name", "SSN"] {
+        let source = format!(
+            "newtype {name} = String\n\
+             fn take(s: String) -> String {{ return s }}\n\
+             fn main(v: {name}) {{ print(take(v)) }}\n"
+        );
+        let out = check_source(&format!("outbound-{name}"), &source);
+        assert_ne!(out.rc, 0, "a `{name}` must not become a String implicitly");
+        assert!(
+            out.stderr.contains("E0117"),
+            "{name}: stderr:\n{}",
+            out.stderr
+        );
+        assert!(
+            out.stderr.contains(&format!("newtype `{name}`")),
+            "{name}: the refusal must name the newtype, got:\n{}",
+            out.stderr
+        );
+        assert!(
+            out.stderr.contains(".inner"),
+            "{name}: the refusal must name the unwrap, got:\n{}",
+            out.stderr
+        );
+    }
+}
+
+/// The unspecified counterweight to the tests above: `Type::Private` still
+/// exists and still applies to *undeclared* sensitive names. The declaration is
+/// what overrides the heuristic — not the name, and not the removal of the
+/// heuristic. This asserts the checker keeps a private-qualified parameter for a
+/// name nothing declares.
+#[test]
+fn undeclared_private_type_name_is_still_private_not_nominal() {
+    // No newtype for `Email`: the parameter is the built-in private String, so
+    // the newtype diagnostics (`newtype \`Email\``) must not appear.
+    let out = check_source(
+        "undeclared-private",
+        "fn send(to: Email) -> String { return \"sent\" }\n\
+         fn main() { print(send(\"x\")) }\n",
+    );
+    assert!(
+        !out.stderr.contains("newtype `Email`"),
+        "an undeclared `Email` is not a newtype, stderr:\n{}",
+        out.stderr
+    );
+}
+
 /// The other direction: a `UserId` is not a `String`, and the refusal names the
 /// unwrap rather than inventing a conversion.
 #[test]
