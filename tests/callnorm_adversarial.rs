@@ -32,16 +32,22 @@
 //! | 4 | default reads another parameter | refused at the declaration | E0124 at the declaration, call-free case included | holds (refusal rule) |
 //! | 5 | recursion, literal default | terminates, planes agree | terminates, `0` on both planes | holds |
 //! | 5 | acyclic chain of defaulted calls | terminates | `7` on both planes | holds |
-//! | 5 | **default that calls its own function** | refuses or terminates | **stack overflow, exit 134 (SIGABRT)** | **DEFECT** |
-//! | 5 | **mutually recursive defaults** | refuses or terminates | **stack overflow, exit 134 (SIGABRT)** | **DEFECT** |
+//! | 5 | **default that calls its own function** | refused, naming the cycle | E0125 `f -> f`, exit 1, no abort | holds |
+//! | 5 | **mutually recursive defaults** | refused, naming the cycle | E0125 `f -> g -> f`, exit 1, no abort | holds |
 //! | 6 | 0 params + 1 named arg | predictable refusal | E0122, "takes no arguments" | holds |
 //! | 6 | name differing only by case | predictable refusal | E0122 `Host`, parameters listed lowercase, `host` left unbound (E0124) | holds |
 //! | 7 | named/default program, interpret vs `--require-native` | byte-identical stdout | identical, `443\n80\n444\n8080\n81\n` | holds |
 //! | 7 | evaluation order of named args | one defined order, both planes | declaration order (`A` then `B`) | holds |
-//! | 7 | **call through a value, omitted default** | byte-identical stdout | interpreter `443`, native `0` | **DEFECT** |
+//! | 7 | **call through a value, omitted default** | byte-identical stdout | both planes `443` | holds |
 //!
-//! Three tests below are expected to fail. They are left failing on purpose:
-//! each one is a reproducer for a real defect, described in its doc comment.
+//! Three tests below began life as defect reproducers: a default that closes a
+//! cycle used to abort the compiler with a stack overflow (exit 134, no
+//! diagnostic), and a call through a function value used to drop the omitted
+//! default on the native plane (interpreted `443`, native `0`, both exit 0).
+//! The rules that close both — the declaration-time default-cycle graph
+//! (E0125) and binding a call through a `let` that still names a top-level
+//! `fn` — are in `src/callnorm.rs`; the tests are kept as regression coverage
+//! and assert the diagnostic, not merely the absence of the abort.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -745,24 +751,24 @@ fn main() { print(f(1)) }
     assert_eq!(interpreted, native, "planes disagree");
 }
 
-/// **DEFECT — expected to fail.**
+/// Was a defect; now the rule it pins.
 ///
 /// `fn f(a: Int, b: Int = f(1))` passes every declaration-time rule: the default
 /// reads no parameter of `f`, so E0124 does not fire, and the parse is legal.
 /// But `rewrite` splices `f(1)` into a call to `f`, then walks the spliced node,
-/// which rewrites it again, splicing another `f(1)`, forever.
+/// which would rewrite it again, splicing another `f(1)`, forever.
 ///
-/// Measured: `tallow check` dies with `thread '<unknown>' has overflowed its
-/// stack / fatal runtime error: stack overflow, aborting`, exit 134 (SIGABRT),
-/// on a program the type system is supposed to refuse at most. A compiler that
-/// aborts on a syntactically valid input has no diagnostic to show — the defect
-/// is the missing termination/cycle rule in `Normalizer::rewrite`, not the
-/// message.
+/// Measured before the fix: `tallow check` died with `thread '<unknown>' has
+/// overflowed its stack / fatal runtime error: stack overflow, aborting`, exit
+/// 134 (SIGABRT). A compiler that aborts on a syntactically valid input has no
+/// diagnostic to show.
 ///
-/// Either fix satisfies this test: refuse the cycle with a diagnostic (exit 1),
-/// or stop re-walking a spliced default. What must not happen is the abort.
+/// The rule is the declaration-time cycle graph in `src/callnorm.rs`: a default
+/// that closes a cycle is refused as E0125, naming the path. This test asserts
+/// both halves — that the compiler terminates with a refusal, and that the
+/// refusal is the cycle rule and names `f -> f` rather than being some
+/// arbitrary depth limit that happened to stop first.
 #[test]
-#[ignore = "D1: callnorm splices a clone of the default and then walks it, so a self-referential default recurses until the stack aborts (exit 134). Un-ignore with the cycle check."]
 fn self_referential_default_must_not_abort_the_compiler() {
     let program = "fn f(a: Int, b: Int = f(1)) -> Int { return b; }
 fn main() { print(f(1)) }
@@ -786,20 +792,31 @@ fn main() { print(f(1)) }
         run.how(),
         run.stderr
     );
+    assert!(
+        run.codes().iter().any(|code| code == "E0125"),
+        "expected the default-cycle rule to refuse it ({}):\n{}",
+        run.how(),
+        run.stderr
+    );
+    let line = run.line_with("E0125");
+    assert!(
+        line.contains("default parameter cycle: f -> f"),
+        "the refusal must name the cycle `f -> f`: {line}"
+    );
+    assert!(run.stdout.is_empty(), "the program ran anyway");
 }
 
-/// **DEFECT — expected to fail.**
+/// Was a defect; now the rule it pins. The variant a self-call-only check
+/// would miss.
 ///
 /// Mutual recursion through defaults: `f`'s default calls `g`, `g`'s default
 /// calls `f`. Neither default reads a parameter, so neither declaration is
-/// refused; the call `g()` is spliced into `f(2)`, whose default is spliced into
-/// `g()`, and so on.
+/// refused by E0124, and before the cycle graph the call `g()` was spliced into
+/// `f(2)`, whose default was spliced into `g()`, and so on.
 ///
-/// Measured: same stack overflow abort as the self-referential case, exit 134.
-/// This is the variant that a "does the default call its own function?" check
-/// alone would miss, which is why it is a separate reproducer.
+/// Measured before the fix: same stack overflow abort as the self-referential
+/// case, exit 134. Now: E0125 naming the whole path, `f -> g -> f`.
 #[test]
-#[ignore = "D2: the mutual-recursion variant of D1, which a self-call-only check would miss. Un-ignore with the cycle check."]
 fn mutually_recursive_defaults_must_not_abort_the_compiler() {
     let program = "fn f(a: Int, b: Int = g()) -> Int { return b; }
 fn g(c: Int = f(2)) -> Int { return c; }
@@ -824,6 +841,18 @@ fn main() { print(g()) }
         run.how(),
         run.stderr
     );
+    assert!(
+        run.codes().iter().any(|code| code == "E0125"),
+        "expected the default-cycle rule to refuse it ({}):\n{}",
+        run.how(),
+        run.stderr
+    );
+    let line = run.line_with("E0125");
+    assert!(
+        line.contains("default parameter cycle: f -> g -> f"),
+        "the refusal must name the whole cycle `f -> g -> f`: {line}"
+    );
+    assert!(run.stdout.is_empty(), "the program ran anyway");
 }
 
 // ── 6. Arity and case ────────────────────────────────────────────────────
@@ -964,22 +993,24 @@ fn main() { print(f(b: tag(\"B\"), a: tag(\"A\"))) }
     );
 }
 
-/// **DEFECT — expected to fail.**
+/// Was a defect; now the rule it pins.
 ///
-/// `callnorm` deliberately leaves a call through a function value alone
-/// (`let g = conn; g("h")`), because the callee's signature is not statically
-/// known. The docs present this as "the pass never guesses an order". Measured
-/// consequence: the omitted default is then **not applied on the native plane**.
+/// `callnorm` used to leave a call through a function value alone (`let g =
+/// conn; g("h")`), because the callee's signature was said not to be statically
+/// known. Measured consequence: the omitted default was **not applied on the
+/// native plane** — the compiled leg passed the zero value instead.
 ///
-///   interpreted: 443   (the interpreter applies `port`'s default)
-///   native:      0     (the compiled leg passes the zero value instead)
+///   interpreted: 443   (the interpreter applied `port`'s default)
+///   native:      0     (the compiled leg passed the zero value instead)
 ///
-/// Both legs exit 0, so nothing warns the user; the two planes of one compiler
-/// return different values for one program. That breaks the parity requirement
-/// this pass exists to satisfy — either the native leg must apply the default,
-/// or the short call must be refused so it cannot mean two things.
+/// Both legs exited 0, so nothing warned the user; the two planes of one
+/// compiler returned different values for one program. The rule that closes it
+/// (implemented, not refused: applying the default is decidable here) is in
+/// `src/callnorm.rs` — a `let` whose initialiser is the bare name of a top-level
+/// `fn`, never re-bound, shadowed or assigned, resolves to that function's
+/// shape, so `g("h")` is normalised to `g("h", 443)` and both planes see the
+/// same positional call.
 #[test]
-#[ignore = "D3: a call through a function value omits the default on the native plane — interpreted prints 443, native prints 0, both exit 0. Un-ignore with the fix."]
 fn value_call_with_an_omitted_default_agrees_across_planes() {
     let program = "fn conn(host: String, port: Int = 443) -> Int { return port }
 fn main() {
