@@ -749,6 +749,31 @@ pub struct CodeGen<'a> {
     // ── @agent_task request counters ──────────────────────────────────────────
     // Function name → (global counter name, max_requests limit)
     agent_task_request_limits: HashMap<String, (String, u64)>,
+
+    // ── Generic stdlib bridge: result ownership (F1) ──────────────────────────
+    /// Registers whose value is a heap allocation `tallow_stdlib_call` returned
+    /// and nobody owns yet: the `String` / struct / opaque / undeclared arms of
+    /// `emit_stdlib_bridge_call`. A `let`/`var` that binds one of these takes
+    /// ownership of it (see `bridge_ownership`); anything left here at the end
+    /// of a statement had its value discarded by the program.
+    bridge_result_regs: HashSet<String>,
+    /// One frame per emitted block: the bridge-owned bindings declared in it,
+    /// released at the end of that block when they provably do not escape.
+    bridge_scopes: Vec<Vec<BridgeBinding>>,
+    /// `String` bindings whose bytes the compiler knows contain an interior NUL
+    /// (they came from a literal): variable → (storage slot, the
+    /// `RAW_PREFIX`+JSON global that carries their full byte length across the
+    /// bridge, F3). The slot pins the entry to one binding, so a shadowed or
+    /// rebound name cannot marshal a stale value.
+    bridge_nul_strings: HashMap<String, (String, String)>,
+}
+
+/// One `let`/`var` binding of a bridged result, owned by the block that declares
+/// it. `slot` is the alloca the program's value lives in, so the release reads
+/// whatever the binding holds at the end of the block.
+struct BridgeBinding {
+    name: String,
+    slot: String,
 }
 
 impl<'a> CodeGen<'a> {
@@ -829,6 +854,9 @@ impl<'a> CodeGen<'a> {
             variable_trait_type: HashMap::new(),
             const_init_fns: Vec::new(),
             agent_task_request_limits: HashMap::new(),
+            bridge_result_regs: HashSet::new(),
+            bridge_scopes: Vec::new(),
+            bridge_nul_strings: HashMap::new(),
         };
         // Layouts for structs the ENGINE returns (stdlib .tl declares them, but
         // only user structs reach struct_layouts through the parser). Without
@@ -4810,9 +4838,15 @@ void tallow_async_runtime_shutdown(void) {
     // ── Block & Statement Emission ──────────────────────────────────────────
 
     fn emit_block(&mut self, block: &Block) -> Result<Option<LLValue>, String> {
+        // Every block owns the bridged results it binds (F1): the frame is
+        // released on the way out, before the caller emits the terminator.
+        self.bridge_scopes.push(Vec::new());
         let mut last_val = None;
         let total = block.stmts.len();
         for (i, stmt) in block.stmts.iter().enumerate() {
+            // Results handed to a bridge/scalar call and not bound belong to no
+            // block frame: whatever this statement leaves behind was discarded.
+            self.bridge_result_regs.clear();
             last_val = self.emit_stmt(stmt)?;
             // A `Result` thrown away mid-block is checked (#133). The *last*
             // statement of a block is the block's value — a tail `try_parse(s)`
@@ -4828,9 +4862,47 @@ void tallow_async_runtime_shutdown(void) {
                         self.emit_unhandled_result_exit1(val);
                     }
                 }
+                // A bridged result the program never binds and only prints or
+                // compares is dead once the statement finishes.
+                if bridge_stmt_reads_only(stmt) {
+                    self.emit_bridge_discarded_temporaries();
+                }
             }
         }
+        let bindings = self.bridge_scopes.pop().unwrap_or_default();
+        self.emit_bridge_releases(block, bindings);
         Ok(last_val)
+    }
+
+    /// Release the bridged results a statement created and the program did not
+    /// bind (`print(mod.f())`). Only called when the statement is a read-only
+    /// consumer (`bridge_stmt_reads_only`), so the pointers cannot have been
+    /// stored anywhere.
+    fn emit_bridge_discarded_temporaries(&mut self) {
+        let discarded: Vec<String> = self.bridge_result_regs.drain().collect();
+        for reg in discarded {
+            self.emit_line(&format!("call void @tallow_free_string(ptr {reg})"));
+        }
+    }
+
+    /// Release the bridged results bound in a block, for the bindings that
+    /// provably do not escape it (`bridge_binding_escapes`).
+    ///
+    /// The load happens at the end of the block, so a binding that was never
+    /// reassigned is read back exactly as it was stored. A block that already
+    /// ended (its last statement returned) takes no instructions.
+    fn emit_bridge_releases(&mut self, block: &Block, bindings: Vec<BridgeBinding>) {
+        for binding in bindings {
+            if bridge_binding_escapes(block, &binding.name) {
+                continue;
+            }
+            if self.block_already_terminated() {
+                return;
+            }
+            let value = self.fresh_reg();
+            self.emit_line(&format!("{value} = load ptr, ptr {}", binding.slot));
+            self.emit_line(&format!("call void @tallow_free_string(ptr {value})"));
+        }
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<Option<LLValue>, String> {
@@ -5516,7 +5588,42 @@ void tallow_async_runtime_shutdown(void) {
                     // (measured: `r.url` read offset 40 of a 24-byte box, #120).
                     self.var_payload_struct.insert(name.clone(), payload);
                 }
-                self.variables.insert(name.clone(), (alloca, val.ty));
+                let binding_reg = val.reg.clone();
+                self.variables.insert(name.clone(), (alloca.clone(), val.ty));
+                // ── Generic stdlib bridge: how many bytes of the value the
+                // compiler knows (F3) ─────────────────────────────────────────
+                //
+                // A `String` bound from a literal keeps its byte length: if the
+                // literal has an interior NUL, the marshalled form below carries
+                // the whole value instead of a NUL-terminated prefix. Only a
+                // `let` qualifies — a `var` can be reassigned without changing
+                // its slot, which would leave this entry pointing at old bytes.
+                match &value.kind {
+                    ExprKind::StringLit(text)
+                        if text.contains('\0')
+                            && matches!(&stmt.kind, StmtKind::Let { .. }) =>
+                    {
+                        let payload = self.intern_string(&bridge_json_string_literal(text));
+                        self.bridge_nul_strings
+                            .insert(name.clone(), (alloca.clone(), payload));
+                    }
+                    _ => {
+                        self.bridge_nul_strings.remove(name);
+                    }
+                }
+                // ── Generic stdlib bridge: who owns the value (F1) ───────────
+                //
+                // A result `emit_stdlib_bridge_call` handed back as a pointer is
+                // heap memory nobody owns yet; this binding takes it, and the
+                // enclosing block releases it (`emit_bridge_releases`).
+                if self.bridge_result_regs.remove(&binding_reg) {
+                    if let Some(frame) = self.bridge_scopes.last_mut() {
+                        frame.push(BridgeBinding {
+                            name: name.clone(),
+                            slot: alloca,
+                        });
+                    }
+                }
                 Ok(None)
             }
 
@@ -22925,6 +23032,404 @@ void tallow_async_runtime_shutdown(void) {
     }
 }
 
+// ── Bridged-result ownership: when is it safe to release? (F1) ───────────────
+//
+// `tallow_stdlib_call` returns a heap allocation the *caller* owns. For a
+// `String`, struct, opaque or undeclared result that allocation becomes the
+// program's value, so codegen releases it at the end of the block that binds it
+// (`emit_bridge_releases`). The release is only emitted when every use of the
+// binding in that block is a **read**: a value that is aliased, stored,
+// returned, captured by a closure or handed to a function that might keep it
+// escapes the block and is left allocated instead.
+//
+// That trade is deliberate and one-directional: leaking is recoverable (the
+// process exits, or the block runs again), while freeing under a live alias is a
+// dangling pointer the program then reads. Every case this analysis cannot
+// decide answers "escapes", so the failure mode of a missed rule is a leak, not
+// a wrong answer.
+
+/// The `RAW_PREFIX` + JSON form of a `String` argument whose full bytes the
+/// compiler knows (F3).
+///
+/// A compiled Tallow `String` is a C string, so an interior NUL is lost at the
+/// boundary — `CStr::from_ptr` stops there and the callee sees a shorter value
+/// (`recordlink.soundex("a\0b")` answered `A000` instead of `A100`). A JSON
+/// string carries its own length, and `decode_argument` rebuilds the exact bytes
+/// from it, so the whole value arrives. `serde_json` escapes the NUL as
+/// `\u0000`, so the encoded text itself is a legal C string.
+///
+/// Only literals reach this path: a compiled `String` can acquire a NUL no other
+/// way, because every string operation in this backend (`strcat`, `strlen`,
+/// interpolation, a bridged result) is NUL-terminated by construction.
+fn bridge_json_string_literal(text: &str) -> String {
+    let mut encoded = String::from("\u{1f}J");
+    encoded.push_str(&serde_json::Value::String(text.to_string()).to_string());
+    encoded
+}
+
+/// `String` methods that only read their receiver, so a call to one does not let
+/// the receiver outlive the block.
+///
+/// Deliberately narrow. Methods that hand back pointers *into* the receiver or
+/// into a new structure built from it (`split`, `lines`, `chars`, `slice`,
+/// `substring`, `index_of`-style byte offsets) are absent: whether the returned
+/// value aliases the input is a runtime question, and a wrong answer there is a
+/// dangling read.
+fn bridge_string_read_only_method(method: &str) -> bool {
+    matches!(
+        method,
+        "len" | "byte_len"
+            | "is_empty"
+            | "contains"
+            | "starts_with"
+            | "ends_with"
+            | "trim"
+            | "trim_start"
+            | "trim_end"
+            | "to_upper"
+            | "to_lower"
+            | "to_uppercase"
+            | "to_lowercase"
+            | "replace"
+            | "repeat"
+            | "reverse"
+            | "compare"
+            | "eq"
+            | "equals"
+            | "hash"
+    )
+}
+
+/// True when `name` might still be read after `block` ends.
+fn bridge_binding_escapes(block: &Block, name: &str) -> bool {
+    block
+        .stmts
+        .iter()
+        .any(|stmt| bridge_stmt_escapes(stmt, name))
+}
+
+fn bridge_stmt_escapes(stmt: &Stmt, name: &str) -> bool {
+    match &stmt.kind {
+        // A binding whose value mentions our name may alias it (`let b = a`) or
+        // build something that holds it (`let s = Struct { f: a }`).
+        StmtKind::Let { name: bound, value, .. }
+        | StmtKind::Var { name: bound, value, .. } => {
+            bound == name || bridge_expr_escapes(value, name, false)
+        }
+        StmtKind::LetDestructure { value, .. } => bridge_expr_escapes(value, name, false),
+        StmtKind::Expr { expr } => bridge_expr_escapes(expr, name, false),
+        StmtKind::Return(Some(value)) => bridge_expr_escapes(value, name, false),
+        StmtKind::For { iter, body, .. } => {
+            bridge_expr_escapes(iter, name, false) || bridge_binding_escapes(body, name)
+        }
+        // A loop or branch condition only tests the value.
+        StmtKind::While { condition, body, .. } => {
+            bridge_expr_escapes(condition, name, true) || bridge_binding_escapes(body, name)
+        }
+        StmtKind::WhileLet { expr, body, .. } => {
+            bridge_expr_escapes(expr, name, false) || bridge_binding_escapes(body, name)
+        }
+        StmtKind::Loop { body, .. } | StmtKind::Defer { body } => {
+            bridge_binding_escapes(body, name)
+        }
+        StmtKind::Bail(expr) => bridge_expr_escapes(expr, name, false),
+        StmtKind::Break {
+            value: Some(value), ..
+        } => bridge_expr_escapes(value, name, false),
+        StmtKind::Return(None) | StmtKind::Break { value: None, .. } | StmtKind::Continue { .. } => {
+            false
+        }
+    }
+}
+
+/// True when `expr` lets `name`'s pointer outlive the block.
+///
+/// `read_position` says a bare `Ident(name)` here is consumed immediately (a
+/// print argument, a comparison operand, a loop condition) rather than stored or
+/// returned.
+fn bridge_expr_escapes(expr: &Expr, name: &str, read_position: bool) -> bool {
+    match &expr.kind {
+        ExprKind::Ident(ident) => ident == name && !read_position,
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Nil
+        | ExprKind::DotIdent(_) => false,
+        // Concatenation, comparison and arithmetic read their operands.
+        ExprKind::Binary { left, right, .. } => {
+            bridge_expr_escapes(left, name, true) || bridge_expr_escapes(right, name, true)
+        }
+        ExprKind::Unary { operand, .. } => bridge_expr_escapes(operand, name, true),
+        ExprKind::Interpolation(parts) => parts.iter().any(|part| match part {
+            StringPart::Expr(inner) => bridge_expr_escapes(inner, name, true),
+            StringPart::Lit(_) => false,
+        }),
+        ExprKind::Cast { expr: inner, .. } | ExprKind::Try(inner) | ExprKind::Await(inner) => {
+            bridge_expr_escapes(inner, name, read_position)
+        }
+        // `print(x)` and `module.method(x)` read their arguments: the bridge
+        // copies an argument into an interpreter `Value` before dispatch, and a
+        // hand-written emitter consumes it the same way.
+        ExprKind::Call { callee, args } => match &callee.kind {
+            ExprKind::Ident(callee) if callee == "print" || crate::stdlib::is_registered_module(callee) => {
+                args.iter()
+                    .any(|arg| bridge_expr_escapes(&arg.value, name, true))
+            }
+            _ => bridge_expr_mentions(expr, name),
+        },
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+        } => {
+            let receiver_is_ours = matches!(&object.kind, ExprKind::Ident(n) if n == name);
+            if receiver_is_ours {
+                // `k.len()` / `k.trim()` reads the receiver; `k.split(..)`
+                // hands back pointers it may share with the receiver.
+                if !bridge_string_read_only_method(method) {
+                    return true;
+                }
+            } else if bridge_expr_escapes(object, name, false) {
+                return true;
+            }
+            args.iter()
+                .any(|arg| bridge_expr_escapes(&arg.value, name, false))
+        }
+        ExprKind::If {
+            condition,
+            then_block,
+            else_branch,
+        } => {
+            bridge_expr_escapes(condition, name, true)
+                || bridge_binding_escapes(then_block, name)
+                || bridge_else_escapes(else_branch, name)
+        }
+        ExprKind::IfLet {
+            expr: scrutinee,
+            then_block,
+            else_branch,
+            ..
+        } => {
+            bridge_expr_escapes(scrutinee, name, false)
+                || bridge_binding_escapes(then_block, name)
+                || bridge_else_escapes(else_branch, name)
+        }
+        ExprKind::Match { subject, arms } => {
+            bridge_expr_escapes(subject, name, false)
+                || arms
+                    .iter()
+                    .any(|arm| bridge_expr_escapes(&arm.body, name, false))
+        }
+        ExprKind::Block(block) | ExprKind::Loop { body: block, .. } => {
+            bridge_binding_escapes(block, name)
+        }
+        // `x = <expr mentioning the binding>` stores into a *different* slot
+        // (an assignment to the binding itself is a different pointer, so it is
+        // an escape); the right-hand side only reads it.
+        ExprKind::Assign { target, value } => {
+            bridge_expr_mentions(target, name) || bridge_expr_escapes(value, name, false)
+        }
+        // Everything else (arrays, maps, struct literals, indexing, field
+        // access, closures, spawn, select, assignment, bail) can store, alias
+        // or capture the pointer: any mention is an escape.
+        _ => bridge_expr_mentions(expr, name),
+    }
+}
+
+fn bridge_else_escapes(branch: &Option<ElseBranch>, name: &str) -> bool {
+    match branch {
+        Some(ElseBranch::Block(block)) => bridge_binding_escapes(block, name),
+        Some(ElseBranch::ElseIf(expr)) => bridge_expr_escapes(expr, name, false),
+        None => false,
+    }
+}
+
+/// Does `name` appear anywhere in `expr`? The conservative half of the analysis:
+/// used for every shape that could store or capture the pointer.
+fn bridge_expr_mentions(expr: &Expr, name: &str) -> bool {
+    match &expr.kind {
+        ExprKind::Ident(ident) => ident == name,
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Nil
+        | ExprKind::DotIdent(_) => false,
+        ExprKind::Binary { left, right, .. } => {
+            bridge_expr_mentions(left, name) || bridge_expr_mentions(right, name)
+        }
+        ExprKind::Unary { operand, .. } => bridge_expr_mentions(operand, name),
+        ExprKind::Call { callee, args } => {
+            bridge_expr_mentions(callee, name)
+                || args.iter().any(|arg| bridge_expr_mentions(&arg.value, name))
+        }
+        ExprKind::MethodCall { object, args, .. } => {
+            bridge_expr_mentions(object, name)
+                || args.iter().any(|arg| bridge_expr_mentions(&arg.value, name))
+        }
+        ExprKind::FieldAccess { object, .. } => bridge_expr_mentions(object, name),
+        ExprKind::Index { object, index } => {
+            bridge_expr_mentions(object, name) || bridge_expr_mentions(index, name)
+        }
+        ExprKind::If {
+            condition,
+            then_block,
+            else_branch,
+        } => {
+            bridge_expr_mentions(condition, name)
+                || bridge_block_mentions(then_block, name)
+                || bridge_else_mentions(else_branch, name)
+        }
+        ExprKind::IfLet {
+            expr: scrutinee,
+            then_block,
+            else_branch,
+            ..
+        } => {
+            bridge_expr_mentions(scrutinee, name)
+                || bridge_block_mentions(then_block, name)
+                || bridge_else_mentions(else_branch, name)
+        }
+        ExprKind::Match { subject, arms } => {
+            bridge_expr_mentions(subject, name)
+                || arms.iter().any(|arm| bridge_expr_mentions(&arm.body, name))
+        }
+        ExprKind::Block(block) | ExprKind::Loop { body: block, .. } => {
+            bridge_block_mentions(block, name)
+        }
+        ExprKind::Array(items) => items.iter().any(|item| bridge_expr_mentions(item, name)),
+        ExprKind::MapLit(pairs) => pairs
+            .iter()
+            .any(|(key, value)| bridge_expr_mentions(key, name) || bridge_expr_mentions(value, name)),
+        ExprKind::Try(inner) | ExprKind::Await(inner) | ExprKind::Bail(inner) => {
+            bridge_expr_mentions(inner, name)
+        }
+        ExprKind::Assign { target, value } => {
+            bridge_expr_mentions(target, name) || bridge_expr_mentions(value, name)
+        }
+        ExprKind::StructLit { fields, spread, .. } => {
+            fields
+                .iter()
+                .any(|field| bridge_expr_mentions(&field.value, name))
+                || spread
+                    .as_ref()
+                    .is_some_and(|inner| bridge_expr_mentions(inner, name))
+        }
+        ExprKind::Cast { expr: inner, .. } => bridge_expr_mentions(inner, name),
+        ExprKind::Interpolation(parts) => parts.iter().any(|part| match part {
+            StringPart::Expr(inner) => bridge_expr_mentions(inner, name),
+            StringPart::Lit(_) => false,
+        }),
+        ExprKind::Closure { body, .. } => body
+            .iter()
+            .any(|stmt| bridge_stmt_mentions(stmt, name)),
+        ExprKind::Spawn { func, args } => {
+            bridge_expr_mentions(func, name)
+                || args.iter().any(|arg| bridge_expr_mentions(arg, name))
+        }
+        ExprKind::Select { cases, default } => {
+            cases
+                .iter()
+                .any(|case| bridge_expr_mentions(&case.body, name))
+                || default
+                    .as_ref()
+                    .is_some_and(|inner| bridge_expr_mentions(inner, name))
+        }
+    }
+}
+
+fn bridge_block_mentions(block: &Block, name: &str) -> bool {
+    block
+        .stmts
+        .iter()
+        .any(|stmt| bridge_stmt_mentions(stmt, name))
+}
+
+fn bridge_else_mentions(branch: &Option<ElseBranch>, name: &str) -> bool {
+    match branch {
+        Some(ElseBranch::Block(block)) => bridge_block_mentions(block, name),
+        Some(ElseBranch::ElseIf(expr)) => bridge_expr_mentions(expr, name),
+        None => false,
+    }
+}
+
+fn bridge_stmt_mentions(stmt: &Stmt, name: &str) -> bool {
+    match &stmt.kind {
+        StmtKind::Let { name: bound, value, .. }
+        | StmtKind::Var { name: bound, value, .. } => {
+            bound == name || bridge_expr_mentions(value, name)
+        }
+        StmtKind::LetDestructure { value, .. } => bridge_expr_mentions(value, name),
+        StmtKind::Expr { expr } => bridge_expr_mentions(expr, name),
+        StmtKind::Return(value) => value
+            .as_ref()
+            .is_some_and(|inner| bridge_expr_mentions(inner, name)),
+        StmtKind::For { iter, body, .. } => {
+            bridge_expr_mentions(iter, name) || bridge_block_mentions(body, name)
+        }
+        StmtKind::While { condition, body, .. } => {
+            bridge_expr_mentions(condition, name) || bridge_block_mentions(body, name)
+        }
+        StmtKind::WhileLet { expr, body, .. } => {
+            bridge_expr_mentions(expr, name) || bridge_block_mentions(body, name)
+        }
+        StmtKind::Loop { body, .. } | StmtKind::Defer { body } => {
+            bridge_block_mentions(body, name)
+        }
+        StmtKind::Bail(expr) => bridge_expr_mentions(expr, name),
+        StmtKind::Break { value, .. } => value
+            .as_ref()
+            .is_some_and(|inner| bridge_expr_mentions(inner, name)),
+        StmtKind::Continue { .. } => false,
+    }
+}
+
+/// True when the value a statement computes is only read, never stored: the
+/// shapes where a bridged result that the program never binds can be released at
+/// the end of that statement.
+fn bridge_stmt_reads_only(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Expr { expr } => bridge_expr_reads_only(expr),
+        _ => false,
+    }
+}
+
+fn bridge_expr_reads_only(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Nil
+        | ExprKind::Ident(_)
+        | ExprKind::DotIdent(_) => true,
+        ExprKind::Call { callee, args } => match &callee.kind {
+            ExprKind::Ident(callee)
+                if callee == "print" || crate::stdlib::is_registered_module(callee) =>
+            {
+                args.iter().all(|arg| bridge_expr_reads_only(&arg.value))
+            }
+            _ => false,
+        },
+        ExprKind::MethodCall { object, method, args } => {
+            bridge_string_read_only_method(method)
+                && bridge_expr_reads_only(object)
+                && args.iter().all(|arg| bridge_expr_reads_only(&arg.value))
+        }
+        ExprKind::Binary { left, right, .. } => {
+            bridge_expr_reads_only(left) && bridge_expr_reads_only(right)
+        }
+        ExprKind::Unary { operand, .. } => bridge_expr_reads_only(operand),
+        ExprKind::Cast { expr: inner, .. } => bridge_expr_reads_only(inner),
+        ExprKind::Interpolation(parts) => parts.iter().all(|part| match part {
+            StringPart::Expr(inner) => bridge_expr_reads_only(inner),
+            StringPart::Lit(_) => true,
+        }),
+        _ => false,
+    }
+}
+
 // ── Helper Functions ────────────────────────────────────────────────────────
 
 /// Context-aware type resolution: checks struct/enum names before fallback.
@@ -23068,6 +23573,13 @@ impl<'a> CodeGen<'a> {
         // the call is emitted (a partial call would leave a malformed block).
         let mut marshalled: Vec<(String, bool)> = Vec::with_capacity(args.len());
         for arg in args {
+            // A `String` whose bytes the compiler knows contain an interior NUL
+            // cannot cross a C string boundary intact (F3): hand over the
+            // prefixed-JSON form of the literal, which carries the whole value.
+            if let Some(payload) = self.bridge_nul_argument(&arg.value) {
+                marshalled.push((payload, false));
+                continue;
+            }
             let value = self.emit_expr(&arg.value)?;
             marshalled.push(self.emit_stdlib_bridge_arg(&value, module, method)?);
         }
@@ -23158,6 +23670,7 @@ impl<'a> CodeGen<'a> {
                 // (that is how a struct-returning module feeds a consuming one),
                 // and refusing the call outright would also refuse a program that
                 // never reads the result. Every consumer refuses by name.
+                self.bridge_result_regs.insert(result.clone());
                 Ok(LLValue::new(result, LLType::BridgeOpaque(spelling)))
             }
             // `String`, a named struct, an explicit `()`, and "no declaration
@@ -23165,10 +23678,48 @@ impl<'a> CodeGen<'a> {
             // a struct round-trips through the `__type` tag (tests/api_parity_native.rs).
             // An undeclared method is *not* guessed at — it gets the same untyped
             // pointer this arm always gave it.
+            //
+            // All four own their payload and are registered here. For a `()`
+            // result the program has nothing to read, so the binding/statement
+            // paths below release it at the first opportunity (`log.info(..)` in
+            // a loop frees each call); freeing it *here* would be one instruction
+            // cheaper and would hand a dangling pointer to a program that binds
+            // the unit value and then prints it.
             Some(crate::stdlib::signatures::RetKind::Str)
             | Some(crate::stdlib::signatures::RetKind::Named(_))
             | Some(crate::stdlib::signatures::RetKind::Void)
-            | None => Ok(LLValue::new(result, LLType::I8Ptr)),
+            | None => {
+                // The pointer is the program's value: whoever binds it owns it
+                // (`emit_bridge_releases`), and a program that never binds it
+                // releases it at the end of the statement
+                // (`emit_bridge_discarded_temporaries`).
+                self.bridge_result_regs.insert(result.clone());
+                Ok(LLValue::new(result, LLType::I8Ptr))
+            }
+        }
+    }
+
+    /// The pre-encoded `\x1fJ`-prefixed JSON global for a `String` argument whose
+    /// bytes the compiler knows contain an interior NUL (F3).
+    ///
+    /// `Some` means "use this pointer as the argument instead of evaluating the
+    /// expression": the literal's own C string would be cut at the NUL.
+    fn bridge_nul_argument(&mut self, expr: &Expr) -> Option<String> {
+        match &expr.kind {
+            ExprKind::StringLit(text) if text.contains('\0') => {
+                Some(self.intern_string(&bridge_json_string_literal(text)))
+            }
+            ExprKind::Ident(name) => {
+                let (slot, payload) = self.bridge_nul_strings.get(name)?;
+                // Only the binding this payload was recorded for: a name that
+                // has since been shadowed or rebound has a different slot, and
+                // its current value is not the literal's.
+                match self.variables.get(name) {
+                    Some((current, _)) if current == slot => Some(payload.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 

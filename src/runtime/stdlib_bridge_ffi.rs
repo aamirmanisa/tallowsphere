@@ -25,13 +25,15 @@
 //! `argv` (when `argc > 0`) points at `argc` C strings. Each element is one
 //! already-marshalled argument:
 //!
-//! * an element that starts with [`RAW_PREFIX`] is a value produced by an
-//!   earlier bridge call; the bytes after the prefix are JSON and are decoded
-//!   back into an interpreter `Value` (a struct keeps its `__type`);
+//! * an element that starts with [`RAW_PREFIX`] is JSON; it is decoded back into
+//!   an interpreter `Value` (a struct keeps its `__type`, a JSON string becomes
+//!   a `String` with its full byte length);
+//! * an element that starts with [`FLOAT_PREFIX`] is a non-finite `f64`
+//!   (`nan` / `inf` / `-inf`), decoded to `Value::Float`;
 //! * any other element is the UTF-8 bytes of a `String`.
 //!
 //! `tallow_json_i64` / `tallow_json_f64` / `tallow_json_bool` marshal the
-//! non-string scalars into **prefixed** JSON text, so the codegen side does not
+//! non-string scalars into **prefixed** text, so the codegen side does not
 //! need to know anything about the callee's signature and the callee still sees
 //! an `Int`/`Float`/`Bool` rather than the string `"2"`.
 //!
@@ -44,10 +46,25 @@
 //! which prints that message and aborts — a bridge failure is never a silent
 //! default value.
 //!
-//! # Result encoding (and its known sharp edge)
+//! Which caller frees it, per declared result kind (`emit_stdlib_bridge_call`):
+//!
+//! * `Int` / `Float` / `Bool` — the decoder (`tallow_json_as_*`) takes ownership
+//!   (`CString::from_raw`) and releases it before returning the scalar;
+//! * `()` — released immediately at the call site, the program never reads it;
+//! * `String`, a named struct, `BridgeOpaque`, and an undeclared result — the
+//!   pointer is the program's value, so codegen releases it at the end of the
+//!   block that binds it, and only when the binding provably does not escape
+//!   (`bridge_binding_escapes`); a binding that escapes is left allocated rather
+//!   than freed under an alias.
+//!
+//! Nothing frees a result twice: the two paths are exclusive by result kind.
+//!
+//! # Result encoding
 //!
 //! * a `String` result is returned as its raw UTF-8 bytes, so native `print`,
 //!   concatenation and comparison see an ordinary C string;
+//! * a non-finite `Float` result is returned as [`FLOAT_PREFIX`] + `nan` /
+//!   `inf` / `-inf` (JSON cannot spell them, and `value_to_json` refuses them);
 //! * every other result is returned as `RAW_PREFIX ++ JSON`.
 //!
 //! The prefix is how the call site tells "a string the program should use" from
@@ -80,6 +97,49 @@ use crate::interp::Value;
 /// and makes an accidental match on ordinary text vanishingly unlikely; it is
 /// still a discriminator, not a type — see the module docs.
 pub const RAW_PREFIX: &[u8] = b"\x1fJ";
+
+/// Marks a C string as "this is an `f64` in [`float_tag`] spelling".
+///
+/// A typed tag, not JSON: JSON has no spelling for NaN or ±inf, and the only
+/// alternatives are to send `null` (which the callee reads as `nil` and refuses
+/// with `Expected number, got nil` — measured before this tag existed) or to
+/// refuse a non-finite argument by name (which would make the compiled plane
+/// diverge from the interpreter, which computes with NaN/inf). The tag carries
+/// the value, so the callee receives the bit pattern the program wrote.
+///
+/// It is used in both directions: `tallow_json_f64` emits it for a non-finite
+/// argument, `encode_result` emits it for a non-finite `Float` result, and both
+/// `decode_argument` and `tallow_json_as_f64` accept it.
+pub const FLOAT_PREFIX: &[u8] = b"\x1fF";
+
+/// The spelling of a non-finite float inside a [`FLOAT_PREFIX`] payload.
+///
+/// These are exactly the words the interpreter prints for these values
+/// (`format_float_c`, src/interp.rs) and the words C's `%g` prints for them, so
+/// a payload that is echoed back to the program reads the same on both planes.
+fn float_tag(value: f64) -> &'static str {
+    if value.is_nan() {
+        "nan"
+    } else if value.is_sign_positive() {
+        "inf"
+    } else {
+        "-inf"
+    }
+}
+
+/// Read a [`FLOAT_PREFIX`] payload back to the `f64` it encodes.
+///
+/// A whitelist rather than `str::parse`, so a payload this runtime did not
+/// write (and a spelling a locale might accept) is refused instead of
+/// interpreted.
+fn parse_float_tag(tag: &[u8]) -> Option<f64> {
+    match tag {
+        b"nan" => Some(f64::NAN),
+        b"inf" => Some(f64::INFINITY),
+        b"-inf" => Some(f64::NEG_INFINITY),
+        _ => None,
+    }
+}
 
 /// Call `module.method(args)` through the interpreter's own stdlib router.
 ///
@@ -169,7 +229,9 @@ pub extern "C" fn tallow_stdlib_call(
     }
 }
 
-/// Decode one marshalled argument. `RAW_PREFIX` means JSON; otherwise a string.
+/// Decode one marshalled argument. See "Argument encoding" in the module docs:
+/// [`RAW_PREFIX`] is JSON, [`FLOAT_PREFIX`] is a typed non-finite float, and
+/// anything else is the raw UTF-8 of a program `String`.
 unsafe fn decode_argument(pointer: *const c_char) -> Result<Value, String> {
     // SAFETY: `pointer` is a non-null C string supplied by the emitted code.
     let bytes = unsafe { CStr::from_ptr(pointer) }.to_bytes();
@@ -177,7 +239,16 @@ unsafe fn decode_argument(pointer: *const c_char) -> Result<Value, String> {
         let json: serde_json::Value = serde_json::from_slice(json_bytes)
             .map_err(|error| format!("bridged value is not valid JSON: {error}"))?;
         json_to_value(&json)
+    } else if let Some(tag) = bytes.strip_prefix(FLOAT_PREFIX) {
+        parse_float_tag(tag)
+            .map(Value::Float)
+            .ok_or_else(|| format!("malformed float tag `{}`", String::from_utf8_lossy(tag)))
     } else {
+        // A program `String` arrives as its raw UTF-8 bytes. Compiled Tallow
+        // strings are C strings, so the byte range this reads is the one the
+        // producer wrote up to the terminator; a `String` whose bytes the
+        // compiler knows contain an interior NUL is marshalled by codegen as a
+        // `RAW_PREFIX` JSON string instead, which carries its length (F3).
         let text = std::str::from_utf8(bytes)
             .map_err(|error| format!("argument is not valid UTF-8: {error}"))?;
         Ok(Value::String(text.to_string()))
@@ -188,6 +259,11 @@ unsafe fn decode_argument(pointer: *const c_char) -> Result<Value, String> {
 fn encode_result(value: &Value) -> Result<Vec<u8>, String> {
     match value {
         Value::String(text) => Ok(text.as_bytes().to_vec()),
+        // A non-finite float has no JSON spelling and `value_to_json` refuses it
+        // outright (`cannot serialize NaN/Infinity float`), which would turn a
+        // legitimate NaN result into a bridge failure. The typed float tag
+        // carries the bit pattern instead.
+        Value::Float(number) if !number.is_finite() => Ok(float_payload(*number)),
         // A `Result` has no native representation at a bridged call site: the
         // emitted code cannot `?`-unwrap it, so a domain error must fail loudly
         // rather than be silently unwrapped like the interpreter's `?` would.
@@ -207,6 +283,15 @@ fn encode_result(value: &Value) -> Result<Vec<u8>, String> {
     }
 }
 
+/// A [`FLOAT_PREFIX`] payload for one non-finite `f64`.
+fn float_payload(value: f64) -> Vec<u8> {
+    let tag = float_tag(value);
+    let mut encoded = Vec::with_capacity(FLOAT_PREFIX.len() + tag.len());
+    encoded.extend_from_slice(FLOAT_PREFIX);
+    encoded.extend_from_slice(tag.as_bytes());
+    encoded
+}
+
 /// Marshal an `i64` argument into JSON number text. Free with `tallow_free_string`.
 ///
 /// The text carries [`RAW_PREFIX`]: without it the decoder cannot tell the
@@ -221,15 +306,18 @@ pub extern "C" fn tallow_json_i64(value: i64) -> *mut c_char {
 
 /// Marshal an `f64` argument into JSON number text. Free with `tallow_free_string`.
 ///
-/// A non-finite float has no JSON spelling; it is marshalled as `null` and the
-/// callee sees `nil`. Rust's own `Display` for `f64` is the shortest text that
-/// round-trips, and `serde_json` parses it back to the same bits.
+/// A finite float is the shortest decimal text that round-trips (`serde_json`
+/// parses it back to the same bits). A non-finite one has no JSON spelling, so
+/// it is marshalled as a [`FLOAT_PREFIX`] typed tag instead: sending `null` made
+/// the callee read `nil` and abort with `Expected number, got nil`, and refusing
+/// by name would make the compiled plane disagree with the interpreter, which
+/// computes with NaN/±inf.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_json_f64(value: f64) -> *mut c_char {
     if value.is_finite() {
         json_cstring(&value.to_string())
     } else {
-        json_cstring("null")
+        cstring_from_bytes(&float_payload(value))
     }
 }
 
@@ -245,9 +333,14 @@ fn json_cstring(json: &str) -> *mut c_char {
     let mut bytes = Vec::with_capacity(RAW_PREFIX.len() + json.len());
     bytes.extend_from_slice(RAW_PREFIX);
     bytes.extend_from_slice(json.as_bytes());
+    cstring_from_bytes(&bytes)
+}
+
+/// Hand a marshalled payload to the caller. `None` (null) when the bytes
+/// contain a NUL, which no payload this module builds ever does.
+fn cstring_from_bytes(bytes: &[u8]) -> *mut c_char {
     match CString::new(bytes) {
         Ok(cstring) => cstring.into_raw(),
-        // JSON text and the prefix are ASCII and contain no NUL.
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -268,13 +361,29 @@ fn json_cstring(json: &str) -> *mut c_char {
 //   what arrived. It never returns 0/false as a default: a bridge that answers
 //   0 for a failed decode is the defect the runtime removed from `len()`.
 
+/// What a bridged result payload turned out to be.
+///
+/// Two shapes, because one of them has no JSON spelling: a non-finite `Float`
+/// arrives as a [`FLOAT_PREFIX`] typed tag (see [`float_payload`]) and would
+/// otherwise have to be refused.
+enum BridgePayload {
+    Json(serde_json::Value),
+    NonFinite(f64),
+}
+
 /// Decode a bridged result as an `Int` (`i64`). Aborts on anything else.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_json_as_i64(value: *mut c_char, what: *const c_char) -> i64 {
-    let json = take_json(value, what, "Int");
-    match json.as_i64() {
-        Some(number) => number,
-        None => abort_expected(what, "Int", &json),
+    match take_payload(value, what, "Int") {
+        BridgePayload::Json(json) => match json.as_i64() {
+            Some(number) => number,
+            None => abort_expected(what, "Int", &json),
+        },
+        BridgePayload::NonFinite(number) => abort_expected_raw(
+            what,
+            "Int",
+            &format!("the bridge returned the non-finite float `{}`", float_tag(number)),
+        ),
     }
 }
 
@@ -282,13 +391,16 @@ pub extern "C" fn tallow_json_as_i64(value: *mut c_char, what: *const c_char) ->
 ///
 /// A JSON *integer* payload is accepted and widens exactly — it is a number, and
 /// `serde_json`'s `as_f64` cannot lose it. A non-numeric payload (a string, an
-/// object, `null`) aborts rather than becoming `0.0`.
+/// object, `null`) aborts rather than becoming `0.0`. A non-finite result
+/// arrives as a [`FLOAT_PREFIX`] tag and is returned as the bit pattern it names.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_json_as_f64(value: *mut c_char, what: *const c_char) -> f64 {
-    let json = take_json(value, what, "Float");
-    match json.as_f64() {
-        Some(number) => number,
-        None => abort_expected(what, "Float", &json),
+    match take_payload(value, what, "Float") {
+        BridgePayload::Json(json) => match json.as_f64() {
+            Some(number) => number,
+            None => abort_expected(what, "Float", &json),
+        },
+        BridgePayload::NonFinite(number) => number,
     }
 }
 
@@ -296,19 +408,31 @@ pub extern "C" fn tallow_json_as_f64(value: *mut c_char, what: *const c_char) ->
 /// emitted code narrows it with `icmp ne i32 …, 0`. Aborts on anything else.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_json_as_bool(value: *mut c_char, what: *const c_char) -> i32 {
-    let json = take_json(value, what, "Bool");
-    match json.as_bool() {
-        Some(flag) => i32::from(flag),
-        None => abort_expected(what, "Bool", &json),
+    match take_payload(value, what, "Bool") {
+        BridgePayload::Json(json) => match json.as_bool() {
+            Some(flag) => i32::from(flag),
+            None => abort_expected(what, "Bool", &json),
+        },
+        BridgePayload::NonFinite(number) => abort_expected_raw(
+            what,
+            "Bool",
+            &format!("the bridge returned the non-finite float `{}`", float_tag(number)),
+        ),
     }
 }
 
-/// Take ownership of a bridged result and decode it as prefixed JSON.
+/// Take ownership of a bridged result and decode it as prefixed JSON, or as a
+/// non-finite float tag.
 ///
 /// Aborts — naming the call — when the pointer is NULL, when it is not a
-/// marshalled (`\x1fJ`) value at all (a plain `String` result reaching a call
-/// site that declared `Int`), or when the bytes are not JSON.
-fn take_json(value: *mut c_char, what: *const c_char, expected: &str) -> serde_json::Value {
+/// marshalled (`\x1fJ` / `\x1fF`) value at all (a plain `String` result reaching
+/// a call site that declared `Int`), when the bytes are not JSON, or when a
+/// float tag is not one this runtime writes.
+fn take_payload(
+    value: *mut c_char,
+    what: *const c_char,
+    expected: &str,
+) -> BridgePayload {
     if value.is_null() {
         abort_expected_raw(what, expected, "the call returned no value (null)");
     }
@@ -317,6 +441,16 @@ fn take_json(value: *mut c_char, what: *const c_char, expected: &str) -> serde_j
     // ownership so the allocation is released on every path out of here.
     let cstring = unsafe { CString::from_raw(value) };
     let bytes = cstring.as_bytes();
+    if let Some(tag) = bytes.strip_prefix(FLOAT_PREFIX) {
+        return match parse_float_tag(tag) {
+            Some(number) => BridgePayload::NonFinite(number),
+            None => abort_expected_raw(
+                what,
+                expected,
+                &format!("the bridge returned the malformed float tag `{}`", lossy_preview(tag)),
+            ),
+        };
+    }
     let Some(json_bytes) = bytes.strip_prefix(RAW_PREFIX) else {
         let shown = lossy_preview(bytes);
         abort_expected_raw(
@@ -326,7 +460,7 @@ fn take_json(value: *mut c_char, what: *const c_char, expected: &str) -> serde_j
         );
     };
     match serde_json::from_slice::<serde_json::Value>(json_bytes) {
-        Ok(json) => json,
+        Ok(json) => BridgePayload::Json(json),
         Err(error) => abort_expected_raw(
             what,
             expected,
