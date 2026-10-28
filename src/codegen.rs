@@ -7150,6 +7150,20 @@ void tallow_async_runtime_shutdown(void) {
                 let saved_defer_stack = std::mem::take(&mut self.defer_stack);
                 let saved_reg = self.next_reg;
                 let saved_label = self.next_label;
+                // The lifted closure is `define i64 @tallow.__closure_N` — always,
+                // see the signature emitted below and the epilogue that coerces
+                // `last_val` to i64. Its `return` must therefore emit `ret i64`.
+                // Before this, `current_fn_ret` still held the *enclosing*
+                // function's type, so a closure written inside `fn main()`
+                // (Void) emitted `ret void` inside an i64 function and clang
+                // rejected the whole module:
+                //
+                //   clos1.ll:506:7: error: value doesn't match function result type 'i64'
+                //     506 |   ret void
+                //
+                // It reproduces with no `defer` present (closure-defer lane).
+                let saved_fn_ret = self.current_fn_ret.take();
+                self.current_fn_ret = Some(LLType::I64);
                 self.next_reg = 0;
                 self.next_label = 0;
 
@@ -7224,6 +7238,7 @@ void tallow_async_runtime_shutdown(void) {
                 self.variable_closure_env = saved_closure_envs;
                 self.next_reg = saved_reg;
                 self.next_label = saved_label;
+                self.current_fn_ret = saved_fn_ret;
 
                 // Register the closure as a known function (with env ptr as first param)
                 self.functions.insert(

@@ -167,3 +167,76 @@ fn every_recorded_lowering_still_builds() {
         broke.join("\n  ")
     );
 }
+
+/// ## Defect 2: a value-returning closure emitted `ret void`
+///
+/// A closure declared `-> i64` whose body uses an explicit `return` emitted
+/// `ret void`, because the lifted closure body inherited the *enclosing*
+/// function's return type — `fn main()` is Void. clang then rejected the whole
+/// module:
+///
+/// ```text
+/// clos_ret.ll:545:7: error: value doesn't match function result type 'i64'
+///  545 |   ret void
+/// ```
+///
+/// Measured at 61b18b5 with the program this test compiles; it reproduces with
+/// no `defer` present, so it is independent of the closure-defer work.
+#[test]
+fn a_closure_with_an_explicit_return_compiles_and_matches_the_interpreter() {
+    let src = r#"fn main() {
+    let base = 7
+    let f = { x: i64 ->
+        if x > 0 { return x + base }
+        return base
+    }
+    print("{f(5)} {f(0)}")
+}
+"#;
+    let dir = std::env::temp_dir().join(format!("tallow-closret-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tempdir");
+    let path = dir.join("clos_ret.tl");
+    std::fs::write(&path, src).expect("write program");
+
+    let interpret = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["run", "--interpret"])
+        .arg(&path)
+        .output()
+        .expect("run --interpret");
+    assert!(
+        interpret.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interpret.stderr)
+    );
+
+    let native = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
+        .args(["run", "--require-native"])
+        .arg(&path)
+        .output()
+        .expect("run --require-native");
+    let native_err = String::from_utf8_lossy(&native.stderr).to_string();
+    assert!(
+        !native_err.contains("ret void"),
+        "the compiled plane emitted `ret void` inside an i64 closure:\n{native_err}"
+    );
+    assert!(
+        !native_err.contains("use of undefined value"),
+        "compiled plane produced an LLVM diagnostic:\n{native_err}"
+    );
+    assert!(
+        native.status.success(),
+        "compiled plane refused a program the interpreter runs:\n{native_err}"
+    );
+    let out = |o: &std::process::Output| {
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        out(&native),
+        out(&interpret),
+        "the two planes printed different output for the same closure program"
+    );
+}
