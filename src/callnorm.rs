@@ -761,14 +761,20 @@ impl Normalizer {
                             .position(|expanding| expanding == name)
                             .unwrap_or(0);
                         let cycle = closed_cycle(&self.expanding[from..].to_vec());
-                        self.diags.push(
-                            Diagnostic::error("E0125", cycle_message(&cycle), span).with_help(
-                                "a default is spliced at the call site, so these defaults would \
-                                 expand without end; give one of them a value that does not call \
-                                 into the cycle, or make the parameter required and pass it at \
-                                 each call instead",
-                            ),
-                        );
+                        // The declaration-time check has almost certainly
+                        // already refused this program; report the walk's own
+                        // view only when it has not, so one cycle is not
+                        // reported twice with two different spans.
+                        if !self.diags.items.iter().any(|d| d.code == "E0125") {
+                            self.diags.push(
+                                Diagnostic::error("E0125", cycle_message(&cycle), span).with_help(
+                                    "a default is spliced at the call site, so these defaults \
+                                     would expand without end; give one of them a value that does \
+                                     not call into the cycle, or make the parameter required and \
+                                     pass it at each call instead",
+                                ),
+                            );
+                        }
                         return false;
                     }
                     slots[slot] = Some(default.clone());
