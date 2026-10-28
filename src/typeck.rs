@@ -444,17 +444,105 @@ impl FnSignature {
 
 // ── Effect rows (G01) ────────────────────────────────────────────────────────
 
+/// The import → effect manifest (G21): `(module head, egress operations)`.
+///
+/// `head` is the module as written at the call site — or the class namespace a
+/// module exposes, since `Inbox.connect_imap` is the `email` module's IMAP
+/// client under another name. The second element lists the operations of that
+/// module which leave the process; an **empty** list means every operation of
+/// the module does, which is a claim only a wholly network-facing module can
+/// make.
+///
+/// This table is the *inference source* for the rule "a function that uses an
+/// effectful module acquires that effect in its row". It replaces the seven-name
+/// head match that used to be the whole of `effect_for_callee`: that list was
+/// narrower than the set of modules that open a socket (bridge-review F8), so
+/// `email.connect_imap`, `ws.connect`, `sync.bidirectional` and the rest
+/// compiled without a row in both engines.
+///
+/// Every entry names a socket or an HTTP client in that module's own source; the
+/// citation is the evidence, not the intent. What is deliberately **absent** is
+/// as load-bearing as what is present: `api`/`intel_api`, `traffic`/`intel_traffic`
+/// and `ip`/`intel_ip` are documented offline parsers ("No sockets, no DNS" —
+/// `src/stdlib/mod.rs`), and the mixed modules are listed per operation so that
+/// `sync.mutex(1)` (a concurrency primitive) never demands a network row.
+///
+/// Heads still outside this table, and why: `transfer_net` and `relay_room` are
+/// the sendtallow relay surfaces (operator directive: out of scope here);
+/// `browser` egresses over CDP but is gated by `@fingerprint_policy`/`@stealth`
+/// and moving it into `Net` is a separate item; `osint` exposes its sockets
+/// through *type namespaces* (`DomainIntel.whois`, `Scanner.scan`), not a module
+/// head, which is the same shape as F8's remaining gap.
+pub const EFFECTFUL_MODULES: &[(&str, &[&str])] = &[
+    // ── Wholly network-facing ────────────────────────────────────────────
+    // `net.rs:2156` TcpStream::connect / `:2199` TcpListener::bind, plus quinn
+    // and tungstenite; `http.rs:1038` TcpListener::bind over `egress_http`.
+    ("net", &[]),
+    ("Tcp", &[]),
+    ("Udp", &[]),
+    ("TLSConn", &[]),
+    ("http", &[]),
+    // `topology.rs:389` connect_probe, `:1595`/`:1765`/`:2092` TcpStream.
+    ("topology", &[]),
+    // `sitescan.rs:235` egress agent; its `network` stage is a TCP connect scan.
+    ("sitescan", &[]),
+    // `graphql.rs:328`/`:365` egress_http::get / ::post — all three module ops.
+    ("graphql", &[]),
+    // ── Sockets under a websocket name ───────────────────────────────────
+    // `ws.rs:333` dispatch "connect" → `ws.rs:95` TcpStream::connect_timeout.
+    ("ws", &["connect"]),
+    ("WS", &["connect"]),
+    // `stdlib/net.tl:75`/`:51` — `native fn connect(..) with Net(connect)`.
+    ("WebSocket", &["connect"]),
+    ("QuicStream", &["connect"]),
+    // ── Mixed modules: only the operations that egress ───────────────────
+    // `email.rs:90-91` connect_imap / connect_guerrilla → `:133`
+    // ImapConnection::connect, `:219` guerrilla_connect (egress_http::get).
+    ("email", &["connect_imap", "connect_guerrilla"]),
+    // The same IMAP client under its class namespace (`tests/stdlib_dispatch.rs`
+    // reaches it as `Inbox.connect_imap`).
+    ("Inbox", &["connect_imap"]),
+    // `email.rs:107-108` → `guerrilla_get_email`/`guerrilla_wait` (`:271`).
+    ("GuerrillaInbox", &["get_email", "wait_for_email"]),
+    // `sync.rs:308-314` → daemon_post/daemon_get (`:38`/`:66`, reqwest). The
+    // concurrency operations (channel/mutex/rwlock/barrier/once/atomic/
+    // wait_group) live in the same module and are not listed: they open nothing.
+    (
+        "sync",
+        &[
+            "bidirectional",
+            "mesh",
+            "status",
+            "list_pairs",
+            "resolve_conflict",
+            "pause",
+            "resume",
+        ],
+    ),
+    // `sso.rs:177` replay_token → `:92` egress_http::get.
+    ("sso", &["replay_token"]),
+    // `oauth.rs:144-147` → `:224`/`:256`/`:284`/`:303` egress_http::post/get.
+    // `authorization_url`, `generate_pkce` and the attack helpers build strings.
+    (
+        "oauth",
+        &["exchange_code", "client_credentials", "refresh_token", "discover"],
+    ),
+];
+
 /// The effect a dotted call path requires, if any.
 ///
-/// Only the **first** segment names the primitive family; the second segment is
-/// the operation (`Tcp.connect` → `Net(connect)`). Families that open a socket
-/// are mapped to `Net`; everything else needs no row.
+/// The **first** segment names the module (or its class namespace); the second
+/// segment is the operation (`Tcp.connect` → `Net(connect)`). The requirement is
+/// read off [`EFFECTFUL_MODULES`] — the module's own egress surface — rather than
+/// off a head list, so an effectful module acquires its row wherever it is used.
 pub fn effect_for_callee(name: &str) -> Option<&'static str> {
-    let head = name.split('.').next().unwrap_or("");
-    match head {
-        "Tcp" | "Udp" | "TLSConn" | "net" | "sitescan" | "http" | "topology" => Some("Net"),
-        _ => None,
-    }
+    let mut segments = name.split('.');
+    let head = segments.next().unwrap_or("");
+    let op = segments.next().unwrap_or("");
+    EFFECTFUL_MODULES
+        .iter()
+        .find(|(module, ops)| *module == head && (ops.is_empty() || ops.contains(&op)))
+        .map(|_| "Net")
 }
 
 /// Effect names a capability type may name: `Grant<Effect>` (G01 P0.2).
@@ -520,19 +608,47 @@ fn scope_grant_effect(expr: &Expr) -> Option<&str> {
 
 // ── Type Checker ─────────────────────────────────────────────────────────────
 
+/// One effect requirement collected while walking a body (G01, G21).
+///
+/// `origin` is the callee whose row imposed the requirement, when the caller
+/// inherited it instead of performing it at the site. The distinction is what
+/// makes the refusal name the callee (E0151) instead of only the effect.
+#[derive(Debug, Clone)]
+struct BodyEffectReq {
+    effect: String,
+    op: String,
+    span: Span,
+    grant_ok: bool,
+    origin: Option<String>,
+}
+
+impl BodyEffectReq {
+    /// `Net` / `Net(connect)` — the spelling a row and a diagnostic share.
+    fn display(&self) -> String {
+        if self.op.is_empty() {
+            self.effect.clone()
+        } else {
+            format!("{}({})", self.effect, self.op)
+        }
+    }
+}
+
 pub struct TypeChecker<'a> {
     program: &'a Program,
     pub env: TypeEnv,
     pub diags: Diagnostics,
     /// Effect row of the signature whose body is being walked (G01).
     declared_effects: Vec<EffectReq>,
-    /// `(effect, op, span, grant_in_scope)` collected from the body being
-    /// walked (G01). The effect name is owned because a row forwarded from a
-    /// callee's signature carries a `String`, not a `&'static str`;
-    /// `grant_in_scope` is whether a `Grant<effect>` value was lexically
-    /// available at that call site — the capability half of the row
-    /// (G01 P0.2, E0142).
-    body_effect_reqs: Vec<(String, String, Span, bool)>,
+    /// The effects the body being walked requires, with provenance (G01, G21).
+    ///
+    /// The effect name is owned because a row forwarded from a callee's
+    /// signature carries a `String`, not a `&'static str`; `grant_in_scope` is
+    /// whether a `Grant<effect>` value was lexically available at that call site
+    /// — the capability half of the row (G01 P0.2, E0142). `origin` names the
+    /// callee that imposed the requirement when it was inherited rather than
+    /// performed at the site, which is what lets the refusal name the callee
+    /// (G21, E0151).
+    body_effect_reqs: Vec<BodyEffectReq>,
     /// `(effect, span)` of every `scope.grant(<effect>)` site in the body being
     /// walked (G01 P0.2, E0144). The site is recorded while the locals are
     /// live; whether it is legal is judged at the body boundary by
@@ -558,6 +674,16 @@ pub struct TypeChecker<'a> {
     /// so the return position cannot manufacture a capability any more than a
     /// `let` can.
     current_return_type: Option<Type>,
+    /// Name and declaration span of the function whose body is being walked
+    /// (G21). The effect set is *per function*, so the per-body report
+    /// [`Self::enforce_effect_row`] emits is attributed to this name.
+    current_body_name: Option<String>,
+    current_body_span: Span,
+    /// Source file of the body being walked when it is not the file compiled
+    /// (G21). Spans are offsets into their own file, so an effect diagnostic
+    /// raised inside an imported library function must carry that file or it
+    /// renders against an unrelated line of the entry file (audit N-9).
+    current_body_file: Option<std::path::PathBuf>,
     /// Nesting depth of closure bodies. A `return` inside a closure returns
     /// from the closure, not from the enclosing function, so the return-slot
     /// check is suspended there.
@@ -600,6 +726,9 @@ impl<'a> TypeChecker<'a> {
             current_body_is_entry_main: false,
             current_body_is_imported_main: false,
             current_return_type: None,
+            current_body_name: None,
+            current_body_span: Span { start: 0, end: 0 },
+            current_body_file: None,
             closure_depth: 0,
             label_stack: Vec::new(),
             loop_value_types: HashMap::new(),
@@ -675,23 +804,25 @@ impl<'a> TypeChecker<'a> {
             self.current_body_is_entry_main = false;
             self.current_body_is_imported_main = false;
             self.current_return_type = None;
+            // A `const` initialiser has no function, so there is no per-function
+            // effect set to report (G21); the requirement is refused below.
+            self.current_body_name = None;
+            self.current_body_span = c.span;
+            self.current_body_file = None;
             self.closure_depth = 0;
             self.check_expr(&c.value, &locals);
             let reqs = std::mem::take(&mut self.body_effect_reqs);
             self.body_grant_sites.clear();
-            for (effect, op, span, _grant) in reqs {
-                let what = if op.is_empty() {
-                    effect.clone()
-                } else {
-                    format!("{effect}({op})")
-                };
+            for req in reqs {
+                let what = req.display();
+                let effect = req.effect;
                 self.diags.push(
                     crate::error::Diagnostic::error(
                         "E0148",
                         format!(
                             "a top-level initialiser may not perform effect {what}; move it into main"
                         ),
-                        span,
+                        req.span,
                     )
                     .with_help(format!(
                         "`const {}` is evaluated before any row exists: obtain the value inside a function that declares `with {effect}`",
@@ -1354,6 +1485,14 @@ impl<'a> TypeChecker<'a> {
         self.current_body_is_entry_main = f.name == "main" && !f.is_imported;
         self.current_body_is_imported_main = f.name == "main" && f.is_imported;
         self.current_return_type = (declared_return != Type::Void).then(|| declared_return.clone());
+        // G21: the effect set is per function, so the report this body emits
+        // names *this* declaration and is anchored on it.
+        self.current_body_name = Some(f.name.clone());
+        // The body block, not `f.span`: the declaration span includes the
+        // annotations, so a report anchored on it pointed at `@legal` instead of
+        // at the function it is about.
+        self.current_body_span = f.body.span;
+        self.current_body_file = f.imported_from.clone();
         self.closure_depth = 0;
         self.body_effect_reqs = Vec::new();
         self.body_grant_sites = Vec::new();
@@ -1420,6 +1559,11 @@ impl<'a> TypeChecker<'a> {
         self.declared_effects = method.effects.clone();
         self.current_body_is_entry_main = false;
         self.current_body_is_imported_main = false;
+        // G21: an `impl` method's effect set is its own, reported under
+        // `Type.method` so it cannot be confused with a free function's.
+        self.current_body_name = Some(format!("{target}.{}", method.name));
+        self.current_body_span = method.body.span;
+        self.current_body_file = None;
         let declared_return = method
             .return_type
             .as_ref()
@@ -1517,15 +1661,16 @@ impl<'a> TypeChecker<'a> {
 
     // ── Effect rows (G01) ───────────────────────────────────────────────
 
-    /// Record that a call at `span` opens a socket, if its path names one of
-    /// the network families in [`effect_for_callee`].
+    /// Record that a call at `span` opens a socket, if its path names a module
+    /// operation in [`EFFECTFUL_MODULES`] (G21: the module's egress surface is
+    /// where the requirement is inferred from).
     fn note_effect_call(&mut self, path: &str, span: Span, locals: &HashMap<String, VarInfo>) {
         let Some(effect) = effect_for_callee(path) else {
             return;
         };
         let op = effect_op(path).to_string();
         let grant_ok = Self::grant_in_scope(locals, effect);
-        self.push_effect_req(effect.to_string(), op, span, grant_ok);
+        self.push_effect_req(effect.to_string(), op, span, grant_ok, None);
     }
 
     /// G01, interprocedural: a call to a user function reaches whatever that
@@ -1549,16 +1694,29 @@ impl<'a> TypeChecker<'a> {
     fn note_callee_row(
         &mut self,
         effects: &[EffectReq],
+        callee: &str,
         span: Span,
         locals: &HashMap<String, VarInfo>,
     ) {
         for effect in effects {
             let grant_ok = Self::grant_in_scope(locals, &effect.name);
             if effect.ops.is_empty() {
-                self.push_effect_req(effect.name.clone(), String::new(), span, grant_ok);
+                self.push_effect_req(
+                    effect.name.clone(),
+                    String::new(),
+                    span,
+                    grant_ok,
+                    Some(callee.to_string()),
+                );
             } else {
                 for op in &effect.ops {
-                    self.push_effect_req(effect.name.clone(), op.clone(), span, grant_ok);
+                    self.push_effect_req(
+                        effect.name.clone(),
+                        op.clone(),
+                        span,
+                        grant_ok,
+                        Some(callee.to_string()),
+                    );
                 }
             }
         }
@@ -1581,6 +1739,7 @@ impl<'a> TypeChecker<'a> {
     fn note_type_row(
         &mut self,
         row: &[(String, Vec<String>)],
+        callee: &str,
         span: Span,
         locals: &HashMap<String, VarInfo>,
     ) {
@@ -1592,7 +1751,7 @@ impl<'a> TypeChecker<'a> {
                 span,
             })
             .collect();
-        self.note_callee_row(&reqs, span, locals);
+        self.note_callee_row(&reqs, callee, span, locals);
     }
 
     /// Union of two rows, entry-wise; the result is in first-seen order.
@@ -1732,23 +1891,59 @@ impl<'a> TypeChecker<'a> {
     /// `grant_ok` records whether a capability for this effect was in scope at
     /// the call site. It is captured here, while the locals are live, because
     /// the enforcement pass runs after the walk has left the scope.
-    fn push_effect_req(&mut self, effect: String, op: String, span: Span, grant_ok: bool) {
-        if self.body_effect_reqs.iter().any(|(e, o, s, _)| {
-            *e == effect && *o == op && s.start == span.start && s.end == span.end
+    fn push_effect_req(
+        &mut self,
+        effect: String,
+        op: String,
+        span: Span,
+        grant_ok: bool,
+        origin: Option<String>,
+    ) {
+        if self.body_effect_reqs.iter().any(|req| {
+            req.effect == effect && req.op == op && req.span.start == span.start && req.span.end == span.end
         }) {
             return;
         }
-        self.body_effect_reqs.push((effect, op, span, grant_ok));
+        self.body_effect_reqs.push(BodyEffectReq {
+            effect,
+            op,
+            span,
+            grant_ok,
+            origin,
+        });
     }
 
-    /// The last gate of a body walk (G01): every effect a call required must
+    /// The last gate of a body walk (G01, G21): every effect a call required must
     /// appear in the signature's row. `with Net` (no parentheses) covers every
     /// operation of `Net`; `with Net(connect)` covers only `connect`.
     ///
-    /// G01 P0.2 adds the second half: a declared row must be backed by a
+    /// G21 adds two things around the unchanged obligation:
+    ///
+    /// * the **effect set** of the function is reported here, once, from the
+    ///   requirements the body actually collected — that is the per-function row
+    ///   `tallow check` shows (`W0130`). It is the union of what the body does
+    ///   directly (an effectful module operation, [`EFFECTFUL_MODULES`]) and what
+    ///   it inherits from the functions it calls, which is why a library
+    ///   function cannot absorb either half;
+    /// * when a requirement was **inherited from a callee**, the refusal carries
+    ///   a second diagnostic naming that callee and the effect (`E0151`, below).
+    ///   `E0141` stays the obligation at the site (unchanged, and pinned by the
+    ///   G01 suite); `E0151` says where the obligation came from, which is the
+    ///   thing an author has to go and fix when the row is not theirs to edit.
+    ///
+    /// G01 P0.2 stays the second half: a declared row must be backed by a
     /// `Grant<effect>` value in scope (E0142). A row is a capability, not a
-    /// promise. `E0141` is checked first and unchanged, so a body that is
-    /// missing both reports the row, which is the outer fix.
+    /// promise. `E0141` is checked first, so a body that is missing both reports
+    /// the row, which is the outer fix.
+    /// Point an effect diagnostic at the file its span came from, when the body
+    /// being walked is an imported one (G21). `None` means "the file compiled".
+    fn in_body_file(&self, diag: crate::error::Diagnostic) -> crate::error::Diagnostic {
+        match &self.current_body_file {
+            Some(path) => diag.with_file(path.clone()),
+            None => diag,
+        }
+    }
+
     fn enforce_effect_row(&mut self) {
         let reqs = std::mem::take(&mut self.body_effect_reqs);
         let declared = std::mem::take(&mut self.declared_effects);
@@ -1762,7 +1957,36 @@ impl<'a> TypeChecker<'a> {
         // E5104) — so the one place authority can originate is also the most
         // heavily annotated one.
         let trust_root = self.current_body_is_entry_main;
-        for (effect, op, span, grant_ok) in reqs {
+        // G21: the per-function effect set, in first-seen order, before the loop
+        // consumes the requirements. `Net(connect)` and `Net` are distinct
+        // entries here because they are distinct claims; the row union in
+        // `union_rows` is what collapses them where a row is built.
+        let mut effect_set: Vec<String> = Vec::new();
+        for req in &reqs {
+            let what = req.display();
+            if !effect_set.contains(&what) {
+                effect_set.push(what);
+            }
+        }
+        if let Some(name) = self.current_body_name.clone() {
+            if !effect_set.is_empty() {
+                let msg = format!(
+                    "effect set of `{name}`: {} (per-function; a caller of `{name}` inherits it)",
+                    effect_set.join(", ")
+                );
+                let diag =
+                    crate::error::Diagnostic::warning("W0130", msg, self.current_body_span);
+                self.diags.push(self.in_body_file(diag));
+            }
+        }
+        for req in reqs {
+            let BodyEffectReq {
+                effect,
+                op,
+                span,
+                grant_ok,
+                origin,
+            } = req;
             // An empty `op` is a whole-effect requirement (a bare `with Net`
             // forwarded from a callee): only a bare entry satisfies it.
             let satisfied = declared.iter().any(|d| {
@@ -1781,8 +2005,24 @@ impl<'a> TypeChecker<'a> {
                 let msg = format!(
                     "function body requires effect {what} but the signature does not declare it"
                 );
-                self.diags
-                    .push(crate::error::Diagnostic::error("E0141", msg, span).with_help(help));
+                let diag = crate::error::Diagnostic::error("E0141", msg, span).with_help(help);
+                self.diags.push(self.in_body_file(diag));
+                // G21: an inherited requirement also names the callee. A direct
+                // operation has no callee to name, so it reports E0141 alone.
+                if let Some(callee) = &origin {
+                    let caller = self
+                        .current_body_name
+                        .clone()
+                        .unwrap_or_else(|| "this function".to_string());
+                    let msg = format!(
+                        "call to `{callee}` requires effect {what}; `{caller}` does not declare it, so the requirement cannot be absorbed here"
+                    );
+                    let diag = crate::error::Diagnostic::error("E0151", msg, span)
+                        .with_help(format!(
+                            "add `with {what}` to `{caller}`'s signature and thread the `Grant<{effect}>` through from main"
+                        ));
+                    self.diags.push(self.in_body_file(diag));
+                }
                 continue;
             }
             if grant_ok || trust_root {
@@ -1796,8 +2036,8 @@ impl<'a> TypeChecker<'a> {
             let msg = format!(
                 "effect {what} requires a Grant<{effect}> in scope; take one as a parameter or obtain it with scope.grant({effect})"
             );
-            self.diags
-                .push(crate::error::Diagnostic::error("E0142", msg, span));
+            let diag = crate::error::Diagnostic::error("E0142", msg, span);
+            self.diags.push(self.in_body_file(diag));
         }
     }
 
@@ -3069,7 +3309,7 @@ impl<'a> TypeChecker<'a> {
             // recorded at *this* call site, so the diagnostic names the
             // call in the caller rather than the callee's declaration.
             if let Some(effects) = self.env.functions.get(&path).map(|s| s.effects.clone()) {
-                self.note_callee_row(&effects, span, locals);
+                self.note_callee_row(&effects, &path, span, locals);
                 row_forwarded = true;
             }
         }
@@ -3089,7 +3329,11 @@ impl<'a> TypeChecker<'a> {
             let callee_ty = self.infer_expr_type(callee, locals);
             let row = Self::type_row(&callee_ty);
             if !row.is_empty() {
-                self.note_type_row(row, span, locals);
+                // G21: the row came through a value, but the diagnostic can still
+                // name the expression the author wrote (`f`, `fs[0]`, `handler`).
+                let callee_name = callee_path(callee)
+                    .unwrap_or_else(|| "this function value".to_string());
+                self.note_type_row(row, &callee_name, span, locals);
                 row_forwarded = true;
             }
         }
@@ -3097,7 +3341,7 @@ impl<'a> TypeChecker<'a> {
             if let ExprKind::Ident(name) = &callee.kind {
                 if let Some(effects) = locals.get(name).map(|v| v.effects.clone()) {
                     if !effects.is_empty() {
-                        self.note_callee_row(&effects, span, locals);
+                        self.note_callee_row(&effects, name, span, locals);
                     }
                 }
             }
@@ -3301,8 +3545,22 @@ impl<'a> TypeChecker<'a> {
                 // G01: `Tcp.connect(..)` / `net.connect(..)` — a static module
                 // path — and `conn.connect()` where the receiver's type is a
                 // socket type both open a socket.
+                // G21: the operation decides, not the head — `ws.connect` is
+                // effectful while `ws.close` (a method on a live socket) is not
+                // a new egress — so the full dotted path is what the manifest is
+                // asked about.
+                // A *local* receiver is never a module namespace: `ws.connect()`
+                // on a variable named `ws` is a method on a value, and the row it
+                // may carry is already carried by that value's type.
+                let receiver_is_local =
+                    matches!(&object.kind, ExprKind::Ident(name) if locals.contains_key(name));
                 let socket_path = match callee_path(object) {
-                    Some(p) if effect_for_callee(&p).is_some() => Some(format!("{p}.{method}")),
+                    Some(p)
+                        if !receiver_is_local
+                            && effect_for_callee(&format!("{p}.{method}")).is_some() =>
+                    {
+                        Some(format!("{p}.{method}"))
+                    }
                     _ => match &obj_ty {
                         Type::Named(n) if matches!(n.as_str(), "Tcp" | "Udp" | "TLSConn") => {
                             Some(format!("{n}.{method}"))
@@ -3324,7 +3582,11 @@ impl<'a> TypeChecker<'a> {
                         .map(|sig| sig.effects.clone())
                 });
                 if let Some(effects) = callee_row {
-                    self.note_callee_row(&effects, expr.span, locals);
+                    let callee_name = match &type_name {
+                        Some(tname) => format!("{tname}.{method}"),
+                        None => method.clone(),
+                    };
+                    self.note_callee_row(&effects, &callee_name, expr.span, locals);
                 }
                 // G01 P0.3 (audit N-6): `b.f(g, h)` is a *method call* to the
                 // parser even when `f` is a struct field of function type, so
@@ -3341,7 +3603,7 @@ impl<'a> TypeChecker<'a> {
                     });
                     if let Some(row) = field_row {
                         if !row.is_empty() {
-                            self.note_type_row(&row, expr.span, locals);
+                            self.note_type_row(&row, &format!("{tname}.{method}"), expr.span, locals);
                         }
                     }
                 }
