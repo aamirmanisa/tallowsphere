@@ -395,6 +395,9 @@ jobs:
           --test bridge_overhead
           --test callnorm_adversarial
           --test newtype_parity
+          --test unsupported_net_refusal
+          --test capability_inference
+          --test bridge_ownership_adversarial
           -- --test-threads=2
 
   conformance:
