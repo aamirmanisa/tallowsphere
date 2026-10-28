@@ -1,8 +1,12 @@
-// tallow.api — offline API-surface ingestion and comparison (N13/N14/N20/N21).
+// tallow.api — API-surface ingestion, comparison and the method matrix
+// (N13/N14/N16/N17/N18/N20/N21).
 //
-// Nothing here opens a socket, resolves a name, or reads a clock. Every document,
-// schema and inventory is bytes or structs the caller supplied; a caller that
-// wants a fresh one fetches it itself, under its own grant, and hands it here.
+// Offline but for one entry point. `openapi_load` parses a document the caller
+// already holds, comparing two inventories is pure over data the caller supplied,
+// and a JavaScript bundle is a file the caller already has. Only `method_matrix`
+// opens a socket, and only after the scope register lists the host. Fetching a
+// spec still belongs to a caller holding a `Grant` — this module is the parser,
+// not the call.
 //
 // N13 — a document URL is part of the finding.
 //
@@ -283,3 +287,64 @@ native fn api.bundle_route(route: String, kind: String, recovered_from: String, 
 // Build a scan from routes the caller holds. `count` is the number of routes,
 // so it is not an argument; routes are sorted by (source_url, offset).
 native fn api.bundle_scan(bundle_url: String, map_mode: String, map_applied: Bool, map_reason: String?, skipped_unlocated: Int, skipped_non_route: Int, routes: []BundleRoute) -> BundleScan
+
+// ── N18: method matrix ───────────────────────────────────────────────────
+//
+// OPTIONS (and HEAD where OPTIONS is refused) against each discovered path.
+// This is the module's one egress path: the target host is checked against the
+// scope register BEFORE a request is built, and the granting entry is recorded
+// in `scope_grant` on every matrix — an observation without a live grant does
+// not exist.
+//
+// A header the server did not send is nil, never a default. "No CORS" is a
+// claim a refused preflight cannot support, so `cors` is "unknown" there.
+
+// One probed path. `method` is the method whose response this row records —
+// "OPTIONS", or "HEAD" when OPTIONS came back 405/501. `auth` is
+// "basic" | "bearer" | "digest" | "negotiate" | "other(<scheme>)" | "none";
+// a 401 with no `WWW-Authenticate` is "other(unspecified)" and never a guess.
+// `cors` is "open" | "restricted" | "unknown"; its `cors_source` is "options"
+// only when a 2xx OPTIONS answer was actually received. `evidence` names the
+// status, the method and the header behind each claim.
+struct ApiMethodRow {
+    path:             String,
+    method:           String,
+    status:           Int,
+    allow:            String?,
+    server:           String?,
+    content_type:     String?,
+    auth:             String,
+    challenge:        String?,
+    acao:             String?,
+    acam:             String?,
+    acac:             String?,
+    cors:             String,
+    cors_source:      String,
+    declared_methods: String,
+    evidence:         String,
+}
+
+// One matrix over a base URL. `count` is the number of rows; `head_fallbacks`
+// is how many of them were produced by HEAD; `skipped_templated` counts paths
+// with a `{...}` segment, which are never requested (a template has no value).
+struct ApiMethodMatrix {
+    base_url:          String,
+    scope_grant:       String,
+    count:             Int,
+    options_answered:  Int,
+    head_fallbacks:    Int,
+    skipped_templated: Int,
+    rows:              []ApiMethodRow,
+}
+
+// Probe every non-templated path in `endpoints` under `base_url`, with
+// `timeout_ms` per request. Refuses `api:method-matrix-scope` for a host the
+// register does not list (naming the register's `scope:` code),
+// `api:method-matrix-url` for a base that is not http(s), and
+// `api:method-matrix-net` when a probe does not complete.
+native fn api.method_matrix(base_url: String, endpoints: []ApiEndpoint, timeout_ms: Int) -> ApiMethodMatrix
+
+// Render a matrix as `tallow.api.method_matrix.v1` JSON: the grant, the
+// counts, and one object per row carrying every observed header and the
+// evidence line that names it.
+native fn api.method_matrix_json(base_url: String, endpoints: []ApiEndpoint, timeout_ms: Int) -> String

@@ -1,10 +1,13 @@
-//! `tallow.api` — offline API-surface ingestion and comparison (N13, N14, N16, N17, N20, N21).
+//! `tallow.api` — API-surface ingestion, comparison and method matrix (N13, N14, N16, N17, N18,
+//! N20, N21).
 //!
-//! **Offline by construction.** Nothing here opens a socket, resolves a name, or reads a clock.
-//! `openapi_load` parses a document the caller already holds; comparing two inventories is pure
-//! over data the caller supplied; a JavaScript bundle is a file the caller already has. Fetching a
-//! spec or probing a server belongs to a caller holding a `Grant` — this module is the parser, not
-//! the call.
+//! **Offline but for one function.** `openapi_load` parses a document the caller already holds;
+//! comparing two inventories is pure over data the caller supplied; a JavaScript bundle is a file
+//! the caller already has. Exactly one entry point opens a socket — `method_matrix` (N18) — and it
+//! consults the scope register on the target host *before* a request is built, records the
+//! granting entry on every result, and refuses an unlisted host by name
+//! (`api:method-matrix-scope`, carrying the register's own `scope:` code). The rest of the module
+//! stays the parser, not the call.
 //!
 //! # N13 — a document URL is part of the finding
 //!
@@ -96,6 +99,21 @@
 //! saved as `.js` is refused by name (`api:bundle-not-js`) — parsing HTML as JavaScript produces
 //! garbage routes, and garbage with offsets is worse than nothing.
 //!
+//! # N18 — a method matrix is a set of observations, not a verdict
+//!
+//! OPTIONS is sent to every discovered path. When it is refused with 405/501 the row falls back to
+//! HEAD and says so in its evidence line: the weaker instrument is named, never disguised. The
+//! CORS stance is derived only from a **2xx OPTIONS** answer, because a preflight that was never
+//! answered is not a policy — `unknown` there is the measurement, not a gap. `open` requires a
+//! wildcard or an echo of the probe origin *and* no credential grant; a `*` with
+//! `Access-Control-Allow-Credentials: true` is refused by every browser and is recorded as
+//! `restricted`.
+//!
+//! The auth class comes from `WWW-Authenticate` and nothing else. A 401 without that header is
+//! `other(unspecified)`, never `basic`: the status says credentials were wanted, the header says
+//! which kind, and only the second is in the response. A path carrying a `{template}` segment is
+//! counted in `skipped_templated` rather than probed — a template has no value to request.
+//!
 //! # N17 — a sourcemap is either applied or *said* not to be
 //!
 //! `bundle_routes_with_map` extracts from the **original sources** when the map carries
@@ -129,6 +147,9 @@
 //! | `api:bundle-not-js` | the first bytes of the input are HTML — a page saved as `.js` |
 //! | `api:bundle-no-evidence` | `bundle_url` is empty — a route that cannot name its bundle is not a finding |
 //! | `api:sourcemap-unparsable` | the map is not JSON, is not v3, has no `sources`/`mappings`, or has a non-array `sourcesContent` |
+//! | `api:method-matrix-url` | the base URL is not `http://`/`https://` with a host, or a request URI could not be built |
+//! | `api:method-matrix-scope` | the target host is not listed in the scope register (the register's `scope:` code is included) |
+//! | `api:method-matrix-net` | a probe did not complete (connect/read failure); no row is invented for it |
 //! | `api:bad-argument` | an argument is missing, of the wrong type, or a struct of the wrong shape |
 
 use super::StdlibResult;
@@ -2270,6 +2291,530 @@ fn bundle_scan_json(s: &BundleScan) -> String {
     .to_string()
 }
 
+// ══════════════════════════════════════════════════════════════════
+// N18 — method matrix (the module's ONE egress path)
+// ══════════════════════════════════════════════════════════════════
+
+/// The `Origin` header the preflight is sent with.
+///
+/// A CORS answer is a function of the origin that asked, so the question has to be a fixed,
+/// named origin — `.invalid` is reserved by RFC 2606 and can never resolve to a real site.
+/// "echoes this origin" in an evidence line means exactly this string came back.
+pub const PROBE_ORIGIN: &str = "https://tallow.invalid";
+
+/// `Allow` is the method set the server advertises; it is recorded verbatim, never parsed into
+/// a set here — a matrix row that summarised it would lose the ordering the server chose.
+const UA_MATRIX: &str = "TallowApiMatrix/1.0 (+https://tallow.invalid/bot)";
+
+pub const CODE_MATRIX_URL: &str = "api:method-matrix-url";
+pub const CODE_MATRIX_SCOPE: &str = "api:method-matrix-scope";
+pub const CODE_MATRIX_NET: &str = "api:method-matrix-net";
+
+/// One probed path, with the method that actually produced the recorded headers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MethodRow {
+    /// The path exactly as the inventory stated it (`/users`, never `/users/1`).
+    pub path: String,
+    /// `OPTIONS` normally; `HEAD` when OPTIONS was refused with 405/501.
+    pub method: String,
+    pub status: u16,
+    pub allow: Option<String>,
+    pub server: Option<String>,
+    pub content_type: Option<String>,
+    /// `basic` | `bearer` | `digest` | `negotiate` | `other(<scheme>)` | `none`.
+    pub auth: String,
+    /// The `WWW-Authenticate` header verbatim, when the server sent one.
+    pub challenge: Option<String>,
+    /// `Access-Control-Allow-Origin`, verbatim.
+    pub acao: Option<String>,
+    /// `Access-Control-Allow-Methods`, verbatim.
+    pub acam: Option<String>,
+    /// `Access-Control-Allow-Credentials`, verbatim.
+    pub acac: Option<String>,
+    /// `open` | `restricted` | `unknown`.
+    pub cors: String,
+    /// Which method the CORS verdict is derived from: `options`, or `none`.
+    pub cors_source: String,
+    /// Methods the document declared for this path, comma-joined and sorted.
+    pub declared_methods: String,
+    /// The evidence line: status, method, and the header names each claim rests on.
+    pub evidence: String,
+}
+
+/// One run of the matrix over a base URL.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MethodMatrix {
+    pub base_url: String,
+    /// The scope-register entry that authorised the run — an observation without one does not
+    /// exist. Rendered as `host (basis, granted_by, expires)`.
+    pub scope_grant: String,
+    pub options_answered: usize,
+    pub head_fallbacks: usize,
+    /// Paths skipped because they carry a `{template}` segment: a template has no value to
+    /// request, and filling one in would be inventing a request the document never declared.
+    pub skipped_templated: usize,
+    pub rows: Vec<MethodRow>,
+}
+
+/// A response stripped to what the matrix records. The body is not kept: no field of a matrix
+/// row is a claim about content.
+#[derive(Clone, Debug, Default)]
+struct HeadResp {
+    status: u16,
+    headers: Vec<(String, String)>,
+}
+
+impl HeadResp {
+    /// All values sent for `name` (already lower-cased), in wire order.
+    fn all(&self, name: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    fn first(&self, name: &str) -> Option<String> {
+        self.all(name).first().map(|v| v.trim().to_string())
+    }
+}
+
+/// The parts of a base URL the matrix needs. Parsed by hand so a malformed base is refused with
+/// a code instead of an opaque transport error.
+#[derive(Debug)]
+struct MatrixBase {
+    scheme: String,
+    authority: String,
+    host: String,
+    /// Path prefix carried on the base (`` for `http://h:1`, `/v1` for `http://h:1/v1`).
+    prefix: String,
+}
+
+fn parse_base(base_url: &str) -> Result<MatrixBase, String> {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    let (scheme, rest) = match trimmed.split_once("://") {
+        Some((s, r)) => (s.to_ascii_lowercase(), r),
+        None => {
+            return Err(format!(
+                "{CODE_MATRIX_URL}: base_url '{base_url}' has no scheme; expected http:// or https://"
+            ))
+        }
+    };
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "{CODE_MATRIX_URL}: scheme '{scheme}' in '{base_url}' is not http or https"
+        ));
+    }
+    let (authority, prefix) = match rest.find('/') {
+        Some(i) => (&rest[..i], rest[i..].to_string()),
+        None => (rest, String::new()),
+    };
+    if authority.is_empty() {
+        return Err(format!(
+            "{CODE_MATRIX_URL}: base_url '{base_url}' has no host"
+        ));
+    }
+    // `[::1]:8080` vs `host:port`. A bare IPv6 literal without brackets is not a URL.
+    let host = if let Some(close) = authority.find(']') {
+        authority[..=close].to_string()
+    } else {
+        authority.split(':').next().unwrap_or("").to_string()
+    };
+    if host.is_empty() {
+        return Err(format!(
+            "{CODE_MATRIX_URL}: base_url '{base_url}' has no host"
+        ));
+    }
+    Ok(MatrixBase {
+        scheme,
+        authority: authority.to_string(),
+        host,
+        prefix,
+    })
+}
+
+/// Loopback traffic never egresses, so it is not routed through the anonymity proxy — a proxy
+/// hop for a packet that cannot leave the box only breaks the measurement. Everything else takes
+/// the fail-closed egress proxy from the single source of truth.
+fn is_loopback(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    h == "::1" || h == "localhost" || h.starts_with("127.")
+}
+
+fn matrix_agent(timeout_ms: u64, loopback: bool) -> ureq::Agent {
+    let t = std::time::Duration::from_millis(timeout_ms.max(1));
+    let mut b = ureq::Agent::config_builder()
+        .timeout_per_call(Some(t))
+        .timeout_connect(Some(t))
+        .timeout_resolve(Some(t))
+        .timeout_recv_response(Some(t))
+        // 4xx/5xx are the measurement: a 405 is a recorded row, never an error.
+        .http_status_as_error(false)
+        // A 3xx is a status to record. Following it would answer a question about a different
+        // resource while wearing this row's path.
+        .max_redirects(0)
+        .https_only(false);
+    if !loopback {
+        b = b.proxy(crate::runtime::egress_http::proxy());
+    }
+    b.build().new_agent()
+}
+
+/// One request, headers only.
+fn probe(
+    agent: &ureq::Agent,
+    method: &str,
+    url: &str,
+    origin: Option<&str>,
+) -> Result<HeadResp, String> {
+    let mut req = ureq::http::Request::builder()
+        .method(method)
+        .uri(url)
+        .header("User-Agent", UA_MATRIX)
+        .header("Accept", "*/*")
+        .header("Connection", "close");
+    if let Some(o) = origin {
+        req = req.header("Origin", o);
+    }
+    let req = req
+        .body(())
+        .map_err(|e| format!("{CODE_MATRIX_URL}: cannot build a {method} request for {url}: {e}"))?;
+    let resp = agent
+        .run(req)
+        .map_err(|e| format!("{CODE_MATRIX_NET}: {method} {url} did not complete: {e}"))?;
+    let status = resp.status().as_u16();
+    let headers = resp
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_ascii_lowercase(),
+                value.to_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    // Drain the body (bounded) so the connection can be reused; nothing in it is recorded.
+    let mut sink = Vec::new();
+    let mut reader = std::io::Read::take(resp.into_body().into_reader(), 64 * 1024);
+    let _ = std::io::Read::read_to_end(&mut reader, &mut sink);
+    Ok(HeadResp { status, headers })
+}
+
+/// Classify a challenge. The header is the ONLY ground for naming a scheme.
+///
+/// `none` means "the response carried no challenge" — which is a different fact from
+/// "unauthenticated". A bare 401 says the server wanted credentials and did not say which kind,
+/// so it is `other(unspecified)`: naming it `basic` because most 401s are would be a guess
+/// wearing a measurement's clothes.
+fn classify_auth(challenge: Option<&str>, status: u16) -> String {
+    let Some(raw) = challenge else {
+        return match status {
+            401 => "other(unspecified)".to_string(),
+            _ => "none".to_string(),
+        };
+    };
+    // `WWW-Authenticate` may carry several challenges; the first scheme is the one the server
+    // leads with. The scheme token ends at the first space or comma.
+    let scheme = raw
+        .trim()
+        .split(|c: char| c == ' ' || c == ',' || c == '\t')
+        .next()
+        .unwrap_or("")
+        .trim();
+    match scheme.to_ascii_lowercase().as_str() {
+        "" => "other(unspecified)".to_string(),
+        "basic" => "basic".to_string(),
+        "bearer" => "bearer".to_string(),
+        "digest" => "digest".to_string(),
+        "negotiate" => "negotiate".to_string(),
+        _ => format!("other({scheme})"),
+    }
+}
+
+/// Derive the CORS stance from what the OPTIONS answer actually carried.
+///
+/// `unknown` is returned whenever no preflight answer exists — a refused OPTIONS, or an OPTIONS
+/// that came back non-2xx. "No CORS" is a claim about a response that was never received.
+///
+/// `open` requires a wildcard or an echo of [`PROBE_ORIGIN`] **and** no credential grant: a
+/// wildcard with `Access-Control-Allow-Credentials: true` is refused by every browser, so
+/// calling it open would describe a capability the response does not grant.
+fn derive_cors(acao: Option<&str>, acac: Option<&str>, options_status: Option<u16>) -> (String, String) {
+    let Some(status) = options_status else {
+        return ("unknown".to_string(), "none".to_string());
+    };
+    if !(200..300).contains(&status) {
+        return ("unknown".to_string(), "none".to_string());
+    }
+    let credentials = acac.map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    let cors = match acao {
+        None => "restricted", // answered, and granted nothing
+        Some(v) if credentials => "restricted", // a credentialed grant is per-origin by spec
+        Some("*") => "open",
+        Some(v) if v.trim() == PROBE_ORIGIN => "open", // echo, no credentials
+        Some(_) => "restricted",
+    };
+    (cors.to_string(), "options".to_string())
+}
+
+/// The one place a socket is opened in this module.
+///
+/// Gate first: the scope register is consulted on the *host* before a request is built, so a
+/// host that is not listed is refused without a packet. The register's read-only grant is what
+/// is asked for (`GET`, as `topology` asks for a read-only probe); an OPTIONS/HEAD matrix sends
+/// no body, mutates nothing, and the granting entry is recorded on every matrix so the authority
+/// behind the observation travels with it.
+pub fn method_matrix(
+    base_url: &str,
+    endpoints: &[Endpoint],
+    timeout_ms: u64,
+) -> Result<MethodMatrix, String> {
+    let base = parse_base(base_url)?;
+    let register = crate::scope::ScopeRegister::load_default();
+    let grant = match register.authorize(&base.host, "GET", &crate::scope::utc_today()) {
+        crate::scope::Decision::Allowed(entry) => format!(
+            "{host} ({basis}, granted_by {by}, expires {expires})",
+            host = entry.host,
+            basis = entry.basis.as_str(),
+            by = entry.granted_by,
+            expires = entry.expires_at.as_deref().unwrap_or("unbounded")
+        ),
+        crate::scope::Decision::Refused(refusal) => {
+            return Err(format!(
+                "{CODE_MATRIX_SCOPE}: target '{}' is not authorized ({}): {}",
+                base.host,
+                refusal.code(),
+                refusal.explain()
+            ))
+        }
+    };
+
+    // One probe per PATH, not per declared method: `GET /users` and `POST /users` are one
+    // resource to ask "what does OPTIONS say about /users".
+    let mut paths: Vec<(String, Vec<String>)> = Vec::new();
+    for e in endpoints {
+        match paths.iter_mut().find(|(p, _)| *p == e.path) {
+            Some((_, methods)) => methods.push(e.method.clone()),
+            None => paths.push((e.path.clone(), vec![e.method.clone()])),
+        }
+    }
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let agent = matrix_agent(timeout_ms, is_loopback(&base.host));
+    let mut matrix = MethodMatrix {
+        base_url: base_url.trim().to_string(),
+        scope_grant: grant,
+        ..Default::default()
+    };
+
+    for (path, mut declared) in paths {
+        if path.contains('{') {
+            // A template is not a request. Filling it from the document's example would be
+            // probing a resource the document never named.
+            matrix.skipped_templated += 1;
+            continue;
+        }
+        declared.sort();
+        let declared_methods = declared.join(",");
+        let url = format!(
+            "{}://{}{}{}",
+            base.scheme,
+            base.authority,
+            base.prefix,
+            if path.starts_with('/') {
+                path.clone()
+            } else {
+                format!("/{path}")
+            }
+        );
+
+        let options = probe(&agent, "OPTIONS", &url, Some(PROBE_ORIGIN))?;
+        matrix.options_answered += 1;
+        let options_status = options.status;
+        // Only 405/501 mean "this resource does not implement the method". A 404 or a 403 is an
+        // answer about the resource, and asking again with HEAD would not improve it.
+        let refuse_options = matches!(options_status, 405 | 501);
+
+        // HEAD only where OPTIONS was refused. It is a weaker instrument — no preflight answer
+        // exists, so the CORS stance stays unknown — but the headers it does carry are real.
+        let (method, resp) = if refuse_options {
+            let head = probe(&agent, "HEAD", &url, None)?;
+            matrix.head_fallbacks += 1;
+            ("HEAD", head)
+        } else {
+            ("OPTIONS", options)
+        };
+
+        let allow = resp.first("allow");
+        let server = resp.first("server");
+        let content_type = resp.first("content-type");
+        let challenge = resp
+            .all("www-authenticate")
+            .first()
+            .map(|v| v.trim().to_string());
+        let acao = resp.first("access-control-allow-origin");
+        let acam = resp.first("access-control-allow-methods");
+        let acac = resp.first("access-control-allow-credentials");
+        let auth = classify_auth(challenge.as_deref(), resp.status);
+        let cors_status = if refuse_options { None } else { Some(options_status) };
+        let (cors, cors_source) = derive_cors(acao.as_deref(), acac.as_deref(), cors_status);
+
+        matrix.rows.push(MethodRow {
+            path: path.clone(),
+            method: method.to_string(),
+            status: resp.status,
+            allow,
+            server,
+            content_type,
+            auth,
+            challenge,
+            acao,
+            acam,
+            acac,
+            cors,
+            cors_source,
+            declared_methods,
+            evidence: evidence_line(
+                method,
+                &url,
+                resp.status,
+                &resp,
+                options_status,
+                refuse_options,
+            ),
+        });
+    }
+    Ok(matrix)
+}
+
+/// Build the evidence line. Every claim names the status, the method and the header it came
+/// from; a claim that has no header says so rather than staying silent.
+fn evidence_line(
+    method: &str,
+    url: &str,
+    status: u16,
+    resp: &HeadResp,
+    options_status: u16,
+    fell_back: bool,
+) -> String {
+    let mut parts: Vec<String> = vec![format!("{method} {url} -> {status}")];
+    if fell_back {
+        parts.push(format!(
+            "OPTIONS refused {options_status}; fell back to HEAD (the headers below are HEAD's); \
+             cors: unknown because no preflight was answered"
+        ));
+    }
+    parts.push(match resp.first("allow") {
+        Some(v) => format!("allow<-Allow: {v}"),
+        None => "allow: no Allow sent".to_string(),
+    });
+    let challenge = resp.all("www-authenticate");
+    parts.push(match challenge.first() {
+        Some(v) => format!("auth<-WWW-Authenticate: {}", v.trim()),
+        None if status == 401 => {
+            "auth: 401 with no WWW-Authenticate (other(unspecified), not inferred)".to_string()
+        }
+        None => "auth: no WWW-Authenticate sent".to_string(),
+    });
+    let acao = resp.first("access-control-allow-origin");
+    let acac = resp.first("access-control-allow-credentials");
+    let acam = resp.first("access-control-allow-methods");
+    if fell_back {
+        // Already stated above; nothing about CORS is claimed without a preflight answer.
+    } else if !(200..300).contains(&options_status) {
+        parts.push(format!(
+            "cors: unknown (OPTIONS answered {options_status}, which is not a preflight answer)"
+        ));
+    } else {
+        parts.push(match (acao, acac) {
+            (Some(o), Some(c)) => format!(
+                "cors<-Access-Control-Allow-Origin: {o}, Access-Control-Allow-Credentials: {c}"
+            ),
+            (Some(o), None) => format!("cors<-Access-Control-Allow-Origin: {o}"),
+            (None, _) => "cors: OPTIONS answered without Access-Control-Allow-Origin".to_string(),
+        });
+        if let Some(m) = acam {
+            parts.push(format!("methods<-Access-Control-Allow-Methods: {m}"));
+        }
+    }
+    parts.push(match resp.first("server") {
+        Some(v) => format!("server<-Server: {v}"),
+        None => "server: no Server sent".to_string(),
+    });
+    parts.join("; ")
+}
+
+fn method_row_value(r: &MethodRow) -> Value {
+    Value::Struct {
+        name: "ApiMethodRow".to_string(),
+        fields: vec![
+            sfield("path", &r.path),
+            sfield("method", &r.method),
+            ifield("status", r.status as usize),
+            ofield("allow", &r.allow),
+            ofield("server", &r.server),
+            ofield("content_type", &r.content_type),
+            sfield("auth", &r.auth),
+            ofield("challenge", &r.challenge),
+            ofield("acao", &r.acao),
+            ofield("acam", &r.acam),
+            ofield("acac", &r.acac),
+            sfield("cors", &r.cors),
+            sfield("cors_source", &r.cors_source),
+            sfield("declared_methods", &r.declared_methods),
+            sfield("evidence", &r.evidence),
+        ],
+    }
+}
+
+fn method_matrix_value(m: &MethodMatrix) -> Value {
+    Value::Struct {
+        name: "ApiMethodMatrix".to_string(),
+        fields: vec![
+            sfield("base_url", &m.base_url),
+            sfield("scope_grant", &m.scope_grant),
+            ifield("count", m.rows.len()),
+            ifield("options_answered", m.options_answered),
+            ifield("head_fallbacks", m.head_fallbacks),
+            ifield("skipped_templated", m.skipped_templated),
+            (
+                "rows".to_string(),
+                Value::Array(m.rows.iter().map(method_row_value).collect()),
+            ),
+        ],
+    }
+}
+
+fn method_matrix_json(m: &MethodMatrix) -> String {
+    json!({
+        "schema_version": "tallow.api.method_matrix.v1",
+        "base_url": m.base_url,
+        "scope_grant": m.scope_grant,
+        "count": m.rows.len(),
+        "options_answered": m.options_answered,
+        "head_fallbacks": m.head_fallbacks,
+        "skipped_templated": m.skipped_templated,
+        "rows": m.rows.iter().map(|r| json!({
+            "path": r.path,
+            "method": r.method,
+            "status": r.status,
+            "allow": r.allow,
+            "server": r.server,
+            "content_type": r.content_type,
+            "auth": r.auth,
+            "challenge": r.challenge,
+            "acao": r.acao,
+            "acam": r.acam,
+            "acac": r.acac,
+            "cors": r.cors,
+            "cors_source": r.cors_source,
+            "declared_methods": r.declared_methods,
+            "evidence": r.evidence,
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────
 
 pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
@@ -2457,6 +3002,35 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
                     "bundle_routes_json",
                 )?;
                 Ok(Value::String(bundle_scan_json(&scan)))
+            }
+            // ── N18: method matrix ───────────────────────────────────────
+            "method_matrix" => {
+                let base_url = str_arg(&args, 0, "method_matrix")?;
+                let endpoints = endpoints_of(
+                    args.get(1)
+                        .ok_or_else(|| bad("method_matrix", "missing argument 2"))?,
+                    "method_matrix",
+                )?;
+                let timeout_ms = int_arg(&args, 2, "method_matrix")?;
+                Ok(method_matrix_value(&method_matrix(
+                    &base_url,
+                    &endpoints,
+                    timeout_ms as u64,
+                )?))
+            }
+            "method_matrix_json" => {
+                let base_url = str_arg(&args, 0, "method_matrix_json")?;
+                let endpoints = endpoints_of(
+                    args.get(1)
+                        .ok_or_else(|| bad("method_matrix_json", "missing argument 2"))?,
+                    "method_matrix_json",
+                )?;
+                let timeout_ms = int_arg(&args, 2, "method_matrix_json")?;
+                Ok(Value::String(method_matrix_json(&method_matrix(
+                    &base_url,
+                    &endpoints,
+                    timeout_ms as u64,
+                )?)))
             }
             // Constructors: E0115 — a stdlib struct cannot be written as a literal in `.tl`, so a
             // struct this module only *takes* is a struct no program can build.
@@ -3203,5 +3777,111 @@ mod intel_api_tests {
             Value::Struct { fields, .. } => fields.clone(),
             other => panic!("expected a struct, got {}", type_name(other)),
         }
+    }
+
+    // ── N18: method matrix ───────────────────────────────────────────────
+    //
+    // The three pure rules are pinned here; the wire behaviour is pinned by
+    // `tests/intel_api_method_matrix.rs` against a loopback fixture, because a header
+    // claim can only be checked against a response that actually carried it.
+
+    #[test]
+    fn only_the_challenge_header_names_a_scheme() {
+        assert_eq!(classify_auth(Some("Basic realm=\"x\""), 401), "basic");
+        assert_eq!(
+            classify_auth(Some("Bearer realm=\"x\", error=\"invalid_token\""), 401),
+            "bearer"
+        );
+        assert_eq!(classify_auth(Some("Digest realm=\"x\""), 401), "digest");
+        assert_eq!(classify_auth(Some("Negotiate"), 401), "negotiate");
+        // A scheme the module does not know is named as sent, not dropped to `none`.
+        assert_eq!(classify_auth(Some("NTLM"), 401), "other(NTLM)");
+        // A 401 with no challenge is unspecified — never a guess at the common case.
+        assert_eq!(classify_auth(None, 401), "other(unspecified)");
+        // No challenge and no 401: nothing was asked for, so nothing is claimed.
+        assert_eq!(classify_auth(None, 200), "none");
+        assert_eq!(classify_auth(None, 403), "none");
+    }
+
+    #[test]
+    fn cors_is_unknown_unless_a_preflight_was_answered() {
+        // No preflight answer exists (OPTIONS refused): unknown, whatever HEAD said.
+        assert_eq!(derive_cors(Some("*"), None, None).0, "unknown");
+        assert_eq!(derive_cors(None, None, None).0, "unknown");
+        assert_eq!(derive_cors(Some("*"), None, Some(405)).0, "unknown");
+        // Answered 2xx: the headers decide.
+        assert_eq!(derive_cors(Some("*"), None, Some(204)).0, "open");
+        assert_eq!(
+            derive_cors(Some(PROBE_ORIGIN), Some("false"), Some(204)).0,
+            "open"
+        );
+        assert_eq!(
+            derive_cors(Some("https://other.test"), None, Some(204)).0,
+            "restricted"
+        );
+        // `*` together with credentials is refused by browsers; it is not open.
+        assert_eq!(derive_cors(Some("*"), Some("true"), Some(204)).0, "restricted");
+        // Answered, granted nothing: same-origin only.
+        assert_eq!(derive_cors(None, None, Some(204)).0, "restricted");
+        assert_eq!(derive_cors(Some("*"), None, Some(204)).1, "options");
+        assert_eq!(derive_cors(Some("*"), None, None).1, "none");
+    }
+
+    #[test]
+    fn a_base_url_is_read_or_refused_by_name() {
+        let b = parse_base("http://127.0.0.1:46111/").unwrap();
+        assert_eq!(b.host, "127.0.0.1");
+        assert_eq!(b.authority, "127.0.0.1:46111");
+        assert_eq!(b.prefix, "");
+        let b = parse_base("https://api.test/v1").unwrap();
+        assert_eq!(b.scheme, "https");
+        assert_eq!(b.prefix, "/v1");
+        let b = parse_base("http://[::1]:8080").unwrap();
+        assert_eq!(b.host, "[::1]");
+        // No scheme, a non-http scheme, and an empty host each get the same stable code.
+        for bad in ["api.test/v1", "ftp://api.test", "http://"] {
+            let e = parse_base(bad).unwrap_err();
+            assert!(e.starts_with(CODE_MATRIX_URL), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn the_json_rendering_carries_the_grant_and_every_evidence_line() {
+        let m = MethodMatrix {
+            base_url: "http://127.0.0.1:46111".to_string(),
+            scope_grant: "127.0.0.1 (self-hosted, granted_by operator, expires 2027-10-16)"
+                .to_string(),
+            options_answered: 1,
+            head_fallbacks: 0,
+            skipped_templated: 1,
+            rows: vec![MethodRow {
+                path: "/public".to_string(),
+                method: "OPTIONS".to_string(),
+                status: 204,
+                allow: Some("GET, OPTIONS".to_string()),
+                server: None,
+                content_type: None,
+                auth: "none".to_string(),
+                challenge: None,
+                acao: Some("*".to_string()),
+                acam: None,
+                acac: None,
+                cors: "open".to_string(),
+                cors_source: "options".to_string(),
+                declared_methods: "GET,POST".to_string(),
+                evidence: "OPTIONS http://127.0.0.1:46111/public -> 204".to_string(),
+            }],
+        };
+        let j: J = serde_json::from_str(&method_matrix_json(&m)).expect("matrix json");
+        assert_eq!(j["schema_version"], "tallow.api.method_matrix.v1");
+        // The authority behind the observation travels with it.
+        assert_eq!(j["scope_grant"], m.scope_grant);
+        assert_eq!(j["count"], 1);
+        assert_eq!(j["skipped_templated"], 1);
+        assert_eq!(j["rows"][0]["cors"], "open");
+        assert_eq!(j["rows"][0]["allow"], "GET, OPTIONS");
+        assert!(j["rows"][0]["evidence"].as_str().unwrap().contains("OPTIONS"));
+        // A header the server did not send is null, never a default.
+        assert!(j["rows"][0]["acac"].is_null());
     }
 }
