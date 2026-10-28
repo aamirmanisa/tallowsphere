@@ -23162,9 +23162,15 @@ fn bridge_stmt_escapes(stmt: &Stmt, name: &str) -> bool {
             bridge_expr_escapes(expr, name, false)
                 || bridge_binding_escapes(body, name, NOT_DECLARED_HERE)
         }
-        StmtKind::Loop { body, .. } | StmtKind::Defer { body } => {
-            bridge_binding_escapes(body, name, NOT_DECLARED_HERE)
-        }
+        StmtKind::Loop { body, .. } => bridge_binding_escapes(body, name, NOT_DECLARED_HERE),
+        // A deferred block runs AFTER the block's release point (the release is
+        // emitted at the end of `emit_block`), so anything a defer captures is
+        // still live when the free happens:
+        //     let k = mod.f();  defer { print(k) }
+        // would print freed memory. Treat the whole block as escaping rather than
+        // scan the defer body: the body may reach the binding indirectly, and a
+        // conservative leak here is a leak, not a corruption. (lattice, w5 review)
+        StmtKind::Defer { .. } => true,
         StmtKind::Bail(expr) => bridge_expr_escapes(expr, name, false),
         StmtKind::Break {
             value: Some(value), ..
