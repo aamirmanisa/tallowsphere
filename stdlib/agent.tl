@@ -162,6 +162,11 @@ native fn IOCScanner.add_indicator(scanner: IOCScanner, ioc_type: String, value:
 native fn IOCScanner.scan(scanner: IOCScanner, data: String) -> []IOCMatch
 
 /// Result of a containment action (all actions are simulated)
+///
+/// Every arm returns `simulated: true` and `dry_run: true`: no host is
+/// isolated, no IP is blocked, no account is disabled and no file is moved.
+/// `success: true` reports that the dry-run record was produced, not that
+/// containment happened — read `simulated` before acting on `success`.
 struct ContainmentResult {
     action:    String,
     target:    String,
@@ -172,19 +177,19 @@ struct ContainmentResult {
 }
 
 /// Simulate host isolation
-// native: simulated — logs action, returns success
+// native: dry run — returns simulated=true, dry_run=true, success=true
 native fn ContainmentAction.isolate_host(hostname: String) -> ContainmentResult
 
 /// Simulate IP blocking
-// native: simulated — logs action, returns success
+// native: dry run — returns simulated=true, dry_run=true, success=true
 native fn ContainmentAction.block_ip(ip: String) -> ContainmentResult
 
 /// Simulate account disabling
-// native: simulated — logs action, returns success
+// native: dry run — returns simulated=true, dry_run=true, success=true
 native fn ContainmentAction.disable_account(account: String) -> ContainmentResult
 
 /// Simulate file quarantine
-// native: simulated — logs action, returns success
+// native: dry run — returns simulated=true, dry_run=true, success=true
 native fn ContainmentAction.quarantine_file(path: String) -> ContainmentResult
 
 /// Incident timeline for event reconstruction

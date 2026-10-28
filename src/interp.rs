@@ -8939,6 +8939,7 @@ impl Interpreter {
                         ("action".to_string(), Value::String("isolate_host".to_string())),
                         ("target".to_string(), Value::String(hostname)),
                         ("success".to_string(), Value::Bool(true)),
+                        ("simulated".to_string(), Value::Bool(true)),
                         ("dry_run".to_string(), Value::Bool(true)),
                         ("timestamp".to_string(), Value::String(timestamp)),
                         ("message".to_string(), Value::String("Host isolation: dry-run mode (compile and deploy for real containment)".to_string())),
@@ -8967,6 +8968,7 @@ impl Interpreter {
                         ("action".to_string(), Value::String("block_ip".to_string())),
                         ("target".to_string(), Value::String(ip)),
                         ("success".to_string(), Value::Bool(true)),
+                        ("simulated".to_string(), Value::Bool(true)),
                         ("dry_run".to_string(), Value::Bool(true)),
                         ("timestamp".to_string(), Value::String(timestamp)),
                         (
@@ -9001,6 +9003,7 @@ impl Interpreter {
                         ("action".to_string(), Value::String("disable_account".to_string())),
                         ("target".to_string(), Value::String(account)),
                         ("success".to_string(), Value::Bool(true)),
+                        ("simulated".to_string(), Value::Bool(true)),
                         ("dry_run".to_string(), Value::Bool(true)),
                         ("timestamp".to_string(), Value::String(timestamp)),
                         ("message".to_string(), Value::String("Account disable: dry-run mode (compile and deploy for real containment)".to_string())),
@@ -9029,6 +9032,7 @@ impl Interpreter {
                         ("action".to_string(), Value::String("quarantine_file".to_string())),
                         ("target".to_string(), Value::String(file_path)),
                         ("success".to_string(), Value::Bool(true)),
+                        ("simulated".to_string(), Value::Bool(true)),
                         ("dry_run".to_string(), Value::Bool(true)),
                         ("timestamp".to_string(), Value::String(timestamp)),
                         ("message".to_string(), Value::String("File quarantine: dry-run mode (compile and deploy for real containment)".to_string())),
@@ -51767,6 +51771,7 @@ fn main() {
     print(result.action)
     print(result.target)
     print(result.success)
+    print(result.simulated)
     print(result.dry_run)
     print(result.message)
 }
@@ -51775,9 +51780,12 @@ fn main() {
         assert_eq!(output[0], "isolate_host");
         assert_eq!(output[1], "WORKSTATION-42");
         assert_eq!(output[2], "true");
-        assert_eq!(output[3], "true");
+        // The declared honesty field must exist and be true on the value the
+        // runtime returns -- a dry run may not report success without it.
+        assert_eq!(output[3], "true", "declared field ContainmentResult.simulated must be true");
+        assert_eq!(output[4], "true");
         assert_eq!(
-            output[4],
+            output[5],
             "Host isolation: dry-run mode (compile and deploy for real containment)"
         );
     }

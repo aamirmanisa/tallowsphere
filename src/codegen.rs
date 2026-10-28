@@ -26697,7 +26697,8 @@ impl<'a> CodeGen<'a> {
         Err(format!(
             "{module}.{method}() has no native lowering — refusing to emit a \
              silently-truthy stub for it (fail-closed). `tallow run` falls back \
-             to the interpreter, which implements it."
+             to the interpreter, which handles the call at runtime (it either \
+             implements it or refuses by name)."
         ))
     }
 

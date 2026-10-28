@@ -206,17 +206,19 @@ struct Tunnel {
 }
 
 // Create a WireGuard tunnel to the given endpoint with the provided public key.
-// Returns Tunnel struct with status="initialized"
+// NOT IMPLEMENTED: there is no WireGuard backend in this build. Refuses with
+// "net.tunnel_wireguard: WireGuard is not supported in this build (no
+// WireGuard/Noise_IKpsk2 transport backend)" — it never returns a Tunnel.
 native fn tunnel_wireguard(endpoint: String, key: String) -> Tunnel
 
 impl Tunnel {
-    // Performs WireGuard handshake, returns status ("connected")
+    // NOT IMPLEMENTED: refuses, naming the missing WireGuard backend.
     native fn handshake(self) -> Result<String>
 
-    // Sends data through tunnel, returns bytes sent
+    // NOT IMPLEMENTED: refuses, naming the missing WireGuard backend.
     native fn send(self, data: String) -> Result<i32>
 
-    // Receives data from tunnel
+    // NOT IMPLEMENTED: refuses, naming the missing WireGuard backend.
     native fn receive(self) -> Result<String>
 
     // Returns current tunnel status
@@ -243,17 +245,19 @@ struct GrpcServer {
 }
 
 // Create a gRPC server bound to the given port.
-// Returns GrpcServer struct with running=false
+// NOT IMPLEMENTED: there is no gRPC backend in this build. Refuses with
+// "net.grpc_server_create: gRPC is not supported in this build (no HTTP/2 gRPC
+// server/client backend)" — it never returns a GrpcServer.
 native fn grpc_server_create(port: i32) -> GrpcServer
 
 impl GrpcServer {
-    // Registers a service route, returns new route count
+    // NOT IMPLEMENTED: refuses, naming the missing gRPC backend.
     native fn route(self, path: String, handler: String) -> i32
 
-    // Starts the gRPC server
+    // NOT IMPLEMENTED: refuses, naming the missing gRPC backend.
     native fn start(self) -> bool
 
-    // Stops the gRPC server and releases resources
+    // NOT IMPLEMENTED: refuses, naming the missing gRPC backend.
     native fn stop(self) -> Result<()>
 }
 
@@ -264,14 +268,15 @@ struct GrpcClient {
 }
 
 // Connect to a gRPC endpoint.
-// Returns GrpcClient struct with connected=true
+// NOT IMPLEMENTED: refuses, naming the missing gRPC backend. It never returns
+// a GrpcClient and never claims connected=true.
 native fn grpc_client_connect(endpoint: String) -> GrpcClient
 
 impl GrpcClient {
-    // Invokes a remote procedure call
+    // NOT IMPLEMENTED: refuses, naming the missing gRPC backend.
     native fn call(self, service: String, method: String, data: String) -> Result<GrpcResponse>
 
-    // Closes the gRPC client connection
+    // NOT IMPLEMENTED: refuses, naming the missing gRPC backend.
     native fn close(self) -> Result<()>
 }
 
@@ -322,38 +327,36 @@ struct Transport {
 }
 
 // Create an obfs4 pluggable transport connection.
-// obfs4 makes traffic look like random noise, defeating DPI-based censorship.
+// NOT IMPLEMENTED: there is no obfs4 implementation in this build. Refuses with
+// "net.transport_obfs4: obfs4 pluggable transport is not supported in this
+// build (no obfs4 bridge implementation)" — it never returns a Transport.
 // bridge: address of the obfs4 bridge (e.g., "bridge.example.com:443")
-// Returns Transport struct with type="obfs4", connected=false
 native fn transport_obfs4(bridge: String) -> Transport
 
 // Create a meek (domain-fronting) transport connection.
-// Meek tunnels traffic through CDN-hosted HTTPS, making it look like
-// normal web browsing to a permitted domain.
+// NOT IMPLEMENTED: no meek implementation exists in this build; refuses with
+// "net.transport_meek: meek pluggable transport is not supported in this build
+// (no meek bridge implementation)" — it never returns a Transport.
 // url: the fronting URL (e.g., "https://cdn.example.com")
-// Returns Transport struct with type="meek", connected=false
 native fn transport_meek(url: String) -> Transport
 
 // Create a snowflake (WebRTC) transport connection.
-// Snowflake uses WebRTC peer connections through volunteer browser proxies,
-// making traffic indistinguishable from video calls.
+// NOT IMPLEMENTED: no snowflake implementation exists in this build; refuses
+// with "net.transport_snowflake: snowflake pluggable transport is not supported
+// in this build (no snowflake bridge implementation)" — it never returns a
+// Transport.
 // broker: URL of the snowflake broker (default: Tor Project broker)
-// Returns Transport struct with type="snowflake", connected=false
 native fn transport_snowflake(broker: String) -> Transport
 
 impl Transport {
-    // Establishes the transport connection.
-    // For obfs4: performs obfuscation handshake with bridge
-    // For meek: establishes domain-fronted HTTPS session
-    // For snowflake: negotiates WebRTC connection through broker
+    // NOT IMPLEMENTED: refuses, naming the missing obfs4/meek/snowflake
+    // implementation. No transport connection is established.
     native fn connect(self) -> Result<bool> with Net(connect)
 
-    // Sends data through the transport, returns bytes sent.
-    // Data is automatically obfuscated per the transport protocol.
+    // NOT IMPLEMENTED: refuses, naming the missing transports. No data is sent.
     native fn send(self, data: String) -> Result<i32>
 
-    // Receives data from the transport.
-    // Automatically de-obfuscates received data.
+    // NOT IMPLEMENTED: refuses, naming the missing transports. No data is read.
     native fn receive(self) -> Result<String>
 
     // Closes the transport connection and cleans up resources.

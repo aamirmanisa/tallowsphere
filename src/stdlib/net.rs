@@ -1450,375 +1450,69 @@ fn proxy_chain_method(object: &Value, method: &str, args: Vec<Value>) -> StdlibR
 }
 
 // ══════════════════════════════════════════════════════════════════
-// WireGuard Tunnel Implementation (NET-08)
+// WireGuard Tunnel — NOT IMPLEMENTED (NET-08)
 // ══════════════════════════════════════════════════════════════════
+//
+// There is no WireGuard backend in this build. The `wireguard` Cargo feature
+// never gated an implementation, and no code ever referenced it, so every
+// entry point refuses in its return value: no Noise_IKpsk2 handshake, no UDP
+// socket, no key material, no tunnel object. A shape-correct "connected"
+// Tunnel would be a fake — the same reason `net.i2p_connect` refuses.
 
-/// State for a WireGuard tunnel.
-/// Without the `wireguard` feature, simulates handshake and send/receive.
-#[allow(dead_code)]
-struct TunnelState {
-    endpoint: String,
-    public_key: String,
-    status: String, // "initialized", "handshaking", "connected", "closed"
+const WIREGUARD_UNSUPPORTED: &str =
+    "WireGuard is not supported in this build (no WireGuard/Noise_IKpsk2 transport backend)";
+
+/// Create a WireGuard tunnel: `tunnel_wireguard(endpoint, key)` → Tunnel.
+///
+/// Refuses: no WireGuard backend exists in this build.
+fn tunnel_wireguard_create(_args: Vec<Value>) -> StdlibResult {
+    Err(format!("net.tunnel_wireguard: {WIREGUARD_UNSUPPORTED}"))
 }
 
-static TUNNELS: LazyLock<Mutex<HashMap<u64, TunnelState>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Create a WireGuard tunnel: `tunnel_wireguard(endpoint, key)`.
-fn tunnel_wireguard_create(args: Vec<Value>) -> StdlibResult {
-    let endpoint = args
-        .first()
-        .map(|v| v.as_string())
-        .ok_or_else(|| "tunnel_wireguard requires an endpoint argument".to_string())?;
-
-    let key = args
-        .get(1)
-        .map(|v| v.as_string())
-        .ok_or_else(|| "tunnel_wireguard requires a key argument".to_string())?;
-
-    let id = next_net_id();
-
-    let state = TunnelState {
-        endpoint: endpoint.clone(),
-        public_key: key,
-        status: "initialized".to_string(),
-    };
-
-    let mut tunnels = TUNNELS.lock().unwrap();
-    tunnels.insert(id, state);
-
-    Ok(Value::Struct {
-        name: "Tunnel".to_string(),
-        fields: vec![
-            ("_tunnel_id".to_string(), Value::Int(id as i128)),
-            ("endpoint".to_string(), Value::String(endpoint)),
-            (
-                "protocol".to_string(),
-                Value::String("wireguard".to_string()),
-            ),
-            (
-                "status".to_string(),
-                Value::String("initialized".to_string()),
-            ),
-        ],
-    })
-}
-
-/// Perform WireGuard handshake (simulated without `wireguard` feature).
-fn tunnel_handshake(tunnel_id: u64) -> StdlibResult {
-    let mut tunnels = TUNNELS.lock().unwrap();
-    let state = tunnels
-        .get_mut(&tunnel_id)
-        .ok_or_else(|| format!("Tunnel {tunnel_id} not found"))?;
-
-    if state.status == "closed" {
-        return Err(format!("Tunnel {tunnel_id} is closed"));
-    }
-
-    // Simulated handshake -- transition to connected state
-    state.status = "connected".to_string();
-    Ok(Value::String("connected".to_string()))
-}
-
-/// Send data through tunnel (simulated without `wireguard` feature).
-fn tunnel_send(tunnel_id: u64, args: Vec<Value>) -> StdlibResult {
-    let data = args
-        .first()
-        .map(|v| v.as_string())
-        .ok_or_else(|| "Tunnel.send requires a data argument".to_string())?;
-
-    let tunnels = TUNNELS.lock().unwrap();
-    let state = tunnels
-        .get(&tunnel_id)
-        .ok_or_else(|| format!("Tunnel {tunnel_id} not found"))?;
-
-    if state.status != "connected" {
-        return Err(format!(
-            "Tunnel {tunnel_id} not connected (status: {})",
-            state.status
-        ));
-    }
-
-    // Simulated: return the data length as acknowledgement
-    Ok(Value::Int(data.len() as i128))
-}
-
-/// Receive data from tunnel (simulated without `wireguard` feature).
-fn tunnel_receive(tunnel_id: u64) -> StdlibResult {
-    let tunnels = TUNNELS.lock().unwrap();
-    let state = tunnels
-        .get(&tunnel_id)
-        .ok_or_else(|| format!("Tunnel {tunnel_id} not found"))?;
-
-    if state.status != "connected" {
-        return Err(format!(
-            "Tunnel {tunnel_id} not connected (status: {})",
-            state.status
-        ));
-    }
-
-    // Simulated: no data available
-    Ok(Value::Nil)
-}
-
-/// Get tunnel status.
-fn tunnel_status(tunnel_id: u64) -> StdlibResult {
-    let tunnels = TUNNELS.lock().unwrap();
-    let state = tunnels
-        .get(&tunnel_id)
-        .ok_or_else(|| format!("Tunnel {tunnel_id} not found"))?;
-    Ok(Value::String(state.status.clone()))
-}
-
-/// Close a tunnel.
-fn tunnel_close(tunnel_id: u64) -> StdlibResult {
-    let mut tunnels = TUNNELS.lock().unwrap();
-    if let Some(state) = tunnels.get_mut(&tunnel_id) {
-        state.status = "closed".to_string();
-    }
-    tunnels.remove(&tunnel_id);
-    Ok(Value::Nil)
-}
-
-fn tunnel_method(object: &Value, method: &str, args: Vec<Value>) -> StdlibResult {
-    let tunnel_id = extract_field_int(object, "_tunnel_id")? as u64;
-    match method {
-        "handshake" => tunnel_handshake(tunnel_id),
-        "send" => tunnel_send(tunnel_id, args),
-        "receive" => tunnel_receive(tunnel_id),
-        "status" => tunnel_status(tunnel_id),
-        "close" => tunnel_close(tunnel_id),
-        _ => Err(format!("Tunnel has no method '{method}'")),
-    }
+/// `Tunnel.{handshake,send,receive,status,close}`.
+///
+/// Refuses: no Tunnel value can be produced, and no WireGuard method is
+/// backed by real code, so every method names the missing backend.
+fn tunnel_method(_object: &Value, method: &str, _args: Vec<Value>) -> StdlibResult {
+    Err(format!(
+        "net.Tunnel.{method}: {WIREGUARD_UNSUPPORTED}; no tunnel object exists"
+    ))
 }
 
 // ══════════════════════════════════════════════════════════════════
-// gRPC Server / Client (NET-07, NET-10)
+// gRPC Server / Client — NOT IMPLEMENTED (NET-07, NET-10)
 // ══════════════════════════════════════════════════════════════════
+//
+// No gRPC (HTTP/2 + protobuf) backend exists in this build: `tonic` was
+// declared as an optional dependency that no code referenced, and the `grpc`
+// feature gated nothing. Every entry point refuses by name instead of binding
+// a port or dialing an endpoint it does not have.
 
-/// Server-side gRPC state.
-#[allow(dead_code)]
-struct GrpcServerState {
-    port: u16,
-    routes: HashMap<String, String>, // path -> handler name
-    running: bool,
+const GRPC_UNSUPPORTED: &str =
+    "gRPC is not supported in this build (no HTTP/2 gRPC server/client backend)";
+
+/// Create a gRPC server: `grpc_server_create(port)` → GrpcServer.
+fn grpc_server_create(_args: Vec<Value>) -> StdlibResult {
+    Err(format!("net.grpc_server_create: {GRPC_UNSUPPORTED}"))
 }
 
-static GRPC_SERVERS: LazyLock<Mutex<HashMap<u64, GrpcServerState>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Create a GrpcServer struct value.
-fn grpc_server_create(args: Vec<Value>) -> StdlibResult {
-    let port = args
-        .first()
-        .and_then(|v| match v {
-            Value::Int(n) => Some(*n as u16),
-            _ => None,
-        })
-        .ok_or_else(|| "grpc_server_create requires a port (integer) argument".to_string())?;
-
-    let id = next_net_id();
-    GRPC_SERVERS.lock().unwrap().insert(
-        id,
-        GrpcServerState {
-            port,
-            routes: HashMap::new(),
-            running: false,
-        },
-    );
-
-    Ok(Value::Struct {
-        name: "GrpcServer".to_string(),
-        fields: vec![
-            ("_server_id".to_string(), Value::Int(id as i128)),
-            ("port".to_string(), Value::Int(port as i128)),
-            ("route_count".to_string(), Value::Int(0)),
-            ("running".to_string(), Value::Bool(false)),
-        ],
-    })
+/// `GrpcServer.{route,start,stop}`.
+fn grpc_server_method(_object: &Value, method: &str, _args: Vec<Value>) -> StdlibResult {
+    Err(format!(
+        "net.GrpcServer.{method}: {GRPC_UNSUPPORTED}; no server object exists"
+    ))
 }
 
-/// Register a route on a GrpcServer.
-fn grpc_server_route(server_id: u64, args: Vec<Value>) -> StdlibResult {
-    let path = args
-        .first()
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .ok_or_else(|| "GrpcServer.route requires a path (string) argument".to_string())?;
-
-    let handler = args
-        .get(1)
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "default_handler".to_string());
-
-    let mut servers = GRPC_SERVERS.lock().unwrap();
-    let state = servers
-        .get_mut(&server_id)
-        .ok_or_else(|| format!("GrpcServer {} not found", server_id))?;
-
-    state.routes.insert(path.clone(), handler);
-    let count = state.routes.len() as i128;
-
-    Ok(Value::Int(count))
+/// Connect a gRPC client: `grpc_client_connect(endpoint)` → GrpcClient.
+fn grpc_client_connect(_args: Vec<Value>) -> StdlibResult {
+    Err(format!("net.grpc_client_connect: {GRPC_UNSUPPORTED}"))
 }
 
-/// Start a GrpcServer (simulated -- sets running=true).
-fn grpc_server_start(server_id: u64) -> StdlibResult {
-    let mut servers = GRPC_SERVERS.lock().unwrap();
-    let state = servers
-        .get_mut(&server_id)
-        .ok_or_else(|| format!("GrpcServer {} not found", server_id))?;
-    state.running = true;
-    Ok(Value::Bool(true))
-}
-
-/// Stop a GrpcServer.
-fn grpc_server_stop(server_id: u64) -> StdlibResult {
-    let mut servers = GRPC_SERVERS.lock().unwrap();
-    if let Some(state) = servers.get_mut(&server_id) {
-        state.running = false;
-    }
-    servers.remove(&server_id);
-    Ok(Value::Nil)
-}
-
-fn grpc_server_method(object: &Value, method: &str, args: Vec<Value>) -> StdlibResult {
-    let server_id = extract_field_int(object, "_server_id")? as u64;
-    match method {
-        "route" => grpc_server_route(server_id, args),
-        "start" => grpc_server_start(server_id),
-        "stop" => grpc_server_stop(server_id),
-        _ => Err(format!("GrpcServer has no method '{method}'")),
-    }
-}
-
-/// Client-side gRPC state.
-struct GrpcClientState {
-    endpoint: String,
-    connected: bool,
-}
-
-static GRPC_CLIENTS: LazyLock<Mutex<HashMap<u64, GrpcClientState>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Create a GrpcClient by connecting to an endpoint.
-fn grpc_client_connect(args: Vec<Value>) -> StdlibResult {
-    let endpoint = args
-        .first()
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .ok_or_else(|| "grpc_client_connect requires an endpoint (string) argument".to_string())?;
-
-    let id = next_net_id();
-    GRPC_CLIENTS.lock().unwrap().insert(
-        id,
-        GrpcClientState {
-            endpoint: endpoint.clone(),
-            connected: true,
-        },
-    );
-
-    Ok(Value::Struct {
-        name: "GrpcClient".to_string(),
-        fields: vec![
-            ("_client_id".to_string(), Value::Int(id as i128)),
-            ("endpoint".to_string(), Value::String(endpoint)),
-            ("connected".to_string(), Value::Bool(true)),
-        ],
-    })
-}
-
-/// Invoke an RPC call on a GrpcClient.
-/// Args: service name, method name, data value.
-/// In interpreter mode this simulates gRPC by attempting an HTTP POST.
-fn grpc_client_call(client_id: u64, args: Vec<Value>) -> StdlibResult {
-    let clients = GRPC_CLIENTS.lock().unwrap();
-    let state = clients
-        .get(&client_id)
-        .ok_or_else(|| format!("GrpcClient {} not found", client_id))?;
-
-    if !state.connected {
-        return Err(format!("GrpcClient {} is disconnected", client_id));
-    }
-
-    let service = args
-        .first()
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "default".to_string());
-
-    let method = args
-        .get(1)
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "call".to_string());
-
-    let data = args.get(2).cloned().unwrap_or(Value::Nil);
-
-    // Simulate gRPC call: attempt HTTP POST to endpoint/service/method
-    let url = format!("{}/{}/{}", state.endpoint, service, method);
-    let body = match &data {
-        Value::String(s) => s.clone(),
-        Value::Nil => "{}".to_string(),
-        other => format!("{:?}", other),
-    };
-
-    // Drop the lock before making network call
-    drop(clients);
-
-    // Attempt the HTTP POST (simulating gRPC over HTTP/2)
-    let result = crate::runtime::egress_http::post(&url)
-        .header("Content-Type", "application/grpc+json")
-        .header("TE", "trailers")
-        .send(body.as_bytes());
-
-    match result {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let text = resp.into_body().read_to_string().unwrap_or_default();
-            Ok(Value::Struct {
-                name: "GrpcResponse".to_string(),
-                fields: vec![
-                    ("status".to_string(), Value::Int(status as i128)),
-                    ("body".to_string(), Value::String(text)),
-                    ("service".to_string(), Value::String(service)),
-                    ("method".to_string(), Value::String(method)),
-                ],
-            })
-        }
-        Err(e) => Err(format!("gRPC call to {} failed: {}", url, e)),
-    }
-}
-
-/// Close a GrpcClient connection.
-fn grpc_client_close(client_id: u64) -> StdlibResult {
-    let mut clients = GRPC_CLIENTS.lock().unwrap();
-    if let Some(state) = clients.get_mut(&client_id) {
-        state.connected = false;
-    }
-    clients.remove(&client_id);
-    Ok(Value::Nil)
-}
-
-fn grpc_client_method(object: &Value, method: &str, args: Vec<Value>) -> StdlibResult {
-    let client_id = extract_field_int(object, "_client_id")? as u64;
-    match method {
-        "call" => grpc_client_call(client_id, args),
-        "close" => grpc_client_close(client_id),
-        _ => Err(format!("GrpcClient has no method '{method}'")),
-    }
+/// `GrpcClient.{call,close}`.
+fn grpc_client_method(_object: &Value, method: &str, _args: Vec<Value>) -> StdlibResult {
+    Err(format!(
+        "net.GrpcClient.{method}: {GRPC_UNSUPPORTED}; no client object exists"
+    ))
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1933,165 +1627,40 @@ fn traffic_shape_method(object: &Value, method: &str, args: Vec<Value>) -> Stdli
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Transport — Pluggable Transports for Censorship Resistance (NET-12)
+// Transport — Pluggable Transports — NOT IMPLEMENTED (NET-12)
 // ══════════════════════════════════════════════════════════════════
+//
+// None of obfs4, meek or snowflake has an implementation in this build: no
+// bridge handshake, no domain fronting, no WebRTC broker negotiation. Each
+// constructor and each Transport method refuses by name rather than returning
+// a "connected" object that carries no bytes.
 
-#[allow(dead_code)]
-struct TransportState {
-    transport_type: String,
-    endpoint: String,
-    connected: bool,
-    bytes_sent: u64,
-    bytes_received: u64,
+fn transport_unsupported(kind: &str, function: &str) -> StdlibResult {
+    Err(format!(
+        "net.{function}: {kind} pluggable transport is not supported in this build (no {kind} bridge implementation)"
+    ))
 }
 
-static TRANSPORTS: LazyLock<Mutex<HashMap<u64, TransportState>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Create an obfs4 pluggable transport connection.
-fn transport_obfs4_create(args: Vec<Value>) -> StdlibResult {
-    let bridge = args.first()
-        .map(|v| v.as_string())
-        .ok_or_else(|| "transport_obfs4 requires a bridge address".to_string())?;
-
-    let id = next_net_id();
-
-    TRANSPORTS.lock().unwrap().insert(id, TransportState {
-        transport_type: "obfs4".to_string(),
-        endpoint: bridge.clone(),
-        connected: false,
-        bytes_sent: 0,
-        bytes_received: 0,
-    });
-
-    Ok(Value::Struct {
-        name: "Transport".to_string(),
-        fields: vec![
-            ("_transport_id".to_string(), Value::Int(id as i128)),
-            ("type".to_string(), Value::String("obfs4".to_string())),
-            ("bridge".to_string(), Value::String(bridge)),
-            ("connected".to_string(), Value::Bool(false)),
-        ],
-    })
+/// Create an obfs4 transport: `transport_obfs4(bridge)` → Transport.
+fn transport_obfs4_create(_args: Vec<Value>) -> StdlibResult {
+    transport_unsupported("obfs4", "transport_obfs4")
 }
 
-/// Create a meek (domain-fronting) transport connection.
-fn transport_meek_create(args: Vec<Value>) -> StdlibResult {
-    let url = args.first()
-        .map(|v| v.as_string())
-        .ok_or_else(|| "transport_meek requires a fronting URL".to_string())?;
-
-    let id = next_net_id();
-
-    TRANSPORTS.lock().unwrap().insert(id, TransportState {
-        transport_type: "meek".to_string(),
-        endpoint: url.clone(),
-        connected: false,
-        bytes_sent: 0,
-        bytes_received: 0,
-    });
-
-    Ok(Value::Struct {
-        name: "Transport".to_string(),
-        fields: vec![
-            ("_transport_id".to_string(), Value::Int(id as i128)),
-            ("type".to_string(), Value::String("meek".to_string())),
-            ("url".to_string(), Value::String(url)),
-            ("connected".to_string(), Value::Bool(false)),
-        ],
-    })
+/// Create a meek transport: `transport_meek(url)` → Transport.
+fn transport_meek_create(_args: Vec<Value>) -> StdlibResult {
+    transport_unsupported("meek", "transport_meek")
 }
 
-/// Create a snowflake (WebRTC) transport connection.
-fn transport_snowflake_create(args: Vec<Value>) -> StdlibResult {
-    let broker = args.first()
-        .map(|v| v.as_string())
-        .unwrap_or_else(|| "https://snowflake-broker.torproject.net".to_string());
-
-    let id = next_net_id();
-
-    TRANSPORTS.lock().unwrap().insert(id, TransportState {
-        transport_type: "snowflake".to_string(),
-        endpoint: broker.clone(),
-        connected: false,
-        bytes_sent: 0,
-        bytes_received: 0,
-    });
-
-    Ok(Value::Struct {
-        name: "Transport".to_string(),
-        fields: vec![
-            ("_transport_id".to_string(), Value::Int(id as i128)),
-            ("type".to_string(), Value::String("snowflake".to_string())),
-            ("broker".to_string(), Value::String(broker)),
-            ("connected".to_string(), Value::Bool(false)),
-        ],
-    })
+/// Create a snowflake transport: `transport_snowflake(broker)` → Transport.
+fn transport_snowflake_create(_args: Vec<Value>) -> StdlibResult {
+    transport_unsupported("snowflake", "transport_snowflake")
 }
 
-/// Attempt to connect a transport. Returns simulated success.
-fn transport_connect(transport_id: u64) -> StdlibResult {
-    let mut transports = TRANSPORTS.lock().unwrap();
-    let state = transports.get_mut(&transport_id)
-        .ok_or_else(|| format!("Transport {} not found", transport_id))?;
-
-    // Simulated connection (real implementation would use ptrs crate / WebRTC)
-    state.connected = true;
-    Ok(Value::Bool(true))
-}
-
-/// Send data through the transport. Increments bytes_sent counter.
-fn transport_send(transport_id: u64, args: Vec<Value>) -> StdlibResult {
-    let mut transports = TRANSPORTS.lock().unwrap();
-    let state = transports.get_mut(&transport_id)
-        .ok_or_else(|| format!("Transport {} not found", transport_id))?;
-
-    if !state.connected {
-        return Err(format!("Transport {} is not connected", transport_id));
-    }
-
-    let data = args.first().map(|v| v.as_string()).unwrap_or_default();
-    let len = data.len() as u64;
-    state.bytes_sent += len;
-
-    Ok(Value::Int(len as i128))
-}
-
-/// Receive data from the transport. Returns simulated empty data.
-fn transport_receive(transport_id: u64) -> StdlibResult {
-    let mut transports = TRANSPORTS.lock().unwrap();
-    let state = transports.get_mut(&transport_id)
-        .ok_or_else(|| format!("Transport {} not found", transport_id))?;
-
-    if !state.connected {
-        return Err(format!("Transport {} is not connected", transport_id));
-    }
-
-    // Simulated receive — in a real implementation, would read from the transport
-    let data = "".to_string();
-    state.bytes_received += data.len() as u64;
-    Ok(Value::String(data))
-}
-
-/// Close the transport connection and clean up.
-fn transport_close(transport_id: u64) -> StdlibResult {
-    let mut transports = TRANSPORTS.lock().unwrap();
-    if let Some(state) = transports.get_mut(&transport_id) {
-        state.connected = false;
-    }
-    transports.remove(&transport_id);
-    Ok(Value::Nil)
-}
-
-fn transport_method(object: &Value, method: &str, args: Vec<Value>) -> StdlibResult {
-    let transport_id = extract_field_int(object, "_transport_id")? as u64;
-    match method {
-        "connect" => transport_connect(transport_id),
-        "send" => transport_send(transport_id, args),
-        "receive" => transport_receive(transport_id),
-        "close" => transport_close(transport_id),
-        _ => Err(format!("Transport has no method '{method}'")),
-    }
+/// `Transport.{connect,send,receive,close}`.
+fn transport_method(_object: &Value, method: &str, _args: Vec<Value>) -> StdlibResult {
+    Err(format!(
+        "net.Transport.{method}: pluggable transports are not supported in this build (no obfs4, meek or snowflake implementation); no transport object exists"
+    ))
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -3257,60 +2826,31 @@ mod tests {
         assert!(result.is_err(), "invalid proxy spec should be rejected");
     }
 
-    // ── Tunnel tests ──
+    // ── Tunnel tests (no WireGuard backend exists) ──
 
     #[test]
-    fn test_tunnel_wireguard_create() {
-        let result = tunnel_wireguard_create(vec![
+    fn tunnel_wireguard_refuses_with_backend_named() {
+        let err = tunnel_wireguard_create(vec![
             Value::String("10.0.0.1:51820".into()),
             Value::String("base64pubkey==".into()),
-        ]);
-        assert!(result.is_ok());
-        if let Ok(Value::Struct { name, fields }) = &result {
-            assert_eq!(name, "Tunnel");
-            let endpoint = fields.iter().find(|(n, _)| n == "endpoint");
-            assert!(matches!(endpoint, Some((_, Value::String(s))) if s == "10.0.0.1:51820"));
-            let protocol = fields.iter().find(|(n, _)| n == "protocol");
-            assert!(matches!(protocol, Some((_, Value::String(s))) if s == "wireguard"));
-            let status = fields.iter().find(|(n, _)| n == "status");
-            assert!(matches!(status, Some((_, Value::String(s))) if s == "initialized"));
-        } else {
-            panic!("tunnel_wireguard should return a Tunnel struct");
+        ])
+        .expect_err("tunnel_wireguard must refuse, not fabricate a Tunnel");
+        assert!(err.contains("not supported"), "refusal must say unsupported: {err}");
+        assert!(err.contains("WireGuard"), "refusal must name the missing backend: {err}");
+    }
+
+    #[test]
+    fn tunnel_methods_refuse_with_backend_named() {
+        let tunnel_struct = Value::Struct {
+            name: "Tunnel".to_string(),
+            fields: vec![("_tunnel_id".to_string(), Value::Int(99999))],
+        };
+        for method in ["handshake", "send", "receive", "status", "close"] {
+            let err = dispatch_method(&tunnel_struct, method, vec![Value::String("x".into())])
+                .expect("Tunnel method should be routable")
+                .expect_err("Tunnel method must refuse");
+            assert!(err.contains("WireGuard"), "{method} refusal must name WireGuard: {err}");
         }
-    }
-
-    #[test]
-    fn test_tunnel_status() {
-        let result = tunnel_wireguard_create(vec![
-            Value::String("10.0.0.1:51820".into()),
-            Value::String("key==".into()),
-        ]);
-        let tunnel = result.unwrap();
-        let id = extract_field_int(&tunnel, "_tunnel_id").unwrap() as u64;
-        let status = tunnel_status(id).unwrap();
-        assert!(matches!(status, Value::String(s) if s == "initialized"));
-    }
-
-    #[test]
-    fn test_tunnel_handshake_and_send() {
-        let result = tunnel_wireguard_create(vec![
-            Value::String("10.0.0.1:51820".into()),
-            Value::String("key==".into()),
-        ]);
-        let tunnel = result.unwrap();
-        let id = extract_field_int(&tunnel, "_tunnel_id").unwrap() as u64;
-
-        // Handshake
-        let hs = tunnel_handshake(id).unwrap();
-        assert!(matches!(hs, Value::String(s) if s == "connected"));
-
-        // Send
-        let sent = tunnel_send(id, vec![Value::String("hello".into())]).unwrap();
-        assert!(matches!(sent, Value::Int(5))); // "hello" is 5 bytes
-
-        // Status should be connected
-        let status = tunnel_status(id).unwrap();
-        assert!(matches!(status, Value::String(s) if s == "connected"));
     }
 
     // ── Method dispatch routing tests ──
@@ -3345,129 +2885,50 @@ mod tests {
         assert!(result.is_some(), "ProxyChain.rotate should be routable");
     }
 
-    // ── gRPC tests ──
+    // ── gRPC tests (no gRPC backend exists) ──
 
     #[test]
-    fn grpc_server_create_has_expected_fields() {
-        let result = grpc_server_create(vec![Value::Int(50051)]);
-        assert!(result.is_ok(), "grpc_server_create should succeed");
-        let server = result.unwrap();
-        if let Value::Struct { name, fields } = &server {
-            assert_eq!(name, "GrpcServer");
-            assert!(fields.iter().any(|(n, _)| n == "_server_id"));
-            assert!(fields.iter().any(|(n, v)| n == "port" && matches!(v, Value::Int(50051))));
-            assert!(fields.iter().any(|(n, v)| n == "route_count" && matches!(v, Value::Int(0))));
-            assert!(fields.iter().any(|(n, v)| n == "running" && matches!(v, Value::Bool(false))));
-        } else {
-            panic!("expected Value::Struct for GrpcServer");
-        }
+    fn grpc_server_create_refuses_with_backend_named() {
+        let err = grpc_server_create(vec![Value::Int(50051)])
+            .expect_err("grpc_server_create must refuse, not fabricate a listener");
+        assert!(err.contains("not supported"), "refusal must say unsupported: {err}");
+        assert!(err.contains("gRPC"), "refusal must name the missing backend: {err}");
     }
 
     #[test]
-    fn grpc_server_route_registration() {
-        let server = grpc_server_create(vec![Value::Int(50052)]).unwrap();
-        let server_id = extract_field_int(&server, "_server_id").unwrap() as u64;
-
-        let count = grpc_server_route(
-            server_id,
-            vec![
-                Value::String("/myapp.Greeter/SayHello".into()),
-                Value::String("say_hello_handler".into()),
-            ],
-        )
-        .unwrap();
-        assert!(matches!(count, Value::Int(1)), "expected route count 1");
-
-        let count2 = grpc_server_route(
-            server_id,
-            vec![
-                Value::String("/myapp.Greeter/SayGoodbye".into()),
-                Value::String("say_goodbye_handler".into()),
-            ],
-        )
-        .unwrap();
-        assert!(matches!(count2, Value::Int(2)), "expected route count 2");
-
-        // Start and verify
-        let started = grpc_server_start(server_id).unwrap();
-        assert!(matches!(started, Value::Bool(true)));
-
-        // Stop and cleanup
-        grpc_server_stop(server_id).unwrap();
-    }
-
-    #[test]
-    fn grpc_client_connect_has_expected_fields() {
-        let result = grpc_client_connect(vec![Value::String("http://localhost:50051".into())]);
-        assert!(result.is_ok(), "grpc_client_connect should succeed");
-        let client = result.unwrap();
-        if let Value::Struct { name, fields } = &client {
-            assert_eq!(name, "GrpcClient");
-            assert!(fields.iter().any(|(n, _)| n == "_client_id"));
-            assert!(fields
-                .iter()
-                .any(|(n, v)| n == "endpoint"
-                    && matches!(v, Value::String(s) if s == "http://localhost:50051")));
-            assert!(fields.iter().any(|(n, v)| n == "connected" && matches!(v, Value::Bool(true))));
-        } else {
-            panic!("expected Value::Struct for GrpcClient");
-        }
-    }
-
-    #[test]
-    fn grpc_client_call_no_server_returns_error() {
-        let client =
-            grpc_client_connect(vec![Value::String("http://127.0.0.1:1".into())]).unwrap();
-        let client_id = extract_field_int(&client, "_client_id").unwrap() as u64;
-
-        let result = grpc_client_call(
-            client_id,
-            vec![
-                Value::String("greeter".into()),
-                Value::String("SayHello".into()),
-                Value::String("{}".into()),
-            ],
-        );
-        // Call to non-existent server should fail
-        assert!(result.is_err(), "call to unreachable endpoint should error");
-
-        // Cleanup
-        grpc_client_close(client_id).unwrap();
-    }
-
-    #[test]
-    fn grpc_server_method_dispatch_routes() {
-        let server = grpc_server_create(vec![Value::Int(50053)]).unwrap();
-        let result = dispatch_method(
-            &server,
-            "route",
-            vec![Value::String("/svc/Method".into())],
-        );
-        assert!(result.is_some(), "GrpcServer.route should be routable");
-    }
-
-    #[test]
-    fn grpc_client_method_dispatch_routes() {
-        let client =
-            grpc_client_connect(vec![Value::String("http://127.0.0.1:1".into())]).unwrap();
-        let result = dispatch_method(&client, "close", vec![]);
-        assert!(result.is_some(), "GrpcClient.close should be routable");
-        assert!(result.unwrap().is_ok());
-    }
-
-    #[test]
-    fn test_tunnel_method_dispatch() {
-        let tunnel_struct = Value::Struct {
-            name: "Tunnel".to_string(),
-            fields: vec![
-                ("_tunnel_id".to_string(), Value::Int(99999)),
-                ("endpoint".to_string(), Value::String("10.0.0.1:51820".into())),
-                ("protocol".to_string(), Value::String("wireguard".into())),
-                ("status".to_string(), Value::String("initialized".into())),
-            ],
+    fn grpc_server_methods_refuse() {
+        let server = Value::Struct {
+            name: "GrpcServer".to_string(),
+            fields: vec![("_server_id".to_string(), Value::Int(99999))],
         };
-        let result = dispatch_method(&tunnel_struct, "status", vec![]);
-        assert!(result.is_some(), "Tunnel.status should be routable");
+        for method in ["route", "start", "stop"] {
+            let err = dispatch_method(&server, method, vec![Value::String("/svc/M".into())])
+                .expect("GrpcServer method should be routable")
+                .expect_err("GrpcServer method must refuse");
+            assert!(err.contains("gRPC"), "{method} refusal must name gRPC: {err}");
+        }
+    }
+
+    #[test]
+    fn grpc_client_connect_refuses_with_backend_named() {
+        let err = grpc_client_connect(vec![Value::String("http://localhost:50051".into())])
+            .expect_err("grpc_client_connect must refuse, not fabricate a connection");
+        assert!(err.contains("not supported"), "refusal must say unsupported: {err}");
+        assert!(err.contains("gRPC"), "refusal must name the missing backend: {err}");
+    }
+
+    #[test]
+    fn grpc_client_methods_refuse() {
+        let client = Value::Struct {
+            name: "GrpcClient".to_string(),
+            fields: vec![("_client_id".to_string(), Value::Int(99999))],
+        };
+        for method in ["call", "close"] {
+            let err = dispatch_method(&client, method, vec![Value::String("svc".into())])
+                .expect("GrpcClient method should be routable")
+                .expect_err("GrpcClient method must refuse");
+            assert!(err.contains("gRPC"), "{method} refusal must name gRPC: {err}");
+        }
     }
 
     // ── TrafficShape tests ──
@@ -3573,118 +3034,40 @@ mod tests {
         assert!(result.is_some(), "TrafficShape.start should be routable");
     }
 
-    // ── Transport tests ──
+    // ── Transport tests (no pluggable transport backend exists) ──
 
     #[test]
-    fn test_transport_obfs4_create() {
-        let result = transport_obfs4_create(vec![Value::String("bridge.example.com:443".into())]);
-        assert!(result.is_ok());
-        if let Ok(Value::Struct { name, fields }) = &result {
-            assert_eq!(name, "Transport");
-            assert!(fields.iter().any(|(n, _)| n == "_transport_id"));
-            assert!(fields.iter().any(|(n, v)| n == "type" && matches!(v, Value::String(s) if s == "obfs4")));
-            assert!(fields.iter().any(|(n, v)| n == "bridge" && matches!(v, Value::String(s) if s == "bridge.example.com:443")));
-            assert!(fields.iter().any(|(n, v)| n == "connected" && matches!(v, Value::Bool(false))));
-        } else {
-            panic!("transport_obfs4_create should return a Transport struct");
+    fn transport_constructors_refuse_with_backend_named() {
+        let cases = [
+            ("obfs4", transport_obfs4_create(vec![Value::String("bridge.example.com:443".into())])),
+            ("meek", transport_meek_create(vec![Value::String("https://cdn.example.com".into())])),
+            ("snowflake", transport_snowflake_create(vec![])),
+        ];
+        for (name, result) in cases {
+            let err = result.expect_err("transport constructor must refuse");
+            assert!(err.contains("not supported"), "{name} refusal must say unsupported: {err}");
+            assert!(err.contains(name), "{name} refusal must name the transport: {err}");
         }
     }
 
     #[test]
-    fn test_transport_meek_create() {
-        let result = transport_meek_create(vec![Value::String("https://cdn.example.com".into())]);
-        assert!(result.is_ok());
-        if let Ok(Value::Struct { name, fields }) = &result {
-            assert_eq!(name, "Transport");
-            assert!(fields.iter().any(|(n, v)| n == "type" && matches!(v, Value::String(s) if s == "meek")));
-            assert!(fields.iter().any(|(n, v)| n == "url" && matches!(v, Value::String(s) if s == "https://cdn.example.com")));
-        } else {
-            panic!("transport_meek_create should return a Transport struct");
-        }
-    }
-
-    #[test]
-    fn test_transport_snowflake_create() {
-        let result = transport_snowflake_create(vec![Value::String("https://broker.example.com".into())]);
-        assert!(result.is_ok());
-        if let Ok(Value::Struct { name, fields }) = &result {
-            assert_eq!(name, "Transport");
-            assert!(fields.iter().any(|(n, v)| n == "type" && matches!(v, Value::String(s) if s == "snowflake")));
-            assert!(fields.iter().any(|(n, v)| n == "broker" && matches!(v, Value::String(s) if s == "https://broker.example.com")));
-        } else {
-            panic!("transport_snowflake_create should return a Transport struct");
-        }
-    }
-
-    #[test]
-    fn test_transport_snowflake_default_broker() {
-        let result = transport_snowflake_create(vec![]);
-        assert!(result.is_ok());
-        if let Ok(Value::Struct { fields, .. }) = &result {
-            assert!(fields.iter().any(|(n, v)| n == "broker"
-                && matches!(v, Value::String(s) if s.contains("torproject.net"))));
-        }
-    }
-
-    #[test]
-    fn test_transport_connect_simulated() {
-        let transport = transport_obfs4_create(vec![Value::String("bridge:443".into())]).unwrap();
-        let id = extract_field_int(&transport, "_transport_id").unwrap() as u64;
-
-        // Connect (simulated)
-        let result = transport_connect(id);
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), Value::Bool(true)));
-
-        // Verify connected state
-        let transports = TRANSPORTS.lock().unwrap();
-        assert!(transports.get(&id).unwrap().connected);
-    }
-
-    #[test]
-    fn test_transport_send_receive_lifecycle() {
-        let transport = transport_meek_create(vec![Value::String("https://cdn.test".into())]).unwrap();
-        let id = extract_field_int(&transport, "_transport_id").unwrap() as u64;
-
-        // Send without connect should fail
-        let result = transport_send(id, vec![Value::String("data".into())]);
-        assert!(result.is_err(), "send on disconnected transport should fail");
-
-        // Connect
-        transport_connect(id).unwrap();
-
-        // Send
-        let result = transport_send(id, vec![Value::String("hello world".into())]);
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), Value::Int(11))); // "hello world" = 11 bytes
-
-        // Verify bytes_sent
-        let transports = TRANSPORTS.lock().unwrap();
-        assert_eq!(transports.get(&id).unwrap().bytes_sent, 11);
-        drop(transports);
-
-        // Close
-        let result = transport_close(id);
-        assert!(result.is_ok());
-
-        // Verify removed
-        let transports = TRANSPORTS.lock().unwrap();
-        assert!(transports.get(&id).is_none());
-    }
-
-    #[test]
-    fn test_transport_method_dispatch() {
-        let transport_struct = Value::Struct {
+    fn transport_methods_refuse() {
+        let transport = Value::Struct {
             name: "Transport".to_string(),
             fields: vec![
                 ("_transport_id".to_string(), Value::Int(99999)),
                 ("type".to_string(), Value::String("obfs4".into())),
-                ("bridge".to_string(), Value::String("test:443".into())),
-                ("connected".to_string(), Value::Bool(false)),
             ],
         };
-        let result = dispatch_method(&transport_struct, "connect", vec![]);
-        assert!(result.is_some(), "Transport.connect should be routable");
+        for method in ["connect", "send", "receive", "close"] {
+            let err = dispatch_method(&transport, method, vec![Value::String("x".into())])
+                .expect("Transport method should be routable")
+                .expect_err("Transport method must refuse");
+            assert!(
+                err.contains("pluggable transports are not supported"),
+                "{method} refusal must name the missing transports: {err}"
+            );
+        }
     }
 
     #[test]
@@ -3695,18 +3078,13 @@ mod tests {
     }
 
     #[test]
-    fn test_transport_dispatch_routing() {
-        let result = dispatch("transport_obfs4", vec![Value::String("bridge:443".into())]);
-        assert!(result.is_some(), "transport_obfs4 should be routable");
-        assert!(result.unwrap().is_ok());
-
-        let result = dispatch("transport_meek", vec![Value::String("https://cdn.test".into())]);
-        assert!(result.is_some(), "transport_meek should be routable");
-        assert!(result.unwrap().is_ok());
-
-        let result = dispatch("transport_snowflake", vec![Value::String("https://broker.test".into())]);
-        assert!(result.is_some(), "transport_snowflake should be routable");
-        assert!(result.unwrap().is_ok());
+    fn test_transport_dispatch_routing_refuses() {
+        for function in ["transport_obfs4", "transport_meek", "transport_snowflake"] {
+            let result = dispatch(function, vec![Value::String("bridge:443".into())])
+                .expect("transport constructor should be routable");
+            let err = result.expect_err("transport constructor must refuse, not simulate");
+            assert!(err.contains("not supported"), "{function} must refuse: {err}");
+        }
     }
 
     // ── TCP/UDP Server tests ──
@@ -3906,19 +3284,33 @@ mod tests {
         assert!(result.is_ok(), "stealth_net.tl failed: {:?}", result.err());
         let output = interp.output.join("\n");
         assert!(
-            output.contains("All Phase 23 types constructed successfully"),
+            output.contains("All implemented Phase 23 types constructed successfully"),
             "stealth_net.tl should print success message, got:\n{output}"
         );
         // Verify individual type outputs
         assert!(output.contains("TorPool size: 3"), "missing TorPool output");
         assert!(output.contains("OnionAddr: example.onion"), "missing OnionAddr output");
         assert!(output.contains("ProxyChain hops: 2"), "missing ProxyChain output");
-        assert!(output.contains("Tunnel status: initialized"), "missing Tunnel output");
-        assert!(output.contains("GrpcServer port: 50051"), "missing GrpcServer output");
         assert!(output.contains("TrafficShape padding: 256"), "missing TrafficShape output");
-        assert!(output.contains("obfs4 connected: false"), "missing obfs4 output");
-        assert!(output.contains("meek connected: false"), "missing meek output");
-        assert!(output.contains("snowflake connected: false"), "missing snowflake output");
+    }
+
+    // ── Refusal from a user path: tests/fixtures/unsupported_net.tl ──
+
+    #[test]
+    fn test_unsupported_net_fixture_refuses() {
+        let source = std::fs::read_to_string("tests/fixtures/unsupported_net.tl")
+            .expect("failed to read unsupported_net.tl fixture");
+        let (tokens, lex_errors) = crate::lexer::tokenize(&source);
+        assert!(lex_errors.is_empty(), "lex errors: {lex_errors:?}");
+        let program =
+            crate::parser::Parser::parse(tokens).expect("parse error in unsupported_net.tl");
+        let mut interp = crate::interp::Interpreter::new();
+        let err = interp
+            .run(&program)
+            .expect_err("tunnel_wireguard must refuse from a user path");
+        let text = format!("{err:?}");
+        assert!(text.contains("WireGuard"), "refusal must name WireGuard: {text}");
+        assert!(text.contains("not supported"), "refusal must say unsupported: {text}");
     }
 
     // ── Feature 4: Tor / I2P anonymization tests ──────────────────────────

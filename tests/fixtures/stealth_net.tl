@@ -1,6 +1,13 @@
 // Phase 23: Stealth & Advanced Networking integration test
+//
+// Covers only the constructs that are actually implemented. The WireGuard
+// tunnel, gRPC server/client and obfs4/meek/snowflake transports have no
+// backend in this build: each entry point refuses with "… is not supported in
+// this build (…)" instead of returning a fake success. Those refusals are
+// pinned by the unit tests in src/stdlib/net.rs and by `tallow run` on
+// tests/fixtures/unsupported_net.tl.
 
-fn main() with Net(tor_pool_create), Net(onion_addr), Net(proxy_chain_create), Net(tunnel_wireguard), Net(grpc_server_create), Net(grpc_client_connect), Net(traffic_shape_create), Net(transport_obfs4), Net(transport_meek), Net(transport_snowflake) {
+fn main() with Net(tor_pool_create), Net(onion_addr), Net(proxy_chain_create), Net(traffic_shape_create) {
     // Test TorPool type construction
     let tor = net.tor_pool_create(3)
     print("TorPool size: {tor.size}")
@@ -13,29 +20,9 @@ fn main() with Net(tor_pool_create), Net(onion_addr), Net(proxy_chain_create), N
     let chain = net.proxy_chain_create(["socks5://127.0.0.1:1080", "http://proxy.example.com:8080"])
     print("ProxyChain hops: {chain.hop_count}")
 
-    // Test Tunnel
-    let tunnel = net.tunnel_wireguard("vpn.example.com:51820", "base64pubkey==")
-    print("Tunnel status: {tunnel.status}")
-
-    // Test GrpcServer
-    let server = net.grpc_server_create(50051)
-    print("GrpcServer port: {server.port}")
-
-    // Test GrpcClient
-    let client = net.grpc_client_connect("http://localhost:50051")
-    print("GrpcClient endpoint: {client.endpoint}")
-
     // Test TrafficShape
     let shaper = net.traffic_shape_create(256, 100, false)
     print("TrafficShape padding: {shaper.padding}")
 
-    // Test Transport types
-    let obfs = net.transport_obfs4("bridge.example.com:443")
-    print("obfs4 connected: {obfs.connected}")
-    let meek = net.transport_meek("https://cdn.example.com")
-    print("meek connected: {meek.connected}")
-    let snow = net.transport_snowflake("https://broker.example.com")
-    print("snowflake connected: {snow.connected}")
-
-    print("All Phase 23 types constructed successfully")
+    print("All implemented Phase 23 types constructed successfully")
 }
