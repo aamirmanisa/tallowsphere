@@ -575,6 +575,32 @@ pub extern "C" fn tallow_random_bytes(out: *mut u8, len: usize) {
     }
 }
 
+/// `rand.bytes(count: usize) -> Bytes` — `count` CSPRNG bytes as a lowercase
+/// hex string.
+///
+/// The interpreter's `stdlib::rand::rand_bytes` returns the hex TEXT, not raw
+/// bytes (`Bytes` is a string at runtime everywhere in this tree), so the
+/// compiled plane has to return the same shape or `print(rand.bytes(4))` would
+/// differ between engines. Same RNG source as [`tallow_random_bytes`]
+/// (`rand::random`, a CSPRNG), same `{b:02x}` formatting as `hex_encode`.
+///
+/// A negative count fails closed with `tallow_last_error`; the emitted code
+/// turns that into a message-bearing `exit(1)`. The alternative — casting to
+/// `usize` the way the interpreter does — would ask for an unbounded
+/// allocation.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_random_hex(count: i64) -> *mut c_char {
+    if count < 0 {
+        set_last_error(format!("rand.bytes: byte count must be >= 0, got {count}"));
+        return std::ptr::null_mut();
+    }
+    if count == 0 {
+        return string_to_cstr("");
+    }
+    let bytes: Vec<u8> = (0..count as usize).map(|_| rand::random::<u8>()).collect();
+    string_to_cstr(&hex_encode(&bytes))
+}
+
 // ── Zstd Compression ──────────────────────────────────────────────────────
 
 /// Compress data with Zstd at the given level.
@@ -1180,6 +1206,43 @@ mod tests {
         tallow_random_bytes(buf.as_mut_ptr(), 32);
         // Very unlikely all zeros after random fill
         assert!(buf.iter().any(|&b| b != 0));
+    }
+
+    /// `rand.bytes` returns the hex TEXT the interpreter returns: 2 chars per
+    /// byte, lowercase, and a different value on the next call.
+    #[test]
+    fn test_random_hex_matches_interpreter_shape() {
+        let a = tallow_random_hex(16);
+        assert!(!a.is_null());
+        let a = unsafe { std::ffi::CStr::from_ptr(a) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(a.len(), 32, "16 bytes is 32 hex chars");
+        assert!(
+            a.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "hex must be lowercase: {a}"
+        );
+        let b = tallow_random_hex(16);
+        let b = unsafe { std::ffi::CStr::from_ptr(b) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(a, b, "two draws must differ");
+    }
+
+    /// The interpreter answers `""` for a zero count and the emitted code turns
+    /// a negative count into a message-bearing exit — never an unbounded alloc.
+    #[test]
+    fn test_random_hex_zero_and_negative() {
+        let empty = tallow_random_hex(0);
+        assert!(!empty.is_null());
+        assert_eq!(
+            unsafe { std::ffi::CStr::from_ptr(empty) }.to_str().unwrap(),
+            ""
+        );
+        assert!(tallow_random_hex(-1).is_null());
     }
 
     #[test]

@@ -493,6 +493,14 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // kind is what routes `.len` to the decoded byte count and
         // `.base64()`/`.hex()` to the `Bytes` arms instead of the string table.
         ("fs", "read_bytes") => Some("Bytes".to_string()),
+        // `rand.bytes(n)` returns the same hex TEXT the interpreter's
+        // `rand_bytes` returns; the kind makes `.len` the decoded byte count and
+        // routes `.base64()`/`.hex()` to the `Bytes` arms, exactly as `fs` does.
+        ("rand", "bytes") => Some("Bytes".to_string()),
+        // `provenance.record(...)` builds the declared `CollectionRecord`, so the
+        // binding is typed: `.grade`/`.confidence`/… resolve as fields of that
+        // struct instead of falling back to the ambiguous name scan.
+        ("provenance", "record") => Some("CollectionRecord".to_string()),
         // http.batch(...) → native array of Result entries (one per URL).
         ("http", "batch") => Some("ResultArray".to_string()),
         // The llm struct returns. Without these, a field shared by two of the
@@ -1804,13 +1812,27 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_bytes_sha256(ptr)\n");
         ir.push_str("declare ptr @tallow_compress_with(ptr, ptr, i32)\n");
         ir.push_str("declare ptr @tallow_decompress_with(ptr, ptr)\n");
+        // `compress.decompress(data)` — auto-detecting; the arm emits this call,
+        // so its declaration must exist or the module fails as `use of undefined
+        // value` (which is what the census caught before this line existed).
+        ir.push_str("declare ptr @tallow_decompress_auto(ptr)\n");
         ir.push_str("declare ptr @tallow_url_encode_query(ptr)\n");
+        // `url.parse(raw)` writes 9 slots and returns <0 on refusal; see
+        // runtime/url_ffi.rs. The emitted code branches on the return.
+        ir.push_str("declare i32 @tallow_url_parse(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_fingerprint_from_text(ptr, ptr, ptr)\n");
         ir.push_str("declare double @tallow_fingerprint_similarity(ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_page_cache_create(ptr, i32, i64, i32, i64)\n");
         ir.push_str("declare ptr @tallow_crawler_from_links(ptr, i32, i64, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_crawler_from_sitemap(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @tallow_structured_data_extract(ptr, ptr, ptr)\n");
+        // `extract.Extract.schema(html, name)` returns a native map buffer (the
+        // documented `[count, k, v, …, tag…]` layout), so it is a pointer like
+        // every other buffer-returning helper. See runtime/html_ffi.rs.
+        ir.push_str("declare ptr @tallow_extract_schema(ptr, ptr)\n");
+        // `provenance.record(…)` fills 8 i64 slots and returns <0 on refusal;
+        // see runtime/provenance_ffi.rs for the slot table.
+        ir.push_str("declare i32 @tallow_provenance_record(ptr, ptr, ptr, i64, ptr, ptr)\n");
         ir.push_str("declare i32 @gettimeofday(ptr, ptr)\n");
         ir.push_str("declare i32 @usleep(i32)\n");
         ir.push('\n');
@@ -1953,6 +1975,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare i32 @tallow_ed25519_verify(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_x25519(ptr, ptr, ptr)\n");
         ir.push_str("declare void @tallow_random_bytes(ptr, i64)\n");
+        // `rand.bytes(n)` — n CSPRNG bytes as lowercase hex text
+        // (runtime/crypto_ffi.rs). Null on a negative count.
+        ir.push_str("declare ptr @tallow_random_hex(i64)\n");
         ir.push_str("declare ptr @tallow_zstd_compress(ptr, i64, i32, ptr)\n");
         ir.push_str("declare ptr @tallow_zstd_decompress(ptr, i64, ptr)\n");
         ir.push_str("declare ptr @tallow_lz4_compress(ptr, i64, ptr)\n");
@@ -2409,6 +2434,80 @@ void tallow_async_runtime_shutdown(void) {
                     field_map,
                     field_kinds: HashMap::new(),
                     llvm_name: "%struct.ContentFingerprint".to_string(),
+                }
+            });
+
+        // `URL` — the return of `url.parse`. `stdlib` imports are SKIPPED by
+        // `resolve_imports` ("handled via module dispatch"), so the declaration
+        // in `stdlib/url.tl` never reaches `merged_items` and the arm that
+        // builds the struct would otherwise have no `%struct.URL` to allocate.
+        // Field order and types are the declaration's: five `String`, one
+        // `u16?`, and the optionals are pointer slots (null or a box).
+        self.struct_layouts
+            .entry("URL".to_string())
+            .or_insert_with(|| {
+                let names = [
+                    "scheme", "host", "port", "path", "query", "fragment", "username", "password",
+                ];
+                let types = [
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::Optional,
+                    LLType::I8Ptr,
+                    LLType::Optional,
+                    LLType::Optional,
+                    LLType::Optional,
+                    LLType::Optional,
+                ];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.URL".to_string(),
+                }
+            });
+
+        // `CollectionRecord` — the return of `provenance.record`. Same reason as
+        // `URL`: the declaration lives in `stdlib/provenance.tl`, which is not
+        // merged. Order and types are that declaration's (Int is i64 natively,
+        // Float is f64). The `validators` array the interpreter keeps is NOT a
+        // declared field, so it has no slot here.
+        self.struct_layouts
+            .entry("CollectionRecord".to_string())
+            .or_insert_with(|| {
+                let names = [
+                    "source_url",
+                    "fetched_at",
+                    "egress_label",
+                    "egress_tier",
+                    "status_code",
+                    "body_hash",
+                    "confidence",
+                    "grade",
+                ];
+                let types = [
+                    LLType::I8Ptr,
+                    LLType::I64,
+                    LLType::I8Ptr,
+                    LLType::I8Ptr,
+                    LLType::I64,
+                    LLType::I8Ptr,
+                    LLType::F64,
+                    LLType::I8Ptr,
+                ];
+                let mut field_map = HashMap::new();
+                for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
+                    field_map.insert((*name).to_string(), (i, ty.clone()));
+                }
+                StructLayout {
+                    fields: names.iter().map(|n| (*n).to_string()).collect(),
+                    field_map,
+                    field_kinds: HashMap::new(),
+                    llvm_name: "%struct.CollectionRecord".to_string(),
                 }
             });
 
@@ -24285,6 +24384,27 @@ impl<'a> CodeGen<'a> {
                 ));
                 Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
             }
+            // `Extract.schema(html, name) -> Map` — the declared return type, as
+            // a NATIVE map buffer (`[count, k, v, …, tags…]`). The runtime
+            // helper is the interpreter's own `extract` dispatch flattened, and
+            // it refuses (null ⇒ message-bearing exit) a field that matched more
+            // than once: the map's value slots are strings, so a multi-valued
+            // field has no representation here. See `runtime/html_ffi.rs`.
+            "schema" => {
+                if args.len() < 2 {
+                    return Err("Extract.schema requires (html, schema_name)".into());
+                }
+                let html_val = self.emit_expr(&args[0].value)?;
+                let html_str = self.coerce_to_string(&html_val)?;
+                let name_val = self.emit_expr(&args[1].value)?;
+                let name_str = self.coerce_to_string(&name_val)?;
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_extract_schema(ptr {html_str}, ptr {name_str})"
+                ));
+                self.emit_runtime_string_null_check(reg, "Extract.schema: ")
+                    .map(Some)
+            }
             _ => Ok(None),
         }
     }
@@ -24349,6 +24469,24 @@ impl<'a> CodeGen<'a> {
                 let result = self.fresh_reg();
                 self.emit_line(&format!("{result} = trunc i32 {bit} to i1"));
                 Ok(Some(LLValue::new(result, LLType::I1)))
+            }
+            // `rand.bytes(n) -> Bytes` — `n` CSPRNG bytes as a lowercase hex
+            // string, exactly what the interpreter's `rand_bytes` returns
+            // (`Bytes` is a string value in both engines). The draw is
+            // `rand::random` in the runtime, so this is NOT the weak `rand()`
+            // the int/float/bool arms above use: those mirror the interpreter's
+            // `rand.int`, which is the C PRNG; `bytes` is documented CSPRNG and
+            // must not inherit that.
+            "bytes" => {
+                let Some(arg) = args.first() else {
+                    return Err("rand.bytes requires a byte count argument".into());
+                };
+                let count_val = self.emit_expr(&arg.value)?;
+                let count = self.coerce_to_i64(&count_val)?;
+                let reg = self.fresh_reg();
+                self.emit_line(&format!("{reg} = call ptr @tallow_random_hex(i64 {count})"));
+                self.emit_runtime_string_null_check(reg, "rand.bytes: ")
+                    .map(Some)
             }
             _ => Ok(None),
         }
@@ -25146,6 +25284,136 @@ impl<'a> CodeGen<'a> {
         args: &[CallArg],
     ) -> Result<Option<LLValue>, String> {
         match method {
+            // `url.parse(raw) -> Result<URL>`.
+            //
+            // The parser is the interpreter's (`stdlib::url::parse_url_value`,
+            // reached through `runtime/url_ffi.rs`), so scheme/host/port/path/
+            // query/fragment/userinfo rules are the module's, not a second
+            // implementation. The runtime fills a 9-slot buffer (its contract);
+            // this arm turns that into `Ok(%struct.URL)` using the program's own
+            // declaration for the field offsets.
+            //
+            // The four `T?` fields are runtime-conditional, which is why the
+            // struct is stored here rather than through `build_result_struct`:
+            // an optional slot is "null, or a box", and which one it is comes
+            // from the parse. Both the box and the nil are computed and
+            // `select`ed, so the value is never a box around a nil.
+            "parse" => {
+                let Some(arg) = args.first() else {
+                    return Err("url.parse requires a URL string argument".into());
+                };
+                let Some(layout) = self.struct_layouts.get("URL").cloned() else {
+                    return Err(
+                        "url.parse: the `URL` struct has no native layout — the program must \
+                         `import tallow.url` for the declaration to be visible"
+                            .into(),
+                    );
+                };
+                let raw = self.emit_expr(&arg.value)?;
+                let raw_str = self.coerce_to_string(&raw)?;
+
+                let slots = self.fresh_reg();
+                self.emit_line(&format!("{slots} = alloca [9 x i64]"));
+                let rc = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{rc} = call i32 @tallow_url_parse(ptr {raw_str}, ptr {slots})"
+                ));
+                let failed = self.fresh_reg();
+                self.emit_line(&format!("{failed} = icmp slt i32 {rc}, 0"));
+                let fail_label = self.fresh_label("url.parse.fail");
+                let ok_label = self.fresh_label("url.parse.ok");
+                self.emit_line(&format!(
+                    "br i1 {failed}, label %{fail_label}, label %{ok_label}"
+                ));
+                self.body.push_str(&format!("{fail_label}:\n"));
+                let err_reg = self.fresh_reg();
+                self.emit_line(&format!("{err_reg} = call ptr @tallow_last_error()"));
+                self.emit_fatal_exit1("url.parse: ", &err_reg);
+                self.body.push_str(&format!("{ok_label}:\n"));
+
+                // Slot table: see `runtime/url_ffi.rs`. Slot 3 is the
+                // `port`-is-present flag, not a field.
+                let mut loaded: Vec<String> = Vec::with_capacity(9);
+                for index in 0..9 {
+                    let slot_ptr = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{slot_ptr} = getelementptr i64, ptr {slots}, i64 {index}"
+                    ));
+                    let raw = self.fresh_reg();
+                    self.emit_line(&format!("{raw} = load i64, ptr {slot_ptr}"));
+                    loaded.push(raw);
+                }
+                // String slots are pointer-as-i64; turn each back into a `ptr`.
+                let mut ptrs: Vec<String> = Vec::with_capacity(9);
+                for index in [0usize, 1, 4, 5, 6, 7, 8] {
+                    let as_ptr = self.fresh_reg();
+                    self.emit_line(&format!("{as_ptr} = inttoptr i64 {} to ptr", loaded[index]));
+                    ptrs.push(as_ptr);
+                }
+                // ptrs: [scheme, host, path, query, fragment, username, password]
+
+                // `port: u16?` — boxed only when the parse found one.
+                let port_boxed =
+                    self.box_optional(&LLValue::new(loaded[2].clone(), LLType::I64))?;
+                let has_port = self.fresh_reg();
+                self.emit_line(&format!("{has_port} = icmp ne i64 {}, 0", loaded[3]));
+                let port = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{port} = select i1 {has_port}, ptr {port_boxed}, ptr null"
+                ));
+
+                // `query/fragment/username/password: String?` — same rule: a box
+                // only when the field is not Nil.
+                let mut optionals: Vec<String> = Vec::with_capacity(4);
+                for ptr_reg in &ptrs[3..7] {
+                    let boxed = self.box_optional(&LLValue::new(ptr_reg.clone(), LLType::I8Ptr))?;
+                    let is_nil = self.fresh_reg();
+                    self.emit_line(&format!("{is_nil} = icmp eq ptr {ptr_reg}, null"));
+                    let selected = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{selected} = select i1 {is_nil}, ptr null, ptr {boxed}"
+                    ));
+                    optionals.push(selected);
+                }
+
+                // sizeof via the emitted type, so the arm never hardcodes a byte
+                // count.
+                let size_ptr = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{size_ptr} = getelementptr inbounds {0}, ptr null, i32 1",
+                    layout.llvm_name
+                ));
+                let size = self.fresh_reg();
+                self.emit_line(&format!("{size} = ptrtoint ptr {size_ptr} to i64"));
+                let object = self.fresh_reg();
+                self.emit_line(&format!("{object} = call ptr @malloc(i64 {size})"));
+
+                let stores: Vec<(&str, &String)> = vec![
+                    ("scheme", &ptrs[0]),
+                    ("host", &ptrs[1]),
+                    ("port", &port),
+                    ("path", &ptrs[2]),
+                    ("query", &optionals[0]),
+                    ("fragment", &optionals[1]),
+                    ("username", &optionals[2]),
+                    ("password", &optionals[3]),
+                ];
+                for (name, reg) in stores {
+                    let Some((idx, field_ty)) = layout.field_map.get(name).cloned() else {
+                        return Err(format!(
+                            "url.parse: the `URL` declaration has no field `{name}`"
+                        ));
+                    };
+                    let gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{gep} = getelementptr inbounds {0}, ptr {object}, i32 0, i32 {idx}",
+                        layout.llvm_name
+                    ));
+                    self.emit_line(&format!("store {} {reg}, ptr {gep}", field_ty.to_ir()));
+                }
+                let parsed = LLValue::new(object, LLType::I8Ptr);
+                Ok(Some(self.wrap_ok_value(&parsed)?))
+            }
             "host" => {
                 // url.host("https://example.com/path") -> "example.com"
                 if let Some(arg) = args.first() {
@@ -26477,6 +26745,101 @@ impl<'a> CodeGen<'a> {
                 // Never let a null digest pass as a value.
                 self.emit_line(&format!("call void @tallow_check_string(ptr {reg})"));
                 Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+            }
+            // `provenance.record(url, label, tier, status, hash) ->
+            // CollectionRecord` — a plain (non-`Result`) declared struct.
+            //
+            // The runtime helper runs the interpreter's own `record`
+            // constructor, so `fetched_at = now`, the baseline confidence and
+            // its clamp are the module's, not a second copy. It writes the eight
+            // declared fields into a slot buffer; `build_plain_struct` allocates
+            // `%struct.CollectionRecord` from the program's declaration, so the
+            // field offsets are the declaration's and never hand-counted.
+            "record" => {
+                if args.len() < 5 {
+                    return Err(format!(
+                        "provenance.record takes (source_url, egress_label, egress_tier, \
+                         status_code, body_hash), got {} argument(s)",
+                        args.len()
+                    ));
+                }
+                let url_val = self.emit_expr(&args[0].value)?;
+                let url = self.coerce_to_string(&url_val)?;
+                let label_val = self.emit_expr(&args[1].value)?;
+                let label = self.coerce_to_string(&label_val)?;
+                let tier_val = self.emit_expr(&args[2].value)?;
+                let tier = self.coerce_to_string(&tier_val)?;
+                let status_val = self.emit_expr(&args[3].value)?;
+                let status = self.coerce_to_i64(&status_val)?;
+                let hash_val = self.emit_expr(&args[4].value)?;
+                let hash = self.coerce_to_string(&hash_val)?;
+
+                let slots = self.fresh_reg();
+                self.emit_line(&format!("{slots} = alloca [8 x i64]"));
+                let rc = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{rc} = call i32 @tallow_provenance_record(ptr {url}, ptr {label}, \
+                     ptr {tier}, i64 {status}, ptr {hash}, ptr {slots})"
+                ));
+                let failed = self.fresh_reg();
+                self.emit_line(&format!("{failed} = icmp slt i32 {rc}, 0"));
+                let fail_label = self.fresh_label("prov.record.fail");
+                let ok_label = self.fresh_label("prov.record.ok");
+                self.emit_line(&format!(
+                    "br i1 {failed}, label %{fail_label}, label %{ok_label}"
+                ));
+                self.body.push_str(&format!("{fail_label}:\n"));
+                let err_reg = self.fresh_reg();
+                self.emit_line(&format!("{err_reg} = call ptr @tallow_last_error()"));
+                self.emit_fatal_exit1("provenance.record: ", &err_reg);
+                self.body.push_str(&format!("{ok_label}:\n"));
+
+                // Slot table: see `runtime/provenance_ffi.rs`. Slot 6 holds the
+                // confidence's IEEE-754 bits, so it is `bitcast` back to double
+                // — an i64 stored into a `Float` field would be a type error in
+                // the IR and a nonsense value if clang accepted it.
+                let mut loaded: Vec<String> = Vec::with_capacity(8);
+                for index in 0..8 {
+                    let slot_ptr = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{slot_ptr} = getelementptr i64, ptr {slots}, i64 {index}"
+                    ));
+                    let raw = self.fresh_reg();
+                    self.emit_line(&format!("{raw} = load i64, ptr {slot_ptr}"));
+                    loaded.push(raw);
+                }
+                let confidence = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{confidence} = bitcast i64 {} to double",
+                    loaded[6]
+                ));
+                // The four string slots cross as `*mut c_char` bitcast through an
+                // i64 slot, so each one must be `inttoptr`ed back before it is
+                // stored into a pointer field. `source_url` is slot 0, the http
+                // status is slot 4 (already i64) — a store of the raw i64 into a
+                // `ptr` field is a hard IR type error, which is what the census
+                // reported as `'%19' defined with type 'i64' but expected 'ptr'`.
+                let mut string_slots: HashMap<usize, String> = HashMap::new();
+                for index in [0usize, 2, 3, 5, 7] {
+                    let as_ptr = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{as_ptr} = inttoptr i64 {} to ptr",
+                        loaded[index]
+                    ));
+                    string_slots.insert(index, as_ptr);
+                }
+                let string_field = |index: usize| -> String { string_slots[&index].clone() };
+                let fields: Vec<(&str, String, LLType)> = vec![
+                    ("source_url", string_field(0), LLType::I8Ptr),
+                    ("fetched_at", loaded[1].clone(), LLType::I64),
+                    ("egress_label", string_field(2), LLType::I8Ptr),
+                    ("egress_tier", string_field(3), LLType::I8Ptr),
+                    ("status_code", loaded[4].clone(), LLType::I64),
+                    ("body_hash", string_field(5), LLType::I8Ptr),
+                    ("confidence", confidence, LLType::F64),
+                    ("grade", string_field(7), LLType::I8Ptr),
+                ];
+                Ok(Some(self.build_plain_struct("CollectionRecord", &fields)?))
             }
             _ => Ok(None),
         }
@@ -27978,6 +28341,33 @@ impl<'a> CodeGen<'a> {
                 } else {
                     self.emit_stdlib_stub("compress", method)
                 }
+            }
+            // `compress.decompress(data) -> Result<Bytes>` — auto-detecting.
+            //
+            // The runtime sniffs the container (zstd / gzip magic, brotli as the
+            // no-magic fallback) and decompresses with the SAME shared
+            // `stdlib::compress::decompress_bytes` the explicit arms use, then
+            // hands back base64 — the `Bytes` convention in this module. An
+            // undetectable container (raw deflate, garbage) is null plus a
+            // `tallow_last_error`, which the null check below turns into a
+            // message-bearing exit rather than an empty buffer.
+            //
+            // NOTE: the interpreter has no `decompress` arm at all, so this
+            // arm's semantics are compiled-only today (see the FFI's module
+            // docs). The declaration promises the call; this is the only
+            // implementation of it in the tree.
+            "decompress" => {
+                let Some(arg) = args.first() else {
+                    return Err("compress.decompress requires a data argument".into());
+                };
+                let data = self.emit_expr(&arg.value)?;
+                let data_str = self.coerce_to_string(&data)?;
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call ptr @tallow_decompress_auto(ptr {data_str})"
+                ));
+                let checked = self.emit_runtime_string_null_check(reg, "compress.decompress: ")?;
+                Ok(Some(self.wrap_ok_value(&checked)?))
             }
             "zstd_compress" | "zstd" => {
                 // compress.zstd_compress(data) via runtime FFI

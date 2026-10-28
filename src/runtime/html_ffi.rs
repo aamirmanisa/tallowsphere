@@ -405,6 +405,102 @@ pub extern "C" fn tallow_extract_pattern(html: *const c_char, pattern: *const c_
     string_array(crate::stdlib::extract::pattern_matches(h, p))
 }
 
+/// `Extract.schema(html, schema_name) -> Map` — the schema's fields as a
+/// NATIVE tallow map.
+///
+/// # Why this is a map and not the interpreter's value
+///
+/// `stdlib/extract.tl` declares `-> Map`, but `stdlib::extract::extract_schema`
+/// returns `Value::Struct { name: "Extraction", … }` — there is no `Extraction`
+/// struct in the language, so the compiled plane has nothing to build from the
+/// declaration. The map is the honest intersection: the declared type, holding
+/// the extractor's key/value pairs.
+///
+/// # Buffer layout (load-bearing)
+///
+/// `[count, k0, v0, …, kN, vN, t0, …, tN]` — see `runtime/display_ffi.rs`: keys
+/// are string pointers in i64 slots, values are too, and each value carries a
+/// trailing type tag. `codegen.rs::emit_map_get` reads the key at `2*i+1`, the
+/// value at `2*i+2` and the tag at `2*count+1+i`, so a buffer without the tags
+/// array would read a tag from past the end. Every tag written here is
+/// `TAG_STR`: the values are strings by construction (see the refusal below).
+///
+/// # What is refused, and why
+///
+/// A field that matched more than once is a `Value::Array` in the interpreter.
+/// The native map layout has no way to carry a nested STRING array: the display
+/// path renders a nested array with `ELEM_INT` (see `display_ffi.rs`), which
+/// would print pointers as numbers, and `Map`'s value slots are strings. So a
+/// multi-valued extraction fails closed with the field named — the caller gets
+/// a message, not a wrong value. `Extract.pattern` is the multi-valued API.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_extract_schema(
+    html: *const c_char,
+    schema_name: *const c_char,
+) -> *mut i64 {
+    let Some(h) = (unsafe { cstr_to_str(html) }) else {
+        set_last_error("Extract.schema: null html".to_string());
+        return std::ptr::null_mut();
+    };
+    let Some(name) = (unsafe { cstr_to_str(schema_name) }) else {
+        set_last_error("Extract.schema: null schema name".to_string());
+        return std::ptr::null_mut();
+    };
+    let value = match crate::stdlib::extract::dispatch(
+        "schema",
+        vec![
+            crate::interp::Value::String(h.to_string()),
+            crate::interp::Value::String(name.to_string()),
+        ],
+    ) {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => {
+            set_last_error(format!("Extract.schema: {e}"));
+            return std::ptr::null_mut();
+        }
+        None => {
+            set_last_error("Extract.schema: no schema arm in the extract module".to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let crate::interp::Value::Struct { fields, .. } = value else {
+        set_last_error(format!(
+            "Extract.schema: extractor returned {}, expected the Extraction struct",
+            crate::interp::type_name(&value)
+        ));
+        return std::ptr::null_mut();
+    };
+
+    let mut slots: Vec<i64> = Vec::with_capacity(1 + 3 * fields.len());
+    slots.push(fields.len() as i64);
+    for (key, value) in &fields {
+        let crate::interp::Value::String(text) = value else {
+            // An Array (several matches) or anything else: refuse by name.
+            let what = crate::interp::type_name(value);
+            let detail = match value {
+                crate::interp::Value::Array(items) => {
+                    format!("{} match(es) as an Array", items.len())
+                }
+                _ => format!("a {what}"),
+            };
+            set_last_error(format!(
+                "Extract.schema: field `{key}` produced {detail}, and the declared \
+                 `Map` result carries one string per key — multi-valued fields are not \
+                 expressible in the native map layout; use Extract.pattern(html, pattern) \
+                 for those, or grade the page in the interpreter"
+            ));
+            return std::ptr::null_mut();
+        };
+        slots.push(string_to_cstr(key) as i64);
+        slots.push(string_to_cstr(text) as i64);
+    }
+    // Trailing per-value tags, all TAG_STR (see the layout note above).
+    for _ in &fields {
+        slots.push(super::display_ffi::TAG_STR);
+    }
+    Box::into_raw(slots.into_boxed_slice()) as *mut i64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
