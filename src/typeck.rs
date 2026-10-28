@@ -1379,8 +1379,18 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// If the type name is a built-in private/secret type, wrap it.
+    ///
+    /// G10: a *declared* newtype wins over this heuristic. `newtype Email = String`
+    /// makes `Email` a nominal type, and `resolve_named_type` has already returned
+    /// `Type::Newtype` for it; wrapping that in `Type::Private` here would erase
+    /// the nominal identity in parameter position only, because this helper is
+    /// composed with resolution by `resolve_param_type` and nowhere else. The
+    /// name list still applies to names nothing declares.
     fn apply_builtin_qualifier(&self, ty: Type, type_expr: &TypeExpr) -> Type {
         if let TypeExprKind::Named(name) = &type_expr.kind {
+            if self.env.newtypes.contains_key(name.as_str()) {
+                return ty;
+            }
             if PRIVATE_TYPES.contains(&name.as_str()) && !ty.is_private() {
                 return Type::Private(Box::new(ty));
             }
@@ -5112,6 +5122,57 @@ mod tests {
                 "{position}: must name the constructor: {message}"
             );
         }
+    }
+
+    #[test]
+    fn newtype_shadowing_a_private_type_name_is_nominal_in_parameter_position() {
+        // `Email`, `Name` and `SSN` are also built-in private-type names. The
+        // declaration is the more specific statement, so the parameter's type
+        // is the newtype — and a bare `String` is refused, in both directions.
+        for name in ["UserId", "Email", "Name", "SSN"] {
+            let refused = newtype_errors(&format!(
+                "newtype {name} = String\n\
+                 fn take(v: {name}) {{}}\n\
+                 fn g() {{ take(\"x\") }}"
+            ));
+            assert_eq!(
+                refused.len(),
+                1,
+                "{name}: a bare String must not fill the slot: {refused:?}"
+            );
+            assert!(
+                refused[0].contains(&format!("newtype `{name}`")),
+                "{name}: must name the expected newtype: {refused:?}"
+            );
+            assert!(
+                refused[0].contains(&format!("{name}(<String>)")),
+                "{name}: must name the constructor: {refused:?}"
+            );
+
+            let accepted = newtype_errors(&format!(
+                "newtype {name} = String\n\
+                 fn take(v: {name}) -> {name} {{ return v }}\n\
+                 fn g() {{ let v: {name} = take({name}(\"x\")) }}"
+            ));
+            assert!(
+                accepted.is_empty(),
+                "{name}: the constructor is the legal producer: {accepted:?}"
+            );
+        }
+    }
+
+    /// The counterpart of the test above: the *declaration* is what wins, not
+    /// the name. With no newtype in scope, `Email` is still the built-in private
+    /// type and nothing about the heuristic has been weakened.
+    #[test]
+    fn undeclared_private_type_name_still_resolves_to_type_private() {
+        let (env, _) = check("fn send(to: Email) {}");
+        let sig = env.functions.get("send").expect("signature for send");
+        assert!(
+            matches!(&sig.params[0].1, Type::Private(inner) if **inner == Type::String),
+            "an undeclared `Email` is still private, got {:?}",
+            sig.params[0].1
+        );
     }
 
     #[test]
