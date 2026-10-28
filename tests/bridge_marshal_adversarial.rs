@@ -532,19 +532,27 @@ fn resident_kb(pid: u32) -> Option<u64> {
     Some(resident_pages * page_kb)
 }
 
-/// **Kept red: real defect.** 600 bridged calls that each return a ~32 KiB
-/// `String`. If the result pointer were released, RSS would plateau a few MiB
-/// above the start; because `emit_stdlib_bridge_call` frees only the marshalled
-/// scalar *arguments* and never the result, every call leaks its result and RSS
-/// climbs by ~19 MiB.
+/// **Was red; now green (F1).** 600 bridged calls that each return a ~32 KiB
+/// `String`, bound to a `let` inside a `while` body and read once with
+/// `k.len()`. That binding does not escape its block, so codegen releases the
+/// bridge buffer at the end of every iteration and RSS plateaus.
+///
+/// Measured before the fix (2026-10-28, pre-fix binary, this exact program):
+/// growth 19_436 / 19_328 KiB over the 600 calls — 32 KiB/call, i.e. the whole
+/// payload. After the fix: 0 KiB on two consecutive runs, same stdout.
 ///
 /// Measured on `/proc/<pid>/statm` of the compiled binary (not of the `tallow`
 /// driver, whose compiler footprint would swamp the signal), sampled every
 /// millisecond. The ceiling is deliberately generous — 8 MiB for 600 calls — so
-/// allocator noise cannot fail it; the leak is 19 MiB, and 2000 calls measured
-/// +64 MiB.
+/// allocator noise cannot fail it.
+///
+/// The rest of this test covers the *other* half of the same rule: a binding
+/// that escapes its block must **not** be released. Each escape program is
+/// checked twice — the emitted IR must contain no `tallow_free_string` call at
+/// all (so the case really takes the escaping branch), and the compiled binary
+/// must answer exactly what the interpreter answers (so the pointer the program
+/// kept is still live, not freed under it).
 #[test]
-#[ignore = "F1 OPEN: still 32 KiB/call after this pass. Measured 2026-10-27: 19208 KiB over 600 calls of a 32768-byte String, ceiling 8192. The pointer IS freed for scalars, but a String/struct result is handed to the program as its own value (codegen.rs:23670 arm), so nothing owns it. Fixing this needs string ownership in codegen, not a free call."]
 fn bridged_string_results_do_not_grow_rss_without_bound() {
     const CALLS: usize = 600;
     const PAYLOAD_BYTES: usize = 32 * 1024;
@@ -560,7 +568,7 @@ fn bridged_string_results_do_not_grow_rss_without_bound() {
         tl_escape(&payload)
     );
 
-    let _serialized = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let serialized = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = workdir("rss");
     let path = write_program(&dir, &source);
     // Build, so the program under measurement is the compiled binary alone. The
@@ -570,12 +578,24 @@ fn bridged_string_results_do_not_grow_rss_without_bound() {
         .args(["build", "-q"])
         .arg(&path)
         .env("TALLOW_ALLOW_DIRECT", "1")
+        // Keep the IR so the assertion can see the release instruction itself,
+        // not just its effect on RSS.
+        .env("TALLOW_KEEP_IR", "1")
         .output()
         .expect("build tallow program");
     assert!(
         build.status.success(),
         "the program did not build: {}",
         String::from_utf8_lossy(&build.stderr)
+    );
+    let ir = std::fs::read_to_string(path.with_extension("ll"))
+        .expect("TALLOW_KEEP_IR=1 promises the .ll next to the binary");
+    assert_eq!(
+        ir.matches("call void @tallow_free_string").count(),
+        1,
+        "the emitted program must release exactly the bridged String result it \
+         binds in the loop body (the argument is the program's own string and is \
+         not freed); a different count means the ownership rule moved"
     );
     let binary = path.with_extension("");
     assert!(binary.exists(), "no binary at {}", binary.display());
@@ -626,11 +646,109 @@ fn bridged_string_results_do_not_grow_rss_without_bound() {
         growth < CEILING_KB,
         "RSS grew {growth} KiB over {CALLS} bridged calls that return a \
          {PAYLOAD_BYTES}-byte String (baseline {baseline} KiB, peak {final_high} KiB, \
-         ceiling {CEILING_KB} KiB, {} samples); a bridged String result is never \
-         `tallow_free_string`-ed, so each call leaks its result. Sampled series \
+         ceiling {CEILING_KB} KiB, {} samples); the result buffer is not being \
+         released at the end of the block that binds it. Sampled series \
          (every 500th, KiB): {series:?}",
         samples.len()
     );
+
+    // ── Escape cases: the release must NOT fire ─────────────────────────────
+    //
+    // `run_plane` takes BUILD_LOCK itself, so this test must not hold it here.
+    drop(serialized);
+
+    let escape_payload = "1 main st, austin tx 78701";
+    let escaped = tl_escape(escape_payload);
+    let expected = "1 main street austin tx 78701";
+    let cases: [(&str, String); 3] = [
+        // Returned to the caller: the block ends, the value does not.
+        (
+            "escape-return",
+            format!(
+                "import tallow.geocode\n\nfn make(s: String) -> String {{\n    \
+                 let k = geocode.normalize_address(s)\n    return k\n}}\n\n\
+                 fn main() {{\n    let payload = \"{escaped}\"\n    let v = make(payload)\n    \
+                 print(v)\n    print(v.len())\n}}\n"
+            ),
+        ),
+        // Moved into a struct that outlives the block.
+        (
+            "escape-struct",
+            format!(
+                "import tallow.geocode\n\nstruct Holder {{\n    value: String,\n}}\n\n\
+                 fn main() {{\n    let payload = \"{escaped}\"\n    \
+                 var h = Holder {{ value: \"\" }}\n    if true {{\n        \
+                 let k = geocode.normalize_address(payload)\n        \
+                 h = Holder {{ value: k }}\n    }}\n    print(h.value)\n    \
+                 print(h.value.len())\n}}\n"
+            ),
+        ),
+        // Moved into a map that outlives the block.
+        (
+            "escape-map",
+            format!(
+                "import tallow.geocode\n\nfn main() {{\n    let payload = \"{escaped}\"\n    \
+                 var m = {{}}\n    if true {{\n        let k = geocode.normalize_address(payload)\n        \
+                 m = {{\"k\": k}}\n    }}\n    print(m[\"k\"])\n}}\n"
+            ),
+        ),
+    ];
+
+    for (tag, source) in &cases {
+        let case_lock = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = workdir(tag);
+        let path = write_program(&dir, source);
+        let build = Command::new(BIN)
+            .args(["build", "-q"])
+            .arg(&path)
+            .env("TALLOW_ALLOW_DIRECT", "1")
+            .env("TALLOW_KEEP_IR", "1")
+            .output()
+            .expect("build escape program");
+        assert!(
+            build.status.success(),
+            "{tag}: the escape program did not build: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let ir = std::fs::read_to_string(path.with_extension("ll"))
+            .expect("TALLOW_KEEP_IR=1 promises the .ll next to the binary");
+        assert!(
+            !ir.contains("call void @tallow_free_string"),
+            "{tag}: the emitted program releases a bridged result that its block \
+             hands back to the caller — that is a dangling pointer, not a leak. \
+             The escape analysis must answer \"escapes\" for this shape."
+        );
+        let binary = path.with_extension("");
+        let native = Command::new(&binary).output().expect("run escape program");
+        let _ = std::fs::remove_dir_all(&dir);
+        drop(case_lock);
+
+        assert!(
+            native.status.success(),
+            "{tag}: the compiled escape program failed: {}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        let interpreted = run_plane(tag, "--interpret", source);
+        assert!(
+            interpreted.ok,
+            "{tag}: the interpreter control leg failed:\n{}",
+            interpreted.describe(tag, "--interpret")
+        );
+        assert_eq!(
+            sha256_hex(&native.stdout),
+            sha256_hex(&interpreted.stdout),
+            "{tag}: the value the block let escape is not what the interpreter \
+             produced, so it was released while still live\ninterpreter:\n{}\n\
+             compiled:\n{}",
+            interpreted.describe(tag, "--interpret"),
+            String::from_utf8_lossy(&native.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&native.stdout).contains(expected),
+            "{tag}: the escaped value did not survive: {:?}",
+            String::from_utf8_lossy(&native.stdout)
+        );
+    }
 }
 
 // ── 6. Unknown module / unknown method ─────────────────────────────────────
