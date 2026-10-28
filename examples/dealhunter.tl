@@ -46,7 +46,7 @@ fn deal_to_jsonl(deal: ScrapedDeal) -> String {
     line = line + '"image_url":"' + json_escape(deal.image_url) + '",'
     line = line + '"deal_type":"' + json_escape(deal.deal_type) + '",'
     line = line + '"extracted_at":"' + json_escape(deal.extracted_at) + '"'
-    line + "}\n"
+    line + "}}\n"
 }
 
 @legal(basis: .public_data, purpose: "collect public deal data from retailer websites", personal_data: false, robots_txt: .respect, rate_limit: 1.per_second)

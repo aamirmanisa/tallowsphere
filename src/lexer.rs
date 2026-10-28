@@ -588,6 +588,16 @@ impl<'src> Lexer<'src> {
                 continue;
             }
 
+            // `{{` is an escaped literal `{`. It has to be tested BEFORE the
+            // interpolation branch, otherwise the first brace opens an
+            // expression that contains nothing but `{`.
+            if ch == b'{' && self.peek_next() == Some(b'{') {
+                self.advance();
+                self.advance();
+                value.push('{');
+                continue;
+            }
+
             // Interpolation: unescaped `{` starts an embedded expression
             if ch == b'{' {
                 self.advance(); // consume '{'
@@ -595,6 +605,22 @@ impl<'src> Lexer<'src> {
                 return Ok(Token::new(
                     TokenKind::StringStart(value),
                     Span::new(start, self.pos),
+                ));
+            }
+
+            // `}}` is an escaped literal `}`; a lone `}` here closes nothing —
+            // this scanner is only reached for literal text, so it is a typo
+            // and is refused by name instead of being emitted as text.
+            if ch == b'}' {
+                if self.peek_next() == Some(b'}') {
+                    self.advance();
+                    self.advance();
+                    value.push('}');
+                    continue;
+                }
+                return Err(LexError::new(
+                    "unexpected `}` in string literal: write `}}` for a literal brace",
+                    Span::new(self.pos, self.pos + 1),
                 ));
             }
 
@@ -637,6 +663,26 @@ impl<'src> Lexer<'src> {
             if ch == b'\\' {
                 self.scan_escape(&mut value, start)?;
                 continue;
+            }
+
+            // `{{` / `}}` are the literal-brace escapes, as in `"…"` literals.
+            if ch == b'{' && self.peek_next() == Some(b'{') {
+                self.advance();
+                self.advance();
+                value.push('{');
+                continue;
+            }
+            if ch == b'}' {
+                if self.peek_next() == Some(b'}') {
+                    self.advance();
+                    self.advance();
+                    value.push('}');
+                    continue;
+                }
+                return Err(LexError::new(
+                    "unexpected `}` in string literal: write `}}` for a literal brace",
+                    Span::new(self.pos, self.pos + 1),
+                ));
             }
 
             // Interpolation inside triple-quoted strings
@@ -785,6 +831,28 @@ impl<'src> Lexer<'src> {
             if ch == b'\\' {
                 self.scan_escape(&mut value, start)?;
                 continue;
+            }
+
+            // `{{` / `}}` are the literal-brace escapes, and a lone `}` here
+            // closes nothing: the interpolation's `}` was consumed before this
+            // scanner resumed. Both rules mirror `scan_string`.
+            if ch == b'{' && self.peek_next() == Some(b'{') {
+                self.advance();
+                self.advance();
+                value.push('{');
+                continue;
+            }
+            if ch == b'}' {
+                if self.peek_next() == Some(b'}') {
+                    self.advance();
+                    self.advance();
+                    value.push('}');
+                    continue;
+                }
+                return Err(LexError::new(
+                    "unexpected `}` in string literal: write `}}` for a literal brace",
+                    Span::new(self.pos, self.pos + 1),
+                ));
             }
 
             // Another interpolation
