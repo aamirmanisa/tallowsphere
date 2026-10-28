@@ -761,6 +761,12 @@ fn a_thousand_iterations_print_inside_the_loop_and_do_not_grow_rss() {
 /// its body. That commit is **not** an ancestor of this worktree, so the defect is
 /// live here and this test is expected to fail until it is merged. Owner: harbor
 /// (author of the ownership pass); fix commit: `a1b61b6`.
+// MEASURED (assay, on one binary): the interpreter's deferred body resolves `k` to
+// "undefined variable: k" (src/interp.rs:898) and exec_fn_body discards the Result
+// (`let _ = self.exec_block(&body, env)`, :2039), so it prints nothing and exits 0.
+// Control: `defer { print("literal") }` does print — the bodies run, they just cannot
+// see enclosing bindings. A function-local (`var s` in main) is invisible too, so this
+// is defer scope capture, not a bridged-value problem.
 #[test]
 #[ignore = "PLANE DIVERGENCE, not a codegen bug: after a1b61b6 the compiled plane keeps the \
 value alive across the defer, but the INTERPRETER loses the binding entirely — it prints \
