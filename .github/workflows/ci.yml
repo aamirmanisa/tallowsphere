@@ -391,6 +391,10 @@ jobs:
           --test scope_adversarial
           --test scope_grant_runtime
           --test stdlib_bridge_returns
+          --test bridge_marshal_adversarial
+          --test bridge_overhead
+          --test callnorm_adversarial
+          --test newtype_parity
           -- --test-threads=2
 
   conformance:
