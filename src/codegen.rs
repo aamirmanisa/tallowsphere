@@ -6138,8 +6138,35 @@ void tallow_async_runtime_shutdown(void) {
                     let pair = self.box_fn_value(&format!("@\"{thunk}\""), "null");
                     Ok(LLValue::new(pair, LLType::I8Ptr))
                 } else {
-                    // Might be a function reference — treat as unresolved for now
-                    Ok(LLValue::new(format!("@tallow.{name}"), LLType::I8Ptr))
+                    // ── G3: do not invent `@tallow.<name>` ────────────────
+                    //
+                    // This was `Ok(LLValue::new(format!("@tallow.{name}")))`,
+                    // commented "might be a function reference — treat as
+                    // unresolved for now". No such symbol can exist: every
+                    // function is in `self.functions` (and is resolved to a
+                    // thunk by the arm above), every compile-time constant in
+                    // `self.constants`, every local in `self.variables`, and
+                    // `mangle_name` only ever emits `tallow.<name>` for a
+                    // `define`. So this branch always produced an undefined
+                    // global, and the only signal was clang:
+                    //
+                    //   json1.ll:485: error: use of undefined value '@tallow.json'
+                    //
+                    // That is blueprint G3, and it was reachable three ways: an
+                    // undefined variable, an unimplemented stdlib module used as
+                    // a value (`json` before the dispatch fix), and an
+                    // unregistered namespace (`JWT`, declared as `JWT.parse` in
+                    // `stdlib/jwt.tl` but registered only as `jwt`). The
+                    // interpreter answers all three with `undefined variable`,
+                    // so refuse in the same words and let `tallow run` fall back
+                    // to it.
+                    Err(format!(
+                        "undefined variable: {name} — no local, constant, function or \
+                         stdlib namespace of that name is visible to the native backend, \
+                         and emitting it as the global `@tallow.{name}` would only reach \
+                         clang as \"use of undefined value\"; the interpreter raises \
+                         `undefined variable: {name}` for the same program"
+                    ))
                 }
             }
 
@@ -7123,6 +7150,20 @@ void tallow_async_runtime_shutdown(void) {
                 let saved_defer_stack = std::mem::take(&mut self.defer_stack);
                 let saved_reg = self.next_reg;
                 let saved_label = self.next_label;
+                // The lifted closure is `define i64 @tallow.__closure_N` — always,
+                // see the signature emitted below and the epilogue that coerces
+                // `last_val` to i64. Its `return` must therefore emit `ret i64`.
+                // Before this, `current_fn_ret` still held the *enclosing*
+                // function's type, so a closure written inside `fn main()`
+                // (Void) emitted `ret void` inside an i64 function and clang
+                // rejected the whole module:
+                //
+                //   clos1.ll:506:7: error: value doesn't match function result type 'i64'
+                //     506 |   ret void
+                //
+                // It reproduces with no `defer` present (closure-defer lane).
+                let saved_fn_ret = self.current_fn_ret.take();
+                self.current_fn_ret = Some(LLType::I64);
                 self.next_reg = 0;
                 self.next_label = 0;
 
@@ -7197,6 +7238,7 @@ void tallow_async_runtime_shutdown(void) {
                 self.variable_closure_env = saved_closure_envs;
                 self.next_reg = saved_reg;
                 self.next_label = saved_label;
+                self.current_fn_ret = saved_fn_ret;
 
                 // Register the closure as a known function (with env ptr as first param)
                 self.functions.insert(
@@ -9433,8 +9475,41 @@ void tallow_async_runtime_shutdown(void) {
                 | "compress" | "regex" | "rand" | "log" | "process" | "url" | "provenance"
                 | "browser" | "Browser" | "llm" | "Llm" | "Mesh" | "mesh" | "FileCopy"
                 | "filecopy" => {
-                    if let Some(result) = self.emit_stdlib_module_call(module_name, method, args)? {
-                        return Ok(result);
+                    // A local binding of the same name shadows the namespace:
+                    // `let json = fs.read(p)` then `json.to_string()` is a method
+                    // on that value, not the `json` module.
+                    if !self.variables.contains_key(module_name) {
+                        if let Some(result) =
+                            self.emit_stdlib_module_call(module_name, method, args)?
+                        {
+                            return Ok(result);
+                        }
+                        // ── G3: never fall out of this arm after a miss ────────
+                        //
+                        // This arm used to fall through whenever the module's
+                        // hand-written emitter returned `Ok(None)`. Nothing then
+                        // resolved `json` as a namespace, and the next receiver
+                        // path emitted the *identifier* as a global —
+                        // `tallow run` on `json.parse("{{}}")` produced
+                        // `json1.ll:485: error: use of undefined value
+                        // '@tallow.json'`, an LLVM diagnostic naming compiler
+                        // internals instead of the missing lowering. `jwt` and
+                        // `JWT` were the same shape from the other side.
+                        //
+                        // Every module listed above is a namespace with a
+                        // hand-written lowering table; a method that table does
+                        // not answer is an interpreter-only call, so refuse it by
+                        // name here (the `regex` idiom) and let `tallow run`
+                        // fall back to the interpreter. One guard covers every
+                        // module in the list, including any method a future
+                        // emitter forgets to add an arm for.
+                        // The refusal *is* the result: `emit_stdlib_stub` never
+                        // returns `Ok`, it names the gap (see its own docs).
+                        let refusal = self
+                            .emit_stdlib_stub(module_name, method)
+                            .err()
+                            .expect("emit_stdlib_stub refuses by construction");
+                        return Err(refusal);
                     }
                 }
                 // Transfer.* — `hash`, `chunk`, `tree_hash` and `manifest`
@@ -9497,9 +9572,19 @@ void tallow_async_runtime_shutdown(void) {
                 other => {
                     if !self.variables.contains_key(other)
                         && crate::stdlib::is_registered_module(other)
-                        && generic_stdlib_bridge_enabled()
                     {
-                        return self.emit_stdlib_bridge_call(other, method, args);
+                        if generic_stdlib_bridge_enabled() {
+                            return self.emit_stdlib_bridge_call(other, method, args);
+                        }
+                        // The bisect gate is off, which is documented to restore
+                        // the refusal — it must not restore the *fall-through*
+                        // (that emitted `@tallow.<module>` and let clang report
+                        // it). Same rule as the hand-written arm above.
+                        let refusal = self
+                            .emit_stdlib_stub(other, method)
+                            .err()
+                            .expect("emit_stdlib_stub refuses by construction");
+                        return Err(refusal);
                     }
                 }
             }
@@ -25746,7 +25831,20 @@ impl<'a> CodeGen<'a> {
                 ));
                 Ok(Some(LLValue::new(buf.to_string(), LLType::I8Ptr)))
             }
-            _ => Ok(None),
+            // `json.parse` / `decode` / `stringify` / `encode` are NOT here,
+            // and they cannot be handed to the generic bridge either: the
+            // interpreter implements them *inline* in `src/interp.rs`
+            // (`"json.parse" | "json.decode"`), and `stdlib::dispatch` returns
+            // `None` for them on purpose (`src/stdlib/json.rs`, pinned by
+            // `inline_implemented_functions_fall_through` in
+            // `src/stdlib/mod.rs`), so a bridge call would fail at run time
+            // with "the interpreter's router has no dispatch for json.parse".
+            // Refusing at build time is the honest answer: `tallow build`
+            // names the gap, `tallow run` falls back to the interpreter that
+            // implements it. Before this, the arm returned `Ok(None)`, the
+            // call fell out of the module match, and clang reported
+            // `use of undefined value '@tallow.json'` (blueprint G3).
+            _ => self.emit_stdlib_stub("json", method),
         }
     }
 
