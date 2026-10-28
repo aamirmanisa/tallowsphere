@@ -4339,6 +4339,11 @@ void tallow_async_runtime_shutdown(void) {
 
         // Run deferred blocks (LIFO) at async function epilogue
         self.emit_defer_cleanup()?;
+        // The body's deferred blocks are spent here. Leaving them on the stack
+        // would re-emit them at the next function's epilogue, where their names
+        // are not locals and resolve to module globals. `emit_sync_function`
+        // clears at its end for the same reason.
+        self.defer_stack.clear();
 
         // Ensure terminator
         if body_sig.ret == LLType::Void {
@@ -7105,6 +7110,17 @@ void tallow_async_runtime_shutdown(void) {
                 let saved_is_tuple = std::mem::take(&mut self.variable_is_tuple);
                 let saved_elem_type = std::mem::take(&mut self.variable_array_element_type);
                 let saved_closure_envs = std::mem::take(&mut self.variable_closure_env);
+                // A deferred block belongs to the SCOPE IT WAS REGISTERED IN, not
+                // to the name it mentions. The closure is a function body of its
+                // own: its defers must be emitted here, before its `ret`, against
+                // the closure's own `variables` table. Sharing the enclosing
+                // function's stack made `defer { print("{y}") }` inside a closure
+                // emit at the *outer* epilogue, where `y` was not a local — the
+                // ident fallback produced `@tallow.y` and clang refused with
+                // "use of undefined value '@tallow.y'". A defer in `main` that
+                // reads a module-level binding still emits at main's epilogue and
+                // still resolves through the module-level path.
+                let saved_defer_stack = std::mem::take(&mut self.defer_stack);
                 let saved_reg = self.next_reg;
                 let saved_label = self.next_label;
                 self.next_reg = 0;
@@ -7151,6 +7167,11 @@ void tallow_async_runtime_shutdown(void) {
                 for stmt in body {
                     last_val = self.emit_stmt(stmt)?;
                 }
+
+                // Run the closure's deferred blocks (LIFO) at its own epilogue,
+                // while the closure's allocas are still the live name table.
+                self.emit_defer_cleanup()?;
+
                 if let Some(val) = last_val {
                     let ret_val = self.coerce_to_i64(&val)?;
                     self.emit_line(&format!("ret i64 {ret_val}"));
@@ -7162,6 +7183,9 @@ void tallow_async_runtime_shutdown(void) {
                 // Move closure body to lifted_closures buffer
                 let closure_body = std::mem::take(&mut self.body);
                 self.lifted_closures.push_str(&closure_body);
+
+                // The enclosing function's deferred blocks are not ours.
+                self.defer_stack = saved_defer_stack;
 
                 // Restore parent function state
                 self.body = saved_body;
@@ -29591,6 +29615,17 @@ fn collect_free_vars_stmt(
             }
         }
         StmtKind::Loop { body, .. } => {
+            for s in &body.stmts {
+                collect_free_vars_stmt(s, bound, builtins, free, seen);
+            }
+        }
+        // A deferred body runs at function exit but names what was visible where
+        // it was written, so a name only it mentions is still a capture: a
+        // closure whose `defer { print("{outer}") }` names the enclosing
+        // function's local must pack that local into its environment, or the
+        // deferred body resolves the name against the module and emits
+        // `@tallow.outer`.
+        StmtKind::Defer { body } => {
             for s in &body.stmts {
                 collect_free_vars_stmt(s, bound, builtins, free, seen);
             }

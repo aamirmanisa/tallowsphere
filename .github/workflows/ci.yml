@@ -398,6 +398,7 @@ jobs:
           --test unsupported_net_refusal
           --test capability_inference
           --test bridge_ownership_adversarial
+          --test defer_parity
           -- --test-threads=2
 
   conformance:
