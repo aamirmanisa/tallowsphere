@@ -97,6 +97,37 @@ fn main() {
 }
 "#;
 
+/// The *value* the guard leaves behind, not just its type.
+///
+/// The checker's narrowing was implemented on one plane only. Measured at
+/// `c3ca375`, this program typechecked and then answered with two different
+/// values depending on the plane:
+///
+/// ```text
+/// tallow run prog.tl --interpret      -> x=6 / v=6 / in=6
+/// tallow run prog.tl --require-native -> x=nil / v=nil / in=nil
+/// ```
+///
+/// The emitter ignored `VarInfo::non_nil` and read the boxed
+/// `%struct.Optional` pointer wherever the guard had proved a payload: into an
+/// `i64` slot for `let x: i64 = v`, and into the string coercion for `{v}`,
+/// which renders an unknown optional as the literal `nil`. Every read below is
+/// one of those shapes, and all three must be the payload.
+const GUARD_READS_THE_PAYLOAD: &str = r#"
+fn maybe() -> i64? { return 6 }
+
+fn main() {
+    let v = maybe()
+    if v == nil { return }
+    let x: i64 = v
+    print("x={x}")
+    print("v={v}")
+    if v != nil {
+        print("in={v}")
+    }
+}
+"#;
+
 /// The wrap direction (#135): a plain value into an optional slot.
 const WRAPS: &str = r#"
 fn show(v: i64?) {
@@ -280,6 +311,44 @@ fn a_guarded_program_prints_identical_stdout_on_both_planes() {
             "{tag}: the planes disagree"
         );
     }
+}
+
+/// The value-side regression for the guard: a `nil`-checked optional read on
+/// the compiled plane must be the payload. A `nil` here is the silent
+/// wrong answer this test exists to make impossible.
+#[test]
+fn a_guarded_optional_reads_as_its_payload_on_both_planes() {
+    let want = "x=6\nv=6\nin=6\n";
+    let native = run(
+        GUARD_READS_THE_PAYLOAD,
+        "guard-payload-native",
+        &["run", "--require-native"],
+    );
+    let interp = run(
+        GUARD_READS_THE_PAYLOAD,
+        "guard-payload-interp",
+        &["run", "--interpret"],
+    );
+    assert!(
+        native.status.success(),
+        "native plane refused: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(
+        interp.status.success(),
+        "interpreter refused: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        want,
+        "the compiled plane did not read the payload the guard proved present"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&interp.stdout),
+        "the planes disagree about the guarded value"
+    );
 }
 
 /// The measured residual: the join of the two arms must consult the narrowing

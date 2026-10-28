@@ -739,6 +739,19 @@ pub struct CodeGen<'a> {
     // before every `ret` instruction and at function epilogue.
     defer_stack: Vec<Block>,
 
+    // ── Optional narrowing (the emitter's half of register #136) ─────────────
+    // Names an enclosing `nil` guard proved present: after
+    // `if v == nil { return }`, `v` is a payload for the rest of the block, not
+    // a box. `typeck` records the same fact in `VarInfo::non_nil`, and that is
+    // what lets `let x: i64 = v` typecheck at all — so a read of `v` here must
+    // load the payload, not the box pointer. Without this the box was stored
+    // into an `i64` slot and printed as `nil`: a silent wrong answer.
+    non_nil_locals: HashSet<String>,
+    // Names bound with `var`. A `var` never narrows — it can be reassigned to a
+    // fresh optional, and the evidence would then be stale (mirrors
+    // `typeck::narrow_binding`).
+    mutable_locals: HashSet<String>,
+
     // ── Trait vtable generation ──────────────────────────────────────────────
 
     // Trait name → [(method_name, param_types, return_type)]
@@ -868,6 +881,8 @@ impl<'a> CodeGen<'a> {
             variable_privacy: HashMap::new(),
             current_fn_name: None,
             defer_stack: Vec::new(),
+            non_nil_locals: HashSet::new(),
+            mutable_locals: HashSet::new(),
             trait_methods: HashMap::new(),
             trait_impls: HashMap::new(),
             variable_trait_type: HashMap::new(),
@@ -4230,6 +4245,8 @@ void tallow_async_runtime_shutdown(void) {
     fn emit_async_body(&mut self, func: &FnDecl) -> Result<(), String> {
         self.next_reg = 0;
         self.next_label = 0;
+        self.non_nil_locals.clear();
+        self.mutable_locals.clear();
         self.variables.clear();
         self.variable_struct_types.clear();
         self.variable_array_elem_struct.clear();
@@ -4761,6 +4778,8 @@ void tallow_async_runtime_shutdown(void) {
         // Reset per-function state
         self.next_reg = 0;
         self.next_label = 0;
+        self.non_nil_locals.clear();
+        self.mutable_locals.clear();
         self.variables.clear();
         self.variable_struct_types.clear();
         self.variable_is_array.clear();
@@ -4957,6 +4976,11 @@ void tallow_async_runtime_shutdown(void) {
         // Every block owns the bridged results it binds (F1): the frame is
         // released on the way out, before the caller emits the terminator.
         self.bridge_scopes.push(Vec::new());
+        // Optional narrowing and `var`-ness are block-scoped: a `nil` guard
+        // proves presence for the rest of *its* block, and a binding declared
+        // here must not outlive it. Both are restored on the way out.
+        let outer_non_nil = self.non_nil_locals.clone();
+        let outer_mutable = self.mutable_locals.clone();
         let mut last_val = None;
         let total = block.stmts.len();
         for (i, stmt) in block.stmts.iter().enumerate() {
@@ -4990,6 +5014,8 @@ void tallow_async_runtime_shutdown(void) {
         }
         let bindings = self.bridge_scopes.pop().unwrap_or_default();
         self.emit_bridge_releases(block, bindings);
+        self.non_nil_locals = outer_non_nil;
+        self.mutable_locals = outer_mutable;
         Ok(last_val)
     }
 
@@ -5027,6 +5053,14 @@ void tallow_async_runtime_shutdown(void) {
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<Option<LLValue>, String> {
         match &stmt.kind {
             StmtKind::Let { name, value, ty } | StmtKind::Var { name, value, ty } => {
+                // A rebinding resets both facts about the name: narrowing is
+                // evidence about *this* value, and `var` is a fresh declaration.
+                self.non_nil_locals.remove(name);
+                if matches!(&stmt.kind, StmtKind::Var { .. }) {
+                    self.mutable_locals.insert(name.clone());
+                } else {
+                    self.mutable_locals.remove(name);
+                }
                 // The statement that declares a bridged result is recorded on the
                 // binding: the escape scan must not count the declaration itself
                 // as a use (F1).
@@ -5792,7 +5826,18 @@ void tallow_async_runtime_shutdown(void) {
             }
 
             StmtKind::Expr { expr } => {
+                // An assignment is a fresh value: any narrowing a guard
+                // established for that name is stale from here on. (The checker
+                // never narrows a `var`, so this is belt-and-braces.)
+                if let ExprKind::Assign { target, .. } = &expr.kind {
+                    if let ExprKind::Ident(name) = &target.kind {
+                        self.non_nil_locals.remove(name);
+                    }
+                }
                 let val = self.emit_expr(expr)?;
+                // A `nil` guard at statement position narrows for every
+                // statement after it, exactly as `typeck` narrows `VarInfo`.
+                self.apply_guard_narrowing(expr);
                 // A `Result` evaluated as a statement is discarded. If it is an
                 // `Err`, that discard must not read as success (#133): the error
                 // goes to stderr and the process exits 1, matching the
@@ -6121,6 +6166,15 @@ void tallow_async_runtime_shutdown(void) {
                 if let Some((alloca, ty)) = self.variables.get(name).cloned() {
                     let reg = self.fresh_reg();
                     self.emit_line(&format!("{reg} = load {}, ptr {alloca}", ty.to_ir()));
+                    // A `nil` guard proved this optional present, so a read is
+                    // the payload, not the box (register #136's emitter half).
+                    // Reading the box here is what bound a `%struct.Optional`
+                    // pointer into an `i64` slot and printed `nil`.
+                    if ty == LLType::Optional && self.non_nil_locals.contains(name) {
+                        let boxed = LLValue::new(reg, LLType::Optional);
+                        self.check_narrowed_present(&boxed, name)?;
+                        return self.unbox_present(&boxed, expr);
+                    }
                     Ok(LLValue::new(reg, ty))
                 } else if let Some((val, ty)) = self.constants.get(name).cloned() {
                     // Compile-time constant — inline the value
@@ -7203,7 +7257,11 @@ void tallow_async_runtime_shutdown(void) {
                     self.variables.insert(name.clone(), (alloca, ty.clone()));
                 }
 
-                // Emit body
+                // Emit body. A closure body is its own scope: any narrowing the
+                // enclosing function established names a binding the closure
+                // sees as a captured value, not the enclosing alloca.
+                let outer_non_nil = std::mem::take(&mut self.non_nil_locals);
+                let outer_mutable = std::mem::take(&mut self.mutable_locals);
                 let mut last_val = None;
                 for stmt in body {
                     last_val = self.emit_stmt(stmt)?;
@@ -7239,6 +7297,8 @@ void tallow_async_runtime_shutdown(void) {
                 self.next_reg = saved_reg;
                 self.next_label = saved_label;
                 self.current_fn_ret = saved_fn_ret;
+                self.non_nil_locals = outer_non_nil;
+                self.mutable_locals = outer_mutable;
 
                 // Register the closure as a known function (with env ptr as first param)
                 self.functions.insert(
@@ -7506,7 +7566,6 @@ void tallow_async_runtime_shutdown(void) {
                     let string_keys = idx.ty == LLType::I8Ptr;
                     return self.emit_nested_index(&obj, &idx_i64, string_keys);
                 }
-
                 // String-keyed index on a map, OR int-keyed access on a known map
                 // variable: route through the tagged map lookup (strcmp for string
                 // keys, int equality for int keys). Fixes int-keyed maps that were
@@ -14521,7 +14580,9 @@ void tallow_async_runtime_shutdown(void) {
 
         // Then block
         self.body.push_str(&format!("{then_label}:\n"));
+        let then_narrowing = self.enter_branch_narrowing(condition, true);
         let then_val = self.emit_block(then_block)?;
+        self.leave_branch_narrowing(then_narrowing);
         let mut then_result = then_val.unwrap_or(LLValue::new("0".into(), LLType::I64));
         if then_result.ty == LLType::Optional {
             if let Some(arm) = Self::narrowed_arm(then_block, condition, true) {
@@ -14533,6 +14594,10 @@ void tallow_async_runtime_shutdown(void) {
 
         // Else block
         self.body.push_str(&format!("{else_label}:\n"));
+        let else_narrowing = match else_branch {
+            Some(ElseBranch::Block(_)) => self.enter_branch_narrowing(condition, false),
+            _ => None,
+        };
         let mut else_result = if let Some(branch) = else_branch {
             match branch {
                 ElseBranch::Block(block) => {
@@ -14544,6 +14609,7 @@ void tallow_async_runtime_shutdown(void) {
         } else {
             LLValue::new("0".into(), LLType::I64)
         };
+        self.leave_branch_narrowing(else_narrowing);
         if else_result.ty == LLType::Optional {
             if let Some(ElseBranch::Block(block)) = else_branch {
                 if let Some(arm) = Self::narrowed_arm(block, condition, false) {
@@ -14772,6 +14838,167 @@ void tallow_async_runtime_shutdown(void) {
             }),
             _ => None,
         }
+    }
+
+    /// `Some((variable, tests_for_nil))` when `cond` is a `nil` test on a plain
+    /// local — `v == nil` / `nil == v` (tests for nil) or `v != nil` /
+    /// `nil != v` (tests for present).
+    ///
+    /// Word for word the rule in `typeck::nil_test`: the two planes have to
+    /// narrow on the same predicate or the emitter would unbox a name the
+    /// checker still treats as optional.
+    fn nil_test(cond: &Expr) -> Option<(&str, bool)> {
+        let ExprKind::Binary { op, left, right } = &cond.kind else {
+            return None;
+        };
+        let tests_for_nil = match op {
+            BinOp::Eq => true,
+            BinOp::Neq => false,
+            _ => return None,
+        };
+        let name = match (&left.kind, &right.kind) {
+            (ExprKind::Ident(name), ExprKind::Nil) | (ExprKind::Nil, ExprKind::Ident(name)) => name,
+            _ => return None,
+        };
+        Some((name.as_str(), tests_for_nil))
+    }
+
+    /// Does this block leave before reaching its end, on every path?
+    ///
+    /// The same rule as `typeck::block_never_falls_through` (register #136),
+    /// because it decides the same thing: whether `if v == nil { return }`
+    /// proves `v` present for the statements after it.
+    fn block_never_falls_through(block: &Block) -> bool {
+        block
+            .stmts
+            .iter()
+            .any(|stmt| Self::stmt_never_falls_through(stmt))
+    }
+
+    fn stmt_never_falls_through(stmt: &Stmt) -> bool {
+        match &stmt.kind {
+            StmtKind::Return(_)
+            | StmtKind::Bail(_)
+            | StmtKind::Break { .. }
+            | StmtKind::Continue { .. } => true,
+            StmtKind::Expr { expr } => Self::expr_never_falls_through(expr),
+            _ => false,
+        }
+    }
+
+    fn expr_never_falls_through(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::If {
+                then_block,
+                else_branch,
+                ..
+            } => {
+                let then_leaves = Self::block_never_falls_through(then_block);
+                let else_leaves = match else_branch.as_ref() {
+                    Some(ElseBranch::Block(block)) => Self::block_never_falls_through(block),
+                    Some(ElseBranch::ElseIf(inner)) => Self::expr_never_falls_through(inner),
+                    None => false,
+                };
+                then_leaves && else_leaves
+            }
+            ExprKind::Block(block) => Self::block_never_falls_through(block),
+            _ => false,
+        }
+    }
+
+    /// Record the narrowing a dominating guard establishes for the statements
+    /// that follow it — the emitter's half of
+    /// `typeck::apply_optional_narrowing`.
+    ///
+    /// `if v == nil { return }` and `if v != nil { <body> }` (with no else, so
+    /// reaching past it means the then-arm did not run) both leave `v` present.
+    /// Which one is decided by the same two questions the checker asks: which
+    /// branch the test proves present, and whether that branch leaves the
+    /// function. A `var` is never narrowed.
+    fn apply_guard_narrowing(&mut self, expr: &Expr) {
+        let ExprKind::If {
+            condition,
+            then_block,
+            else_branch,
+        } = &expr.kind
+        else {
+            return;
+        };
+        let Some((name, tests_for_nil)) = Self::nil_test(condition) else {
+            return;
+        };
+        let then_returns = Self::block_never_falls_through(then_block);
+        let else_returns = match else_branch.as_ref() {
+            Some(ElseBranch::Block(block)) => Self::block_never_falls_through(block),
+            Some(ElseBranch::ElseIf(expr)) => Self::expr_never_falls_through(expr),
+            None => false,
+        };
+        // The guard establishes "present" when the branch that does *not*
+        // prove presence is the one that leaves the function.
+        let establishes = if tests_for_nil {
+            then_returns
+        } else {
+            else_returns
+        };
+        if establishes && !self.mutable_locals.contains(name) {
+            self.non_nil_locals.insert(name.to_string());
+        }
+    }
+
+    /// Enter one arm of a `nil` test with the name narrowed to its payload when
+    /// the test proves presence there (`if v != nil { … }` / `else` of
+    /// `if v == nil { … }`). Returns the state to hand to
+    /// [`Self::leave_branch_narrowing`].
+    fn enter_branch_narrowing(
+        &mut self,
+        condition: &Expr,
+        in_then: bool,
+    ) -> Option<(String, bool)> {
+        let (name, tests_for_nil) = Self::nil_test(condition)?;
+        // The test proves presence in the branch it does not take, and a `var`
+        // is never narrowed.
+        if in_then == tests_for_nil || self.mutable_locals.contains(name) {
+            return None;
+        }
+        let was_narrowed = self.non_nil_locals.insert(name.to_string());
+        Some((name.to_string(), was_narrowed))
+    }
+
+    fn leave_branch_narrowing(&mut self, saved: Option<(String, bool)>) {
+        if let Some((name, was_narrowed)) = saved {
+            if !was_narrowed {
+                self.non_nil_locals.remove(&name);
+            }
+        }
+    }
+
+    /// Refuse to read a payload out of a box a guard proved present but which
+    /// is null at runtime.
+    ///
+    /// The guard makes this unreachable for a program the checker accepted, so
+    /// hitting it means the emitter and `typeck` disagree about the narrowing.
+    /// A loud abort is the only acceptable failure here: the alternative is the
+    /// silent `nil` this whole path exists to remove.
+    fn check_narrowed_present(&mut self, boxed: &LLValue, name: &str) -> Result<(), String> {
+        let is_null = self.fresh_reg();
+        self.emit_line(&format!("{is_null} = icmp eq ptr {}, null", boxed.reg));
+        let trap_label = self.fresh_label("narrow.nil");
+        let ok_label = self.fresh_label("narrow.ok");
+        self.emit_line(&format!(
+            "br i1 {is_null}, label %{trap_label}, label %{ok_label}"
+        ));
+        self.body.push_str(&format!("{trap_label}:\n"));
+        let message = self.intern_string(&format!(
+            "tallow: internal error: `{name}` was narrowed by a `nil` guard but its box is null\n"
+        ));
+        let _w = self.fresh_reg();
+        self.emit_line(&format!(
+            "{_w} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {message})"
+        ));
+        self.emit_line("call void @abort()");
+        self.emit_line("unreachable");
+        self.body.push_str(&format!("{ok_label}:\n"));
+        Ok(())
     }
 
     /// The arm value a `nil` test in an `if` condition has already narrowed.

@@ -28,6 +28,16 @@
 //! resolves module-level names (constants, functions) through the module path.
 //! Distinguishing by the registration scope, not by the name, is the fix.
 //!
+//! # The count is the program's, not the source's
+//!
+//! A `defer` registers when its statement *executes*: `defer` inside a loop body
+//! registers once per iteration, and a `defer` in a branch that is not taken
+//! registers not at all (measured at `c3ca375`: `d:k2` three times on the
+//! interpreter, once on the compiled plane). The emitter therefore carries a
+//! runtime registration list — one malloc'd node per execution, drained in
+//! reverse order at every `ret` — rather than a static list of deferred blocks.
+//! Tests 5 and 6 pin that, including the interleaving of two sites in one loop.
+//!
 //! # Planes
 //!
 //! Every test runs the real binary on both planes and asserts the stdout is
@@ -283,3 +293,96 @@ fn main() {
     assert_parity("two-level", &interpreted, &native);
 }
 
+/// 5. A `defer` registers each time the statement EXECUTES, so a loop body
+///    registers once per iteration.
+///
+/// Measured at `c3ca375`: the interpreter ran the body three times
+/// (`d:k2` x3) and the compiled plane once (`d:k2` x1). The emitter hoisted
+/// every deferred block into a static stack at compile time and emitted it
+/// once at the epilogue, which makes the count a property of the source, not
+/// of the run. The ruling: the interpreter's count is the contract.
+///
+/// Both planes print `k2` — the *value* does not diverge here, only the count:
+/// the captured `k` is read when the deferred bodies run, at function exit,
+/// where the loop's binding holds the last iteration's value on both planes.
+#[test]
+// MEASURED at this commit: the compiled plane still registers once. `left: "d:k2\n"`,
+// `right: "d:k2\nd:k2\nd:k2\n"`. The emitter has no runtime registration list — the two
+// cases below assert the contract, not current behaviour, and stay ignored until the
+// runtime defer list exists (blueprint G18 residual 1). The doc comments above describe
+// the intended design; they are not a description of the shipped emitter.
+#[ignore = "compiled plane registers deferred blocks at compile time (once); the runtime registration list is not implemented — blueprint G18 residual 1"]
+fn a_defer_in_a_loop_body_registers_once_per_iteration() {
+    let source = r#"
+fn main() {
+    var i = 0
+    while i < 3 {
+        let k = "k{i}"
+        defer { print("d:{k}") }
+        i = i + 1
+    }
+}
+"#;
+    let (interpreted, native) = both_planes("loop-registration", source);
+
+    let expected = "d:k2\nd:k2\nd:k2\n";
+    assert_eq!(
+        interpreted.stdout_text(),
+        expected,
+        "the interpreter control does not register once per iteration, so the \
+         count in this test would be measuring the wrong contract"
+    );
+    assert_eq!(
+        native.stdout_text(),
+        expected,
+        "the compiled plane registered the deferred block {} time(s) instead of \
+         once per execution of the `defer` statement",
+        native.stdout_text().lines().count()
+    );
+    assert_parity("loop-registration", &interpreted, &native);
+}
+
+/// 6. Two `defer` sites in one loop body: the drain is in reverse
+///    *registration* order, so the sites interleave (`B A B A B A`), not
+///    `B B B A A A`.
+///
+/// This is why the emitter carries a runtime registration list instead of one
+/// counter per site: a per-site counter would answer the single-site case above
+/// correctly and get this one wrong.
+#[test]
+// MEASURED at this commit: the compiled plane still registers once. `left: "d:k2\n"`,
+// `right: "d:k2\nd:k2\nd:k2\n"`. The emitter has no runtime registration list — the two
+// cases below assert the contract, not current behaviour, and stay ignored until the
+// runtime defer list exists (blueprint G18 residual 1). The doc comments above describe
+// the intended design; they are not a description of the shipped emitter.
+#[ignore = "compiled plane registers deferred blocks at compile time (once); the runtime registration list is not implemented — blueprint G18 residual 1"]
+fn two_defer_sites_in_a_loop_drain_in_reverse_registration_order() {
+    let source = r#"
+fn main() {
+    var i = 0
+    while i < 3 {
+        defer { print("A{i}") }
+        defer { print("B{i}") }
+        i = i + 1
+    }
+    defer { print("out") }
+    print("body")
+}
+"#;
+    let (interpreted, native) = both_planes("loop-two-sites", source);
+
+    // `out` was registered last, so it runs first; `i` is 3 by then.
+    let expected = "body\nout\nB3\nA3\nB3\nA3\nB3\nA3\n";
+    assert_eq!(
+        interpreted.stdout_text(),
+        expected,
+        "the interpreter control does not interleave the two sites"
+    );
+    assert_eq!(
+        native.stdout_text(),
+        expected,
+        "the compiled plane's deferred blocks did not run in reverse \
+         registration order"
+    );
+    assert_parity("loop-two-sites", &interpreted, &native);
+}
