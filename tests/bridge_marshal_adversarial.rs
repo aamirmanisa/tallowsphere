@@ -321,7 +321,6 @@ fn one_mib_string_arg_arrives_intact() {
 /// printed the soundex of a truncated string"; that would record the defect as
 /// the contract.
 #[test]
-#[ignore = "F3 (docs/security/bridge-review.md): arguments are read with CStr::from_ptr, so an interior NUL truncates. Remove this #[ignore] when the fix lands; the assertion is the correct expectation, not the observed behaviour."]
 fn string_arg_with_an_embedded_nul_must_not_truncate() {
     let source = "import tallow.recordlink\n\nfn main() {\n    \
                   print(recordlink.soundex(\"a\\0b\"))\n    \
@@ -482,7 +481,6 @@ fn int_extremes_survive_the_abi() {
 /// The assertion is parity, because a bridged call must mean what the
 /// interpreter's call means.
 #[test]
-#[ignore = "Float marshalling turns non-finite values into JSON null, so the callee receives nil and dispatch aborts. Remove this #[ignore] with the fix."]
 fn nan_and_infinite_float_arguments_must_reach_the_module() {
     let source = "import tallow.finance\nimport tallow.math\n\nfn main() {\n    \
                   let nan = math.sqrt(-1.0)\n    \
@@ -546,7 +544,7 @@ fn resident_kb(pid: u32) -> Option<u64> {
 /// allocator noise cannot fail it; the leak is 19 MiB, and 2000 calls measured
 /// +64 MiB.
 #[test]
-#[ignore = "F1: the result pointer of a bridged call is never freed (32 KiB/call, +64 MB over 2000 calls). Remove this #[ignore] with the fix."]
+#[ignore = "F1 OPEN: still 32 KiB/call after this pass. Measured 2026-10-27: 19208 KiB over 600 calls of a 32768-byte String, ceiling 8192. The pointer IS freed for scalars, but a String/struct result is handed to the program as its own value (codegen.rs:23670 arm), so nothing owns it. Fixing this needs string ownership in codegen, not a free call."]
 fn bridged_string_results_do_not_grow_rss_without_bound() {
     const CALLS: usize = 600;
     const PAYLOAD_BYTES: usize = 32 * 1024;
