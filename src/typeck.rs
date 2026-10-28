@@ -2834,10 +2834,16 @@ impl<'a> TypeChecker<'a> {
         }
         // A dominating `if v == nil { .. }` has excluded the absent case before
         // this use, so `v` is the payload here, not the optional. Only an
-        // immutable binding is ever narrowed (see `VarInfo::non_nil`).
+        // immutable binding is ever narrowed (see `VarInfo::non_nil`), and the
+        // question "what does this name denote here" is answered by
+        // [`Self::narrowed_local_type`] — the same helper every read of a
+        // local's type goes through, so the binding rule and the expression
+        // rule cannot disagree.
         if let ExprKind::Ident(name) = &value.kind {
-            if locals.get(name).is_some_and(|info| info.non_nil) {
-                return;
+            if let Some(info) = locals.get(name) {
+                if !matches!(Self::narrowed_local_type(info), Type::Optional(_)) {
+                    return;
+                }
             }
         }
         let got = self.infer_expr_type(value, locals);
@@ -3000,6 +3006,27 @@ impl<'a> TypeChecker<'a> {
             info.non_nil = true;
         }
         Some(inner)
+    }
+
+    /// The type the name of a local denotes at a use site.
+    ///
+    /// A binding that a dominating `nil` guard has narrowed
+    /// ([`VarInfo::non_nil`]) denotes its payload, not the optional: the absent
+    /// case was excluded before this expression is reached. The declared type
+    /// stays `T?` on the binding — the narrowing is evidence about *this* point
+    /// in the walk, not a change to what was declared — so it is applied here,
+    /// at the one place a local's type is read.
+    ///
+    /// Every reader goes through this helper rather than testing `non_nil`
+    /// itself. The binding rule and the expression rule used to answer the
+    /// question separately, and drifted: `let x: i64 = v` was accepted after a
+    /// guard while `v + 1` was refused with the very help text that recommends
+    /// the guard.
+    fn narrowed_local_type(info: &VarInfo) -> Type {
+        match (&info.ty, info.non_nil) {
+            (Type::Optional(inner), true) => (**inner).clone(),
+            (ty, _) => ty.clone(),
+        }
     }
 
     /// Mark `name` as present in this map, if it is an immutable binding.
@@ -4783,7 +4810,13 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Nil => Type::Void,
             ExprKind::Ident(name) => {
                 if let Some(vi) = locals.get(name) {
-                    return vi.ty.clone();
+                    // Register #136: a name narrowed by a dominating `nil`
+                    // guard types as its payload in *every* expression
+                    // position — operand, argument, return value, index base,
+                    // method receiver. This is the one place a local's type is
+                    // read, so the binding rule (which goes through the same
+                    // helper) and the expression rule cannot drift apart.
+                    return Self::narrowed_local_type(vi);
                 }
                 // A top-level function used as a value *is* a function type,
                 // and that type carries the declared row (G01 P0.3). Without
