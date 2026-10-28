@@ -914,6 +914,18 @@ pub struct Env {
     /// value carries its own state between calls and distinct closure values
     /// stay independent.
     shared_captures: Option<Rc<RefCell<Vec<(String, Value)>>>>,
+    /// Depths (indices in `scopes`) of block scopes that must be retained when
+    /// they are popped, because a `defer` was written while they were open and
+    /// the deferred body may name a binding they hold. Recorded at registration
+    /// time — a deferred block can only name what was visible where it was
+    /// written — so a function with one early `defer` and a long loop does not
+    /// hoard a scope per iteration. Empty for functions that never write one.
+    pinned: Vec<usize>,
+    /// Scopes popped out of `scopes` while their depth was [`Env::pinned`], each
+    /// tagged with the depth it occupied in the scope chain. Ordered by depth
+    /// when the deferred bodies run, so lookup precedence is the source nesting
+    /// order: call frame first, then the block scopes inside it.
+    retained: Vec<(usize, HashMap<String, Value>)>,
 }
 
 impl Env {
@@ -921,6 +933,8 @@ impl Env {
         Self {
             scopes: vec![HashMap::new()],
             shared_captures: None,
+            pinned: Vec::new(),
+            retained: Vec::new(),
         }
     }
 
@@ -928,8 +942,25 @@ impl Env {
         self.scopes.push(HashMap::new());
     }
 
+    /// Pin every block scope currently open. Called when a `defer` registers:
+    /// those are exactly the scopes whose bindings the deferred body can name.
+    fn pin_open_scopes(&mut self) {
+        for depth in 1..self.scopes.len() {
+            if !self.pinned.contains(&depth) {
+                self.pinned.push(depth);
+            }
+        }
+    }
+
     fn pop_scope(&mut self) {
-        self.scopes.pop();
+        let Some(map) = self.scopes.pop() else {
+            return;
+        };
+        // An empty scope has no bindings to capture and cannot shadow anything,
+        // so retaining it would only cost memory.
+        if !map.is_empty() && self.pinned.contains(&self.scopes.len()) {
+            self.retained.push((self.scopes.len(), map));
+        }
     }
 
     pub fn define(&mut self, name: String, value: Value) {
@@ -2030,13 +2061,61 @@ impl Interpreter {
     /// Execute a function body with `defer` support: pushes a new deferred frame,
     /// runs the body, then runs deferred blocks in LIFO order regardless of how
     /// the body exited (Return, Bail, or normal completion).
+    ///
+    /// A deferred block reads the bindings that were lexically visible where it
+    /// was written, and it reads their values at function exit. The scopes that
+    /// declared those bindings are gone from `env` by the time the deferred
+    /// bodies run, so `Env::pop_scope` retains every non-empty scope that was
+    /// pinned (open where a `defer` was written); those retained scopes are
+    /// reinstated here, deepest last, around the deferred bodies. That is the
+    /// shape the compiled plane has after a1b61b6: the alloca outlives the
+    /// block, and the read happens at the epilogue.
     pub fn exec_fn_body(&mut self, block: &Block, env: &mut Env) -> Result<Value, RuntimeError> {
         self.deferred_stack.push(Vec::new());
         let result = self.exec_block(block, env);
         let frame = self.deferred_stack.pop().unwrap_or_default();
-        for body in frame.into_iter().rev() {
-            // Run deferred block; ignore its result so cleanup always proceeds.
-            let _ = self.exec_block(&body, env);
+        if !frame.is_empty() {
+            // Park the call frame's still-live scopes (parameters, constants)
+            // and append the retained block scopes, so the deferred bodies run
+            // against the full chain: call frame first, then the block scopes
+            // inside it, deepest last. Moved, never cloned — a write performed
+            // by one deferred block is seen by the next, as writes through the
+            // compiled plane's stack slots are. The chain is built once: a
+            // function that registers its defer inside a loop accumulates one
+            // entry per iteration, and rebuilding per entry would be quadratic.
+            let mut chain = std::mem::take(&mut env.scopes);
+            let surviving_len = chain.len();
+            let mut retained = std::mem::take(&mut env.retained);
+            // Stable: retained scopes at the same depth keep source order, so a
+            // later sibling block shadows an earlier one.
+            retained.sort_by_key(|(depth, _)| *depth);
+            chain.extend(retained.into_iter().map(|(_, scope)| scope));
+            let captures = std::mem::take(&mut env.shared_captures);
+
+            let mut defer_env = Env {
+                scopes: std::mem::take(&mut chain),
+                shared_captures: captures.clone(),
+                // A `defer` written inside a deferred block belongs to the frame
+                // that is still unwinding, not to this one.
+                pinned: Vec::new(),
+                retained: Vec::new(),
+            };
+            for body in frame.into_iter().rev() {
+                // Ignore the result so cleanup always proceeds.
+                let _ = self.exec_block(&body, &mut defer_env);
+                debug_assert!(
+                    defer_env.scopes.len() >= surviving_len,
+                    "a deferred body must leave the reinstated scope chain balanced"
+                );
+            }
+
+            // Restore only the call frame's own scopes: `Drop for Env` flushes a
+            // closure call frame's mutated captures from `scopes[0]`, and the
+            // retained block scopes expire with the frame that declared them.
+            let mut restored = std::mem::take(&mut defer_env.scopes);
+            restored.truncate(surviving_len);
+            env.scopes = restored;
+            env.shared_captures = captures;
         }
         result
     }
@@ -2579,6 +2658,10 @@ impl Interpreter {
                 match self.deferred_stack.last_mut() {
                     Some(frame) => {
                         frame.push(body.clone());
+                        // Pin the scopes open here: those hold exactly the
+                        // bindings this deferred body can name, and they will
+                        // be gone by the time it runs at function exit.
+                        env.pin_open_scopes();
                         Ok(Value::Nil)
                     }
                     // P0-5: silent drops were a correctness bug — every fn body
@@ -33364,6 +33447,117 @@ mod tests {
     fn hello_nx() {
         let (_, output) = run(include_str!("../tests/fixtures/hello.tl"));
         assert_eq!(output, vec!["hello from tallow"]);
+    }
+
+    // ── `defer` scope capture (wave-08) ─────────────────────────────────────
+    //
+    // A deferred block reads the bindings that were lexically visible where it
+    // was written, and it reads their values at function exit. Every
+    // expectation below is the compiled plane's answer for the same program
+    // (`tallow run --require-native`, measured 2026-10-28 on c8abb71+a1b61b6),
+    // so a change here is a plane divergence, not a preference.
+
+    #[test]
+    fn interp_defer_reads_a_block_local_at_function_exit() {
+        // The shape from case 9 of tests/bridge_ownership_adversarial.rs,
+        // without the bridged call: the binding is declared in a block that has
+        // already been left when the deferred body runs.
+        let (_, output) = run(
+            r#"
+fn main() {
+    if true {
+        let k = 99
+        defer { print(k) }
+    }
+    print("body")
+}
+"#,
+        );
+        assert_eq!(output, vec!["body", "99"]);
+    }
+
+    #[test]
+    fn interp_defer_reads_a_function_local_declared_before_it() {
+        let (_, output) = run(
+            r#"
+fn main() {
+    var s = 1
+    defer { print(s) }
+    s = 2
+    print("body")
+}
+"#,
+        );
+        // The value is read at exit, not captured when `defer` is written.
+        assert_eq!(output, vec!["body", "2"]);
+    }
+
+    #[test]
+    fn interp_defer_keeps_lifo_order_and_literal_bodies() {
+        let (_, output) = run(
+            r#"
+fn main() {
+    defer { print("first") }
+    defer { print("second") }
+    print("body")
+}
+"#,
+        );
+        assert_eq!(output, vec!["body", "second", "first"]);
+    }
+
+    #[test]
+    fn interp_defer_runs_with_its_capture_on_the_return_path() {
+        let (_, output) = run(
+            r#"
+fn f() -> i64 {
+    let k = 7
+    defer { print(k) }
+    return 0
+}
+fn main() { f() }
+"#,
+        );
+        assert_eq!(output, vec!["7"]);
+    }
+
+    #[test]
+    fn interp_defer_resolves_a_shadowing_binding_the_compiled_plane_also_picks() {
+        // The inner `k` is declared *after* the defer, so lexical scope says the
+        // deferred read means the outer `k`. The compiled plane resolves defer
+        // bodies at the epilogue against the innermost binding of the name, and
+        // prints 2 — the interpreter matches the plane here, and this test pins
+        // the agreement rather than the lexical reading.
+        let (_, output) = run(
+            r#"
+fn main() {
+    let k = 1
+    {
+        defer { print(k) }
+        let k = 2
+        print(k)
+    }
+    print("body")
+}
+"#,
+        );
+        assert_eq!(output, vec!["2", "body", "2"]);
+    }
+
+    #[test]
+    fn interp_defer_writes_are_visible_to_later_deferred_blocks() {
+        let (_, output) = run(
+            r#"
+fn main() {
+    var a = 1
+    defer { print(a) }
+    defer { a = 9 }
+    print("body")
+}
+"#,
+        );
+        // LIFO: the assignment runs first, and the read sees the write.
+        assert_eq!(output, vec!["body", "9"]);
     }
 
     #[test]

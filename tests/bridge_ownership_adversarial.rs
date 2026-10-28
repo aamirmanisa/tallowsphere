@@ -36,12 +36,11 @@
 //! | 7 | two bridged results live at once | one release must not take the other's block |
 //! | 8 | 1000 iterations printing inside the loop | released per iteration (RSS ceiling) **and** still correct |
 //!
-//! A ninth case is added after the eight, and it is **red on this tree**: the
-//! escape scan treats the body of a `defer` as an ordinary block, so a deferred
-//! read of the binding is scored as "read only" and the release fires before the
-//! deferred block runs. See
-//! `a_deferred_block_reads_the_value_after_the_release_point` for the measurement
-//! and the commit on `main` that fixes it.
+//! A ninth case is added after the eight: a deferred block reads a bridged
+//! result. It exercises both fixes at once — the escape scan must not release a
+//! binding a `defer` reads (`a1b61b6`), and the interpreter must resolve the
+//! deferred body against the bindings its declaring scope could see (wave-08).
+//! See `a_deferred_block_reads_the_value_after_the_release_point`.
 //!
 //! Cases 3–7 are the ones that decide whether the escape scan is right; each of
 //! them asserts, beyond stdout parity with the interpreter, that the value that
@@ -728,20 +727,25 @@ fn a_thousand_iterations_print_inside_the_loop_and_do_not_grow_rss() {
 
 // ── 9. A deferred block reads the value after the release point ─────────────
 
-/// **Kept red: real defect, introduced by `735a689` — the commit this file
-/// attacks.**
+/// **Green on both planes since wave-08.** Green on the compiled plane since
+/// `a1b61b6` and on the interpreter since the `defer` scope-capture fix: a
+/// deferred block now reads the bindings its declaring scope could see, at
+/// function exit — `src/interp.rs` (`Env::retained`, `exec_fn_body`).
 ///
-/// `defer { print(k) }` does not read `k` where it is written: the deferred body
-/// runs at function exit, *after* `emit_bridge_releases` has already released the
-/// binding at the end of the block that declared it. The escape scan walks the
-/// defer body like any nested block (`StmtKind::Defer { body } =>
-/// bridge_binding_escapes(body, name, NOT_DECLARED_HERE)`), sees a `print` —
-/// a read-only use — and answers "does not escape". The release then fires before
-/// the deferred read.
+/// `defer { print(k) }` used to read the wrong `k` on both planes, in two
+/// different ways. The compiled plane ran the deferred body at function exit,
+/// *after* `emit_bridge_releases` had released the binding at the end of the
+/// block that declared it, because the escape scan walked the defer body like
+/// any nested block (`StmtKind::Defer { body } =>
+/// bridge_binding_escapes(body, name, NOT_DECLARED_HERE)`), saw a `print` — a
+/// read-only use — and answered "does not escape". The interpreter lost the
+/// binding entirely: the deferred body's lookup returned "undefined variable:
+/// k" and `exec_fn_body` discarded the Result, so it printed nothing and the
+/// process still exited 0.
 ///
-/// Measured 2026-10-29 on this tree (`4a8db9a`), for the program below — no churn
-/// is needed, `free` itself writes the allocator's tcache metadata into the block
-/// it is handing back:
+/// Measured 2026-10-29 on `4a8db9a`, for the program below — no churn is needed,
+/// `free` itself writes the allocator's tcache metadata into the block it is
+/// handing back:
 ///
 /// ```text
 /// compiled plane (--require-native):        interpreter control (--interpret):
@@ -750,28 +754,24 @@ fn a_thousand_iterations_print_inside_the_loop_and_do_not_grow_rss() {
 ///                                           (the deferred print emitted nothing)
 /// ```
 ///
-/// The interpreter is therefore **not** a usable control for this shape — it
-/// loses the binding entirely rather than freeing it — so the case asserts the
-/// contract on each plane directly instead of asserting parity. The contract is
-/// what `defer` means and what the non-deferred form of the same program already
-/// produces: `body`, then the normalized address.
+/// The contract is what `defer` means and what the non-deferred form of the same
+/// program already produces: `body`, then the normalized address. The two legs
+/// below now assert that contract **and** assert byte-identical stdout, because
+/// the interpreter is a usable control again.
 ///
-/// Fixed on `main` by `a1b61b6` ("fix(codegen): a deferred block keeps the bridged
-/// value live"), which makes a block containing a defer escape instead of scanning
-/// its body. That commit is **not** an ancestor of this worktree, so the defect is
-/// live here and this test is expected to fail until it is merged. Owner: harbor
-/// (author of the ownership pass); fix commit: `a1b61b6`.
-// MEASURED (assay, on one binary): the interpreter's deferred body resolves `k` to
-// "undefined variable: k" (src/interp.rs:898) and exec_fn_body discards the Result
-// (`let _ = self.exec_block(&body, env)`, :2039), so it prints nothing and exits 0.
-// Control: `defer { print("literal") }` does print — the bodies run, they just cannot
-// see enclosing bindings. A function-local (`var s` in main) is invisible too, so this
-// is defer scope capture, not a bridged-value problem.
+/// `a1b61b6` ("fix(codegen): a deferred block keeps the bridged value live")
+/// makes a block containing a defer escape instead of scanning its body. The
+/// interpreter fix is `exec_fn_body`: it reinstates the scopes that were popped
+/// after the `defer` registered, deepest last, around each deferred body — so
+/// the read is of the declaring scope's bindings, taken at exit. Owner: harbor.
+// MEASURED (assay, before the fix, on one binary): the interpreter's deferred body
+// resolved `k` to "undefined variable: k" (src/interp.rs:898) and exec_fn_body
+// discarded the Result (`let _ = self.exec_block(&body, env)`, :2039), so it printed
+// nothing and exited 0. Control: `defer { print("literal") }` did print — the bodies
+// ran, they just could not see enclosing bindings. A function-local (`var s` in main)
+// was invisible too, so this was defer scope capture, not a bridged-value problem.
+// Both are pinned by `interp_defer_*` in `src/interp.rs`.
 #[test]
-#[ignore = "PLANE DIVERGENCE, not a codegen bug: after a1b61b6 the compiled plane keeps the \
-value alive across the defer, but the INTERPRETER loses the binding entirely — it prints \
-nothing where the address should be. Whether `defer` captures a block-local is a language \
-question; it is queued as wave-08 (interpreter defer scope capture). Un-ignore with that fix."]
 fn a_deferred_block_reads_the_value_after_the_release_point() {
     let source = format!(
         "import tallow.geocode\n\nfn main() {{\n    let payload = \"{}\"\n    \
@@ -812,6 +812,15 @@ fn a_deferred_block_reads_the_value_after_the_release_point() {
         expected,
         "the interpreter control lost the binding: the deferred block printed \
          nothing where the address should be"
+    );
+    // Both legs passed on their own; the divergence this case was born from is
+    // closed only if they agree byte for byte.
+    assert_eq!(
+        native.stdout,
+        interpreted.stdout,
+        "the planes disagree on a deferred read of a bridged value:\n{}\n{}",
+        native.describe("defer", "--require-native"),
+        interpreted.describe("defer", "--interpret")
     );
 }
 
