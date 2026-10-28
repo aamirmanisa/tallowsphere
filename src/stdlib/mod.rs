@@ -44,7 +44,7 @@ pub mod topology;
 // matching stdlib/ip.tl, so the manifest and the dispatch key agree.
 #[path = "intel_ip.rs"]
 pub mod ip;
-// A2 API surface (N13/N14/N20/N21). The Rust module is `intel_api` because
+// A2 API surface (N13/N14/N16/N17/N18/N20/N21). The Rust module is `intel_api` because
 // `intel` already names the evidence/budget lane; the .tl namespace is `api`,
 // matching stdlib/api.tl, so the manifest and the dispatch key agree.
 #[path = "intel_api.rs"]
@@ -193,8 +193,9 @@ pub fn dispatch(module: &str, function: &str, args: Vec<Value>) -> Option<Stdlib
         // `intel_ip` is tolerated as a prefix because the brief names the API
         // that way; the .tl namespace is `ip`.
         "ip" | "intel_ip" => ip::dispatch(function, args),
-        // A2 API surface (N13/N14/N20/N21): offline OpenAPI/GraphQL ingestion and
-        // inventory comparison. No sockets, no DNS, no clock.
+        // A2 API surface (N13/N14/N16/N17/N18/N20/N21): OpenAPI/GraphQL ingestion,
+        // inventory comparison and the method matrix. Everything but the matrix is
+        // offline; the matrix consults the scope register before it opens a socket.
         "api" | "intel_api" => api::dispatch(function, args),
         // A3 traffic (N27/N28/N29/N30): offline capture parsing, protocol
         // attribution, DNS-tunnelling signal, egress-plane summary. No sockets,

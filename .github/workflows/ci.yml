@@ -390,6 +390,7 @@ jobs:
           --test checker_diagnostics
           --test effect_rows
           --test intel_ip_fixtures
+          --test intel_api_method_matrix
           --test language_ergonomics
           --test len_scalar_parity
           --test module_value
