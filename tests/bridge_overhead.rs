@@ -81,10 +81,26 @@
 //! second fence: 20 µs/call is ~5× the measured value and still far below the
 //! spike's 89.4 µs/call (which included real serialization work), so a
 //! regression that keeps the *ratio* but inflates the cost still fails.
+//!
+//! # The ownership case, added after F1
+//!
+//! `735a689` (F1) made a bridged `String` result releasable: when the binding
+//! does not escape its block, codegen frees the runtime's buffer at the end of
+//! that block. `bridged_string_ownership_path_is_bounded_and_released` times
+//! the case where that release fires — a result consumed immediately by
+//! `print` — subtracts a print-only control, times `tallow_free_string`
+//! directly (one deallocation is below what the two-count subtraction can
+//! resolve), and checks RSS flatness at 2000 calls with a 32 KiB result. The
+//! numbers and the bound rationale are in `docs/perf/bridge-overhead.md` §7.
 
+use std::ffi::CString;
+use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
+
+use tallow::runtime::stdlib_bridge_ffi::tallow_stdlib_call;
+use tallow::runtime::tallow_free_string;
 
 /// Baseline call count. The loop — not unrolled straight-line calls — is what
 /// keeps the emitted IR the same size between the two programs.
@@ -114,6 +130,34 @@ const BRIDGED_CEILING_US: f64 = 20.0;
 
 /// The ratio bound. Measured ratio is ~0.1; 5.0 leaves a ~50× regression free.
 const MAX_RATIO_TO_INTERPRETER: f64 = 5.0;
+
+/// Ceiling on the ownership case's per-call cost (µs): a bridged `String`
+/// result consumed immediately and released at the end of the loop body, as
+/// F1's escape scan allows. `2 ×` the measured 3.72 µs/call; see
+/// `docs/perf/bridge-overhead.md` §7.
+const OWNERSHIP_CEILING_US: f64 = 8.0;
+
+/// RSS leg: F1's own shape at four times the call count F1's test used.
+const RSS_CALLS: usize = 2000;
+const RSS_PAYLOAD_BYTES: usize = 32 * 1024;
+const RSS_METHOD: &str = "normalize_address";
+
+/// Ceiling on RSS growth over [`RSS_CALLS`] bridged calls returning a
+/// 32 KiB result: measured +300 and +408 KiB on two runs, so this is ~5× the
+/// larger reading rather than 2×. The reason is stated rather than hidden: a
+/// 1 ms sampler's *peak* moves with the allocator's arena, and 2× a
+/// noise-level peak would flake, which is worse than a slightly looser bound.
+/// It is still 32× below the 64 MiB that one un-released result per call would
+/// produce, and 13× tighter per call than F1's own 8 MiB ceiling for 600 calls
+/// (1.0 KiB/call allowed here against 13.7 KiB/call there).
+/// See `docs/perf/bridge-overhead.md` §7.3.
+const OWNERSHIP_RSS_CEILING_KB: u64 = 2048;
+
+/// Sanity fence on `tallow_free_string` itself, in nanoseconds. Deliberately
+/// not a performance bound: it is ~15× the measured 67 ns and exists only to
+/// catch the release turning into something other than one deallocation (a
+/// scan, a copy, a lock).
+const FREE_CEILING_NS: f64 = 1_000.0;
 
 /// Serializes this test's legs. Each fixture is a full codegen + clang link
 /// against a 1.1 GB archive, and this box has been driven into zram thrash by
@@ -161,23 +205,33 @@ impl Fixture {
     /// `tallow run`), so a silent fallback cannot make "bridged" a second
     /// interpretation of the same program.
     fn prepare(tag: &str, calls: usize) -> Fixture {
+        Fixture::prepare_source(tag, calls, program(calls), false)
+    }
+
+    /// The same, for any source text. `keep_ir` asks `tallow build` to leave
+    /// the emitted IR next to the artifact, so a caller can assert on the
+    /// instruction a case depends on instead of only on its effect.
+    fn prepare_source(tag: &str, calls: usize, text: String, keep_ir: bool) -> Fixture {
         let dir = unique_dir(tag, calls);
         std::fs::create_dir_all(&dir).expect("create fixture dir");
         let source = dir.join("prog.tl");
-        std::fs::write(&source, program(calls)).expect("write program");
+        std::fs::write(&source, text).expect("write program");
         // `tallow build` writes the executable next to the source, replacing
         // the `.tl` extension (src/main.rs:10740).
         let artifact = dir.join("prog");
-        let output = Command::new(env!("CARGO_BIN_EXE_tallow"))
+        let mut build = Command::new(env!("CARGO_BIN_EXE_tallow"));
+        build
             .args(["build", source.to_str().expect("utf-8 path")])
-            .env("TALLOW_ALLOW_DIRECT", "1")
-            .output()
-            .expect("run tallow build");
+            .env("TALLOW_ALLOW_DIRECT", "1");
+        if keep_ir {
+            build.env("TALLOW_KEEP_IR", "1");
+        }
+        let output = build.output().expect("run tallow build");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
-            "[bridge-overhead] the native build of the {calls}-call program failed, so the \
-             bridge did not lower {MODULE}.{METHOD}:\n{stderr}"
+            "[bridge-overhead] the native build of the '{tag}' program ({calls} calls) failed, so \
+             the call was not lowered to the bridge:\n{stderr}"
         );
         assert!(
             artifact.exists(),
@@ -426,6 +480,365 @@ fn the_module_work_floor_under_both_planes() {
         per_call_us < BRIDGED_CEILING_US,
         "one dispatch of a function that only lowercases one word costs {per_call_us:.3} µs; if \
          that is not cheap, the bridged number above is not measuring the bridge"
+    );
+}
+
+// ── The ownership path (F1), timed ─────────────────────────────────────────
+//
+// F1 (`735a689`) gave a bridged `String` result an owner: when the binding
+// does not escape its block, codegen releases the runtime's buffer at the end
+// of that block. Two things are new and both can cost something — a *compile
+// time* escape scan over the declaring block, and one *run time* release per
+// call. The escape scan cannot be seen in a µs/call figure (it is the same
+// scan whether the program loops 200 times or 2200), so what this case
+// measures at run time is the release, on the case where it fires.
+
+/// `calls` iterations of the ownership path: a bridged `String` result that is
+/// consumed immediately (printed) and released when the loop body ends.
+///
+/// `print(s)` is a *read* — the escape scan's `Call` arm treats `print`'s
+/// arguments as consumed — so the binding does not escape and F1's release
+/// fires. That is asserted against the emitted IR below, not assumed from the
+/// source: a case that silently stopped releasing would measure the leak path
+/// and report it as the fix.
+fn ownership_program(calls: usize) -> String {
+    format!(
+        r#"import tallow.{MODULE}
+
+fn main() {{
+    var i = 0
+    while i < {calls} {{
+        let s = {MODULE}.{METHOD}("Texas")
+        print(s)
+        i = i + 1
+    }}
+}}
+"#
+    )
+}
+
+/// The control: the same loop with the same number of writes and no bridged
+/// call. Subtracting it is what makes "the ownership path is what is timed" a
+/// measurement rather than a claim — what is left is the bridged call (module
+/// work + marshalling + the release), with the loop and the write removed.
+fn print_control_program(calls: usize) -> String {
+    format!(
+        r#"fn main() {{
+    var i = 0
+    while i < {calls} {{
+        print("{EXPECTED_RESULT}")
+        i = i + 1
+    }}
+}}
+"#
+    )
+}
+
+/// F1's RSS shape at [`RSS_CALLS`] calls. The payload is what makes RSS a
+/// signal: `state_from_name` returns two bytes, so a leak in the timed case
+/// would be invisible in RSS no matter how long the loop ran.
+fn ownership_rss_program(calls: usize, payload: &str) -> String {
+    format!(
+        r#"import tallow.{MODULE}
+
+fn main() {{
+    let payload = "{payload}"
+    var total = 0
+    var i = 0
+    while i < {calls} {{
+        let k = {MODULE}.{RSS_METHOD}(payload)
+        total = total + k.len()
+        i = i + 1
+    }}
+    print(total)
+}}
+"#
+    )
+}
+
+/// Minimum of [`RUNS`] executions, checking that the program printed `calls`
+/// lines of `line`.
+///
+/// These programs have no accumulator to print, so the output is the proof the
+/// loop ran: a run that printed fewer results, or a result that is not what
+/// the module answers, fails instead of reporting a small delta.
+fn min_of_line_runs(command: &mut Command, calls: usize, line: &str, what: &str) -> Duration {
+    let mut best: Option<Duration> = None;
+    for attempt in 0..RUNS {
+        let started = Instant::now();
+        let output: Output = command.output().expect(what);
+        let elapsed = started.elapsed();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "[{what}] run {attempt} failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        let printed: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            printed.len(),
+            calls,
+            "[{what}] the program printed {} line(s) for {calls} iterations, so this is not a \
+             timing of {calls} consumed results\nstderr:\n{stderr}",
+            printed.len()
+        );
+        assert!(
+            printed.iter().all(|got| got.trim() == line),
+            "[{what}] a consumed result printed something other than {line:?} (first five: {:?})",
+            &printed[..printed.len().min(5)]
+        );
+        best = Some(match best {
+            Some(previous) if previous <= elapsed => previous,
+            _ => elapsed,
+        });
+    }
+    best.expect("at least one run")
+}
+
+/// Resident set of `pid`, in KiB.
+fn resident_kb(pid: u32) -> Option<u64> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+    let resident_pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;
+    let page_kb = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64 / 1024;
+    Some(resident_pages * page_kb)
+}
+
+/// What one `tallow_free_string` — the instruction F1 emits — costs.
+///
+/// The end-to-end planes cannot resolve this: the release is one deallocation
+/// against a ~4 µs call, well inside the run-to-run spread of the two-count
+/// subtraction. So it is timed directly: allocate the results first, then time
+/// the frees alone, so neither the bridge call nor the module's work is inside
+/// the timed region.
+fn free_cost_per_call_ns() -> f64 {
+    const CALLS: usize = 200_000;
+
+    let module = CString::new(MODULE).expect("module name");
+    let method = CString::new(METHOD).expect("method name");
+    let argument = CString::new("Texas").expect("argument");
+    let argv = [argument.as_ptr()];
+
+    let mut results: Vec<*mut c_char> = Vec::with_capacity(CALLS);
+    for _ in 0..CALLS {
+        let pointer = tallow_stdlib_call(
+            module.as_ptr(),
+            method.as_ptr(),
+            1,
+            argv.as_ptr() as *const *const c_char,
+        );
+        assert!(
+            !pointer.is_null(),
+            "the bridge refused the free probe's call to {MODULE}.{METHOD}"
+        );
+        results.push(pointer);
+    }
+
+    let started = Instant::now();
+    for pointer in results.drain(..) {
+        tallow_free_string(pointer);
+    }
+    started.elapsed().as_secs_f64() * 1e9 / CALLS as f64
+}
+
+/// **The cost of F1's ownership rule, and that it holds at 2000 calls.**
+///
+/// Three numbers, all on the compiled plane of one binary:
+///
+/// 1. **the ownership loop** — a bridged `String` result consumed immediately
+///    (printed) and released at the end of every iteration, differenced over
+///    2000 calls exactly as the planes above are;
+/// 2. **its control** — the same writes with no bridged call, so the print and
+///    the loop can be removed rather than hand-waved;
+/// 3. **the release itself** — `tallow_free_string`, timed directly, because
+///    the two-count subtraction cannot resolve a deallocation.
+///
+/// The RSS leg is F1's own shape at 2000 calls instead of 600 (2000 × 32 KiB =
+/// 64 MiB if anything is un-released).
+#[test]
+fn bridged_string_ownership_path_is_bounded_and_released() {
+    let _serialized = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let owned_base =
+        Fixture::prepare_source("ownership", BASE_CALLS, ownership_program(BASE_CALLS), true);
+    let owned_long = Fixture::prepare_source(
+        "ownership",
+        BASE_CALLS + EXTRA_CALLS,
+        ownership_program(BASE_CALLS + EXTRA_CALLS),
+        false,
+    );
+    let control_base = Fixture::prepare_source(
+        "print-control",
+        BASE_CALLS,
+        print_control_program(BASE_CALLS),
+        false,
+    );
+    let control_long = Fixture::prepare_source(
+        "print-control",
+        BASE_CALLS + EXTRA_CALLS,
+        print_control_program(BASE_CALLS + EXTRA_CALLS),
+        false,
+    );
+
+    // The case is about the ownership path only if the release is in the
+    // program. `TALLOW_KEEP_IR=1` leaves the IR beside the artifact; exactly
+    // one release means the bridged result — and not the program's own string
+    // argument — is what gets freed, once, per iteration.
+    let ir = std::fs::read_to_string(owned_base.dir.join("prog.ll"))
+        .expect("TALLOW_KEEP_IR=1 promises prog.ll next to the artifact");
+    assert_eq!(
+        ir.matches("call void @tallow_free_string").count(),
+        1,
+        "the ownership program must release exactly one value — the bridged String result it \
+         binds in the loop body; a different count means F1's rule moved and this case no longer \
+         measures the release"
+    );
+
+    let owned_base_time = min_of_line_runs(
+        &mut Command::new(&owned_base.artifact),
+        BASE_CALLS,
+        EXPECTED_RESULT,
+        "ownership #200",
+    );
+    let owned_long_time = min_of_line_runs(
+        &mut Command::new(&owned_long.artifact),
+        BASE_CALLS + EXTRA_CALLS,
+        EXPECTED_RESULT,
+        "ownership #2200",
+    );
+    let control_base_time = min_of_line_runs(
+        &mut Command::new(&control_base.artifact),
+        BASE_CALLS,
+        EXPECTED_RESULT,
+        "print-control #200",
+    );
+    let control_long_time = min_of_line_runs(
+        &mut Command::new(&control_long.artifact),
+        BASE_CALLS + EXTRA_CALLS,
+        EXPECTED_RESULT,
+        "print-control #2200",
+    );
+
+    assert!(
+        owned_long_time >= owned_base_time,
+        "adding {EXTRA_CALLS} calls made the compiled program faster \
+         ({owned_long_time:?} < {owned_base_time:?}); the subtraction is not measuring the loop"
+    );
+    // The control has no such guard, and that is the measurement: 2000 buffered
+    // writes cost less than the ±0.2 ms of start-up jitter between two runs of a
+    // ~4 ms process, so its difference can come out *negative*. That is the
+    // control saying "printing and looping are below this method's resolution",
+    // not the control failing — clamping it at zero is the honest reading, and
+    // a control that ever became expensive would arrive as a positive number and
+    // be subtracted.
+    let per_call = |long: Duration, base: Duration| -> f64 {
+        let delta = long.as_secs_f64() - base.as_secs_f64();
+        delta * 1e6 / EXTRA_CALLS as f64
+    };
+    let owned_us = per_call(owned_long_time, owned_base_time);
+    let control_us = per_call(control_long_time, control_base_time);
+    let ownership_us = owned_us - control_us.max(0.0);
+
+    let free_ns = free_cost_per_call_ns();
+
+    // ── RSS: the same ownership shape, 2000 calls, 32 KiB results ───────────
+    let unit = "1 main st, austin tx 78701 ";
+    let payload = unit.repeat(RSS_PAYLOAD_BYTES / unit.len());
+    let rss_fixture = Fixture::prepare_source(
+        "ownership-rss",
+        RSS_CALLS,
+        ownership_rss_program(RSS_CALLS, &payload),
+        false,
+    );
+
+    let mut child = Command::new(&rss_fixture.artifact)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn the RSS program");
+    let pid = child.id();
+    let mut samples: Vec<u64> = Vec::new();
+    loop {
+        if let Some(kb) = resident_kb(pid) {
+            samples.push(kb);
+        }
+        match child.try_wait().expect("wait on the RSS program") {
+            Some(_) => break,
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    let output = child.wait_with_output().expect("collect the RSS program");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "the RSS program failed:\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let total: u64 = stdout.trim().parse().unwrap_or_else(|_| {
+        panic!("the RSS program must print the summed result length, printed {stdout:?}")
+    });
+    assert!(
+        total >= (RSS_CALLS * (payload.len() / 2)) as u64
+            && total <= (RSS_CALLS * (payload.len() * 2)) as u64,
+        "the RSS program summed {total} bytes over {RSS_CALLS} calls on a {}-byte payload; an \
+         empty or corrupted result is what a premature release looks like, and it would also \
+         make the RSS series meaningless",
+        payload.len()
+    );
+    assert!(
+        samples.len() >= 20,
+        "too few RSS samples ({}) to make a claim about growth",
+        samples.len()
+    );
+
+    let tenth = (samples.len() / 10).max(1);
+    let baseline = *samples[..tenth].iter().max().expect("samples");
+    let final_high = *samples[samples.len() - tenth..]
+        .iter()
+        .max()
+        .expect("samples");
+    let growth = final_high.saturating_sub(baseline);
+    let series: Vec<u64> = samples.iter().copied().step_by(500).collect();
+
+    eprintln!(
+        "\n── bridged String ownership path (F1) ──\n\
+         binary      {}\n\
+         corpus      {MODULE}.{METHOD}(\"Texas\") -> \"{EXPECTED_RESULT}\", consumed by print\n\
+         counts      {BASE_CALLS} vs {} iterations, min of {RUNS} runs each, difference / {EXTRA_CALLS}\n\
+         loop        {owned_us:.3} µs/call   ({owned_base_time:?} -> {owned_long_time:?})\n\
+         control     {control_us:.3} µs/call   (same loop, print only; {control_base_time:?} -> {control_long_time:?})\n\
+         ownership   {ownership_us:.3} µs/call  (loop - control: bridge + marshalling + release)\n\
+         release     {free_ns:.1} ns/call      (tallow_free_string, timed directly)\n\
+         rss         +{growth} KiB over {RSS_CALLS} calls returning {} bytes (baseline {baseline} KiB, peak {final_high} KiB, {} samples)\n\
+         rss series  {series:?}",
+        binary_fingerprint(),
+        BASE_CALLS + EXTRA_CALLS,
+        payload.len(),
+        samples.len(),
+    );
+
+    assert!(
+        ownership_us > 0.0,
+        "the ownership loop cost no more than printing a literal ({ownership_us:.3} µs), so the \
+         bridged call is not what is being timed"
+    );
+    assert!(
+        owned_us < OWNERSHIP_CEILING_US,
+        "a bridged String result consumed immediately costs {owned_us:.3} µs/call, over the \
+         {OWNERSHIP_CEILING_US} µs ceiling (2x the measured value)"
+    );
+    assert!(
+        free_ns < FREE_CEILING_NS,
+        "one tallow_free_string took {free_ns:.1} ns against a {FREE_CEILING_NS} ns fence; the \
+         release is supposed to be one deallocation, not a scan"
+    );
+    assert!(
+        growth < OWNERSHIP_RSS_CEILING_KB,
+        "RSS grew {growth} KiB over {RSS_CALLS} bridged calls returning a {}-byte String \
+         (baseline {baseline} KiB, peak {final_high} KiB, ceiling {OWNERSHIP_RSS_CEILING_KB} KiB, \
+         {} samples); the result buffer is not being released. Sampled series (every 500th, KiB): \
+         {series:?}",
+        payload.len(),
+        samples.len()
     );
 }
 
