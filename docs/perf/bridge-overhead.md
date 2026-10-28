@@ -126,6 +126,25 @@ about the bridge. The interpreter leg needs no such hoist — `tallow run
 | box | Hetzner ARM (aarch64), 15 GiB, shared with 8+ concurrent agent lanes; `/run/nixe-heavy-build.lock` queues `cargo` invocations |
 | corpus | `geocode.state_from_name("Texas") -> "TX"`, 1 `String` arg, 1 `String` result |
 
+### 2.1 Repeatability
+
+The measurement was taken twice, on two builds of the same worktree. The second
+binary has a different sha256 because the shared target dir had been relinked by
+the lanes in between — which is exactly why the sha, not the revision, is the
+identity of a measurement here.
+
+| | run 1 (`7d21043b…82bb7`) | run 2 (`e5f1f7ca…2b777`) |
+|---|---|---|
+| bridged | 4.566 µs/call | 4.944 µs/call |
+| interpreted | 38.498 µs/call | 36.212 µs/call |
+| delta | −33.931 µs/call (0.12x) | −31.269 µs/call (0.14x) |
+| work floor | 2.085 µs/call | 2.221 µs/call |
+
+Same shape, ±8 % on the bridged figure and ±6 % on the interpreted one. That
+spread — not the last digit of any single number — is the precision this box
+supports while other lanes are building. §3 quotes run 1; §6's conclusions are
+the ones both runs agree on.
+
 Everything is debug-profile. That inflates the *interpreter* far more than a C
 call boundary, whose own cost is a handful of instructions — read the numbers
 below as debug numbers, not as what a release build would spend. Nothing here
