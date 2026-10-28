@@ -156,6 +156,11 @@ The spike's 89.4 µs (bridged) was 20× this figure because `endpoints_json`
 serializes a document. Here the module does ~2 µs of work, so what is left is
 the call mechanism itself — which is the point of the exercise.
 
+**These are the pre-F1 numbers.** They were taken before `735a689` gave a
+bridged `String` result an owner; §7 re-measures them and reports what the
+ownership rule cost. Nothing here is retired — §7 is a second reading, not a
+replacement, and the readings differ by less than they differ from each other.
+
 ---
 
 ## 4. Overhead or work? The delta is neither, on its own
@@ -212,6 +217,9 @@ bridged_per_call < 5 × interpreted_per_call      # measured ratio 0.12 → 50×
 bridged_per_call < 20 µs                          # measured 4.57 µs  → 4.4× headroom
 ```
 
+§7 adds three fences for the ownership case (a bridged `String` result
+consumed immediately, and the release F1 emits); the two above are unchanged.
+
 Both are loose on purpose. A ~50× regression in the bridge, or a ~4× absolute
 regression, still passes; anything an order of magnitude worse fails. The
 ratio bound alone would not catch a regression that inflated *both* planes, and
@@ -252,9 +260,12 @@ Guards inside the same test, so it cannot pass while measuring something else:
    is a gap worth closing with a deliberately trivial `probe.echo(s: String) ->
    String` if bridge overhead is to be tracked over time.
 4. **A `String` result costs two allocations at the boundary** (`to_vec` +
-   `CString::new`) and is never freed by the emitted code — 2000 calls leak
-   2000 small allocations in the measured program. Irrelevant at 4.5 µs/call,
-   relevant if a loop ever calls a bridged function a million times.
+   `CString::new`). **Superseded by F1 (`735a689`):** the emitted code used to
+   never free that buffer, so 2000 calls leaked 2000 small allocations. It is
+   now released at the end of the block that binds it when the binding provably
+   does not escape; the release costs 59–60 ns/call and RSS is flat at 2000 calls
+   × 32 KiB (§7). The two allocations per result are still there — F1 gave them
+   an owner, it did not remove the copy.
 5. **The shared `CARGO_TARGET_DIR` makes the runtime archive a cross-lane
    artifact.** `find_runtime_lib_for_target` picks the newest
    `deps/libtallow-*.a` by mtime; with all lanes writing to
@@ -262,3 +273,179 @@ Guards inside the same test, so it cannot pass while measuring something else:
    have been produced by another lane's tree. The numbers above were taken with
    the archive in place at the time and the binary's sha256 recorded; treat the
    sha as the identity of the measurement, not the git revision alone.
+
+---
+
+## 7. The F1 ownership fix — what it cost
+
+`735a689` (F1) closed the last bridge defect: a bridged `String`/struct result
+had no owner, so a loop leaked the whole payload per call (32 KiB/call,
+measured 19 208 KiB over 600 calls). The fix is ownership, not a call-site
+free: a bridge binding records the statement that declared it, an escape scan
+over the declaring block decides whether the value can be released at the end
+of that block, and only then does codegen emit `tallow_free_string`.
+
+Two things are new, and each can cost something:
+
+| added | when it runs | what it costs |
+|---|---|---|
+| the escape scan | once per bridged binding, at codegen | compile time only — see §7.1 |
+| `tallow_free_string` | once per released result, at run time | **60.3 ns/call**, measured directly (§7.2) |
+
+### 7.1 The three numbers, pre-F1 and post-F1
+
+Same harness, same corpus, same method (200 vs 2200, difference ÷ 2000, min of
+5 runs, debug profile), two binaries:
+
+```
+                                   pre-F1 (e5f1f7ca)   post-F1 (c16cdf2e)   move
+bridged                            4.944 µs/call       4.780 µs/call        -0.164  (-3.3 %)
+interpreted                       36.212 µs/call      38.447 µs/call        +2.235  (+6.2 %)
+delta                            -31.269 µs/call     -33.667 µs/call
+module work floor                  2.221 µs/call       2.088 µs/call        -0.133  (-6.0 %)
+```
+
+Conditions for the post-F1 column:
+
+| | |
+|---|---|
+| revision | `4a8db9a` (worktree `run/2.0-20261029-ember-cost`) with F1 `735a689` |
+| binary | `/workspace/shared-target/debug/tallow` |
+| sha256 | `c16cdf2eeda7daceb6a0461908d350acf6865835e19b1f7c492278061ab1a8cb` |
+| profile | **debug** (`dev`, unoptimized) — compiler, runtime archive and test |
+| counts | 200 vs 2200 calls, difference ÷ 2000, min of 5 runs each |
+| box | same Hetzner ARM box, other lanes building throughout |
+| command | `cargo test --test bridge_overhead -- --nocapture --test-threads=1` (3 passed) |
+
+**The bridge did not get more expensive — it moved down, and the sign of the
+move is not the finding.** The same program on five binaries reads:
+
+```
+bridged      4.566  4.944  3.956  4.231  4.780  µs/call   (7d21043b, e5f1f7ca, 147d1b6e, 8d5949e4, c16cdf2e)
+interpreted 38.498 36.212 38.521 38.303 38.447  µs/call
+```
+
+That is a 3.96–4.94 µs band on a shared box across five rebuilds, and the
+interpreted plane a 36.2–38.5 band. F1's run-time addition is **58.9 ns** —
+1.2 % of the bridged call and 0.2 % of the plane delta — so it is inside that
+band and no end-to-end statement of the form "F1 added X µs" can be made from
+this harness. The direct measurement below is what resolves it.
+
+**The escape scan is compile-time and is not in any number here.** It walks the
+statements of the declaring block once per bridged binding, with no
+allocation, and it runs once per program rather than once per call — so it
+cannot appear in a per-call figure, and the loop bound does not change it. Its
+magnitude is **unverified**: separating a linear AST walk from a ~20 s
+codegen-plus-link whose own run-to-run spread is seconds (measured in §1.3)
+is not possible with the instrumentation in this tree. It is a walk over
+statements the emitter already visits, and nothing in §7 depends on its size.
+
+### 7.2 The ownership case
+
+`tests/bridge_overhead.rs::bridged_string_ownership_path_is_bounded_and_released`
+times the case where the release actually fires — the result is consumed
+immediately by `print`, so the binding does not escape its block:
+
+```
+── bridged String ownership path (F1) ──
+binary      /workspace/shared-target/debug/tallow sha256:c16cdf2e…a1a8cb
+corpus      geocode.state_from_name("Texas") -> "TX", consumed by print
+counts      200 vs 2200 iterations, min of 5 runs each, difference / 2000
+loop        4.156 µs/call   (9.98619ms -> 18.298587ms)
+control    -0.210 µs/call   (same loop, print only; 4.813291ms -> 4.393644ms)
+ownership   4.156 µs/call   (loop - control: bridge + marshalling + release)
+release    58.9 ns/call     (tallow_free_string, timed directly)
+rss         +24 KiB over 2000 calls returning 32751 bytes (baseline 22104 KiB, peak 22128 KiB, 20928 samples)
+```
+
+Reading it:
+
+1. **Consuming the result immediately is free at this resolution.** The loop
+   measures 4.156 µs/call and the plain bridged call of §7.1 measures 4.780 —
+   the same measurement inside run-to-run noise. The control makes that
+   explicit: 2200 buffered `print`s of a two-byte literal differ from 200 by
+   **less than the ±0.4 ms start-up jitter** of a ~5 ms process, so the control
+   comes out *negative* (−0.210 µs/call, and −0.308 on the run before it) and
+   is clamped at zero rather than subtracted. That is the control reporting the
+   method's floor, not failing: print and loop together cost under 0.3 µs/call,
+   and the ownership path is the call.
+2. **The release itself is 58.9 ns/call** (60.3 ns on the previous run),
+   measured by allocating 200 000 results first and then timing the frees
+   alone, so neither the bridge call nor the module's work is in the timed
+   region — the two-count subtraction cannot resolve a deallocation against a
+   4 µs call. 59 ns is one deallocation of the buffer `tallow_stdlib_call`
+   returned; it is the whole run-time cost of F1.
+3. **The scan is not in this number** — it is compile-time, per §7.1.
+
+### 7.3 RSS at 2000 calls
+
+F1's own test checks 600 calls with a 32 KiB result. This one checks 2000 —
+the same ownership shape (result bound in the loop body, read once, released at
+the end of the block) at 3.3× the calls:
+
+```
+rss         +24 KiB over 2000 calls returning 32751 bytes
+            (baseline 22104 KiB, peak 22128 KiB, 20928 samples)
+rss series  [188, 22084, 22088, 21832, 22044, 22048, 21872, 21872, 22100, 22052,
+             22052, 22056, 21932, 22104, 22092, 22056, 22056, 22060, 22068, 22096,
+             21844, 22072, 21940, 21928, 22112, 22072, 22072, 22068, 21944, 22068,
+             22068, 22084, 22108, 22072, 22072, 22072, 22124, 22076, 22108, 22076,
+             22128, 22076]
+```
+
+Flat after start-up (sample 0 is the process still mapping its binary). A
+missing release would be **64 MiB** at this call count — 2000 × 32 KiB — which
+is what the ceiling exists to catch. Three runs of this case measured **+24,
++300 and +408 KiB**; the residual is the allocator's arena, not a per-call
+trend (24 KiB over 2000 calls would be 12 bytes/call, and the leak this exists
+to catch was 32768 bytes/call).
+
+Ceiling: **2048 KiB** — ~5× the largest of those three readings rather than the
+2× this brief asked for, and the reason is stated rather than hidden: 2× a
+noise-level *peak* (816 KiB) would flake on a shared box, and a flaky
+performance gate is worse than a slightly looser one. The bound is still 32×
+below the leak it exists to catch, and — per call — **13× tighter** than F1's
+own 8 MiB ceiling for 600 calls (1.0 KiB/call allowed here against 13.7
+KiB/call there). The existing bound was not touched.
+
+### 7.4 The fences this case adds
+
+| bound | measured | bound | headroom |
+|---|---|---|---|
+| ownership loop, µs/call | 4.156 (3.819 on the first run) | **8.0** | 1.9× this run, 2.1× the run it was set from |
+| RSS growth, KiB over 2000 calls | 24…408 | **2048** | 5.0× (§7.3) |
+| `tallow_free_string`, ns/call | 58.9 (60.3) | **1000** | 17× — a sanity fence, not a perf bound |
+
+Guards inside the case, so it cannot pass while measuring something else:
+
+* the emitted IR of the ownership program must contain **exactly one**
+  `call void @tallow_free_string` — the bridged result, not the program's own
+  string argument. If F1's rule moves and the release stops firing, the case
+  fails instead of quietly re-measuring the leak path;
+* every timed run must print exactly 200 / 2200 lines, each `TX`; a run that
+  did fewer calls, or a corrupted result, fails instead of reporting a small
+  delta;
+* the loop's two-count subtraction must be positive — 2000 bridged calls are
+  ~8 ms of signal against ~0.2 ms of jitter. The control is deliberately *not*
+  guarded the same way, for the reason in §7.2;
+* the RSS program's summed result length must land between half and twice
+  `calls × payload`, which is what a premature release (freed while still live)
+  would break — and a garbage answer would also make the RSS series
+  meaningless.
+
+### 7.5 What is still unpaid
+
+* **The copy stayed.** F1 gave the buffer an owner; it did not remove the
+  `to_vec` + `CString::new` pair the bridge makes per `String` result (§4,
+  finding 3). If the bridge ever becomes hot, that copy — not the 60 ns free —
+  is the thing to remove.
+* **The scan's cost is unmeasured**, for the reason in §7.1. It is a linear
+  AST walk with no allocation; anyone who wants a number needs codegen
+  instrumentation, which does not exist in this tree.
+* **A pre-F1 A/B was not built.** The honest A/B would rebuild `735a689^` into
+  a second target dir and run the same harness; the box had 8 GiB free during
+  this work and two other lanes building, and the effect being measured (60 ns
+  on 4.2 µs) is an order of magnitude below the between-binary spread the A/B
+  would be fighting. The direct free measurement is the stronger evidence and
+  costs 200 000 allocations instead of a 20 minute rebuild.
+
