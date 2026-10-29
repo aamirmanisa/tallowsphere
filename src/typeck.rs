@@ -2534,20 +2534,15 @@ impl<'a> TypeChecker<'a> {
                     },
                 );
             }
-            StmtKind::LetDestructure { names, value } => {
-                let _val_ty = self.infer_expr_type(value, locals);
+            StmtKind::LetDestructure { pattern, value } => {
+                let val_ty = self.infer_expr_type(value, locals);
                 self.check_expr(value, locals);
-                for name in names {
-                    locals.insert(
-                        name.clone(),
-                        VarInfo {
-                            ty: Type::Unknown,
-                            mutable: false,
-                            effects: Vec::new(),
-                            non_nil: false,
-                        },
-                    );
-                }
+                // G07: the pattern is checked against the scrutinee's type, and
+                // every arm of it refuses a shape the value cannot have. A
+                // sequence literal has a statically known length, so an arity
+                // mismatch is caught here rather than at run time.
+                self.check_pattern_arity_against_literal(pattern, value);
+                self.check_binding_pattern(pattern, &val_ty, stmt.span, false, locals);
             }
             StmtKind::Expr { expr } => {
                 self.check_expr(expr, locals);
@@ -2597,7 +2592,7 @@ impl<'a> TypeChecker<'a> {
             StmtKind::Return(None) => {}
             StmtKind::For {
                 label,
-                binding,
+                pattern,
                 iter,
                 body,
             } => {
@@ -2608,15 +2603,16 @@ impl<'a> TypeChecker<'a> {
                     _ => Type::Unknown,
                 };
                 let mut inner_locals = locals.clone();
-                inner_locals.insert(
-                    binding.clone(),
-                    VarInfo {
-                        ty: elem_ty,
-                        mutable: false,
-                        effects: Vec::new(),
-                        non_nil: false,
-                    },
-                );
+                // G07: the loop binds its element through a pattern, checked
+                // against the element type exactly as a `let` would be. When the
+                // iterated literal's first element is itself a literal, its
+                // length is known and an arity mismatch is caught here.
+                if let ExprKind::Array(items) = &iter.kind {
+                    if let Some(first) = items.first() {
+                        self.check_pattern_arity_against_literal(pattern, first);
+                    }
+                }
+                self.check_binding_pattern(pattern, &elem_ty, stmt.span, false, &mut inner_locals);
                 self.label_stack.push(LoopTarget {
                     label: label.clone(),
                     yields: false,
@@ -4719,7 +4715,7 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 // Literal patterns cover no variant of an enum-typed scrutinee.
-                Pattern::Literal(_) | Pattern::Tuple(_) => {}
+                Pattern::Literal(_) | Pattern::Tuple(_) | Pattern::Array { .. } => {}
                 Pattern::Wildcard => return,
             }
         }
@@ -4770,6 +4766,202 @@ impl<'a> TypeChecker<'a> {
             || self.env.enums.values().any(|i| i.variants.iter().any(|v| v == name))
     }
 
+    /// Check a *binding* pattern (G07) against the type of the value it binds.
+    ///
+    /// A binding pattern is irrefutable by construction: names, `_`, tuples and
+    /// arrays. The shape still has to fit the value — a tuple pattern against a
+    /// scalar, or a tuple of the wrong arity, is `E0152` and the program does
+    /// not run. `Unknown` is always accepted: the checker does not invent a
+    /// rule for a type it cannot see, and the runtime guard is what speaks then.
+    fn check_binding_pattern(
+        &mut self,
+        pattern: &Pattern,
+        ty: &Type,
+        span: Span,
+        mutable: bool,
+        locals: &mut HashMap<String, VarInfo>,
+    ) {
+        match pattern {
+            Pattern::Ident(name) => {
+                if name != "_" {
+                    locals.insert(
+                        name.clone(),
+                        VarInfo {
+                            ty: ty.clone(),
+                            mutable,
+                            effects: Vec::new(),
+                            non_nil: false,
+                        },
+                    );
+                }
+            }
+            Pattern::Wildcard => {}
+            Pattern::Literal(_) | Pattern::Variant { .. } => {
+                self.diags.error(
+                    "E0152",
+                    "a binding position takes a name, `_`, `(pattern, ...)` or `[pattern, ...]` \
+                     — a literal or variant pattern tests a value instead of binding it",
+                    span,
+                );
+            }
+            Pattern::Tuple(elems) => match ty {
+                Type::Tuple(ts) => {
+                    if ts.len() != elems.len() {
+                        self.diags.error(
+                            "E0152",
+                            format!(
+                                "destructuring mismatch: a {}-element tuple pattern cannot bind a \
+                                 {}-element tuple",
+                                elems.len(),
+                                ts.len()
+                            ),
+                            span,
+                        );
+                        for p in elems {
+                            self.check_binding_pattern(p, &Type::Unknown, span, mutable, locals);
+                        }
+                        return;
+                    }
+                    for (p, t) in elems.iter().zip(ts.iter()) {
+                        self.check_binding_pattern(p, t, span, mutable, locals);
+                    }
+                }
+                Type::Array(inner) => {
+                    for p in elems {
+                        self.check_binding_pattern(p, inner, span, mutable, locals);
+                    }
+                }
+                // `nil` and an unpublished type are not evidence of a shape.
+                Type::Unknown | Type::Void => {
+                    for p in elems {
+                        self.check_binding_pattern(p, &Type::Unknown, span, mutable, locals);
+                    }
+                }
+                other => {
+                    let what = self.type_display(other);
+                    self.diags.error(
+                        "E0152",
+                        format!(
+                            "destructuring mismatch: {what} is not a sequence, so a tuple pattern \
+                             cannot bind it"
+                        ),
+                        span,
+                    );
+                }
+            },
+            Pattern::Array { elems, rest } => match ty {
+                Type::Tuple(ts) => {
+                    if ts.len() < elems.len() {
+                        self.diags.error(
+                            "E0152",
+                            format!(
+                                "destructuring mismatch: a pattern with {} fixed element(s) cannot \
+                                 bind a {}-element tuple",
+                                elems.len(),
+                                ts.len()
+                            ),
+                            span,
+                        );
+                        for p in elems {
+                            self.check_binding_pattern(p, &Type::Unknown, span, mutable, locals);
+                        }
+                    } else {
+                        for (p, t) in elems.iter().zip(ts.iter()) {
+                            self.check_binding_pattern(p, t, span, mutable, locals);
+                        }
+                    }
+                    if let Some(rest) = rest {
+                        self.check_binding_pattern(
+                            rest,
+                            &Type::Array(Box::new(Type::Unknown)),
+                            span,
+                            mutable,
+                            locals,
+                        );
+                    }
+                }
+                Type::Array(inner) => {
+                    for p in elems {
+                        self.check_binding_pattern(p, inner, span, mutable, locals);
+                    }
+                    if let Some(rest) = rest {
+                        self.check_binding_pattern(
+                            rest,
+                            &Type::Array(inner.clone()),
+                            span,
+                            mutable,
+                            locals,
+                        );
+                    }
+                }
+                Type::Unknown | Type::Void => {
+                    for p in elems {
+                        self.check_binding_pattern(p, &Type::Unknown, span, mutable, locals);
+                    }
+                    if let Some(rest) = rest {
+                        self.check_binding_pattern(
+                            rest,
+                            &Type::Array(Box::new(Type::Unknown)),
+                            span,
+                            mutable,
+                            locals,
+                        );
+                    }
+                }
+                other => {
+                    let what = self.type_display(other);
+                    self.diags.error(
+                        "E0152",
+                        format!(
+                            "destructuring mismatch: {what} is not a sequence, so an array pattern \
+                             cannot bind it"
+                        ),
+                        span,
+                    );
+                }
+            },
+        }
+    }
+
+    /// Report an arity mismatch between a pattern and a *literal* sequence.
+    ///
+    /// `Type::Array` carries no length, so `let (a, b) = [1, 2, 3]` would
+    /// otherwise only be caught at run time. The literal's length is right
+    /// there in the source, so it is checked here on both planes.
+    fn check_pattern_arity_against_literal(&mut self, pattern: &Pattern, value: &Expr) {
+        let ExprKind::Array(items) = &value.kind else {
+            return;
+        };
+        let n = items.len();
+        match pattern {
+            Pattern::Tuple(elems) if elems.len() != n => {
+                self.diags.error(
+                    "E0152",
+                    format!(
+                        "destructuring mismatch: a {}-element tuple pattern cannot bind a \
+                         {}-element sequence",
+                        elems.len(),
+                        n
+                    ),
+                    value.span,
+                );
+            }
+            Pattern::Array { elems, .. } if elems.len() > n => {
+                self.diags.error(
+                    "E0152",
+                    format!(
+                        "destructuring mismatch: a pattern with {} fixed element(s) cannot bind a \
+                         {}-element sequence",
+                        elems.len(),
+                        n
+                    ),
+                    value.span,
+                );
+            }
+            _ => {}
+        }
+    }
+
     /// Bind pattern variables into scope for match arm checking.
     fn bind_pattern_vars(&self, pattern: &Pattern, locals: &mut HashMap<String, VarInfo>) {
         match pattern {
@@ -4794,6 +4986,14 @@ impl<'a> TypeChecker<'a> {
             Pattern::Tuple(pats) => {
                 for p in pats {
                     self.bind_pattern_vars(p, locals);
+                }
+            }
+            Pattern::Array { elems, rest } => {
+                for p in elems {
+                    self.bind_pattern_vars(p, locals);
+                }
+                if let Some(rest) = rest {
+                    self.bind_pattern_vars(rest, locals);
                 }
             }
             _ => {}

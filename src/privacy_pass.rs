@@ -101,10 +101,10 @@ impl<'a> PrivacyPass<'a> {
                 let ty = self.infer_type(value, locals);
                 locals.insert(name.clone(), ty);
             }
-            StmtKind::LetDestructure { names, value } => {
+            StmtKind::LetDestructure { pattern, value } => {
                 self.check_expr_privacy(value, locals);
-                for name in names {
-                    locals.insert(name.clone(), Type::Unknown);
+                for name in pattern.bound_names() {
+                    locals.insert(name, Type::Unknown);
                 }
             }
             StmtKind::Expr { expr } => {
@@ -115,14 +115,16 @@ impl<'a> PrivacyPass<'a> {
             }
             StmtKind::Return(None) => {}
             StmtKind::For {
-                binding,
+                pattern,
                 iter,
                 body,
                 ..
             } => {
                 self.check_expr_privacy(iter, locals);
                 let mut inner = locals.clone();
-                inner.insert(binding.clone(), Type::Unknown);
+                for name in pattern.bound_names() {
+                    inner.insert(name, Type::Unknown);
+                }
                 for s in &body.stmts {
                     self.check_stmt(s, &mut inner);
                 }

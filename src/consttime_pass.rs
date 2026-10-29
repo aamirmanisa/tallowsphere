@@ -159,10 +159,10 @@ impl<'a> ConstTimePass<'a> {
                 // Also check the value expression itself for violations
                 self.check_expr(value, tainted, fn_name);
             }
-            StmtKind::LetDestructure { names, value } => {
+            StmtKind::LetDestructure { pattern, value } => {
                 if Self::expr_references_tainted(value, tainted) {
-                    for name in names {
-                        tainted.insert(name.clone());
+                    for name in pattern.bound_names() {
+                        tainted.insert(name);
                     }
                 }
                 self.check_expr(value, tainted, fn_name);

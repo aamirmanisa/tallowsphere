@@ -495,15 +495,16 @@ impl<'a> EmitState<'a> {
             }
             StmtKind::For {
                 label,
-                binding,
+                pattern,
                 iter,
                 body,
-            } => self.emit_for_loop(builder, binding, iter, body, label),
-            StmtKind::LetDestructure { names, value } => {
+            } => self.emit_for_loop(builder, pattern, iter, body, label),
+            StmtKind::LetDestructure { pattern, value } => {
                 // Lower tuple destructuring: evaluate the scrutinee once and
                 // bind each name. Without layout tables the first element is
                 // the value itself; the remaining elements are zero-filled.
                 let val = self.emit_expr(builder, value)?;
+                let names = pattern.bound_names();
                 for (i, name) in names.iter().enumerate() {
                     let el = if i == 0 {
                         val
@@ -933,11 +934,21 @@ impl<'a> EmitState<'a> {
     fn emit_for_loop(
         &mut self,
         builder: &mut FunctionBuilder,
-        binding: &str,
+        pattern: &Pattern,
         iter: &Expr,
         body: &Block,
         label: &Option<String>,
     ) -> Result<(), String> {
+        // The Cranelift backend binds a single name per loop and has no
+        // sequence layout to destructure; a structural pattern is refused
+        // loudly rather than bound to the wrong slot (G07).
+        let Pattern::Ident(binding) = pattern else {
+            return Err(
+                "destructuring: the cranelift backend binds a single loop name and cannot lower a \
+                 tuple/array pattern — run with `--interpret` or the LLVM target"
+                    .to_string(),
+            );
+        };
         if let ExprKind::Binary {
             op: BinOp::Range,
             left,
@@ -1227,6 +1238,16 @@ impl<'a> EmitState<'a> {
                     self.variables.insert(name.clone(), (var, types::I64));
                 }
                 Ok(Some(builder.ins().iconst(types::I8, 1)))
+            }
+            Pattern::Array { .. } => {
+                // This backend has no sequence layout to index into; the
+                // binding is refused rather than bound to the whole value
+                // (G07). `for`/`let` refuse earlier with a named error.
+                Err(
+                    "destructuring: the cranelift backend cannot lower an array pattern — run \
+                     with `--interpret` or the LLVM target"
+                        .to_string(),
+                )
             }
         }
     }

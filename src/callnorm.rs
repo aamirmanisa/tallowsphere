@@ -536,9 +536,9 @@ impl Normalizer {
                 // A `var` may be assigned later; the alias is not a promise.
                 self.bind(name, None);
             }
-            StmtKind::LetDestructure { names, value } => {
+            StmtKind::LetDestructure { pattern, value } => {
                 self.walk_expr(value, purpose);
-                let names: Vec<String> = names.clone();
+                let names = pattern.bound_names();
                 for name in &names {
                     self.bind(name, None);
                 }
@@ -549,15 +549,17 @@ impl Normalizer {
             StmtKind::Return(Some(value)) => self.walk_expr(value, purpose),
             StmtKind::Return(None) => {}
             StmtKind::For {
-                binding,
+                pattern,
                 iter,
                 body,
                 ..
             } => {
                 self.walk_expr(iter, purpose);
-                let binding = binding.clone();
+                let names = pattern.bound_names();
                 self.push_scope();
-                self.bind(&binding, None);
+                for name in &names {
+                    self.bind(name, None);
+                }
                 self.walk_block(body, purpose);
                 self.pop_scope();
             }
@@ -995,6 +997,14 @@ fn pattern_names(pattern: &Pattern, out: &mut Vec<String>) {
             }
         }
         Pattern::Literal(_) | Pattern::Wildcard => {}
+        Pattern::Array { elems, rest } => {
+            for p in elems {
+                pattern_names(p, out);
+            }
+            if let Some(rest) = rest {
+                pattern_names(rest, out);
+            }
+        }
     }
 }
 

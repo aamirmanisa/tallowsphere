@@ -2342,30 +2342,17 @@ impl Interpreter {
                 Ok(Value::Nil)
             }
 
-            StmtKind::LetDestructure { names, value } => {
+            StmtKind::LetDestructure { pattern, value } => {
                 let val = self.eval_expr(value, env)?;
                 // P1: propagate the `?`-operator Return sentinel like the
                 // Let/Var path does — it used to be swallowed as a binding.
                 if matches!(&val, Value::Return(_)) {
                     return Ok(val);
                 }
-                match val {
-                    Value::Array(items) => {
-                        for (i, name) in names.iter().enumerate() {
-                            env.define(name.clone(), items.get(i).cloned().unwrap_or(Value::Nil));
-                        }
-                    }
-                    _ => {
-                        // Single value: bind to first name, rest get nil
-                        for (i, name) in names.iter().enumerate() {
-                            if i == 0 {
-                                env.define(name.clone(), val.clone());
-                            } else {
-                                env.define(name.clone(), Value::Nil);
-                            }
-                        }
-                    }
-                }
+                // G07: the pattern decides what is bound, and it refuses a value
+                // whose shape it cannot have instead of binding `nil` into the
+                // gap (which used to read as data).
+                self.bind_binding_pattern(pattern, val, env)?;
                 Ok(Value::Nil)
             }
 
@@ -2379,7 +2366,7 @@ impl Interpreter {
 
             StmtKind::For {
                 label,
-                binding,
+                pattern,
                 iter,
                 body,
             } => {
@@ -2392,38 +2379,15 @@ impl Interpreter {
                     Value::Ok(inner) => *inner,
                     other => other,
                 };
-                // Parse binding: tuple form is "(a,b,...)"
-                let tuple_names: Option<Vec<String>> =
-                    if binding.starts_with('(') && binding.ends_with(')') {
-                        Some(
-                            binding[1..binding.len() - 1]
-                                .split(',')
-                                .map(|s| s.trim().to_string())
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    };
-                let bind_one =
-                    |env: &mut Env, item: Value, names: &Option<Vec<String>>, binding: &str| {
-                        if let Some(ns) = names {
-                            // Destructure: array/tuple-shaped value -> bind components
-                            let parts: Vec<Value> = match item {
-                                Value::Array(a) => a,
-                                other => vec![other],
-                            };
-                            for (i, n) in ns.iter().enumerate() {
-                                env.define(n.clone(), parts.get(i).cloned().unwrap_or(Value::Nil));
-                            }
-                        } else {
-                            env.define(binding.to_string(), item);
-                        }
-                    };
                 match iter_val {
                     Value::Array(items) => {
                         for item in items {
                             env.push_scope();
-                            bind_one(env, item, &tuple_names, binding);
+                            // G07: the element is bound through the pattern.
+                            if let Err(e) = self.bind_binding_pattern(pattern, item, env) {
+                                env.pop_scope();
+                                return Err(e);
+                            }
                             let result = match self.exec_block_discarding(body, env) {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -2443,7 +2407,12 @@ impl Interpreter {
                     Value::String(s) => {
                         for ch in s.chars() {
                             env.push_scope();
-                            env.define(binding.clone(), Value::String(ch.to_string()));
+                            if let Err(e) =
+                                self.bind_binding_pattern(pattern, Value::String(ch.to_string()), env)
+                            {
+                                env.pop_scope();
+                                return Err(e);
+                            }
                             let result = match self.exec_block_discarding(body, env) {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -2466,7 +2435,12 @@ impl Interpreter {
                             let mut i = start;
                             while i < end {
                                 env.push_scope();
-                                env.define(binding.clone(), Value::Int(i));
+                                if let Err(e) =
+                                    self.bind_binding_pattern(pattern, Value::Int(i), env)
+                                {
+                                    env.pop_scope();
+                                    return Err(e);
+                                }
                                 let result = match self.exec_block_discarding(body, env) {
                                     Ok(v) => v,
                                     Err(e) => {
@@ -2493,7 +2467,12 @@ impl Interpreter {
                             let mut i = start;
                             while i > end {
                                 env.push_scope();
-                                env.define(binding.clone(), Value::Int(i));
+                                if let Err(e) =
+                                    self.bind_binding_pattern(pattern, Value::Int(i), env)
+                                {
+                                    env.pop_scope();
+                                    return Err(e);
+                                }
                                 let result = match self.exec_block_discarding(body, env) {
                                     Ok(v) => v,
                                     Err(e) => {
@@ -2522,10 +2501,18 @@ impl Interpreter {
                         // Iterate over map: tuple binding -> (key, val), single -> key
                         for (key, val) in pairs {
                             env.push_scope();
-                            if tuple_names.is_some() {
-                                bind_one(env, Value::Array(vec![key, val]), &tuple_names, binding);
-                            } else {
-                                env.define(binding.clone(), key);
+                            // A structural pattern over a map entry sees
+                            // `[key, value]`; a plain name binds the key (the
+                            // pre-G07 meaning of `for k in map`).
+                            let item = match pattern {
+                                Pattern::Tuple(_) | Pattern::Array { .. } => {
+                                    Value::Array(vec![key, val])
+                                }
+                                _ => key,
+                            };
+                            if let Err(e) = self.bind_binding_pattern(pattern, item, env) {
+                                env.pop_scope();
+                                return Err(e);
                             }
                             let result = match self.exec_block_discarding(body, env) {
                                 Ok(v) => v,
@@ -23564,6 +23551,81 @@ impl Interpreter {
 
     // ── Pattern Matching ─────────────────────────────────────────────────
 
+    /// Bind a *binding* pattern (G07) into `env`.
+    ///
+    /// Only the irrefutable forms are legal in a binding position — a name,
+    /// `_`, a tuple or an array pattern. The shape is enforced, not guessed: a
+    /// value that is not a sequence, or is the wrong length, is a named error.
+    /// (Binding `nil` into the gap, as the flat destructure did, turned a shape
+    /// bug into a plausible-looking datum.)
+    fn bind_binding_pattern(
+        &mut self,
+        pattern: &Pattern,
+        value: Value,
+        env: &mut Env,
+    ) -> Result<(), RuntimeError> {
+        match pattern {
+            Pattern::Wildcard => Ok(()),
+            Pattern::Ident(name) => {
+                if name != "_" {
+                    env.define(name.clone(), value);
+                }
+                Ok(())
+            }
+            Pattern::Literal(_) | Pattern::Variant { .. } => Err(RuntimeError::TypeError(
+                "a binding position takes a name, `_`, `(pattern, ...)` or `[pattern, ...]` — a \
+                 literal or variant pattern tests a value instead of binding it"
+                    .to_string(),
+            )),
+            Pattern::Tuple(elems) => {
+                let Value::Array(items) = value else {
+                    return Err(RuntimeError::TypeError(
+                        "destructuring mismatch: a tuple pattern cannot bind a value that is not a \
+                         sequence"
+                            .to_string(),
+                    ));
+                };
+                if items.len() != elems.len() {
+                    return Err(RuntimeError::TypeError(format!(
+                        "destructuring mismatch: a {}-element tuple pattern cannot bind a \
+                         {}-element sequence",
+                        elems.len(),
+                        items.len()
+                    )));
+                }
+                for (p, v) in elems.iter().zip(items) {
+                    self.bind_binding_pattern(p, v, env)?;
+                }
+                Ok(())
+            }
+            Pattern::Array { elems, rest } => {
+                let Value::Array(items) = value else {
+                    return Err(RuntimeError::TypeError(
+                        "destructuring mismatch: an array pattern cannot bind a value that is not a \
+                         sequence"
+                            .to_string(),
+                    ));
+                };
+                if items.len() < elems.len() {
+                    return Err(RuntimeError::TypeError(format!(
+                        "destructuring mismatch: a pattern with {} fixed element(s) cannot bind a \
+                         {}-element sequence",
+                        elems.len(),
+                        items.len()
+                    )));
+                }
+                for (p, v) in elems.iter().zip(items.iter()) {
+                    self.bind_binding_pattern(p, v.clone(), env)?;
+                }
+                if let Some(rest) = rest {
+                    let tail: Vec<Value> = items[elems.len()..].to_vec();
+                    self.bind_binding_pattern(rest, Value::Array(tail), env)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Try to match a pattern, returning bindings if successful.
     fn try_match_pattern(&self, pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)>> {
         let mut env = Env::new();
@@ -23703,6 +23765,29 @@ impl Interpreter {
                         .iter()
                         .zip(items)
                         .all(|(p, v)| self.pattern_matches(p, v, env))
+                } else {
+                    false
+                }
+            }
+            Pattern::Array { elems, rest } => {
+                if let Value::Array(items) = value {
+                    if items.len() < elems.len() {
+                        return false;
+                    }
+                    let head_ok = elems
+                        .iter()
+                        .zip(items.iter())
+                        .all(|(p, v)| self.pattern_matches(p, v, env));
+                    if !head_ok {
+                        return false;
+                    }
+                    match rest {
+                        None => items.len() == elems.len(),
+                        Some(rest) => {
+                            let tail = Value::Array(items[elems.len()..].to_vec());
+                            self.pattern_matches(rest, &tail, env)
+                        }
+                    }
                 } else {
                     false
                 }
