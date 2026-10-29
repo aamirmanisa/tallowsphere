@@ -295,6 +295,8 @@ jobs:
           --test audit_cli_contract
           --test language_surface
           --test pattern_destructure
+          --test doctest
+          --test module_visibility
           --test browser_page_helpers
           --test llm_providers
           --test mesh_plan_tl
