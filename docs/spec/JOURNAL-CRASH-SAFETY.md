@@ -9,7 +9,7 @@ bytes into the kernel, not onto the platter, and nothing frames a record: a cras
 write can leave a **partial line**. `replay()` then fails on it —
 
 ```
-replay: line 7 is not JSON: EOF while parsing an object at line 1 column 210
+replay: line {N} is not JSON: {serde error}      (format string in replay(), src/mesh/journal.rs)
 ```
 
 — which is correct behaviour for a corrupt file and useless behaviour for a journal, because the
