@@ -734,10 +734,40 @@ pub struct CodeGen<'a> {
     // Current function name (set at emit_function entry, used for @legal checks)
     current_fn_name: Option<String>,
 
-    // ── Defer stack ───────────────────────────────────────────────────────────
-    // One Vec<Block> per function scope; deferred blocks are emitted LIFO
-    // before every `ret` instruction and at function epilogue.
-    defer_stack: Vec<Block>,
+    // ── Deferred blocks: a RUNTIME registration list ─────────────────────────
+    //
+    // A `defer` registers when its statement EXECUTES, so the registration count
+    // is a property of the run, not of the source: one `defer` in a loop body
+    // that iterates three times registers three times. The emitter therefore
+    // keeps no compile-time stack of blocks to run at the epilogue. Instead:
+    //
+    //   * this Vec holds one entry per *syntactic* `defer` in the function being
+    //     emitted — the index is the site id;
+    //   * each execution of the `defer` statement mallocs a 16-byte node
+    //     `{ i64 site_id; ptr next }` and pushes it onto the function's list;
+    //   * every `ret` and the epilogue drain the list LIFO, dispatching on the
+    //     site id and freeing each node.
+    //
+    // The list is a malloc'd linked list, not a fixed ring: there is no cap to
+    // hit and nothing to silently drop. Peak memory is O(registrations still
+    // pending), and every node is freed at the drain.
+    defer_sites: Vec<Block>,
+    /// Site id by the AST block's address. A drain emits deferred bodies, which
+    /// re-executes `StmtKind::Defer` lowering for any `defer` nested inside one;
+    /// keying on the source block keeps that from minting a duplicate id.
+    defer_site_ids: HashMap<usize, usize>,
+    /// Alloca holding the runtime list head for the function being emitted. It
+    /// is created in the entry block before user code, so a `defer` inside a
+    /// loop body pushes to the same slot the epilogue drains.
+    defer_head: Option<String>,
+    /// Alloca the drain walks: it is seeded from `defer_head` and advanced,
+    /// while `defer_head` is cleared. That is what keeps a registration made by
+    /// a `defer` inside a deferred body from being drained by the drain that is
+    /// already running (see `emit_defer_cleanup`).
+    defer_cursor: Option<String>,
+    /// Set while a drain's case bodies are being emitted: a `return` in a
+    /// deferred body must not recursively emit the drain inside its own case.
+    in_defer_drain: bool,
 
     // ── Optional narrowing (the emitter's half of register #136) ─────────────
     // Names an enclosing `nil` guard proved present: after
@@ -880,7 +910,11 @@ impl<'a> CodeGen<'a> {
             ct_functions: Vec::new(),
             variable_privacy: HashMap::new(),
             current_fn_name: None,
-            defer_stack: Vec::new(),
+            defer_sites: Vec::new(),
+            defer_site_ids: HashMap::new(),
+            defer_head: None,
+            defer_cursor: None,
+            in_defer_drain: false,
             non_nil_locals: HashSet::new(),
             mutable_locals: HashSet::new(),
             trait_methods: HashMap::new(),
@@ -4297,6 +4331,9 @@ void tallow_async_runtime_shutdown(void) {
             }
         }
 
+        // Runtime defer-list head for this body (see `init_defer_head`).
+        self.init_defer_head();
+
         // Allocate parameter variables
         for (name, ty) in &body_sig.params {
             let alloca = self.fresh_reg();
@@ -4354,13 +4391,13 @@ void tallow_async_runtime_shutdown(void) {
         // Emit function body
         let result = self.emit_block(&func.body)?;
 
-        // Run deferred blocks (LIFO) at async function epilogue
+        // Drain the runtime defer list at the async body's epilogue.
         self.emit_defer_cleanup()?;
-        // The body's deferred blocks are spent here. Leaving them on the stack
-        // would re-emit them at the next function's epilogue, where their names
-        // are not locals and resolve to module globals. `emit_sync_function`
-        // clears at its end for the same reason.
-        self.defer_stack.clear();
+        // The next function's sites start from zero: leaving these behind would
+        // dispatch its registrations to another function's bodies.
+        self.defer_sites.clear();
+        self.defer_site_ids.clear();
+        self.defer_head = None;
 
         // Ensure terminator
         if body_sig.ret == LLType::Void {
@@ -4854,6 +4891,9 @@ void tallow_async_runtime_shutdown(void) {
             }
         }
 
+        // Runtime defer-list head for this function (see `init_defer_head`).
+        self.init_defer_head();
+
         // Allocate parameter variables
         for (name, ty) in &sig.params {
             let alloca = self.fresh_reg();
@@ -4953,20 +4993,196 @@ void tallow_async_runtime_shutdown(void) {
         self.body.push_str("}\n\n");
         self.current_fn_ret = None;
         self.in_ct_function = false;
-        self.defer_stack.clear();
+        // The next function's sites start from zero: leaving these behind would
+        // dispatch its registrations to another function's bodies.
+        self.defer_sites.clear();
+        self.defer_site_ids.clear();
+        self.defer_head = None;
         Ok(())
     }
 
     // ── Defer Cleanup ────────────────────────────────────────────────────────
 
-    /// Emit all deferred blocks in LIFO order (last defer runs first).
-    /// Called before every `ret` instruction and at function epilogue.
-    fn emit_defer_cleanup(&mut self) -> Result<(), String> {
-        // Clone the stack so we can iterate while self is mutably borrowed for emit_block
-        let deferred: Vec<Block> = self.defer_stack.iter().rev().cloned().collect();
-        for block in &deferred {
-            self.emit_block(block)?;
+    /// Create the runtime defer-list head for the function about to be emitted.
+    ///
+    /// Called from the entry block, after `entry:` and before user code. If the
+    /// head were allocated lazily at the first `defer` statement, a `defer`
+    /// inside a loop body would allocate it inside that body: the store of the
+    /// null sentinel would then re-run every iteration (clobbering earlier
+    /// registrations) and the epilogue's drain would read an alloca from a
+    /// block that does not dominate it.
+    fn init_defer_head(&mut self) {
+        let slot = self.fresh_reg();
+        self.emit_line(&format!("{slot} = alloca ptr"));
+        self.emit_line(&format!("store ptr null, ptr {slot}"));
+        self.defer_head = Some(slot);
+        let cursor = self.fresh_reg();
+        self.emit_line(&format!("{cursor} = alloca ptr"));
+        self.emit_line(&format!("store ptr null, ptr {cursor}"));
+        self.defer_cursor = Some(cursor);
+    }
+
+    /// The site id for a syntactic `defer`. The id is the entry's index in
+    /// `defer_sites`, which is also the value the switch in the drain
+    /// dispatches on. Keyed on the source block's address so that a drain
+    /// re-emitting a deferred body (and therefore its nested `defer`s) reuses
+    /// the id instead of minting a second one for the same statement.
+    fn register_defer_site(&mut self, body: &Block) -> usize {
+        let key = body as *const Block as usize;
+        if let Some(id) = self.defer_site_ids.get(&key) {
+            return *id;
         }
+        let id = self.defer_sites.len();
+        self.defer_sites.push(body.clone());
+        self.defer_site_ids.insert(key, id);
+        id
+    }
+
+    /// Drain the runtime defer list (LIFO) at a function exit point.
+    ///
+    /// Each `defer` statement execution pushed a `{ i64 site_id; ptr next }`
+    /// node onto the function's list; this pops the head until it is null,
+    /// dispatches on the site id to that site's body, and frees the node — so a
+    /// loop that registers n times costs O(pending) memory, not O(n) retained.
+    /// The bodies are emitted here, in registration scope, exactly as they were
+    /// when this was a compile-time stack; the only change is *how many* run.
+    ///
+    /// Why an id and not a `{ fn pointer; env pointer }` pair: the closure
+    /// machinery captures by VALUE, and a `defer` reads its names at exit — the
+    /// interpreter drains against retained scopes and, for a loop body, prints
+    /// the last iteration's binding three times (`d:k2` x3), not `d:k0`,
+    /// `d:k1`, `d:k2`. Emitting the body in its registration scope keeps that
+    /// read against the same alloca the rest of the function reads, which is
+    /// the compiled plane's version of the retained scope. Lifting a function
+    /// per site would need an environment of POINTERS to those allocas, which
+    /// this emitter has no scope frame to express.
+    ///
+    /// Called before every `ret` and at the function epilogue.
+    fn emit_defer_cleanup(&mut self) -> Result<(), String> {
+        // Nothing was ever registered in this function.
+        if self.defer_sites.is_empty() {
+            return Ok(());
+        }
+        let (Some(head), Some(cursor)) = (self.defer_head.clone(), self.defer_cursor.clone()) else {
+            return Err(
+                "internal: defer drain in a function with no runtime defer-list head".to_string(),
+            );
+        };
+        // A `return` inside a deferred body is emitted while its own drain is in
+        // flight; draining again from there would nest the drain inside a case
+        // of itself without bound.
+        if self.in_defer_drain {
+            return Ok(());
+        }
+
+        let cond = self.fresh_label("defer.cond");
+        let dispatch = self.fresh_label("defer.dispatch");
+        let cont = self.fresh_label("defer.cont");
+        let leftover = self.fresh_label("defer.leftover.cond");
+        let leftover_body = self.fresh_label("defer.leftover.body");
+        let leftover_done = self.fresh_label("defer.done");
+
+        // Allocate the drain's own registers BEFORE the case bodies are emitted.
+        // LLVM numbers unnamed instructions by their textual order, so a case
+        // body generated first would take numbers the scaffolding — written
+        // earlier in the block — then reuses ("instruction expected to be
+        // numbered '%39' or greater").
+        let owned = self.fresh_named("owned");
+        let node = self.fresh_named("node");
+        let is_null = self.fresh_named("isnull");
+        let id_slot = self.fresh_named("idslot");
+        let site = self.fresh_named("site");
+        let next_slot = self.fresh_named("nextslot");
+        let next = self.fresh_named("next");
+        let left_node = self.fresh_named("leftnode");
+        let left_null = self.fresh_named("leftnull");
+        let left_next_slot = self.fresh_named("leftnextslot");
+        let left_next = self.fresh_named("leftnext");
+
+        // Emit the case bodies first, into a scratch buffer. A deferred body may
+        // itself contain a `defer`, whose site is only discovered here — and its
+        // id must appear in the switch, or a node it pushed would be dropped.
+        // Grow the case list to a fixpoint before writing the switch.
+        let outer_body = std::mem::take(&mut self.body);
+        let outer_draining = std::mem::replace(&mut self.in_defer_drain, true);
+        let mut cases: Vec<(String, String)> = Vec::new();
+        let mut emitted = 0usize;
+        while emitted < self.defer_sites.len() {
+            let block = self.defer_sites[emitted].clone();
+            let label = self.fresh_label("defer.case");
+            let saved = std::mem::take(&mut self.body);
+            let emitted_body = self.emit_block(&block);
+            let code = std::mem::replace(&mut self.body, saved);
+            if let Err(e) = emitted_body {
+                self.in_defer_drain = outer_draining;
+                self.body = outer_body;
+                return Err(e);
+            }
+            cases.push((label, code));
+            emitted += 1;
+        }
+        self.in_defer_drain = outer_draining;
+        self.body = outer_body;
+
+        // Take the list this drain owns: seed the cursor from the head and clear
+        // the head, so a `defer` that executes inside a deferred body registers
+        // into the ENCLOSING frame (matching the interpreter's `deferred_stack`)
+        // rather than into the drain that is already running. Such a node is
+        // freed at `defer.leftover.*` below and never dispatched here.
+        self.emit_line(&format!("{owned} = load ptr, ptr {head}"));
+        self.emit_line(&format!("store ptr null, ptr {head}"));
+        self.emit_line(&format!("store ptr {owned}, ptr {cursor}"));
+        self.emit_line(&format!("br label %{cond}"));
+
+        self.body.push_str(&format!("{cond}:\n"));
+        self.emit_line(&format!("{node} = load ptr, ptr {cursor}"));
+        self.emit_line(&format!("{is_null} = icmp eq ptr {node}, null"));
+        self.emit_line(&format!(
+            "br i1 {is_null}, label %{leftover}, label %{dispatch}"
+        ));
+
+        self.body.push_str(&format!("{dispatch}:\n"));
+        self.emit_line(&format!("{id_slot} = getelementptr i8, ptr {node}, i64 0"));
+        self.emit_line(&format!("{site} = load i64, ptr {id_slot}"));
+        self.emit_line(&format!("{next_slot} = getelementptr i8, ptr {node}, i64 8"));
+        self.emit_line(&format!("{next} = load ptr, ptr {next_slot}"));
+        // Advance before dispatching, so the loop's own cursor is not disturbed
+        // by anything a deferred body does.
+        self.emit_line(&format!("store ptr {next}, ptr {cursor}"));
+
+        let mut switch = format!("switch i64 {site}, label %{cont} [");
+        for (id, (label, _)) in cases.iter().enumerate() {
+            switch.push_str(&format!(" i64 {id}, label %{label}"));
+        }
+        switch.push_str(" ]");
+        self.emit_line(&switch);
+
+        for (label, code) in &cases {
+            self.body.push_str(&format!("{label}:\n"));
+            self.body.push_str(code);
+            self.emit_line(&format!("br label %{cont}"));
+        }
+
+        self.body.push_str(&format!("{cont}:\n"));
+        self.emit_line(&format!("call void @free(ptr {node})"));
+        self.emit_line(&format!("br label %{cond}"));
+
+        // Free — without running — whatever was registered while this drain ran.
+        self.body.push_str(&format!("{leftover}:\n"));
+        self.emit_line(&format!("{left_node} = load ptr, ptr {head}"));
+        self.emit_line(&format!("{left_null} = icmp eq ptr {left_node}, null"));
+        self.emit_line(&format!(
+            "br i1 {left_null}, label %{leftover_done}, label %{leftover_body}"
+        ));
+        self.body.push_str(&format!("{leftover_body}:\n"));
+        self.emit_line(&format!(
+            "{left_next_slot} = getelementptr i8, ptr {left_node}, i64 8"
+        ));
+        self.emit_line(&format!("{left_next} = load ptr, ptr {left_next_slot}"));
+        self.emit_line(&format!("store ptr {left_next}, ptr {head}"));
+        self.emit_line(&format!("call void @free(ptr {left_node})"));
+        self.emit_line(&format!("br label %{leftover}"));
+        self.body.push_str(&format!("{leftover_done}:\n"));
         Ok(())
     }
 
@@ -6102,9 +6318,28 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(None)
             }
             StmtKind::Defer { body } => {
-                // Push the deferred block onto the stack; it will be emitted
-                // in LIFO order before every `ret` and at function epilogue.
-                self.defer_stack.push(body.clone());
+                // A `defer` registers when its statement EXECUTES — once per
+                // iteration of an enclosing loop, never in a branch that is not
+                // taken. Push a node `{ i64 site_id; ptr next }` onto this
+                // function's runtime list; `emit_defer_cleanup` drains it LIFO
+                // at every `ret`.
+                let id = self.register_defer_site(body);
+                let head = self.defer_head.clone().ok_or_else(|| {
+                    "internal: `defer` lowered outside a function prologue, so there \
+                     is no runtime defer-list head to push onto"
+                        .to_string()
+                })?;
+                let node = self.fresh_reg();
+                self.emit_line(&format!("{node} = call ptr @malloc(i64 16)"));
+                let id_slot = self.fresh_reg();
+                self.emit_line(&format!("{id_slot} = getelementptr i8, ptr {node}, i64 0"));
+                self.emit_line(&format!("store i64 {id}, ptr {id_slot}"));
+                let next_slot = self.fresh_reg();
+                self.emit_line(&format!("{next_slot} = getelementptr i8, ptr {node}, i64 8"));
+                let old_head = self.fresh_reg();
+                self.emit_line(&format!("{old_head} = load ptr, ptr {head}"));
+                self.emit_line(&format!("store ptr {old_head}, ptr {next_slot}"));
+                self.emit_line(&format!("store ptr {node}, ptr {head}"));
                 Ok(None)
             }
 
@@ -7193,15 +7428,22 @@ void tallow_async_runtime_shutdown(void) {
                 let saved_closure_envs = std::mem::take(&mut self.variable_closure_env);
                 // A deferred block belongs to the SCOPE IT WAS REGISTERED IN, not
                 // to the name it mentions. The closure is a function body of its
-                // own: its defers must be emitted here, before its `ret`, against
-                // the closure's own `variables` table. Sharing the enclosing
-                // function's stack made `defer { print("{y}") }` inside a closure
-                // emit at the *outer* epilogue, where `y` was not a local — the
-                // ident fallback produced `@tallow.y` and clang refused with
+                // own: its defers are registered against, and drained from, the
+                // closure's own runtime list, emitted here against the closure's
+                // own `variables` table. Sharing the enclosing function's sites
+                // made `defer { print("{y}") }` inside a closure emit at the
+                // *outer* epilogue, where `y` was not a local — the ident
+                // fallback produced `@tallow.y` and clang refused with
                 // "use of undefined value '@tallow.y'". A defer in `main` that
                 // reads a module-level binding still emits at main's epilogue and
                 // still resolves through the module-level path.
-                let saved_defer_stack = std::mem::take(&mut self.defer_stack);
+                let saved_defer_sites = std::mem::take(&mut self.defer_sites);
+                let saved_defer_ids = std::mem::take(&mut self.defer_site_ids);
+                let saved_defer_head = self.defer_head.take();
+                // The closure is a drain scope of its own: a `return` in its body
+                // must emit the closure's drain even if the closure is being
+                // lowered as a case body of the enclosing function's drain.
+                let saved_in_drain = std::mem::replace(&mut self.in_defer_drain, false);
                 let saved_reg = self.next_reg;
                 let saved_label = self.next_label;
                 // The lifted closure is `define i64 @tallow.__closure_N` — always,
@@ -7227,6 +7469,10 @@ void tallow_async_runtime_shutdown(void) {
                     all_params_ir.join(", ")
                 ));
                 self.body.push_str("entry:\n");
+                // The closure's own runtime defer-list head: its `defer`s
+                // register and drain here, never at the enclosing function's
+                // epilogue.
+                self.init_defer_head();
 
                 // Bind captured variables to their field *inside the caller's
                 // environment struct* (no per-call copy). Reads and writes go
@@ -7284,7 +7530,10 @@ void tallow_async_runtime_shutdown(void) {
                 self.lifted_closures.push_str(&closure_body);
 
                 // The enclosing function's deferred blocks are not ours.
-                self.defer_stack = saved_defer_stack;
+                self.defer_sites = saved_defer_sites;
+                self.defer_site_ids = saved_defer_ids;
+                self.defer_head = saved_defer_head;
+                self.in_defer_drain = saved_in_drain;
 
                 // Restore parent function state
                 self.body = saved_body;
@@ -23337,6 +23586,18 @@ void tallow_async_runtime_shutdown(void) {
         let n = self.next_reg;
         self.next_reg += 1;
         format!("%{n}")
+    }
+
+    /// A uniquely NAMED SSA value. Use instead of `fresh_reg` when instructions
+    /// are emitted in a different order than they are generated: LLVM requires
+    /// unnamed temporaries numbered in textual order, so a value allocated early
+    /// and written late yields "instruction expected to be numbered '%N' or
+    /// greater". Named values carry no ordering constraint.
+
+    fn fresh_named(&mut self, hint: &str) -> String {
+        let n = self.next_label;
+        self.next_label += 1;
+        format!("%{hint}.{n}")
     }
 
     fn fresh_label(&mut self, prefix: &str) -> String {

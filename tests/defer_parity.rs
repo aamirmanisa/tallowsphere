@@ -306,12 +306,6 @@ fn main() {
 /// the captured `k` is read when the deferred bodies run, at function exit,
 /// where the loop's binding holds the last iteration's value on both planes.
 #[test]
-// MEASURED at this commit: the compiled plane still registers once. `left: "d:k2\n"`,
-// `right: "d:k2\nd:k2\nd:k2\n"`. The emitter has no runtime registration list — the two
-// cases below assert the contract, not current behaviour, and stay ignored until the
-// runtime defer list exists (blueprint G18 residual 1). The doc comments above describe
-// the intended design; they are not a description of the shipped emitter.
-#[ignore = "compiled plane registers deferred blocks at compile time (once); the runtime registration list is not implemented — blueprint G18 residual 1"]
 fn a_defer_in_a_loop_body_registers_once_per_iteration() {
     let source = r#"
 fn main() {
@@ -350,12 +344,6 @@ fn main() {
 /// counter per site: a per-site counter would answer the single-site case above
 /// correctly and get this one wrong.
 #[test]
-// MEASURED at this commit: the compiled plane still registers once. `left: "d:k2\n"`,
-// `right: "d:k2\nd:k2\nd:k2\n"`. The emitter has no runtime registration list — the two
-// cases below assert the contract, not current behaviour, and stay ignored until the
-// runtime defer list exists (blueprint G18 residual 1). The doc comments above describe
-// the intended design; they are not a description of the shipped emitter.
-#[ignore = "compiled plane registers deferred blocks at compile time (once); the runtime registration list is not implemented — blueprint G18 residual 1"]
 fn two_defer_sites_in_a_loop_drain_in_reverse_registration_order() {
     let source = r#"
 fn main() {
@@ -385,4 +373,235 @@ fn main() {
          registration order"
     );
     assert_parity("loop-two-sites", &interpreted, &native);
+}
+
+/// 7. A `defer` in a block nested inside a loop body registers once per entry
+///    to that block — two iterations, two registrations, drained LIFO.
+///
+/// The interpreter control prints `body` and then `n:t1` twice: both bodies
+/// read the binding at function exit, where the last iteration's `t` is
+/// visible, exactly as in case 5. What this case adds is the nested scope: the
+/// registration has to survive the block that declared it, and the drain must
+/// still find it.
+#[test]
+fn a_defer_in_a_nested_block_registers_once_per_entry() {
+    let source = r#"
+fn main() {
+    var i = 0
+    while i < 2 {
+        if i < 2 {
+            let t = "t{i}"
+            defer { print("n:{t}") }
+        }
+        i = i + 1
+    }
+    print("body")
+}
+"#;
+    let (interpreted, native) = both_planes("nested-block", source);
+
+    let expected = "body\nn:t1\nn:t1\n";
+    assert_eq!(
+        interpreted.stdout_text(),
+        expected,
+        "the interpreter control does not register the nested defer once per \
+         entry to its block"
+    );
+    assert_eq!(
+        native.stdout_text(),
+        expected,
+        "the compiled plane registered the nested deferred block {} time(s) \
+         instead of once per entry to the block that declares it",
+        native.stdout_text().lines().count().saturating_sub(1)
+    );
+    assert_parity("nested-block", &interpreted, &native);
+}
+
+// ── 8. The registrations must not accumulate ────────────────────────────────
+
+/// Resident set size of a live process, in KiB, read from `/proc/<pid>/statm`.
+fn resident_kb(pid: u32) -> Option<u64> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+    let resident_pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;
+    let page_kb = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64 / 1024;
+    Some(resident_pages * page_kb)
+}
+
+/// Build `source` into `<dir>/<name>` and return the binary path.
+fn build_program(dir: &std::path::Path, name: &str, source: &str, keep_ir: bool) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, source).expect("write program");
+    let mut cmd = Command::new(BIN);
+    cmd.args(["build", "-q"])
+        .arg(&path)
+        .env("TALLOW_ALLOW_DIRECT", "1");
+    if keep_ir {
+        // The .ll is removed after a successful link unless this is set.
+        cmd.env("TALLOW_KEEP_IR", "1");
+    }
+    let build = cmd.output().expect("build tallow program");
+    assert!(
+        build.status.success(),
+        "the program did not build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let binary = path.with_extension("");
+    assert!(binary.exists(), "no binary at {}", binary.display());
+    binary
+}
+
+/// Run `binary` to completion with stdout redirected to `out_path`, sampling its
+/// resident set every ~200 µs. Returns the samples (KiB) and the stdout bytes.
+fn run_and_sample(binary: &std::path::Path, out_path: &std::path::Path) -> (Vec<u64>, Vec<u8>) {
+    let out_file = std::fs::File::create(out_path).expect("create stdout file");
+    let mut child = Command::new(binary)
+        .stdout(std::process::Stdio::from(out_file))
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn built program");
+    let pid = child.id();
+    let mut samples: Vec<u64> = Vec::new();
+    loop {
+        // A zombie reports 0 resident pages: reading it as "peak" would make the
+        // growth assertion vacuously true, so those samples are dropped.
+        if let Some(kb) = resident_kb(pid) {
+            if kb > 0 {
+                samples.push(kb);
+            }
+        }
+        match child.try_wait().expect("wait on child") {
+            Some(_) => break,
+            None => std::thread::sleep(std::time::Duration::from_micros(200)),
+        }
+    }
+    let output = child.wait_with_output().expect("collect output");
+    assert!(
+        output.status.success(),
+        "the measured program failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = std::fs::read(out_path).expect("read child stdout");
+    (samples, stdout)
+}
+
+/// 10 000 registrations in one loop: correctness, the emitted free, and RSS
+/// against a control that differs only in having no `defer`.
+///
+/// Each executed `defer` mallocs a 16-byte list node; the drain frees each node
+/// as it dispatches it. Two independent claims, because neither alone can see a
+/// leak:
+///
+/// * **the emitted IR** — exactly one `free` of the node, in the drain loop. At
+///   10 000 registrations a leak is 10 000 × 32 B of allocator chunks ≈ 320 KiB,
+///   which no whole-process RSS bound could tell from allocator noise.
+/// * **RSS against a control** — the same 10 000-print loop with the `defer`
+///   removed. Both runs sample `/proc/<pid>/statm` the same way, and the
+///   `defer` program may not peak more than 4 MiB above the control. Measured
+///   on this box: control ~4.9 MiB, `defer` ~5.2 MiB, delta ~256 KiB — the
+///   pending nodes themselves (all 10 000 are pending until the drain at exit,
+///   by design: the list is O(pending), not O(1)).
+///
+/// The 8 MiB growth ceiling inside the `defer` run is the bound
+/// `tests/bridge_ownership_adversarial.rs` uses, kept so the two numbers are
+/// comparable.
+#[test]
+fn ten_thousand_registrations_do_not_grow_rss() {
+    const REGISTRATIONS: usize = 10_000;
+    const CEILING_KB: u64 = 8 * 1024;
+    const EXTRA_KB: u64 = 4 * 1024;
+
+    let deferred = format!(
+        "fn main() {{\n    var i = 0\n    while i < {REGISTRATIONS} {{\n        \
+         defer {{ print(\"d\") }}\n        i = i + 1\n    }}\n}}\n"
+    );
+    // The control: identical output and iteration count, no defer, so the delta
+    // between the two peaks is the defer machinery and nothing else.
+    let control = format!(
+        "fn main() {{\n    var i = 0\n    while i < {REGISTRATIONS} {{\n        \
+         print(\"d\")\n        i = i + 1\n    }}\n}}\n"
+    );
+
+    let serialized = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = workdir("rss");
+    let deferred_bin = build_program(&dir, "deferred.tl", &deferred, true);
+    let control_bin = build_program(&dir, "control.tl", &control, false);
+    let ir = std::fs::read_to_string(dir.join("deferred.ll"))
+        .expect("TALLOW_KEEP_IR=1 promises the .ll next to the binary");
+    let (deferred_samples, native_stdout) =
+        run_and_sample(&deferred_bin, &dir.join("deferred.stdout"));
+    let (control_samples, control_stdout) = run_and_sample(&control_bin, &dir.join("control.stdout"));
+    drop(serialized);
+
+    // TWO frees, and both are the design: the drain frees each node it dispatches
+    // (`defer.cont`), and the leftover sweep frees anything registered WHILE the
+    // drain ran (`defer.leftover.body`) so a `defer` inside a deferred body cannot
+    // leak. One free would mean the leftover path is missing; three would mean a
+    // node is freed twice.
+    assert_eq!(
+        ir.matches("call void @free(ptr").count(),
+        2,
+        "expected exactly two frees: the dispatched node and the leftover sweep"
+    );
+    assert!(
+        ir.contains("defer.cond"),
+        "the compiled program has no runtime defer drain at all"
+    );
+
+    let interpreted = run_plane("rss-interp", "--interpret", &deferred);
+    assert!(
+        interpreted.ok,
+        "the interpreter control leg failed:\n{}",
+        interpreted.describe("rss-interp", "--interpret")
+    );
+    assert_eq!(
+        native_stdout, interpreted.stdout,
+        "the compiled plane's stdout is not byte-identical to the interpreter's \
+         over {REGISTRATIONS} registrations"
+    );
+    assert_eq!(
+        native_stdout, control_stdout,
+        "the `defer` program and its no-defer control printed different output, \
+         so their RSS peaks are not comparable"
+    );
+
+    for (tag, samples) in [("defer", &deferred_samples), ("control", &control_samples)] {
+        assert!(
+            samples.len() >= 5,
+            "too few RSS samples for the {tag} run ({}) : {samples:?}",
+            samples.len()
+        );
+    }
+    let peak_of = |samples: &[u64]| *samples.iter().max().expect("samples");
+    let edge = |samples: &[u64]| (samples.len() / 10).max(1);
+    let deferred_peak = peak_of(&deferred_samples);
+    let control_peak = peak_of(&control_samples);
+    let baseline = *deferred_samples[..edge(&deferred_samples)]
+        .iter()
+        .max()
+        .expect("samples");
+    let growth = deferred_peak.saturating_sub(baseline);
+    let extra = deferred_peak.saturating_sub(control_peak);
+    println!(
+        "── registration RSS ──\n{REGISTRATIONS} registrations: defer peak \
+         {deferred_peak} KiB ({} samples, growth from baseline {baseline} KiB = \
+         {growth} KiB), control peak {control_peak} KiB ({} samples), delta \
+         {extra} KiB; growth ceiling {CEILING_KB} KiB, delta ceiling {EXTRA_KB} \
+         KiB",
+        deferred_samples.len(),
+        control_samples.len()
+    );
+    assert!(
+        growth < CEILING_KB,
+        "RSS grew {growth} KiB inside the `defer` run over {REGISTRATIONS} \
+         registrations (baseline {baseline} KiB, peak {deferred_peak} KiB, \
+         ceiling {CEILING_KB} KiB)"
+    );
+    assert!(
+        extra < EXTRA_KB,
+        "the `defer` program peaked {extra} KiB above its no-defer control \
+         ({deferred_peak} KiB vs {control_peak} KiB, ceiling {EXTRA_KB} KiB) \
+         over {REGISTRATIONS} registrations; the registrations are retaining \
+         more than the pending nodes"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
