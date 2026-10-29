@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::ast::*;
-use crate::typeck::TypeEnv;
+use crate::typeck::{Type, TypeEnv};
 
 // ── LLVM Type Representation ────────────────────────────────────────────────
 
@@ -470,6 +470,72 @@ const ELEM_STR: i32 = 1;
 const ELEM_FLOAT: i32 = 2;
 const ELEM_BOOL: i32 = 3;
 
+/// The one refusal text for an array the native layout cannot render because
+/// its element kind is not a scalar — or is not recoverable at all. Shared by
+/// the array-literal guard and the value-based guard so a `print` of the same
+/// value reads the same however it was reached.
+const PRINT_ARRAY_NON_SCALAR_REFUSAL: &str =
+    "print() of an array with non-scalar or unknown-kind elements is not \
+     supported by the native backend (the native array layout has no \
+     per-element tags); use the interpreter";
+
+/// The one refusal text for a mixed-type array `print`.
+const PRINT_ARRAY_MIXED_REFUSAL: &str =
+    "print() of a mixed-type array is not supported by the native backend \
+     (the native array layout has no per-element tags); use the interpreter";
+
+/// Static element shape of an array VALUE (B4).
+///
+/// This is a property of the value's element layout, not of the expression
+/// that reaches `print`: the native array layout carries no per-element tags,
+/// so a `let`-binding, a parameter, a field and a call result all hold the same
+/// untagged buffer. `print` may render only `Scalar`; everything else takes the
+/// documented refusal path (the interpreter is then the answer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArrayElemShape {
+    /// Every element is this one scalar kind (`ELEM_*`).
+    Scalar(i32),
+    /// Elements are themselves arrays: printing the array refuses, and so does
+    /// printing one element, because the slot holds a pointer to an untagged
+    /// inner array.
+    NonScalar,
+    /// Elements are pointer-shaped values that already have their OWN rendering
+    /// path on this plane (tagged `Result` slots, browser handles). Printing the
+    /// ARRAY still refuses — the renderer has no tag to consult — but a single
+    /// element may take its own path, so `print(out[0])` keeps working.
+    Handle,
+    /// Elements disagree on their scalar kind.
+    Mixed,
+    /// Known to be an array, but the element type is not statically recoverable.
+    Unknown,
+}
+
+/// `print(<array>)` element kind, or the refusal the shape demands.
+fn scalar_elem_kind_or_refuse(shape: ArrayElemShape) -> Result<i32, String> {
+    match shape {
+        ArrayElemShape::Scalar(kind) => Ok(kind),
+        ArrayElemShape::Mixed => Err(PRINT_ARRAY_MIXED_REFUSAL.to_string()),
+        ArrayElemShape::NonScalar | ArrayElemShape::Handle | ArrayElemShape::Unknown => {
+            Err(PRINT_ARRAY_NON_SCALAR_REFUSAL.to_string())
+        }
+    }
+}
+
+/// Element shape named by a codegen container kind (`StringArray`, `I64Array`,
+/// `ResultArray`, …). `None` when the kind does not name an array.
+fn array_shape_of_kind(kind: &str) -> Option<ArrayElemShape> {
+    match kind {
+        "StringArray" => Some(ArrayElemShape::Scalar(ELEM_STR)),
+        "I64Array" | "IntArray" => Some(ArrayElemShape::Scalar(ELEM_INT)),
+        "FloatArray" => Some(ArrayElemShape::Scalar(ELEM_FLOAT)),
+        "BoolArray" => Some(ArrayElemShape::Scalar(ELEM_BOOL)),
+        // `ResultArray`, `ElementArray`, `HtmlElementArray`, the checkpoint/
+        // cookie kinds: element is a handle with its own rendering path.
+        other if other.ends_with("Array") => Some(ArrayElemShape::Handle),
+        _ => None,
+    }
+}
+
 /// Result kind of calling `method` on a receiver of kind `recv_kind`.
 /// Mirrors the `(kind, method)` table in `emit_stmt`'s `Let`-tracking so that a
 /// chained call (`html.parse(b).select_one("h1")`) resolves exactly like the
@@ -642,6 +708,12 @@ pub struct CodeGen<'a> {
     // map/filter of such arrays, and for the native-array FFI returns
     // (html.select / doc.links / Extract.pattern).
     variable_array_elem_is_ptr: HashMap<String, bool>,
+    /// Variable → static element shape of the array it holds (B4, value-based
+    /// `print` guard). Recorded when the binding is created — from the declared
+    /// `[]T` annotation, the literal's elements, or the callee's declared return
+    /// — so `print(xs)` refuses exactly what `print([..])` refuses: the shape is
+    /// a property of the value, never of the print argument's syntax.
+    variable_array_elem_shape: HashMap<String, ArrayElemShape>,
     /// Handler-name → wrapper symbol for native callbacks. Declared once per
     /// name, emitted after the module body (see docs/browser-callback-abi.md).
     callback_wrappers: Vec<(String, String)>,
@@ -884,6 +956,7 @@ impl<'a> CodeGen<'a> {
             fn_param_shapes: HashMap::new(),
             emitted_fn_thunks: std::collections::HashSet::new(),
             variable_array_elem_is_ptr: HashMap::new(),
+            variable_array_elem_shape: HashMap::new(),
             callback_wrappers: Vec::new(),
             variable_result_payload_kind: HashMap::new(),
             string_variables: HashSet::new(),
@@ -4302,6 +4375,7 @@ void tallow_async_runtime_shutdown(void) {
         self.variable_struct_types.clear();
         self.variable_array_elem_struct.clear();
         self.variable_is_array.clear();
+        self.variable_array_elem_shape.clear();
         self.variable_is_string.clear();
         self.variable_data_enum.clear();
         self.variable_is_fn.clear();
@@ -4373,6 +4447,13 @@ void tallow_async_runtime_shutdown(void) {
 
         // Track array/struct types from params
         for param in &func.params {
+            // The declared `[]T` records the parameter's element shape, so a
+            // `print(xs)` of a parameter refuses exactly like the literal (B4):
+            // the shape belongs to the value, not to the print argument.
+            if let Some(shape) = self.array_shape_of_type_expr(&param.ty) {
+                self.variable_array_elem_shape
+                    .insert(param.name.clone(), shape);
+            }
             if let TypeExprKind::Slice(inner) = &param.ty.kind {
                 self.variable_is_array.insert(param.name.clone(), true);
                 if let TypeExprKind::Named(elem_name) = &inner.kind {
@@ -4837,6 +4918,7 @@ void tallow_async_runtime_shutdown(void) {
         self.variables.clear();
         self.variable_struct_types.clear();
         self.variable_is_array.clear();
+        self.variable_array_elem_shape.clear();
         self.variable_array_element_type.clear();
         self.variable_privacy.clear();
         self.current_fn_name = Some(func.name.clone());
@@ -4940,6 +5022,12 @@ void tallow_async_runtime_shutdown(void) {
                     self.variable_struct_types
                         .insert(param.name.clone(), n.clone());
                 }
+            }
+            // The declared `[]T` records the parameter's element shape, so a
+            // `print(xs)` of a parameter refuses exactly like the literal (B4).
+            if let Some(shape) = self.array_shape_of_type_expr(&param.ty) {
+                self.variable_array_elem_shape
+                    .insert(param.name.clone(), shape);
             }
             if let TypeExprKind::Slice(inner) = &param.ty.kind {
                 // []T parameter — mark as array
@@ -5892,6 +5980,26 @@ void tallow_async_runtime_shutdown(void) {
                         }
                     }
                 }
+                // ── Record the bound array's element shape (B4) ───────────────
+                // `print` refuses an array whose elements are not all one scalar
+                // kind however the array was reached — a property of the value's
+                // element layout, so it is recorded once on the binding here
+                // rather than re-derived from the print argument's syntax. A
+                // declared `[]T` annotation is authoritative; otherwise the
+                // initializer resolves it (literal, copy, callee signature).
+                match ty
+                    .as_ref()
+                    .and_then(|t| self.array_shape_of_type_expr(t))
+                    .or_else(|| self.array_value_shape(value))
+                {
+                    Some(shape) => {
+                        self.variable_array_elem_shape.insert(name.clone(), shape);
+                    }
+                    None => {
+                        self.variable_array_elem_shape.remove(name);
+                    }
+                }
+
                 // Source 3: RHS is a variable that already has privacy
                 if !self.variable_privacy.contains_key(name) {
                     if let ExprKind::Ident(src_name) = &value.kind {
@@ -6030,9 +6138,21 @@ void tallow_async_runtime_shutdown(void) {
                 // An assignment is a fresh value: any narrowing a guard
                 // established for that name is stale from here on. (The checker
                 // never narrows a `var`, so this is belt-and-braces.)
-                if let ExprKind::Assign { target, .. } = &expr.kind {
+                if let ExprKind::Assign { target, value } = &expr.kind {
                     if let ExprKind::Ident(name) = &target.kind {
                         self.non_nil_locals.remove(name);
+                        // The array element shape is a fact about the current
+                        // value, so a reassignment resets it exactly like a
+                        // rebinding — a stale shape would let `print` render a
+                        // buffer whose layout is no longer what was recorded.
+                        match self.array_value_shape(value) {
+                            Some(shape) => {
+                                self.variable_array_elem_shape.insert(name.clone(), shape);
+                            }
+                            None => {
+                                self.variable_array_elem_shape.remove(name);
+                            }
+                        }
                     }
                 }
                 let val = self.emit_expr(expr)?;
@@ -14413,6 +14533,14 @@ void tallow_async_runtime_shutdown(void) {
     /// a fail-loud refusal: the native array layout carries no per-element
     /// tags, so rendering it would print decoded garbage. `tallow run` then
     /// falls back to the (correct) interpreter.
+    ///
+    /// The array test is a test of the VALUE's element shape, never of the
+    /// argument's syntax. `let xs = [[1,2],[3,4]]; print(xs)` holds the same
+    /// untagged buffer as `print([[1,2],[3,4]])`, and so does a parameter, a
+    /// struct field and a call result — so all of them take the same refusal
+    /// path as the literal. `array_value_shape` resolves the shape from the
+    /// declared type (annotation, parameter, callee signature, struct field
+    /// kind) or from the shape recorded when the binding was created.
     fn print_composite_route(&self, e: &Expr) -> Result<Option<PrintCompositeRoute>, String> {
         match &e.kind {
             ExprKind::MapLit(entries) => Ok(Some(PrintCompositeRoute::Map {
@@ -14422,7 +14550,7 @@ void tallow_async_runtime_shutdown(void) {
                 },
             })),
             ExprKind::Array(items) => Ok(Some(PrintCompositeRoute::Array {
-                elem_kind: self.array_literal_elem_kind(items)?,
+                elem_kind: scalar_elem_kind_or_refuse(self.array_items_shape(items))?,
             })),
             ExprKind::Ident(name) => {
                 // A whole struct value has no native display path: the string
@@ -14444,30 +14572,22 @@ void tallow_async_runtime_shutdown(void) {
                             .unwrap_or(true),
                     }));
                 }
-                if self.variable_is_array.get(name).copied().unwrap_or(false) {
-                    let elem_kind = if self
-                        .variable_array_elem_is_ptr
-                        .get(name)
-                        .copied()
-                        .unwrap_or(false)
-                    {
-                        ELEM_STR
-                    } else {
-                        ELEM_INT
-                    };
-                    return Ok(Some(PrintCompositeRoute::Array { elem_kind }));
-                }
+                // Handle arrays keep their own sentence: the refusal names the
+                // browser kind rather than the array layout.
                 match self.browser_variables.get(name).map(String::as_str) {
-                    Some("StringArray") => Ok(Some(PrintCompositeRoute::Array {
-                        elem_kind: ELEM_STR,
-                    })),
                     Some("ElementArray") | Some("HtmlElementArray") | Some("ResultArray") => {
-                        Err(format!(
+                        return Err(format!(
                             "print() of a browser/handle array (`{name}`) is not supported by the \
                              native backend; use the interpreter"
-                        ))
+                        ));
                     }
-                    _ => Ok(None),
+                    _ => {}
+                }
+                match self.array_value_shape(e) {
+                    Some(shape) => Ok(Some(PrintCompositeRoute::Array {
+                        elem_kind: scalar_elem_kind_or_refuse(shape)?,
+                    })),
+                    None => Ok(None),
                 }
             }
             // A struct field holding a native array: `print(p.wave_sizes)`.
@@ -14479,6 +14599,17 @@ void tallow_async_runtime_shutdown(void) {
                 let Some(owner) = self.infer_kind(object) else {
                     return Ok(None);
                 };
+                // The field's DECLARED slice type is the value's shape, and it is
+                // the only source that distinguishes `[]int` from `[][]int`: the
+                // layout's `field_kinds` table names only container kinds it has
+                // a renderer for (`[]String`, `Map`), so everything else used to
+                // fall through to the string path and print the array header's
+                // first byte.
+                if let Some(shape) = self.struct_field_array_shape(&owner, field) {
+                    return Ok(Some(PrintCompositeRoute::Array {
+                        elem_kind: scalar_elem_kind_or_refuse(shape)?,
+                    }));
+                }
                 let Some(kind) = self
                     .struct_layouts
                     .get(&owner)
@@ -14496,44 +14627,256 @@ void tallow_async_runtime_shutdown(void) {
                     "I64Array" | "IntArray" => Ok(Some(PrintCompositeRoute::Array {
                         elem_kind: ELEM_INT,
                     })),
+                    // Any other array kind (a struct/handle array such as
+                    // `WaveCheckpointArray`) has no scalar element rendering.
+                    other if other.ends_with("Array") => Ok(Some(PrintCompositeRoute::Array {
+                        elem_kind: scalar_elem_kind_or_refuse(ArrayElemShape::Handle)?,
+                    })),
                     _ => Ok(None),
                 }
             }
+            // `print(make_rows())` — the callee's declared `[]T` return type is
+            // the value's shape, exactly as it is for a binding.
+            ExprKind::Call { .. } => match self.array_value_shape(e) {
+                Some(shape) => Ok(Some(PrintCompositeRoute::Array {
+                    elem_kind: scalar_elem_kind_or_refuse(shape)?,
+                })),
+                None => Ok(None),
+            },
+            // `print(rows[0])` where `rows` is an array of arrays: the slot
+            // holds a pointer to an untagged inner array, so it is the same
+            // value class the literal guard refuses. Deliberately limited to the
+            // shapes that are KNOWN to be composites: an element of an
+            // unknown-shape array may be a `Result`/handle slot that already has
+            // its own tagged rendering on this plane (`print(out[0])` of a
+            // `pool.map` result set), and refusing it would be a false negative.
+            ExprKind::Index { object, .. } => match self.array_value_shape(object) {
+                Some(ArrayElemShape::NonScalar) | Some(ArrayElemShape::Mixed) => {
+                    Ok(Some(PrintCompositeRoute::Array {
+                        elem_kind: scalar_elem_kind_or_refuse(ArrayElemShape::NonScalar)?,
+                    }))
+                }
+                _ => Ok(None),
+            },
             _ => Ok(None),
         }
     }
 
-    /// Element kind of an array literal (B4): every element must agree on a
-    /// scalar kind the runtime renderer understands. Mixed or non-scalar
-    /// elements fail loud — the native array layout has no per-element tags,
-    /// so the kind is not recoverable at runtime.
-    fn array_literal_elem_kind(&self, items: &[Expr]) -> Result<i32, String> {
-        if items.is_empty() {
-            return Ok(ELEM_INT);
-        }
+    /// Static element shape of an array literal (B4): every element must agree
+    /// on one scalar kind the runtime renderer understands. A composite element
+    /// (array, map, struct, handle) has no scalar rendering at all; a
+    /// disagreement between scalar kinds is `Mixed`.
+    fn array_items_shape(&self, items: &[Expr]) -> ArrayElemShape {
         let mut kind: Option<i32> = None;
         for item in items {
+            // An element that is itself a composite has no scalar rendering,
+            // whatever its pointer slot looks like.
+            if matches!(
+                item.kind,
+                ExprKind::Array(_) | ExprKind::MapLit(_) | ExprKind::StructLit { .. }
+            ) || self.array_value_shape(item).is_some()
+            {
+                return ArrayElemShape::NonScalar;
+            }
             match (kind, self.print_elem_kind(item)) {
-                (_, None) => {
-                    return Err(
-                        "print() of an array with non-scalar or unknown-kind elements is not \
-                         supported by the native backend (the native array layout has no \
-                         per-element tags); use the interpreter"
-                            .to_string(),
-                    );
-                }
+                (_, None) => return ArrayElemShape::NonScalar,
                 (None, Some(k)) => kind = Some(k),
                 (Some(a), Some(b)) if a == b => {}
-                (Some(_), Some(_)) => {
-                    return Err(
-                        "print() of a mixed-type array is not supported by the native backend \
-                         (the native array layout has no per-element tags); use the interpreter"
-                            .to_string(),
-                    );
+                (Some(_), Some(_)) => return ArrayElemShape::Mixed,
+            }
+        }
+        ArrayElemShape::Scalar(kind.unwrap_or(ELEM_INT))
+    }
+
+    /// Static element shape of an array VALUE (B4), or `None` when the
+    /// expression is not known to be an array.
+    ///
+    /// Every way an array reaches `print` — a binding, a parameter, a struct
+    /// field, a call result — resolves here to the same shape, because all of
+    /// them read the same `[]T` declaration or the same literal.
+    fn array_value_shape(&self, e: &Expr) -> Option<ArrayElemShape> {
+        match &e.kind {
+            ExprKind::Array(items) => Some(self.array_items_shape(items)),
+            ExprKind::Try(inner) | ExprKind::Await(inner) => self.array_value_shape(inner),
+            ExprKind::Ident(name) => {
+                // The shape recorded when the array was bound: a literal, a
+                // `let` copy, a `[]T` parameter, or a declared call result.
+                if let Some(shape) = self.variable_array_elem_shape.get(name) {
+                    return Some(*shape);
+                }
+                // Container kinds that name an array outright.
+                if let Some(kind) = self.browser_variables.get(name) {
+                    if let Some(shape) = array_shape_of_kind(kind) {
+                        return Some(shape);
+                    }
+                }
+                // Known to be an array, but nothing recorded its element type:
+                // the layout is untagged and the kind is unrecoverable.
+                if self.variable_is_array.get(name).copied().unwrap_or(false) {
+                    return Some(ArrayElemShape::Unknown);
+                }
+                self.infer_kind(e).as_deref().and_then(array_shape_of_kind)
+            }
+            ExprKind::FieldAccess { .. } => {
+                self.infer_kind(e).as_deref().and_then(array_shape_of_kind)
+            }
+            ExprKind::MethodCall { object, method, .. } => {
+                match method.as_str() {
+                    // `split(sep)` yields strings whatever the receiver is.
+                    "split" => return Some(ArrayElemShape::Scalar(ELEM_STR)),
+                    // map/filter of an array keep the receiver's element layout.
+                    "map" | "filter" | "filter_ok" => {
+                        if let Some(shape) = self.array_value_shape(object) {
+                            return Some(shape);
+                        }
+                    }
+                    _ => {}
+                }
+                self.infer_kind(e).as_deref().and_then(array_shape_of_kind)
+            }
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(f) => self
+                    .env
+                    .functions
+                    .get(f)
+                    .and_then(|sig| self.array_shape_of_type(&sig.return_type)),
+                _ => None,
+            },
+            // The element of an array whose elements are composites is itself a
+            // composite (an inner array, a struct, a handle).
+            ExprKind::Index { object, .. } => match self.array_value_shape(object) {
+                Some(ArrayElemShape::NonScalar)
+                | Some(ArrayElemShape::Mixed)
+                | Some(ArrayElemShape::Unknown) => Some(ArrayElemShape::Unknown),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Declared element shape of `Struct.field`, read from the struct
+    /// declaration itself. `None` when the field is not an array (or the struct
+    /// is not in this compilation unit), which keeps the non-array field path.
+    fn struct_field_array_shape(&self, struct_name: &str, field: &str) -> Option<ArrayElemShape> {
+        for item in &self.merged_items {
+            if let Item::Struct(decl) = item {
+                if decl.name == struct_name {
+                    let f = decl.fields.iter().find(|f| f.name == field)?;
+                    return self.array_shape_of_type_expr(&f.ty);
                 }
             }
         }
-        Ok(kind.unwrap_or(ELEM_INT))
+        None
+    }
+
+    /// Element shape of a declared type, when the type is an array (`[]T`).
+    fn array_shape_of_type(&self, t: &Type) -> Option<ArrayElemShape> {
+        match t {
+            Type::Array(inner) => Some(self.elem_shape_of_type(inner)),
+            Type::Private(inner)
+            | Type::Secret(inner)
+            | Type::Trusted(inner)
+            | Type::Unverified(inner)
+            | Type::Erasable(inner)
+            | Type::Consent(inner)
+            | Type::Boxed(inner)
+            | Type::Optional(inner)
+            | Type::Result(inner) => self.array_shape_of_type(inner),
+            Type::Fresh(inner, _) => self.array_shape_of_type(inner),
+            Type::Newtype { inner, .. } => self.array_shape_of_type(inner),
+            Type::Named(n) => self
+                .env
+                .type_aliases
+                .get(n)
+                .and_then(|alias| self.array_shape_of_type(alias)),
+            _ => None,
+        }
+    }
+
+    /// Element shape of one declared element type.
+    fn elem_shape_of_type(&self, t: &Type) -> ArrayElemShape {
+        match t {
+            Type::Int(_) => ArrayElemShape::Scalar(ELEM_INT),
+            Type::Float(_) => ArrayElemShape::Scalar(ELEM_FLOAT),
+            Type::Bool => ArrayElemShape::Scalar(ELEM_BOOL),
+            Type::String => ArrayElemShape::Scalar(ELEM_STR),
+            Type::Private(inner)
+            | Type::Secret(inner)
+            | Type::Trusted(inner)
+            | Type::Unverified(inner)
+            | Type::Erasable(inner)
+            | Type::Consent(inner) => self.elem_shape_of_type(inner),
+            Type::Fresh(inner, _) => self.elem_shape_of_type(inner),
+            Type::Newtype { inner, .. } => self.elem_shape_of_type(inner),
+            Type::Named(n) => match n.as_str() {
+                "String" | "str" | "string" => ArrayElemShape::Scalar(ELEM_STR),
+                "int" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32"
+                | "u64" | "u128" | "usize" => ArrayElemShape::Scalar(ELEM_INT),
+                "f32" | "f64" | "float" => ArrayElemShape::Scalar(ELEM_FLOAT),
+                "bool" => ArrayElemShape::Scalar(ELEM_BOOL),
+                _ => match self.env.type_aliases.get(n) {
+                    Some(alias) => self.elem_shape_of_type(alias),
+                    // A named type with no alias is a struct: a record slot.
+                    None => ArrayElemShape::Unknown,
+                },
+            },
+            // An array of arrays: both the outer print and an element print
+            // refuse, because the element slot is a pointer to an untagged inner
+            // array.
+            Type::Array(_) => ArrayElemShape::NonScalar,
+            // Pointer-shaped elements with their own rendering path (tagged
+            // `Result` slots, maps, handles, closures): the array cannot be
+            // rendered, a single element can.
+            Type::Tuple(_)
+            | Type::Map(_, _)
+            | Type::Set(_)
+            | Type::Chan(_)
+            | Type::Optional(_)
+            | Type::Result(_)
+            | Type::Boxed(_)
+            | Type::Grant(_)
+            | Type::Function { .. } => ArrayElemShape::Handle,
+            // `char`/`bytes` elements have no `ELEM_*` code, and `Unknown` is
+            // honestly unknown: both refuse rather than print a decode.
+            Type::Char | Type::Bytes | Type::Void | Type::Unknown => ArrayElemShape::Unknown,
+        }
+    }
+
+    /// Element shape of a declared `[]T` annotation (`None` for a non-slice).
+    fn array_shape_of_type_expr(&self, ty: &TypeExpr) -> Option<ArrayElemShape> {
+        match &ty.kind {
+            TypeExprKind::Slice(inner) => Some(self.elem_shape_of_type_expr(inner)),
+            _ => None,
+        }
+    }
+
+    /// Element shape of one declared element annotation.
+    fn elem_shape_of_type_expr(&self, elem: &TypeExpr) -> ArrayElemShape {
+        match &elem.kind {
+            TypeExprKind::Named(n) => match n.as_str() {
+                "String" | "str" | "string" => ArrayElemShape::Scalar(ELEM_STR),
+                "int" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32"
+                | "u64" | "u128" | "usize" => ArrayElemShape::Scalar(ELEM_INT),
+                "f32" | "f64" | "float" => ArrayElemShape::Scalar(ELEM_FLOAT),
+                "bool" => ArrayElemShape::Scalar(ELEM_BOOL),
+                _ => match self.env.type_aliases.get(n) {
+                    Some(alias) => self.elem_shape_of_type(alias),
+                    None => ArrayElemShape::Unknown,
+                },
+            },
+            // `[][]T` — the element is an array: neither the outer print nor an
+            // element print can be rendered.
+            TypeExprKind::Slice(_) => ArrayElemShape::NonScalar,
+            // Tuples, maps, optionals, function types: pointer-shaped elements
+            // with their own rendering path.
+            TypeExprKind::Tuple(_)
+            | TypeExprKind::Generic { .. }
+            | TypeExprKind::Optional(_)
+            | TypeExprKind::Function { .. }
+            | TypeExprKind::Boxed(_)
+            | TypeExprKind::ImplTrait(_)
+            | TypeExprKind::DynTrait(_) => ArrayElemShape::Handle,
+        }
     }
 
     /// Statically-known print element kind of one array element (B4).
@@ -37282,6 +37625,75 @@ mod tests {
             .emit_module()
             .expect_err("mixed-type array print must fail loud");
         assert!(err.contains("mixed-type array"), "{err}");
+    }
+
+    #[test]
+    fn b4_print_bound_nested_array_fails_loud() {
+        // The same value behind a `let` must refuse exactly like the literal: the
+        // native array layout is untagged whether the print argument is a
+        // literal, a name, a parameter or a call result.
+        let (tokens, errors) = lexer::tokenize(
+            r#"
+            fn main() {
+                let xs = [[1, 2], [3, 4]]
+                print(xs)
+            }
+        "#,
+        );
+        assert!(errors.is_empty(), "lex errors: {errors:?}");
+        let program = parser::Parser::parse(tokens).expect("parse error");
+        let (env, _) = TypeChecker::new(&program).check();
+        let mut cg = CodeGen::new(&program, &env);
+        let err = cg
+            .emit_module()
+            .expect_err("print of a `let`-bound array of arrays must fail loud");
+        assert!(err.contains("non-scalar or unknown-kind"), "{err}");
+    }
+
+    #[test]
+    fn b4_print_bound_mixed_array_fails_loud() {
+        let (tokens, errors) = lexer::tokenize(
+            r#"
+            fn main() {
+                let m = [1, "two"]
+                print(m)
+            }
+        "#,
+        );
+        assert!(errors.is_empty(), "lex errors: {errors:?}");
+        let program = parser::Parser::parse(tokens).expect("parse error");
+        let (env, _) = TypeChecker::new(&program).check();
+        let mut cg = CodeGen::new(&program, &env);
+        let err = cg
+            .emit_module()
+            .expect_err("print of a `let`-bound mixed array must fail loud");
+        assert!(err.contains("mixed-type array"), "{err}");
+    }
+
+    #[test]
+    fn b4_print_bound_scalar_array_still_renders() {
+        // The refusal is only for layouts the renderer cannot decode: a bound
+        // scalar array keeps its `tallow_display_array` call.
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let xs = [1, 2, 3]
+                print(xs)
+            }
+        "#,
+        );
+        assert!(
+            ir.contains("call ptr @tallow_display_array(ptr "),
+            "bound scalar array must still render natively: {ir}"
+        );
+        let call = ir
+            .lines()
+            .find(|l| l.contains("call ptr @tallow_display_array("))
+            .expect("no display call in the module");
+        assert!(
+            call.trim_end().ends_with("i32 0)"),
+            "a bound []int must pass the integer element kind: {call}"
+        );
     }
 
     // ── While-let tests ─────────────────────────────────────────────────────
