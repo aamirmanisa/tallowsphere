@@ -271,6 +271,10 @@ jobs:
           python3 scripts/check_capability_registry.py
       - name: Every test target is run or explicitly excluded
         run: python3 scripts/check_test_coverage.py
+      - name: Every DONE backlog row cites a real path
+        # A DONE claim whose evidence is `symbol:748` in an unnamed file cannot be
+        # checked, and a stale line number is how the claim goes false silently.
+        run: python3 scripts/check_backlog_evidence.py
       - name: Build the engine for the parity runner
         # --lib as well as --bin: the runner needs target/debug/libtallow.a next
         # to the binary, which only the `staticlib` crate-type target produces.
