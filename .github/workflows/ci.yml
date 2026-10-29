@@ -301,6 +301,7 @@ jobs:
           --test module_visibility
           --test browser_page_helpers
           --test llm_providers
+          --test journal_crash_safety
           --test mesh_plan_tl
           --test mesh_run_tl
           --test mesh_llm_tl

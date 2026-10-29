@@ -1060,6 +1060,13 @@ enum Command {
         /// Rotation-state file for `--rotation`
         #[arg(long, value_name = "PATH")]
         rotation_state: Option<PathBuf>,
+
+        /// With `--rotation`: also write the report snapshot to PATH as
+        /// temp file -> sync_data -> rename -> fsync(dir), so a concurrent
+        /// reader sees either the previous report or the new one, never a
+        /// half-written file.
+        #[arg(long, value_name = "PATH")]
+        rotation_report_out: Option<PathBuf>,
     },
     /// Exercise mode: offline scenario drills with after-action reports (#205)
     Drill {
@@ -6583,11 +6590,12 @@ fn real_main() -> anyhow::Result<()> {
             crypto_surface,
             rotation,
             ref rotation_state,
+            ref rotation_report_out,
         } => {
             // W3 batch-2 cluster C (#120): SVID rotation alarm report. Pure
             // JSON on stdout; exit 2 when any Critical alarm is present.
             if rotation {
-                let exit = emit_rotation_report(rotation_state.as_deref());
+                let exit = emit_rotation_report(rotation_state.as_deref(), rotation_report_out.as_deref());
                 std::process::exit(exit);
             }
             // W2-04 (cycle-02/07 §D5 L3): crypto-surface coverage + mock-body
@@ -19638,7 +19646,7 @@ fn emit_crypto_surface_report() -> i32 {
 /// (expired-while-held); exit 0 otherwise — including the explicit
 /// `status: "no_state"` report when no state file is supplied (that is not a
 /// silent green: the status field says so).
-fn emit_rotation_report(state_path: Option<&std::path::Path>) -> i32 {
+fn emit_rotation_report(state_path: Option<&std::path::Path>, out_path: Option<&std::path::Path>) -> i32 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -19660,10 +19668,18 @@ fn emit_rotation_report(state_path: Option<&std::path::Path>) -> i32 {
             return 2;
         }
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&report).unwrap_or_default()
-    );
+    let rendered = serde_json::to_string_pretty(&report).unwrap_or_default();
+    // A snapshot that is rewritten, not appended: temp -> sync_data -> rename
+    // -> fsync(dir). A reader sees the previous report or the new one.
+    if let Some(path) = out_path {
+        let mut bytes = rendered.clone().into_bytes();
+        bytes.push(b'\n');
+        if let Err(e) = tallow::mesh::journal::write_snapshot_atomic(path, &bytes) {
+            eprintln!("rotation: cannot write report snapshot {}: {e}", path.display());
+            return 2;
+        }
+    }
+    println!("{rendered}");
     let critical = report["alarm_counts"]["critical"].as_u64().unwrap_or(1);
     if critical == 0 {
         0
