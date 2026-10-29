@@ -160,7 +160,7 @@ The `git:` line is provenance: a release artifact reports the commit it was buil
 
 The extraction stack is written in Tallow and lowered by Tallow's compiler, so the language is not a detail of this repository — it is the trunk.
 
-```tallow
+```tallow run
 fn main() {
     let names = ["ada", "grace", "edsger"]
     for name in names {
@@ -188,7 +188,7 @@ hello, edsger
 
 ### Scripts
 
-```tallow
+```tallow skip:reads a path from argv; illustrative
 #!/usr/bin/env tallow
 fn main() {
     let path = env.args()[0]          // the script path is not included

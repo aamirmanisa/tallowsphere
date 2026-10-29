@@ -275,6 +275,11 @@ jobs:
         # --lib as well as --bin: the runner needs target/debug/libtallow.a next
         # to the binary, which only the `staticlib` crate-type target produces.
         run: cargo build --locked --lib --bin tallow
+      - name: Documentation examples run
+        # G59. Every ```tallow / ```tl block must carry `run`, `run:fail:<CODE>`
+        # or `skip:<reason>`; the `run` ones are executed here. An unmarked block
+        # is a failure, because silence is how an example rots into a lie.
+        run: python3 scripts/docs_examples.py
       - name: Parity fixtures (interpreter vs native, both planes)
         # parity_runner was excluded as unclassified. It was failing because the
         # runner treated every non-zero interpreter exit as an error, so the

@@ -1663,7 +1663,7 @@ domain_history * 0.05
 #### IPPool as First-Class Tallow Type — +3,238 lines in `interp.rs` + `net.rs`
 
 **Tallow syntax now supports**:
-```tallow
+```tallow skip:design sketch; IPPool is not a stdlib type
 // Create pool
 let pool = IPPool {
     size: 10000,
