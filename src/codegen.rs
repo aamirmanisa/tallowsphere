@@ -33482,29 +33482,15 @@ mod tests {
 
     #[test]
     fn codegen_array_push() {
-        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
-        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
-        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
-        // which is the behaviour that actually shipped.
-        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            compile_to_ir(
-                r#"
-                fn main() {
-                    let arr = [1, 2, 3]
-                    let arr2 = arr.push(4)
-                }
-            "#,
-            )
-        }));
-        let err = refused.expect_err("Array.push must be refused on the native plane");
-        let msg = err
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_default();
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            msg.contains("no lowering for Array.push"),
-            "refusal must name the method, got: {msg}"
+            !crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push must be refused on the native plane"
         );
     }
 
@@ -34599,29 +34585,15 @@ mod tests {
 
     #[test]
     fn codegen_array_push_element() {
-        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
-        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
-        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
-        // which is the behaviour that actually shipped.
-        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            compile_to_ir(
-                r#"
-                fn main() {
-                    let arr = [1, 2, 3]
-                    let arr2 = arr.push(4)
-                }
-            "#,
-            )
-        }));
-        let err = refused.expect_err("Array.push must be refused on the native plane");
-        let msg = err
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_default();
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            msg.contains("no lowering for Array.push"),
-            "refusal must name the method, got: {msg}"
+            !crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push must be refused on the native plane"
         );
     }
 
@@ -35278,29 +35250,15 @@ mod tests {
 
     #[test]
     fn codegen_array_push_extends() {
-        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
-        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
-        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
-        // which is the behaviour that actually shipped.
-        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            compile_to_ir(
-                r#"
-                fn main() {
-                    let arr = [1, 2, 3]
-                    let arr2 = arr.push(4)
-                }
-            "#,
-            )
-        }));
-        let err = refused.expect_err("Array.push must be refused on the native plane");
-        let msg = err
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_default();
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            msg.contains("no lowering for Array.push"),
-            "refusal must name the method, got: {msg}"
+            !crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push must be refused on the native plane"
         );
     }
 
@@ -36604,29 +36562,15 @@ mod tests {
 
     #[test]
     fn codegen_array_push_method() {
-        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
-        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
-        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
-        // which is the behaviour that actually shipped.
-        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            compile_to_ir(
-                r#"
-                fn main() {
-                    let arr = [1, 2, 3]
-                    let arr2 = arr.push(4)
-                }
-            "#,
-            )
-        }));
-        let err = refused.expect_err("Array.push must be refused on the native plane");
-        let msg = err
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_default();
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            msg.contains("no lowering for Array.push"),
-            "refusal must name the method, got: {msg}"
+            !crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push must be refused on the native plane"
         );
     }
 
@@ -41788,18 +41732,15 @@ fn main() {
 
     #[test]
     fn codegen_array_take_method() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let arr = [1, 2, 3, 4, 5]
-                let t = arr.take(3)
-            }
-        "#,
-        );
-        assert!(ir.contains("@malloc"), "should malloc for take result");
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            ir.contains("take.cond") || ir.contains("arrtake"),
-            "should have take label, IR:\n{ir}"
+            !crate::array_methods::lookup("take").expect("registry row").native,
+            "Array.take must be refused on the native plane"
         );
     }
 
@@ -42410,24 +42351,15 @@ fn main() {
 
     #[test]
     fn codegen_array_zip() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let a = [1, 2, 3]
-                let b = [10, 20, 30]
-                let zipped = a.zip(b)
-                print(zipped.len)
-            }
-        "#,
-        );
-        assert!(ir.contains("@malloc"), "zip should allocate sub-arrays");
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            ir.contains("ptrtoint ptr"),
-            "zip should store sub-array ptrs as i64"
-        );
-        assert!(
-            ir.contains("zip.cond") || ir.contains("zip.body"),
-            "should have zip loop labels"
+            !crate::array_methods::lookup("zip").expect("registry row").native,
+            "Array.zip must be refused on the native plane"
         );
     }
 
@@ -42457,83 +42389,57 @@ fn main() {
 
     #[test]
     fn codegen_array_flat_map() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let a = [1, 2, 3]
-                let result = a.flat_map { x -> [x, x] }
-                print(result.len)
-            }
-        "#,
-        );
-        assert!(ir.contains("@malloc"), "flat_map should allocate");
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            ir.contains("map.cond") || ir.contains("map.body"),
-            "should have map loop for flat_map"
+            !crate::array_methods::lookup("flat_map").expect("registry row").native,
+            "Array.flat_map must be refused on the native plane"
         );
     }
 
     #[test]
     fn codegen_array_unique() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let a = [1, 2, 2, 3, 1]
-                let u = a.unique()
-                print(u.len)
-            }
-        "#,
-        );
-        assert!(ir.contains("@malloc"), "unique should allocate result");
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            ir.contains("uniq.o.cond") || ir.contains("uniq.i.cond"),
-            "should have unique loop labels"
+            !crate::array_methods::lookup("unique").expect("registry row").native,
+            "Array.unique must be refused on the native plane"
         );
-        assert!(ir.contains("icmp eq i64"), "unique should compare elements");
     }
 
     #[test]
     fn codegen_array_chunk() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let a = [1, 2, 3, 4, 5]
-                let chunks = a.chunk(2)
-                print(chunks.len)
-            }
-        "#,
-        );
-        assert!(ir.contains("@malloc"), "chunk should allocate sub-arrays");
-        assert!(ir.contains("sdiv i64"), "chunk should compute num_chunks");
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            ir.contains("ptrtoint ptr"),
-            "chunk should store sub-array ptrs as i64"
+            !crate::array_methods::lookup("chunk").expect("registry row").native,
+            "Array.chunk must be refused on the native plane"
         );
-        assert!(ir.contains("@memcpy"), "chunk should copy elements");
     }
 
     #[test]
     fn codegen_array_enumerate() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let a = [10, 20, 30]
-                let e = a.enumerate()
-                print(e.len)
-            }
-        "#,
-        );
+        // BP21: the emitter still carries an arm for this method, but it disagrees with the
+        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
+        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
+        // in the method registry, which the check phase consults before codegen is reached -- so
+        // the honest unit assertion is on the registry flag, not on IR that can no longer be
+        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
         assert!(
-            ir.contains("@malloc"),
-            "enumerate should allocate sub-arrays"
-        );
-        assert!(
-            ir.contains("ptrtoint ptr"),
-            "enumerate should store pairs as i64"
-        );
-        assert!(
-            ir.contains("enum.cond") || ir.contains("enum.body"),
-            "should have enumerate loop labels"
+            !crate::array_methods::lookup("enumerate").expect("registry row").native,
+            "Array.enumerate must be refused on the native plane"
         );
     }
 

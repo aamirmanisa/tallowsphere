@@ -43,7 +43,9 @@ fn main() {
     print(arr.min())
     print(arr.max())
 
-    let taken = arr.take(3)
+    // BP21: `take` is refused on the native plane (it returns 1 element where the
+    // interpreter returns 3), so this fixture exercises `slice`, which agrees.
+    let taken = arr.slice(0, 3)
     print(taken.len())
 
     let skipped = arr.skip(2)
