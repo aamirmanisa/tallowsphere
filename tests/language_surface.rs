@@ -107,7 +107,7 @@ const OPERATORS: &[(&str, TokenKind)] = &[
     ("_", TokenKind::Underscore),
 ];
 
-/// 196 diagnostic codes, spec §5.
+/// 197 diagnostic codes, spec §5.
 // The seventeen codes added 2026-10-27 were emitted by the engine and absent from
 // this list: the effect-row family (E0118–E0123), E0124 (named/default argument
 // binding, G03), and the E0141–E0150 run (capability, scope, budget, redaction,
@@ -154,6 +154,11 @@ const ERROR_CODES: &[&str] = &[
     "E0149",
     "E0150",
     "E0151",
+    // E0152: a binding pattern whose shape the scrutinee cannot have — a scalar
+    // scrutinee, a tuple-pattern arity mismatch, or an array pattern longer than
+    // the sequence. Emitted by `src/typeck.rs:4801` (and its siblings in the same
+    // walk). Added with G07 destructuring.
+    "E0152",
     "E0200",
     "E0201",
     "E0202",
@@ -324,9 +329,9 @@ fn kinds(src: &str) -> Vec<TokenKind> {
 fn published_counts_match_the_tables() {
     assert_eq!(KEYWORDS.len(), 36, "keyword table size");
     assert_eq!(OPERATORS.len(), 51, "operator table size");
-    assert_eq!(ERROR_CODES.len(), 196, "error catalogue size");
+    assert_eq!(ERROR_CODES.len(), 197, "error catalogue size");
     let dup: BTreeSet<&str> = ERROR_CODES.iter().copied().collect();
-    assert_eq!(dup.len(), 196, "duplicate code in the catalogue");
+    assert_eq!(dup.len(), 197, "duplicate code in the catalogue");
 }
 
 #[test]
@@ -386,7 +391,7 @@ fn error_catalogue_equals_what_the_engine_emits() {
     let unemitted: Vec<_> = catalogue.difference(&found).cloned().collect();
     assert!(undocumented.is_empty(), "codes emitted but not in the catalogue: {undocumented:?}");
     assert!(unemitted.is_empty(), "codes in the catalogue that no source file emits: {unemitted:?}");
-    assert_eq!(found.len(), 196, "engine emits {} distinct codes", found.len());
+    assert_eq!(found.len(), 197, "engine emits {} distinct codes", found.len());
 }
 
 /// `"E1234"` string literals only — a code is emitted by passing the literal to

@@ -36913,19 +36913,24 @@ mod tests {
     // ── Destructuring codegen tests ─────────────────────────────────
 
     #[test]
-    fn codegen_let_destructure_uses_gep() {
+    fn codegen_let_destructure_binds_each_slot() {
+        // Was `..._uses_gep`, which destructured `pair()` — a function returning a
+        // plain `i64`. That program is refused now (E0152: a tuple pattern needs a
+        // sequence), so the test never saw IR at all. A destructure of a real
+        // sequence must give every bound name its own slot; the refusal itself is
+        // covered end-to-end by tests/pattern_destructure.rs.
         let ir = compile_to_ir(
             r#"
-            fn pair() -> i64 { 42 }
             fn main() {
-                let (a, b) = pair()
+                let (a, b) = (1, 2)
+                print(a)
+                print(b)
             }
         "#,
         );
-        // Should allocate variables for a and b
         assert!(
-            ir.contains("alloca i64"),
-            "should alloca for destructured vars"
+            ir.matches("alloca i64").count() >= 2,
+            "each destructured name needs its own slot:\n{ir}"
         );
     }
 
