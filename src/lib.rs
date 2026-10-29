@@ -12,6 +12,7 @@ pub mod agent_safety_pass;
 pub mod agent_store;
 pub mod ai_act_pass;
 pub mod artifact_index;
+pub mod array_methods;
 pub mod ast;
 pub mod bands;
 pub mod bbs;

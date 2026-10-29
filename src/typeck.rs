@@ -3857,6 +3857,13 @@ impl<'a> TypeChecker<'a> {
                     self.check_expr(&arg.value, locals);
                 }
                 let obj_ty = self.infer_expr_type(object, locals);
+                // BP21: a method call on a known `Array` receiver is resolved
+                // against the array registry (src/array_methods.rs). This is
+                // what stops `a.push(2)` from being accepted by `tallow check`
+                // and then doing nothing on one plane and yielding a byte on
+                // the other. `Unknown` receivers are left alone: no rule is
+                // invented for a type the checker cannot see.
+                self.check_array_method_call(&obj_ty, method, args, expr.span);
                 let type_name = self.type_to_name(&obj_ty);
                 // G01: `Tcp.connect(..)` / `net.connect(..)` — a static module
                 // path — and `conn.connect()` where the receiver's type is a
@@ -5020,6 +5027,76 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// BP21 — resolve a method call on an `Array` receiver against the registry.
+    ///
+    /// The contract (`docs/spec/ARRAY-METHODS.md`) is that a method call is
+    /// resolved at **check time** against a registry keyed by receiver type,
+    /// and that the registry is the interpreter's implemented set — not a wish
+    /// list. Two rules are enforced here, on both planes and from `tallow
+    /// check`, because all three read this same walk:
+    ///
+    ///   * an unknown name is `E0625`, naming the receiver type and the method
+    ///     (this is the half that stops `a.push(2)` from being accepted and
+    ///     then doing nothing);
+    ///   * a wrong argument count is `E0626`, a named error rather than a
+    ///     runtime surprise.
+    ///
+    /// Receivers of type `Unknown` are left alone: no rule is invented for a
+    /// type the checker cannot see, and the interpreter stays the fallback
+    /// plane for those programs.
+    fn check_array_method_call(
+        &mut self,
+        obj_ty: &Type,
+        method: &str,
+        args: &[CallArg],
+        span: Span,
+    ) {
+        if !matches!(obj_ty, Type::Array(_)) {
+            return;
+        }
+        match crate::array_methods::lookup(method) {
+            None => self.diags.error(
+                "E0625",
+                format!(
+                    "no method `{method}` on `Array` — the interpreter implements no array \
+                     method with that name (the registry is `src/array_methods.rs`)"
+                ),
+                span,
+            ),
+            Some(row) => {
+                if !row.accepts_arity(args.len()) {
+                    self.diags.error(
+                        "E0626",
+                        format!(
+                            "method `{method}` on `Array` {}, but got {}",
+                            row.arity_clause(),
+                            args.len()
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
+    }
+
+    /// The static type a registry method returns, relative to the receiver's
+    /// element type. `Unknown` where the interpreter's answer genuinely depends
+    /// on a value (a closure's result), so inference never invents a type.
+    fn array_method_return(elem: &Type, ret: crate::array_methods::Ret) -> Type {
+        use crate::array_methods::Ret;
+        match ret {
+            Ret::Same => Type::Array(Box::new(elem.clone())),
+            Ret::Element => elem.clone(),
+            Ret::ArrayOfArray => Type::Array(Box::new(Type::Array(Box::new(elem.clone())))),
+            Ret::Int => Type::Int(IntSize::I64),
+            Ret::Bool => Type::Bool,
+            Ret::String => Type::String,
+            // A closure's result type, and the void methods, are not derivable
+            // from the receiver alone.
+            Ret::Mapped | Ret::Void => Type::Unknown,
+        }
+    }
+
     /// Infer the type of an expression (simplified — handles common patterns).
     fn infer_expr_type(&self, expr: &Expr, locals: &HashMap<String, VarInfo>) -> Type {
         match &expr.kind {
@@ -5079,6 +5156,15 @@ impl<'a> TypeChecker<'a> {
                     };
                 }
                 let obj_ty = self.infer_expr_type(object, locals);
+                // BP21: the registry is the authority on what an array method
+                // returns, so `let b = a.first()` and `a.push(2).len()` type as
+                // the values the interpreter produces. Without this a chained
+                // call on the result was `Unknown` and escaped resolution.
+                if let Type::Array(elem) = &obj_ty {
+                    if let Some(row) = crate::array_methods::lookup(method) {
+                        return Self::array_method_return(elem, row.ret);
+                    }
+                }
                 // .redact() and .hash() on private types return String
                 if obj_ty.is_sensitive()
                     && (method == "redact" || method == "hash" || method == "mask")

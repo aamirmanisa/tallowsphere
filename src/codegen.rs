@@ -10813,6 +10813,29 @@ void tallow_async_runtime_shutdown(void) {
             }
         }
 
+        // ── BP21 — the array registry decides what this plane can lower ───────
+        //
+        // `array_value_shape` answers "is this receiver an array" from the
+        // binding's own element layout: a string local answers `None`, and a
+        // map was already dispatched above. When the registry (`src/
+        // array_methods.rs`) declares the method but this plane cannot lower
+        // it, the one correct answer is a NAMED refusal. Before BP21 the
+        // pointer branch below matched the name and emitted *something*:
+        // `let b = a.push(2)` printed a raw `0x02` byte on this plane where the
+        // interpreter printed `[1, 2]`. A refusal falls back to the interpreter
+        // (`tallow run`) and is fatal under `--require-native`, so no program
+        // can silently receive the wrong value.
+        if obj.ty == LLType::I8Ptr
+            && !obj_is_map
+            && self.array_value_shape(object).is_some()
+        {
+            if let Some(row) = crate::array_methods::lookup(method) {
+                if !row.native {
+                    return Err(crate::array_methods::native_refusal(method));
+                }
+            }
+        }
+
         // Array methods (only trigger for ptr that's not a known string method)
         if obj.ty == LLType::I8Ptr {
             match method {
@@ -33459,17 +33482,30 @@ mod tests {
 
     #[test]
     fn codegen_array_push() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let arr = [1, 2, 3]
-                let arr2 = arr.push(4)
-            }
-        "#,
+        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
+        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
+        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
+        // which is the behaviour that actually shipped.
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compile_to_ir(
+                r#"
+                fn main() {
+                    let arr = [1, 2, 3]
+                    let arr2 = arr.push(4)
+                }
+            "#,
+            )
+        }));
+        let err = refused.expect_err("Array.push must be refused on the native plane");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            msg.contains("no lowering for Array.push"),
+            "refusal must name the method, got: {msg}"
         );
-        // Push allocates new array via malloc, copies old via memcpy
-        assert!(ir.contains("@malloc"));
-        assert!(ir.contains("@memcpy"));
     }
 
     #[test]
@@ -34563,16 +34599,30 @@ mod tests {
 
     #[test]
     fn codegen_array_push_element() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let arr = [1, 2, 3]
-                let arr2 = arr.push(4)
-            }
-        "#,
+        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
+        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
+        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
+        // which is the behaviour that actually shipped.
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compile_to_ir(
+                r#"
+                fn main() {
+                    let arr = [1, 2, 3]
+                    let arr2 = arr.push(4)
+                }
+            "#,
+            )
+        }));
+        let err = refused.expect_err("Array.push must be refused on the native plane");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            msg.contains("no lowering for Array.push"),
+            "refusal must name the method, got: {msg}"
         );
-        assert!(ir.contains("@malloc"));
-        assert!(ir.contains("@memcpy") || ir.contains("@llvm.memcpy"));
     }
 
     #[test]
@@ -35228,16 +35278,30 @@ mod tests {
 
     #[test]
     fn codegen_array_push_extends() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                var arr = [1, 2, 3]
-                arr.push(4)
-            }
-        "#,
+        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
+        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
+        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
+        // which is the behaviour that actually shipped.
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compile_to_ir(
+                r#"
+                fn main() {
+                    let arr = [1, 2, 3]
+                    let arr2 = arr.push(4)
+                }
+            "#,
+            )
+        }));
+        let err = refused.expect_err("Array.push must be refused on the native plane");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            msg.contains("no lowering for Array.push"),
+            "refusal must name the method, got: {msg}"
         );
-        // push modifies the array
-        assert!(ir.contains("@malloc") || ir.contains("getelementptr"));
     }
 
     // ── Bool to_string ──────────────────────────────────────────────────
@@ -36540,16 +36604,30 @@ mod tests {
 
     #[test]
     fn codegen_array_push_method() {
-        let ir = compile_to_ir(
-            r#"
-            fn main() {
-                let arr = [1, 2]
-                let arr2 = arr.push(3)
-            }
-        "#,
+        // BP21: the emitter's push arm produced a garbage value (measured: a raw 0x02 byte for
+        // `let b = a.push(2)`), so Array.push is a named native refusal until a correct lowering
+        // exists. This test used to assert @malloc/@memcpy for that arm; it now pins the refusal,
+        // which is the behaviour that actually shipped.
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compile_to_ir(
+                r#"
+                fn main() {
+                    let arr = [1, 2, 3]
+                    let arr2 = arr.push(4)
+                }
+            "#,
+            )
+        }));
+        let err = refused.expect_err("Array.push must be refused on the native plane");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            msg.contains("no lowering for Array.push"),
+            "refusal must name the method, got: {msg}"
         );
-        // Push uses realloc/memcpy pattern
-        assert!(ir.contains("@realloc") || ir.contains("@malloc") || ir.contains("@memcpy"));
     }
 
     #[test]

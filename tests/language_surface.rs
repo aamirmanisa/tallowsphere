@@ -107,7 +107,7 @@ const OPERATORS: &[(&str, TokenKind)] = &[
     ("_", TokenKind::Underscore),
 ];
 
-/// 199 diagnostic codes, spec §5.
+/// 202 diagnostic codes, spec §5.
 // The seventeen codes added 2026-10-27 were emitted by the engine and absent from
 // this list: the effect-row family (E0118–E0123), E0124 (named/default argument
 // binding, G03), and the E0141–E0150 run (capability, scope, budget, redaction,
@@ -204,6 +204,17 @@ const ERROR_CODES: &[&str] = &[
     "E0621",
     "E0622",
     "E0623",
+    // E0624: an array literal that mixes int and float elements (BP20).
+    // Emitted by `src/typeck.rs` and cited by the emitter as the same
+    // sentence (`crate::codegen::ARRAY_LITERAL_MIXED_NUMERIC_REFUSAL`).
+    "E0624",
+    // E0625: a method name that does not exist on a statically-known receiver
+    // type — the array registry (`src/array_methods.rs`) has no such row, and
+    // the interpreter implements no such array method. Added with BP21.
+    "E0625",
+    // E0626: a wrong argument count for a registry method on `Array`. Added
+    // with BP21: arity is checked, so it is not a runtime surprise.
+    "E0626",
     "E0700",
     "E0703",
     "E0800",
@@ -338,9 +349,9 @@ fn kinds(src: &str) -> Vec<TokenKind> {
 fn published_counts_match_the_tables() {
     assert_eq!(KEYWORDS.len(), 36, "keyword table size");
     assert_eq!(OPERATORS.len(), 51, "operator table size");
-    assert_eq!(ERROR_CODES.len(), 199, "error catalogue size");
+    assert_eq!(ERROR_CODES.len(), 202, "error catalogue size");
     let dup: BTreeSet<&str> = ERROR_CODES.iter().copied().collect();
-    assert_eq!(dup.len(), 199, "duplicate code in the catalogue");
+    assert_eq!(dup.len(), 202, "duplicate code in the catalogue");
 }
 
 #[test]
@@ -400,7 +411,7 @@ fn error_catalogue_equals_what_the_engine_emits() {
     let unemitted: Vec<_> = catalogue.difference(&found).cloned().collect();
     assert!(undocumented.is_empty(), "codes emitted but not in the catalogue: {undocumented:?}");
     assert!(unemitted.is_empty(), "codes in the catalogue that no source file emits: {unemitted:?}");
-    assert_eq!(found.len(), 199, "engine emits {} distinct codes", found.len());
+    assert_eq!(found.len(), 202, "engine emits {} distinct codes", found.len());
 }
 
 /// `"E1234"` string literals only — a code is emitted by passing the literal to

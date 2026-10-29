@@ -293,6 +293,7 @@ jobs:
       - run: >-
           cargo test --locked --no-fail-fast
           --test audit_cli_contract
+          --test array_methods
           --test language_surface
           --test pattern_destructure
           --test doctest
