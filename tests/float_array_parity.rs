@@ -219,11 +219,11 @@ fn float_array_for_loop_binds_the_double() {
 }
 
 /// `push` writes the bit pattern too, so an appended float keeps its value.
-// NOTE: a case asserting `fs.push(2.25)` was removed. `Array` has no `push` method in the
-// language — `tallow check` accepts `a.push(2)` with zero warnings and the call returns an
-// undefined value (measured: `print(b)` emits byte 0x02, `a.len()` stays 1). That is an
-// unknown-method hole of its own (blueprint BP21), not a float-array case: the test was
-// asserting a method that does not exist, so it could only ever fail.
+// NOTE: a case asserting `fs.push(2.25)` on BOTH planes was removed. `push` exists in the
+// interpreter only: `let b = a.push(2)` gives `[1, 2]` under --interpret and a raw 0x02 byte
+// under --require-native, while `tallow check` reports 0 warnings for the same program. The
+// test was right about the interpreter and wrong about the native plane, which is blueprint
+// BP21, not a float-array case. `push` is functional: a bare statement mutates nothing.
 
 #[test]
 fn mixed_int_float_literal_is_refused_by_name() {
