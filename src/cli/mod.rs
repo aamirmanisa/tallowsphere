@@ -1,5 +1,6 @@
 pub mod canary_cmd;
 pub mod daemon;
+pub mod doctest_cmd;
 pub mod extract_cmd;
 pub mod fingerprint_audit_cmd;
 pub mod fixity_cmd;

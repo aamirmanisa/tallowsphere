@@ -551,6 +551,13 @@ enum Command {
         /// Enable function-level coverage reporting
         #[arg(long)]
         coverage: bool,
+
+        /// Run doctests instead: every ```tallow block in a `///` doc comment
+        /// under `path` is executed on both planes (`--interpret` and
+        /// `--require-native`) and the two must agree. See
+        /// docs/spec/DOCTESTS.md.
+        #[arg(long)]
+        doc: bool,
     },
     /// Interactive REPL (read-eval-print loop)
     Repl,
@@ -3156,7 +3163,14 @@ fn real_main() -> anyhow::Result<()> {
             ref path,
             ref filter,
             coverage,
+            doc,
         } => {
+            // G14: `--doc` runs the fenced examples in `///` comments instead
+            // of `test_*` functions. Both planes, agreement required — see
+            // src/cli/doctest_cmd.rs.
+            if doc {
+                std::process::exit(tallow::cli::doctest_cmd::run_doc_tests(path)?);
+            }
             return run_tests(path, filter.as_deref(), coverage);
         }
         Command::Repl => {
