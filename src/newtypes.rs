@@ -140,9 +140,9 @@ impl Lowerer<'_> {
                 self.known.insert(name.clone(), is_newtype);
                 self.expr(value);
             }
-            StmtKind::LetDestructure { names, value } => {
-                for name in names {
-                    self.known.insert(name.clone(), false);
+            StmtKind::LetDestructure { pattern, value } => {
+                for name in pattern.bound_names() {
+                    self.known.insert(name, false);
                 }
                 self.expr(value);
             }
@@ -150,14 +150,16 @@ impl Lowerer<'_> {
             StmtKind::Return(Some(expr)) => self.expr(expr),
             StmtKind::Return(None) | StmtKind::Continue { .. } => {}
             StmtKind::For {
-                binding,
+                pattern,
                 iter,
                 body,
                 ..
             } => {
                 self.expr(iter);
                 let saved = self.known.clone();
-                self.known.insert(binding.clone(), false);
+                for name in pattern.bound_names() {
+                    self.known.insert(name, false);
+                }
                 self.block(body);
                 self.known = saved;
             }

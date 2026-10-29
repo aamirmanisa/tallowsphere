@@ -1182,22 +1182,16 @@ impl Parser {
         // Skip optional `mut` keyword: let mut x = ...
         self.eat(TokenKind::Mut);
 
-        // Check for tuple destructuring: let (a, b) = expr
-        if self.check(TokenKind::LParen) {
-            self.advance(); // consume (
-            let mut names = Vec::new();
-            loop {
-                names.push(self.expect_ident()?);
-                if !self.eat(TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(TokenKind::RParen)?;
+        // A structural binding pattern: `let (a, b) = expr` /
+        // `let [first, ..rest] = expr` (G07). A bare name stays `Let`, so the
+        // common case keeps its simpler node.
+        if self.check(TokenKind::LParen) || self.check(TokenKind::LBracket) {
+            let pattern = self.parse_binding_pattern()?;
             self.expect(TokenKind::Eq)?;
             let value = self.parse_expr()?;
             self.eat(TokenKind::Semi);
             return Ok(Stmt {
-                kind: StmtKind::LetDestructure { names, value },
+                kind: StmtKind::LetDestructure { pattern, value },
                 span: Span::new(start.start, self.prev_span().end),
             });
         }
@@ -1263,19 +1257,15 @@ impl Parser {
     fn parse_for_stmt(&mut self, label: Option<String>) -> Result<Stmt, ParseError> {
         let start = self.span();
         self.expect(TokenKind::For)?;
-        let binding = if self.check(TokenKind::LParen) {
-            self.advance();
-            let mut names: Vec<String> = Vec::new();
-            names.push(self.expect_ident()?);
-            while self.check(TokenKind::Comma) {
-                self.advance();
-                names.push(self.expect_ident()?);
-            }
-            self.expect(TokenKind::RParen)?;
-            // Encode tuple binding as "(a,b,c)" — interp will detect & split.
-            format!("({})", names.join(","))
+        // The element is bound by a pattern (G07): `for x in ..`,
+        // `for (i, v) in ..`, `for [head, ..tail] in ..`.
+        let pattern = if self.check(TokenKind::LParen)
+            || self.check(TokenKind::LBracket)
+            || self.check(TokenKind::Underscore)
+        {
+            self.parse_binding_pattern()?
         } else {
-            self.expect_ident()?
+            Pattern::Ident(self.expect_ident()?)
         };
         self.expect(TokenKind::In)?;
         let iter = self.parse_expr()?;
@@ -1284,7 +1274,7 @@ impl Parser {
         Ok(Stmt {
             kind: StmtKind::For {
                 label,
-                binding,
+                pattern,
                 iter,
                 body,
             },
@@ -2926,6 +2916,63 @@ impl Parser {
 
     // ── Patterns ─────────────────────────────────────────────────────────
 
+    /// Parse a pattern in a *binding* position — `let`/`for` (G07).
+    ///
+    /// Separate from [`Self::parse_pattern`] on purpose: that one parses
+    /// *refutable* match arms, where `(a, b)` has historically produced an
+    /// anonymous `Variant` (the match lowering reads it that way). A binding is
+    /// irrefutable by construction, so it gets the structural patterns —
+    /// `Tuple` and `Array` — and no variant/literal forms.
+    fn parse_binding_pattern(&mut self) -> Result<Pattern, ParseError> {
+        match self.peek_kind().clone() {
+            TokenKind::Underscore => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            }
+            // Tuple pattern: (a, (b, c))
+            TokenKind::LParen => {
+                self.advance();
+                let mut elems = Vec::new();
+                while !self.check(TokenKind::RParen) && !self.at_eof() {
+                    elems.push(self.parse_binding_pattern()?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+                Ok(Pattern::Tuple(elems))
+            }
+            // Array pattern: [a, b] / [head, ..tail] / [head, ..]
+            TokenKind::LBracket => {
+                self.advance();
+                let mut elems = Vec::new();
+                let mut rest: Option<Box<Pattern>> = None;
+                while !self.check(TokenKind::RBracket) && !self.at_eof() {
+                    if self.eat(TokenKind::DotDot) {
+                        // `..` with nothing after it discards the tail.
+                        rest = Some(if self.check(TokenKind::RBracket) {
+                            Box::new(Pattern::Wildcard)
+                        } else {
+                            Box::new(self.parse_binding_pattern()?)
+                        });
+                        break;
+                    }
+                    elems.push(self.parse_binding_pattern()?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RBracket)?;
+                Ok(Pattern::Array { elems, rest })
+            }
+            TokenKind::Ident(name) => {
+                self.advance();
+                Ok(Pattern::Ident(name))
+            }
+            other => Err(self.error(format!("expected a binding pattern, found {other}"))),
+        }
+    }
+
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
         match self.peek_kind().clone() {
             // Wildcard
@@ -3740,14 +3787,14 @@ mod tests {
             panic!();
         };
         let StmtKind::For {
-            ref binding,
+            ref pattern,
             ref body,
             ..
         } = f.body.stmts[0].kind
         else {
             panic!();
         };
-        assert_eq!(binding, "i");
+        assert!(matches!(pattern, Pattern::Ident(n) if n == "i"));
         assert_eq!(body.stmts.len(), 1);
     }
 
@@ -3830,9 +3877,19 @@ mod tests {
         let Item::Fn(ref f) = program.items[0] else {
             panic!()
         };
-        let StmtKind::LetDestructure { ref names, .. } = f.body.stmts[0].kind else {
+        let StmtKind::LetDestructure { ref pattern, .. } = f.body.stmts[0].kind else {
             panic!("expected LetDestructure");
         };
+        let Pattern::Tuple(elems) = pattern else {
+            panic!("expected a tuple pattern, got {pattern:?}");
+        };
+        let names: Vec<&str> = elems
+            .iter()
+            .map(|p| match p {
+                Pattern::Ident(n) => n.as_str(),
+                other => panic!("expected a name, got {other:?}"),
+            })
+            .collect();
         assert_eq!(names, &["a", "b", "c"]);
     }
 
@@ -5052,10 +5109,13 @@ mod tests {
             panic!("expected fn")
         };
         let stmt = &f.body.stmts[0];
-        if let StmtKind::LetDestructure { ref names, .. } = stmt.kind {
-            assert_eq!(names.len(), 2);
-            assert_eq!(names[0], "data");
-            assert_eq!(names[1], "err");
+        if let StmtKind::LetDestructure { ref pattern, .. } = stmt.kind {
+            let Pattern::Tuple(elems) = pattern else {
+                panic!("expected a tuple pattern, got {pattern:?}");
+            };
+            assert_eq!(elems.len(), 2);
+            assert!(matches!(&elems[0], Pattern::Ident(n) if n == "data"));
+            assert!(matches!(&elems[1], Pattern::Ident(n) if n == "err"));
         } else {
             panic!("expected LetDestructure, got {:?}", stmt.kind);
         }
@@ -5069,9 +5129,12 @@ mod tests {
             panic!()
         };
         let stmt = &f.body.stmts[0];
-        if let StmtKind::LetDestructure { ref names, .. } = stmt.kind {
-            assert_eq!(names.len(), 3);
-            assert_eq!(names[2], "c");
+        if let StmtKind::LetDestructure { ref pattern, .. } = stmt.kind {
+            let Pattern::Tuple(elems) = pattern else {
+                panic!("expected a tuple pattern, got {pattern:?}");
+            };
+            assert_eq!(elems.len(), 3);
+            assert!(matches!(&elems[2], Pattern::Ident(n) if n == "c"));
         } else {
             panic!("expected LetDestructure");
         }
@@ -5374,12 +5437,12 @@ mod tests {
             panic!()
         };
         if let StmtKind::For {
-            ref binding,
+            ref pattern,
             ref iter,
             ..
         } = f.body.stmts[0].kind
         {
-            assert_eq!(binding, "item");
+            assert!(matches!(pattern, Pattern::Ident(n) if n == "item"));
             assert!(matches!(iter.kind, ExprKind::Ident(ref n) if n == "items"));
         } else {
             panic!("expected for stmt");
@@ -6414,11 +6477,87 @@ mod tests {
         let Item::Fn(ref f) = program.items[0] else {
             panic!()
         };
-        if let StmtKind::LetDestructure { names, .. } = &f.body.stmts[0].kind {
-            assert_eq!(names.len(), 2);
+        if let StmtKind::LetDestructure { pattern, .. } = &f.body.stmts[0].kind {
+            let Pattern::Tuple(elems) = pattern else {
+                panic!("expected a tuple pattern, got {pattern:?}");
+            };
+            assert_eq!(elems.len(), 2);
         } else {
             panic!("expected LetDestructure");
         }
+    }
+
+    // G07: `let [a, b, ..rest] = ..` — an array pattern with a rest binding.
+    #[test]
+    fn parse_let_array_pattern_with_rest() {
+        let program = parse("fn main() { let [a, b, ..rest] = items }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::LetDestructure { pattern, .. } = &f.body.stmts[0].kind else {
+            panic!("expected LetDestructure");
+        };
+        let Pattern::Array { elems, rest } = pattern else {
+            panic!("expected an array pattern, got {pattern:?}");
+        };
+        assert_eq!(elems.len(), 2);
+        assert!(matches!(
+            rest.as_deref(),
+            Some(Pattern::Ident(n)) if n == "rest"
+        ));
+    }
+
+    // G07: a bare `..` discards the tail rather than binding it.
+    #[test]
+    fn parse_let_array_pattern_discards_rest() {
+        let program = parse("fn main() { let [head, ..] = items }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::LetDestructure { pattern, .. } = &f.body.stmts[0].kind else {
+            panic!("expected LetDestructure");
+        };
+        let Pattern::Array { elems, rest } = pattern else {
+            panic!("expected an array pattern, got {pattern:?}");
+        };
+        assert_eq!(elems.len(), 1);
+        assert!(matches!(rest.as_deref(), Some(Pattern::Wildcard)));
+    }
+
+    // G07: `for [head, ..tail] in ..` parses as a for-loop binding pattern.
+    #[test]
+    fn parse_for_array_binding_pattern() {
+        let program = parse("fn main() { for [head, ..tail] in rows { print(head) } }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::For { pattern, .. } = &f.body.stmts[0].kind else {
+            panic!("expected a for loop");
+        };
+        let Pattern::Array { elems, rest } = pattern else {
+            panic!("expected an array pattern, got {pattern:?}");
+        };
+        assert_eq!(elems.len(), 1);
+        assert!(matches!(
+            rest.as_deref(),
+            Some(Pattern::Ident(n)) if n == "tail"
+        ));
+    }
+
+    // G07: `for (a, b) in ..` parses as a tuple binding pattern.
+    #[test]
+    fn parse_for_tuple_binding_pattern() {
+        let program = parse("fn main() { for (a, b) in pairs { print(a) } }");
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        let StmtKind::For { pattern, .. } = &f.body.stmts[0].kind else {
+            panic!("expected a for loop");
+        };
+        let Pattern::Tuple(elems) = pattern else {
+            panic!("expected a tuple pattern, got {pattern:?}");
+        };
+        assert_eq!(elems.len(), 2);
     }
 
     #[test]

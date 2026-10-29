@@ -6001,43 +6001,11 @@ void tallow_async_runtime_shutdown(void) {
                 Ok(None)
             }
 
-            StmtKind::LetDestructure { names, value } => {
+            StmtKind::LetDestructure { pattern, value } => {
                 let val = self.emit_expr(value)?;
-
-                if val.ty == LLType::I8Ptr {
-                    // Value is a pointer (array or Result struct).
-                    // Check if it's a 2-element destructure on a Result (tag, value)
-                    // For arrays: ptr → length-prefixed i64 array [len, elem0, elem1, ...]
-                    // GEP to extract each element by index.
-                    for (i, name) in names.iter().enumerate() {
-                        let gep = self.fresh_reg();
-                        // Skip index 0 (array length), elements start at index 1
-                        let elem_idx = i + 1;
-                        self.emit_line(&format!(
-                            "{gep} = getelementptr i64, ptr {}, i64 {elem_idx}",
-                            val.reg
-                        ));
-                        let loaded = self.fresh_reg();
-                        self.emit_line(&format!("{loaded} = load i64, ptr {gep}"));
-                        let alloca = self.fresh_reg();
-                        self.emit_line(&format!("{alloca} = alloca i64"));
-                        self.emit_line(&format!("store i64 {loaded}, ptr {alloca}"));
-                        self.variables.insert(name.clone(), (alloca, LLType::I64));
-                    }
-                } else {
-                    // Value is a single scalar — bind first name to it, rest get 0
-                    for (i, name) in names.iter().enumerate() {
-                        let alloca = self.fresh_reg();
-                        self.emit_line(&format!("{alloca} = alloca i64"));
-                        if i == 0 {
-                            let as_i64 = self.coerce_to_i64(&val)?;
-                            self.emit_line(&format!("store i64 {as_i64}, ptr {alloca}"));
-                        } else {
-                            self.emit_line(&format!("store i64 0, ptr {alloca}"));
-                        }
-                        self.variables.insert(name.clone(), (alloca, LLType::I64));
-                    }
-                }
+                // G07: the pattern decides the shape — element loads for a
+                // tuple, index loads plus a copied remainder for an array.
+                self.emit_pattern_destructure(pattern, &val)?;
                 Ok(None)
             }
 
@@ -6124,11 +6092,11 @@ void tallow_async_runtime_shutdown(void) {
 
             StmtKind::For {
                 label,
-                binding,
+                pattern,
                 iter,
                 body,
             } => {
-                self.emit_for_loop(binding, iter, body, label)?;
+                self.emit_for_loop(pattern, iter, body, label)?;
                 Ok(None)
             }
 
@@ -16392,9 +16360,224 @@ void tallow_async_runtime_shutdown(void) {
         }
     }
 
+    // ── Binding patterns (G07) ──────────────────────────────────────────────
+    //
+    // A sequence in the native layout is a length-prefixed `i64` array:
+    // `[len, e0, e1, ...]` behind an `i8*`. A tuple pattern therefore lowers to
+    // one field extract per element (slot `i + 1`), an array pattern to the same
+    // index loads plus a freshly allocated copy of `slots k+1 ..= len` for the
+    // `..rest` binding. Element slots hold `i64`, so a nested sequence pattern
+    // reads its slot back through `inttoptr`.
+    //
+    // Arity is enforced at run time, not assumed: a mismatch prints the
+    // interpreter's sentence on stderr and exits 1, so the two planes refuse the
+    // same program for the same reason instead of one binding garbage.
+
+    fn emit_pattern_destructure(
+        &mut self,
+        pattern: &Pattern,
+        val: &LLValue,
+    ) -> Result<(), String> {
+        match pattern {
+            Pattern::Wildcard => Ok(()),
+            Pattern::Ident(name) => {
+                if name != "_" {
+                    let alloca = self.fresh_reg();
+                    self.emit_line(&format!("{alloca} = alloca {}", val.ty.to_ir()));
+                    self.emit_line(&format!(
+                        "store {} {}, ptr {alloca}",
+                        val.ty.to_ir(),
+                        val.reg
+                    ));
+                    self.variables
+                        .insert(name.clone(), (alloca, val.ty.clone()));
+                }
+                Ok(())
+            }
+            Pattern::Literal(_) | Pattern::Variant { .. } => Err(
+                "a binding position takes a name, `_`, `(pattern, ...)` or `[pattern, ...]` — a \
+                 literal or variant pattern tests a value instead of binding it"
+                    .to_string(),
+            ),
+            Pattern::Tuple(elems) => {
+                self.emit_sequence_pattern(val, elems, None, true, "tuple")
+            }
+            Pattern::Array { elems, rest } => {
+                self.emit_sequence_pattern(val, elems, rest.as_deref(), false, "array")
+            }
+        }
+    }
+
+    /// Lower one tuple/array pattern against a sequence value.
+    ///
+    /// `exact` selects the arity rule: a tuple pattern requires exactly
+    /// `elems.len()` elements, an array pattern requires at least that many.
+    fn emit_sequence_pattern(
+        &mut self,
+        val: &LLValue,
+        elems: &[Pattern],
+        rest: Option<&Pattern>,
+        exact: bool,
+        what: &str,
+    ) -> Result<(), String> {
+        if val.ty != LLType::I8Ptr {
+            return Err(format!(
+                "destructuring: a {what} pattern needs a sequence value, and this one is a \
+                 {} in compiled code — run with `--interpret` or destructure a sequence",
+                val.ty.to_ir()
+            ));
+        }
+        let lp = self.fresh_reg();
+        self.emit_line(&format!(
+            "{lp} = getelementptr i64, ptr {}, i64 0",
+            val.reg
+        ));
+        let len = self.fresh_reg();
+        self.emit_line(&format!("{len} = load i64, ptr {lp}"));
+
+        let ok = self.fresh_reg();
+        let ok_label = self.fresh_label("pattern.ok");
+        let fail_label = self.fresh_label("pattern.fail");
+        let after_label = self.fresh_label("pattern.after");
+        if exact {
+            self.emit_line(&format!("{ok} = icmp eq i64 {len}, {}", elems.len()));
+        } else {
+            self.emit_line(&format!("{ok} = icmp sge i64 {len}, {}", elems.len()));
+        }
+        self.emit_line(&format!(
+            "br i1 {ok}, label %{ok_label}, label %{fail_label}"
+        ));
+
+        self.body.push_str(&format!("{ok_label}:\n"));
+        for (i, p) in elems.iter().enumerate() {
+            let ev = self.emit_pattern_elem(&val.reg, i, p)?;
+            self.emit_pattern_destructure(p, &ev)?;
+        }
+        if let Some(rest) = rest {
+            let tail = self.emit_sequence_tail(&val.reg, &len, elems.len())?;
+            self.emit_pattern_destructure(rest, &tail)?;
+        }
+        self.emit_line(&format!("br label %{after_label}"));
+
+        self.body.push_str(&format!("{fail_label}:\n"));
+        // Same sentence the interpreter raises, so a mismatch reads identically
+        // whichever engine ran the program.
+        let prefix = if exact {
+            format!(
+                "runtime error: destructuring mismatch: a {}-element {what} pattern cannot bind a ",
+                elems.len()
+            )
+        } else {
+            format!(
+                "runtime error: destructuring mismatch: a pattern with {} fixed element(s) cannot \
+                 bind a ",
+                elems.len()
+            )
+        };
+        let prefix_reg = self.intern_string(&prefix);
+        let suffix_reg = self.intern_string("-element sequence");
+        self.emit_stderr_write(&prefix_reg);
+        let len_str = self.coerce_to_string(&LLValue::new(len.clone(), LLType::I64))?;
+        self.emit_stderr_write(&len_str);
+        self.emit_stderr_write(&suffix_reg);
+        let nl = self.intern_string("\n");
+        self.emit_stderr_write(&nl);
+        self.emit_line("call void @exit(i32 1)");
+        self.emit_line("unreachable");
+        self.body.push_str(&format!("{after_label}:\n"));
+        Ok(())
+    }
+
+    /// Load slot `index + 1` of a length-prefixed array; a nested sequence
+    /// pattern receives it as a pointer, everything else as the raw `i64`.
+    fn emit_pattern_elem(
+        &mut self,
+        base: &str,
+        index: usize,
+        p: &Pattern,
+    ) -> Result<LLValue, String> {
+        let ep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{ep} = getelementptr i64, ptr {base}, i64 {}",
+            index + 1
+        ));
+        let raw = self.fresh_reg();
+        self.emit_line(&format!("{raw} = load i64, ptr {ep}"));
+        if matches!(p, Pattern::Tuple(_) | Pattern::Array { .. }) {
+            let ptr = self.fresh_reg();
+            self.emit_line(&format!("{ptr} = inttoptr i64 {raw} to ptr"));
+            Ok(LLValue::new(ptr, LLType::I8Ptr))
+        } else {
+            Ok(LLValue::new(raw, LLType::I64))
+        }
+    }
+
+    /// Allocate and fill a length-prefixed copy of slots `skip+1 ..= len`.
+    fn emit_sequence_tail(
+        &mut self,
+        base: &str,
+        len: &str,
+        skip: usize,
+    ) -> Result<LLValue, String> {
+        let new_len = self.fresh_reg();
+        self.emit_line(&format!("{new_len} = sub i64 {len}, {skip}"));
+        let slots = self.fresh_reg();
+        self.emit_line(&format!("{slots} = add i64 {new_len}, 1"));
+        let bytes = self.fresh_reg();
+        self.emit_line(&format!("{bytes} = mul i64 {slots}, 8"));
+        let buf = self.fresh_reg();
+        self.emit_line(&format!("{buf} = call ptr @malloc(i64 {bytes})"));
+        let lp = self.fresh_reg();
+        self.emit_line(&format!("{lp} = getelementptr i64, ptr {buf}, i64 0"));
+        self.emit_line(&format!("store i64 {new_len}, ptr {lp}"));
+
+        let i_ptr = self.fresh_reg();
+        self.emit_line(&format!("{i_ptr} = alloca i64"));
+        self.emit_line(&format!("store i64 0, ptr {i_ptr}"));
+        let cond = self.fresh_label("rest.cond");
+        let body = self.fresh_label("rest.body");
+        let end = self.fresh_label("rest.end");
+        self.emit_line(&format!("br label %{cond}"));
+
+        self.body.push_str(&format!("{cond}:\n"));
+        let i = self.fresh_reg();
+        self.emit_line(&format!("{i} = load i64, ptr {i_ptr}"));
+        let c = self.fresh_reg();
+        self.emit_line(&format!("{c} = icmp slt i64 {i}, {new_len}"));
+        self.emit_line(&format!("br i1 {c}, label %{body}, label %{end}"));
+
+        self.body.push_str(&format!("{body}:\n"));
+        let i2 = self.fresh_reg();
+        self.emit_line(&format!("{i2} = load i64, ptr {i_ptr}"));
+        let src_off = self.fresh_reg();
+        self.emit_line(&format!("{src_off} = add i64 {i2}, {}", skip + 1));
+        let sp = self.fresh_reg();
+        self.emit_line(&format!(
+            "{sp} = getelementptr i64, ptr {base}, i64 {src_off}"
+        ));
+        let v = self.fresh_reg();
+        self.emit_line(&format!("{v} = load i64, ptr {sp}"));
+        let dst_off = self.fresh_reg();
+        self.emit_line(&format!("{dst_off} = add i64 {i2}, 1"));
+        let dp = self.fresh_reg();
+        self.emit_line(&format!(
+            "{dp} = getelementptr i64, ptr {buf}, i64 {dst_off}"
+        ));
+        self.emit_line(&format!("store i64 {v}, ptr {dp}"));
+        let i3 = self.fresh_reg();
+        self.emit_line(&format!("{i3} = load i64, ptr {i_ptr}"));
+        let next = self.fresh_reg();
+        self.emit_line(&format!("{next} = add i64 {i3}, 1"));
+        self.emit_line(&format!("store i64 {next}, ptr {i_ptr}"));
+        self.emit_line(&format!("br label %{cond}"));
+
+        self.body.push_str(&format!("{end}:\n"));
+        Ok(LLValue::new(buf, LLType::I8Ptr))
+    }
+
     fn emit_for_loop(
         &mut self,
-        binding: &str,
+        pattern: &Pattern,
         iter: &Expr,
         body: &Block,
         label: &Option<String>,
@@ -16406,6 +16589,18 @@ void tallow_async_runtime_shutdown(void) {
             right,
         } = &iter.kind
         {
+            // A range yields a scalar, so only a name or `_` can bind it; a
+            // structural pattern is refused here rather than in every loop.
+            let binding_name: Option<&str> =
+                match pattern {
+                    Pattern::Ident(n) if n != "_" => Some(n.as_str()),
+                    Pattern::Wildcard | Pattern::Ident(_) => None,
+                    _ => return Err(
+                        "destructuring: a range loop binds a scalar, so `for (a, b) in 0..n` has \
+                         no sequence to destructure — iterate a sequence instead"
+                            .to_string(),
+                    ),
+                };
             let start = self.emit_expr(left)?;
             let end = self.emit_expr(right)?;
             let start_i64 = self.coerce_to_i64(&start)?;
@@ -16415,8 +16610,10 @@ void tallow_async_runtime_shutdown(void) {
             let loop_var = self.fresh_reg();
             self.emit_line(&format!("{loop_var} = alloca i64"));
             self.emit_line(&format!("store i64 {start_i64}, ptr {loop_var}"));
-            self.variables
-                .insert(binding.to_string(), (loop_var.clone(), LLType::I64));
+            if let Some(name) = binding_name {
+                self.variables
+                    .insert(name.to_string(), (loop_var.clone(), LLType::I64));
+            }
 
             let cond_label = self.fresh_label("for.cond");
             let body_label = self.fresh_label("for.body");
@@ -16493,8 +16690,8 @@ void tallow_async_runtime_shutdown(void) {
 
         if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
             eprintln!(
-                "[codegen] for {} in <.> : elem_is_ptr={} kind={:?} iter_kind={:?}",
-                binding,
+                "[codegen] for {:?} in <.> : elem_is_ptr={} kind={:?} iter_kind={:?}",
+                pattern.bound_names(),
                 elem_is_ptr,
                 elem_browser_kind,
                 self.infer_kind(iter)
@@ -16553,37 +16750,50 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!("{elem_val} = load i64, ptr {elem_gep}"));
 
         // Bind loop variable — if elements are structs, convert i64 back to ptr
-        if let Some(ref struct_name) = elem_struct_type {
-            let struct_ptr = self.fresh_reg();
-            self.emit_line(&format!("{struct_ptr} = inttoptr i64 {elem_val} to ptr"));
-            let binding_ptr = self.fresh_reg();
-            self.emit_line(&format!("{binding_ptr} = alloca ptr"));
-            self.emit_line(&format!("store ptr {struct_ptr}, ptr {binding_ptr}"));
-            self.variables
-                .insert(binding.to_string(), (binding_ptr.clone(), LLType::I8Ptr));
-            self.variable_struct_types
-                .insert(binding.to_string(), struct_name.clone());
-        } else if elem_is_ptr {
-            let elem_ptr_val = self.fresh_reg();
-            self.emit_line(&format!("{elem_ptr_val} = inttoptr i64 {elem_val} to ptr"));
-            let binding_ptr = self.fresh_reg();
-            self.emit_line(&format!("{binding_ptr} = alloca ptr"));
-            self.emit_line(&format!("store ptr {elem_ptr_val}, ptr {binding_ptr}"));
-            self.variables
-                .insert(binding.to_string(), (binding_ptr.clone(), LLType::I8Ptr));
-            if let Some(kind) = &elem_browser_kind {
-                self.browser_variables
-                    .insert(binding.to_string(), kind.clone());
-                if kind == "String" {
-                    self.variable_is_string.insert(binding.to_string(), true);
+        match pattern {
+            Pattern::Ident(name) if name != "_" => {
+                if let Some(ref struct_name) = elem_struct_type {
+                    let struct_ptr = self.fresh_reg();
+                    self.emit_line(&format!("{struct_ptr} = inttoptr i64 {elem_val} to ptr"));
+                    let binding_ptr = self.fresh_reg();
+                    self.emit_line(&format!("{binding_ptr} = alloca ptr"));
+                    self.emit_line(&format!("store ptr {struct_ptr}, ptr {binding_ptr}"));
+                    self.variables
+                        .insert(name.clone(), (binding_ptr.clone(), LLType::I8Ptr));
+                    self.variable_struct_types
+                        .insert(name.clone(), struct_name.clone());
+                } else if elem_is_ptr {
+                    let elem_ptr_val = self.fresh_reg();
+                    self.emit_line(&format!("{elem_ptr_val} = inttoptr i64 {elem_val} to ptr"));
+                    let binding_ptr = self.fresh_reg();
+                    self.emit_line(&format!("{binding_ptr} = alloca ptr"));
+                    self.emit_line(&format!("store ptr {elem_ptr_val}, ptr {binding_ptr}"));
+                    self.variables
+                        .insert(name.clone(), (binding_ptr.clone(), LLType::I8Ptr));
+                    if let Some(kind) = &elem_browser_kind {
+                        self.browser_variables.insert(name.clone(), kind.clone());
+                        if kind == "String" {
+                            self.variable_is_string.insert(name.clone(), true);
+                        }
+                    }
+                } else {
+                    let binding_ptr = self.fresh_reg();
+                    self.emit_line(&format!("{binding_ptr} = alloca i64"));
+                    self.emit_line(&format!("store i64 {elem_val}, ptr {binding_ptr}"));
+                    self.variables
+                        .insert(name.clone(), (binding_ptr.clone(), LLType::I64));
                 }
             }
-        } else {
-            let binding_ptr = self.fresh_reg();
-            self.emit_line(&format!("{binding_ptr} = alloca i64"));
-            self.emit_line(&format!("store i64 {elem_val}, ptr {binding_ptr}"));
-            self.variables
-                .insert(binding.to_string(), (binding_ptr.clone(), LLType::I64));
+            // `_` binds nothing, and a single name has already been handled.
+            Pattern::Wildcard | Pattern::Ident(_) => {}
+            // A structural pattern destructures the element: its slot holds a
+            // pointer to a length-prefixed array (a nested sequence).
+            _ => {
+                let elem_ptr_val = self.fresh_reg();
+                self.emit_line(&format!("{elem_ptr_val} = inttoptr i64 {elem_val} to ptr"));
+                let v = LLValue::new(elem_ptr_val, LLType::I8Ptr);
+                self.emit_pattern_destructure(pattern, &v)?;
+            }
         }
 
         // Emit body
@@ -29570,8 +29780,8 @@ fn substitute_stmt(stmt: &Stmt, subst: &HashMap<String, String>) -> Stmt {
             ty: ty.as_ref().map(|t| substitute_type_expr(t, subst)),
             value: substitute_expr(value, subst),
         },
-        StmtKind::LetDestructure { names, value } => StmtKind::LetDestructure {
-            names: names.clone(),
+        StmtKind::LetDestructure { pattern, value } => StmtKind::LetDestructure {
+            pattern: pattern.clone(),
             value: substitute_expr(value, subst),
         },
         StmtKind::Expr { expr } => StmtKind::Expr {
@@ -29581,12 +29791,12 @@ fn substitute_stmt(stmt: &Stmt, subst: &HashMap<String, String>) -> Stmt {
         StmtKind::Return(None) => StmtKind::Return(None),
         StmtKind::For {
             label,
-            binding,
+            pattern,
             iter,
             body,
         } => StmtKind::For {
             label: label.clone(),
-            binding: binding.clone(),
+            pattern: pattern.clone(),
             iter: substitute_expr(iter, subst),
             body: substitute_block(body, subst),
         },
@@ -36703,19 +36913,24 @@ mod tests {
     // ── Destructuring codegen tests ─────────────────────────────────
 
     #[test]
-    fn codegen_let_destructure_uses_gep() {
+    fn codegen_let_destructure_binds_each_slot() {
+        // Was `..._uses_gep`, which destructured `pair()` — a function returning a
+        // plain `i64`. That program is refused now (E0152: a tuple pattern needs a
+        // sequence), so the test never saw IR at all. A destructure of a real
+        // sequence must give every bound name its own slot; the refusal itself is
+        // covered end-to-end by tests/pattern_destructure.rs.
         let ir = compile_to_ir(
             r#"
-            fn pair() -> i64 { 42 }
             fn main() {
-                let (a, b) = pair()
+                let (a, b) = (1, 2)
+                print(a)
+                print(b)
             }
         "#,
         );
-        // Should allocate variables for a and b
         assert!(
-            ir.contains("alloca i64"),
-            "should alloca for destructured vars"
+            ir.matches("alloca i64").count() >= 2,
+            "each destructured name needs its own slot:\n{ir}"
         );
     }
 

@@ -321,7 +321,9 @@ pub enum StmtKind {
         value: Expr,
     },
     LetDestructure {
-        names: Vec<String>,
+        /// The pattern that shapes the binding (G07). A bare name is
+        /// `Pattern::Ident`; the `(`/`[` forms bind several names at once.
+        pattern: Pattern,
         value: Expr,
     },
     Expr {
@@ -331,7 +333,9 @@ pub enum StmtKind {
     For {
         /// Loop label (`'outer: for ...`), if any (G08).
         label: Option<String>,
-        binding: String,
+        /// The binding pattern: a name, or a `(`/`[` pattern whose scrutinee is
+        /// the iteration element (G07).
+        pattern: Pattern,
         iter: Expr,
         body: Block,
     },
@@ -592,7 +596,66 @@ pub enum Pattern {
         name: String,
         fields: Vec<PatternField>,
     },
+    /// `(a, b, c)` — positional destructuring of a sequence.
+    ///
+    /// The arity is exact: a sequence of any other length does not match, and
+    /// both planes refuse it (G07). A tuple has no value of its own in this
+    /// language (there is no tuple expression), so the pattern destructures a
+    /// sequence value by position — the shape `let (a, b) = pair` has always
+    /// meant.
     Tuple(Vec<Pattern>),
+    /// `[a, b, ..rest]` — the first `elems.len()` positions, plus the remainder
+    /// bound as one sequence (G07).
+    ///
+    /// `rest: None` requires at least `elems.len()` elements; `rest:
+    /// Some(pattern)` binds the tail — empty when the value is exactly
+    /// `elems.len()` long — as a sequence of the same element type.
+    Array {
+        elems: Vec<Pattern>,
+        rest: Option<Box<Pattern>>,
+    },
+}
+
+impl Pattern {
+    /// Every name this pattern binds, in source order.
+    ///
+    /// Wildcards bind nothing and `_` is not a name, so neither appears. The
+    /// policy passes use this to register the bindings a destructuring
+    /// introduces without knowing the pattern's shape.
+    pub fn bound_names(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_bound_names(&mut out);
+        out
+    }
+
+    fn collect_bound_names(&self, out: &mut Vec<String>) {
+        match self {
+            Pattern::Ident(name) => {
+                if name != "_" {
+                    out.push(name.clone());
+                }
+            }
+            Pattern::Wildcard | Pattern::Literal(_) => {}
+            Pattern::Variant { fields, .. } => {
+                for field in fields {
+                    field.pattern.collect_bound_names(out);
+                }
+            }
+            Pattern::Tuple(pats) => {
+                for p in pats {
+                    p.collect_bound_names(out);
+                }
+            }
+            Pattern::Array { elems, rest } => {
+                for p in elems {
+                    p.collect_bound_names(out);
+                }
+                if let Some(rest) = rest {
+                    rest.collect_bound_names(out);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

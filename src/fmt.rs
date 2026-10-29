@@ -336,16 +336,11 @@ impl Formatter {
                 self.format_expr(value);
                 self.write("\n");
             }
-            StmtKind::LetDestructure { names, value } => {
+            StmtKind::LetDestructure { pattern, value } => {
                 self.write_indent();
-                self.write("let (");
-                for (i, name) in names.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    self.write(name);
-                }
-                self.write(") = ");
+                self.write("let ");
+                self.format_pattern(pattern);
+                self.write(" = ");
                 self.format_expr(value);
                 self.write("\n");
             }
@@ -365,7 +360,7 @@ impl Formatter {
             }
             StmtKind::For {
                 label,
-                binding,
+                pattern,
                 iter,
                 body,
             } => {
@@ -374,7 +369,7 @@ impl Formatter {
                     self.write(&format!("'{label}: "));
                 }
                 self.write("for ");
-                self.write(binding);
+                self.format_pattern(pattern);
                 self.write(" in ");
                 self.format_expr(iter);
                 self.write(" {\n");
@@ -816,6 +811,26 @@ impl Formatter {
                     self.format_pattern(p);
                 }
                 self.write(")");
+            }
+            Pattern::Array { elems, rest } => {
+                self.write("[");
+                for (i, p) in elems.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.format_pattern(p);
+                }
+                if let Some(rest) = rest {
+                    if !elems.is_empty() {
+                        self.write(", ");
+                    }
+                    // `[..]` (a bare `..`) discards the tail; `[..rest]` binds it.
+                    self.write("..");
+                    if !matches!(rest.as_ref(), Pattern::Wildcard) {
+                        self.format_pattern(rest);
+                    }
+                }
+                self.write("]");
             }
         }
     }

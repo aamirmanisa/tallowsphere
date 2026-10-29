@@ -12529,12 +12529,14 @@ fn collect_vars_and_calls(
                 collect_expr_calls(expr, defined, called);
             }
             StmtKind::For {
-                binding,
+                pattern,
                 iter,
                 body,
                 ..
             } => {
-                defined.insert(binding.clone(), true); // loop var is always "used"
+                for name in pattern.bound_names() {
+                    defined.insert(name, true); // loop var is always "used"
+                }
                 collect_expr_calls(iter, defined, called);
                 collect_vars_and_calls(&body.stmts, defined, called, shadowed);
             }

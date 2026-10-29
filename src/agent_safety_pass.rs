@@ -1023,11 +1023,11 @@ impl<'a> AgentSafetyPass<'a> {
                 StmtKind::Let { name, .. } | StmtKind::Var { name, .. } => {
                     locals.push(name.clone());
                 }
-                StmtKind::LetDestructure { names, .. } => {
-                    locals.extend(names.iter().cloned());
+                StmtKind::LetDestructure { pattern, .. } => {
+                    locals.extend(pattern.bound_names());
                 }
-                StmtKind::For { binding, body, .. } => {
-                    locals.push(binding.clone());
+                StmtKind::For { pattern, body, .. } => {
+                    locals.extend(pattern.bound_names());
                     self.collect_local_vars(&body.stmts, locals);
                 }
                 StmtKind::While { body, .. }

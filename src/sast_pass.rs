@@ -620,9 +620,9 @@ impl<'a> SastPass<'a> {
                 self.check_expr_sinks(value, tainted, fn_name, fn_map, impl_fn_map, depth);
             }
 
-            StmtKind::LetDestructure { names, value } => {
+            StmtKind::LetDestructure { pattern, value } => {
                 if let Some(source) = self.expr_is_tainted(value, tainted, fn_map, impl_fn_map) {
-                    for name in names {
+                    for name in pattern.bound_names() {
                         tainted.insert(
                             name.clone(),
                             TaintSource {
@@ -645,21 +645,24 @@ impl<'a> SastPass<'a> {
             }
 
             StmtKind::For {
-                binding,
+                pattern,
                 iter,
                 body,
                 ..
             } => {
                 // If iterator is tainted, binding variable is tainted
                 if let Some(source) = self.expr_is_tainted(iter, tainted, fn_map, impl_fn_map) {
-                    tainted.insert(
-                        binding.clone(),
-                        TaintSource {
-                            source_var: source.source_var.clone(),
-                            source_span: source.source_span,
-                            depth: source.depth + 1,
-                        },
-                    );
+                    let names = pattern.bound_names();
+                    for binding in names {
+                        tainted.insert(
+                            binding,
+                            TaintSource {
+                                source_var: source.source_var.clone(),
+                                source_span: source.source_span,
+                                depth: source.depth + 1,
+                            },
+                        );
+                    }
                 }
                 self.check_expr_sinks(iter, tainted, fn_name, fn_map, impl_fn_map, depth);
                 for s in &body.stmts {
