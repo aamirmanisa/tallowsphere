@@ -200,6 +200,7 @@ pub mod typeck;
 pub mod unknowns;
 pub mod upcasters;
 pub mod vault;
+pub mod visibility;
 pub mod vouch_policy;
 pub mod vouching;
 pub mod watchlist;

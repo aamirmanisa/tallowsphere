@@ -1709,8 +1709,34 @@ impl Interpreter {
             RuntimeError::Error(format!("parse error in '{}': {}", path.display(), e))
         })?;
 
-        // Register all top-level items from the imported file
-        self.register(&program)?;
+        // Register all top-level items from the imported file — the ones that
+        // reach this file (G09). The interpreter is the second execution plane,
+        // so an item import resolution refused must not bind here either. Its
+        // own imports still travel, so a module's dependencies keep loading.
+        let importer = self
+            .source_file
+            .clone()
+            .unwrap_or_else(|| canonical.clone());
+        let package_root = crate::visibility::package_root(&importer);
+        let selection = crate::visibility::select_imported_items(
+            program.items.clone(),
+            &importer,
+            &canonical,
+            &package_root,
+        );
+        let mut items = selection.merge;
+        items.extend(
+            program
+                .items
+                .iter()
+                .filter(|i| matches!(i, Item::Import(_)))
+                .cloned(),
+        );
+        let visible = Program {
+            items,
+            span: program.span,
+        };
+        self.register(&visible)?;
 
         Ok(())
     }
@@ -1814,6 +1840,7 @@ impl Interpreter {
                                 if tm.has_default && !method_names.contains(&tm.name) {
                                     if let Some(ref body) = tm.body {
                                         let default_fn = FnDecl {
+                                            visibility: crate::ast::Visibility::Private,
                                             annotations: Vec::new(),
                                             is_async: false,
                                             is_native: false,
@@ -22767,6 +22794,7 @@ impl Interpreter {
                     if tm.name == method_name && tm.has_default {
                         if let Some(ref body) = tm.body {
                             return Some(Arc::new(FnDecl {
+                                visibility: crate::ast::Visibility::Private,
                                 annotations: Vec::new(),
                                 is_async: false,
                                 is_native: false,

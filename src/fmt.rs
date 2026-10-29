@@ -56,6 +56,17 @@ impl Formatter {
         }
     }
 
+    /// G09: the visibility marker is part of the declaration. Emitting the
+    /// item without it would turn a `pub fn` into a file-private one, so
+    /// `tallow fmt` would change what the program means.
+    fn write_visibility(&mut self, visibility: crate::ast::Visibility) {
+        match visibility {
+            crate::ast::Visibility::Private => {}
+            crate::ast::Visibility::Pub => self.write("pub "),
+            crate::ast::Visibility::PubCrate => self.write("pub(crate) "),
+        }
+    }
+
     fn format_item(&mut self, item: &Item) {
         match item {
             Item::Fn(f) => self.format_fn(f),
@@ -77,6 +88,7 @@ impl Formatter {
 
         // Signature
         self.write_indent();
+        self.write_visibility(f.visibility);
         if f.is_async {
             self.write("async ");
         }
@@ -138,6 +150,7 @@ impl Formatter {
 
     fn format_struct(&mut self, s: &StructDecl) {
         self.write_indent();
+        self.write_visibility(s.visibility);
         self.write("struct ");
         self.write(&s.name);
         if !s.type_params.is_empty() {
@@ -169,6 +182,7 @@ impl Formatter {
 
     fn format_enum(&mut self, e: &EnumDecl) {
         self.write_indent();
+        self.write_visibility(e.visibility);
         self.write("enum ");
         self.write(&e.name);
         if !e.type_params.is_empty() {
@@ -206,6 +220,7 @@ impl Formatter {
 
     fn format_impl(&mut self, i: &ImplBlock) {
         self.write_indent();
+        self.write_visibility(i.visibility);
         self.write("impl ");
         self.write(&i.target);
         self.write(" {\n");
@@ -222,6 +237,7 @@ impl Formatter {
 
     fn format_trait(&mut self, t: &crate::ast::TraitDecl) {
         self.write_indent();
+        self.write_visibility(t.visibility);
         self.write("trait ");
         self.write(&t.name);
         if !t.type_params.is_empty() {
@@ -268,6 +284,7 @@ impl Formatter {
 
     fn format_const(&mut self, c: &ConstDecl) {
         self.write_indent();
+        self.write_visibility(c.visibility);
         self.write("const ");
         self.write(&c.name);
         if let Some(ref ty) = c.ty {
@@ -281,6 +298,7 @@ impl Formatter {
 
     fn format_type_alias(&mut self, t: &TypeAlias) {
         self.write_indent();
+        self.write_visibility(t.visibility);
         // G10: the prefix is not decoration. Emitting `type` for a `newtype`
         // would turn a nominal type into a transparent alias, so `tallow fmt`
         // would change what the program means.
