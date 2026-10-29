@@ -63,10 +63,22 @@ def main() -> int:
                 continue
             found += 1
             refs += 1
+            text = target.read_text(errors="ignore")
+            lines = text.splitlines()
             if lineno:
-                total = len(target.read_text(errors="ignore").splitlines())
-                if int(lineno) > total:
-                    problems.append(f"{cells[0]}: {path}:{lineno} is past EOF ({total} lines)")
+                if int(lineno) > len(lines):
+                    problems.append(f"{cells[0]}: {path}:{lineno} is past EOF ({len(lines)} lines)")
+                else:
+                    # A line number inside the file is not evidence unless the symbol
+                    # named beside it is on that line: ast.rs:313 held StmtKind::Let
+                    # while the row claimed Pattern. Check the trailing identifier.
+                    rest = span[m.end():].strip()
+                    sym = rest.split()[0] if rest else ""
+                    if sym and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", sym):
+                        if sym not in lines[int(lineno) - 1]:
+                            problems.append(
+                                f"{cells[0]}: {path}:{lineno} does not mention `{sym}`"
+                            )
         if not found:
             problems.append(f"{cells[0]}: DONE with no checkable path — {cells[6][:70]}")
 
