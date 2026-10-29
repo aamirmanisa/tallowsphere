@@ -4187,6 +4187,26 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(index, locals);
             }
             ExprKind::Array(elements) => {
+                // BP20: an array literal that mixes int and float has no single
+                // element kind — the layout has one element kind per array, so
+                // the float would be silently truncated to an integer (it was:
+                // `[1.5, 2.25]` held `1` and `2`). The mix is knowable from the
+                // literal alone, so the refusal is a check-time diagnostic
+                // naming it, identical on both planes, and the emitter cites the
+                // same sentence as its backstop.
+                let has_int = elements
+                    .iter()
+                    .any(|e| matches!(e.kind, ExprKind::IntLit(_)));
+                let has_float = elements
+                    .iter()
+                    .any(|e| matches!(e.kind, ExprKind::FloatLit(_)));
+                if has_int && has_float {
+                    self.diags.error(
+                        "E0624",
+                        crate::codegen::ARRAY_LITERAL_MIXED_NUMERIC_REFUSAL.to_string(),
+                        expr.span,
+                    );
+                }
                 for e in elements {
                     self.check_expr(e, locals);
                 }

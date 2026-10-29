@@ -389,6 +389,7 @@ jobs:
           --test stdlib_rand
           --test stdlib_time_log
           --test struct_array_parity
+          --test float_array_parity
           --test print_array_refusal
           --test structured_data_parity
           --test transfer_chunk_parity

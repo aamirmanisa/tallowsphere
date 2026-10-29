@@ -484,6 +484,19 @@ const PRINT_ARRAY_MIXED_REFUSAL: &str =
     "print() of a mixed-type array is not supported by the native backend \
      (the native array layout has no per-element tags); use the interpreter";
 
+/// The one refusal text for an array LITERAL that mixes integer and float
+/// elements (BP20). The native array layout stores one element kind per array,
+/// so the float would have to be truncated to an integer (which it silently
+/// was: `[1.5, 2.25]` held `1` and `2`, and the renderer decoded those as the
+/// subnormals `f64::from_bits(1)` / `f64::from_bits(2)`). Naming the mix is the
+/// refusal; the fix is one spelling or the other, never a coercion. Same
+/// sentence from the type checker (both planes) and the emitter (`pub` so
+/// `typeck.rs` can cite it rather than paraphrasing it).
+pub const ARRAY_LITERAL_MIXED_NUMERIC_REFUSAL: &str =
+    "array literal mixes int and float elements: the array stores one element kind, so the \
+     float element would be truncated to an integer; write every element as a float \
+     (`[1.0, 1.5]`) or every element as an int (`[1, 2]`)";
+
 /// Static element shape of an array VALUE (B4).
 ///
 /// This is a property of the value's element layout, not of the expression
@@ -7330,16 +7343,49 @@ void tallow_async_runtime_shutdown(void) {
                 self.emit_line(&format!("{len_ptr} = getelementptr i64, ptr {buf}, i32 0"));
                 self.emit_line(&format!("store i64 {count}, ptr {len_ptr}"));
 
+                // BP20 — the element kind of the literal decides what the slots
+                // hold. A float array stores the IEEE-754 BIT PATTERN of each
+                // double (`bitcast double … to i64`, the same convention
+                // `Result`'s `value_type == 1` uses), not `fptosi`, which
+                // truncated 1.5 to 1 and left the renderer decoding
+                // `f64::from_bits(1)` = 5e-324. A literal that mixes int and
+                // float has no single element kind, so it is refused by name
+                // here rather than silently coerced (the type checker refuses
+                // it too, with this same sentence, so both planes agree).
+                let shape = self.array_items_shape(items);
+                if shape == ArrayElemShape::Mixed {
+                    let mut has_int = false;
+                    let mut has_float = false;
+                    for item in items {
+                        match self.print_elem_kind(item) {
+                            Some(ELEM_INT) => has_int = true,
+                            Some(ELEM_FLOAT) => has_float = true,
+                            _ => {}
+                        }
+                    }
+                    if has_int && has_float {
+                        return Err(ARRAY_LITERAL_MIXED_NUMERIC_REFUSAL.to_string());
+                    }
+                }
+                let store_as_float = shape == ArrayElemShape::Scalar(ELEM_FLOAT);
+
                 // Store each element
                 for (i, item) in items.iter().enumerate() {
                     let val = self.emit_expr(item)?;
-                    let coerced = self.coerce_to_i64(&val)?;
+                    let stored = if store_as_float {
+                        let as_f64 = self.coerce_to_f64(&val)?;
+                        let bits = self.fresh_reg();
+                        self.emit_line(&format!("{bits} = bitcast double {as_f64} to i64"));
+                        bits
+                    } else {
+                        self.coerce_to_i64(&val)?
+                    };
                     let elem_ptr = self.fresh_reg();
                     self.emit_line(&format!(
                         "{elem_ptr} = getelementptr i64, ptr {buf}, i32 {}",
                         i + 1
                     ));
-                    self.emit_line(&format!("store i64 {coerced}, ptr {elem_ptr}"));
+                    self.emit_line(&format!("store i64 {stored}, ptr {elem_ptr}"));
                 }
 
                 Ok(LLValue::new(buf, LLType::I8Ptr))
@@ -8008,6 +8054,15 @@ void tallow_async_runtime_shutdown(void) {
                             return Ok(LLValue::new(as_ptr, LLType::ResultPtr));
                         }
                         return Ok(LLValue::new(as_ptr, LLType::I8Ptr));
+                    }
+                    // A float-element array stores each element as its IEEE-754
+                    // bit pattern (BP20), so the loaded slot is handed back as
+                    // the double it encodes — `print(fs[0])`, arithmetic and
+                    // comparisons then see 1.5 instead of 4609434218613702656.
+                    if self.array_value_shape(object) == Some(ArrayElemShape::Scalar(ELEM_FLOAT)) {
+                        let as_f64 = self.fresh_reg();
+                        self.emit_line(&format!("{as_f64} = bitcast i64 {loaded} to double"));
+                        return Ok(LLValue::new(as_f64, LLType::F64));
                     }
                     Ok(LLValue::new(loaded, LLType::I64))
                 } else {
@@ -10781,7 +10836,23 @@ void tallow_async_runtime_shutdown(void) {
                 "push" => {
                     if let Some(arg) = args.first() {
                         let val = self.emit_expr(&arg.value)?;
-                        let val_i64 = self.coerce_to_i64(&val)?;
+                        // BP20: a float-element array stores IEEE-754 bits, so a
+                        // pushed element is bitcast, not truncated. A float
+                        // pushed into a non-float array keeps the old coercion
+                        // (and the print guard refuses that buffer by shape).
+                        let val_i64 =
+                            if self.array_value_shape(object)
+                                == Some(ArrayElemShape::Scalar(ELEM_FLOAT))
+                            {
+                                let as_f64 = self.coerce_to_f64(&val)?;
+                                let bits = self.fresh_reg();
+                                self.emit_line(&format!(
+                                    "{bits} = bitcast double {as_f64} to i64"
+                                ));
+                                bits
+                            } else {
+                                self.coerce_to_i64(&val)?
+                            };
                         return self.emit_array_push(&obj, &val_i64);
                     }
                     return Ok(obj);
@@ -17047,6 +17118,12 @@ void tallow_async_runtime_shutdown(void) {
                 _ => None,
             },
         );
+        // BP20: a float-element array holds each element's IEEE-754 bit pattern,
+        // so the loop variable binds the double it encodes, not the bits. Without
+        // this, `for x in fs { print(x) }` would print 4609434218613702656 for
+        // 1.5 — the int-slot reading the storage change makes wrong.
+        let elem_is_float =
+            self.array_value_shape(iter) == Some(ArrayElemShape::Scalar(ELEM_FLOAT));
 
         if std::env::var_os("TALLOW_DEBUG_CODEGEN").is_some() {
             eprintln!(
@@ -17136,6 +17213,15 @@ void tallow_async_runtime_shutdown(void) {
                             self.variable_is_string.insert(name.clone(), true);
                         }
                     }
+                } else if elem_is_float {
+                    // BP20: the slot holds the element's IEEE-754 bits.
+                    let as_f64 = self.fresh_reg();
+                    self.emit_line(&format!("{as_f64} = bitcast i64 {elem_val} to double"));
+                    let binding_ptr = self.fresh_reg();
+                    self.emit_line(&format!("{binding_ptr} = alloca double"));
+                    self.emit_line(&format!("store double {as_f64}, ptr {binding_ptr}"));
+                    self.variables
+                        .insert(name.clone(), (binding_ptr.clone(), LLType::F64));
                 } else {
                     let binding_ptr = self.fresh_reg();
                     self.emit_line(&format!("{binding_ptr} = alloca i64"));
