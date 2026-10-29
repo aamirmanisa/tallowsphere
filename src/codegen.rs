@@ -523,6 +523,26 @@ enum ArrayElemShape {
     Unknown,
 }
 
+/// How an array method's result is laid out on the native plane.
+///
+/// Read from the registry (`src/array_methods.rs`) by
+/// `Compiler::array_result_layout`; every array question the emitter asks
+/// about a method-call receiver (`is this an array`, `what is its element
+/// shape`, `are its slots pointers`, `record what this `let` holds`) goes
+/// through that one query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArrayResultLayout {
+    /// An array whose elements have the receiver's layout (`take`, `unique`,
+    /// `sort`, `slice`, …), or the closure's of the receiver's elements (`map`).
+    SameAsReceiver,
+    /// An array of arrays: each slot is a pointer to an untagged inner array
+    /// (`zip`, `chunk`, `enumerate`).
+    ArrayOfArray,
+    /// An array whose element layout the receiver does not determine
+    /// (`flat_map`: the closure returns the arrays that get concatenated).
+    Unrecoverable,
+}
+
 /// `print(<array>)` element kind, or the refusal the shape demands.
 fn scalar_elem_kind_or_refuse(shape: ArrayElemShape) -> Result<i32, String> {
     match shape {
@@ -5945,35 +5965,45 @@ void tallow_async_runtime_shutdown(void) {
                 } else {
                     self.string_variables.remove(name);
                 }
-                // Methods that return arrays: map, filter, etc.
+                // Methods that return arrays. The registry decides which (BP22): this
+                // block used to name five methods by hand, so `let c = a.chunk(2)` did
+                // not track `c` as an array and `c.len()` strlen'd the count word.
                 if let ExprKind::MethodCall { method, object, .. } = &value.kind {
-                    if matches!(
-                        method.as_str(),
-                        "map" | "filter" | "filter_ok" | "flatten" | "split"
-                    ) {
+                    if method == "split" {
+                        // `split(",")` yields strings whatever the receiver is.
                         self.variable_is_array.insert(name.clone(), true);
-                        // `split(",")` yields strings whatever the receiver is
-                        // (literal, call, variable).
-                        if method == "split" {
-                            self.variable_array_elem_is_ptr.insert(name.clone(), true);
-                            self.variable_is_array.insert(name.clone(), true);
-                        }
-                        // map/filter of a pointer-backed array stays pointer-backed.
-                        if let ExprKind::Ident(src) = &object.kind {
-                            if let Some(elem_ty) =
-                                self.variable_array_element_type.get(src).cloned()
-                            {
-                                self.variable_array_element_type
-                                    .insert(name.clone(), elem_ty);
-                            }
-                            if self
-                                .variable_array_elem_is_ptr
-                                .get(src)
-                                .copied()
-                                .unwrap_or(false)
-                            {
+                        self.variable_array_elem_is_ptr.insert(name.clone(), true);
+                    } else if let Some(layout) = self.array_result_layout(method)
+                        // BP22: only an ARRAY receiver makes this an array result.
+                        // `reverse`/`slice`/`concat` are string methods too, and
+                        // `let r = s.reverse()` was being tracked as an array, so
+                        // `print(r)` hit the non-scalar array refusal.
+                        && (self.expr_is_native_array(object)
+                            || self.array_value_shape(object).is_some())
+                    {
+                        self.variable_is_array.insert(name.clone(), true);
+                        match layout {
+                            // An array of arrays: each slot is a pointer to an
+                            // untagged inner array, so indexing must inttoptr.
+                            ArrayResultLayout::ArrayOfArray => {
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                             }
+                            // map/filter/take/… keep the receiver's element layout.
+                            ArrayResultLayout::SameAsReceiver => {
+                                if let ExprKind::Ident(src) = &object.kind {
+                                    if let Some(elem_ty) =
+                                        self.variable_array_element_type.get(src).cloned()
+                                    {
+                                        self.variable_array_element_type
+                                            .insert(name.clone(), elem_ty);
+                                    }
+                                }
+                                if self.array_expr_elem_is_ptr(object) {
+                                    self.variable_array_elem_is_ptr.insert(name.clone(), true);
+                                }
+                            }
+                            // `flat_map`: the closure chose the element layout.
+                            ArrayResultLayout::Unrecoverable => {}
                         }
                     }
                 }
@@ -11137,7 +11167,7 @@ void tallow_async_runtime_shutdown(void) {
                     return Ok(obj);
                 }
                 "unique" => {
-                    return self.emit_array_unique(&obj);
+                    return self.emit_array_unique(&obj, arr_elem_is_ptr);
                 }
                 "chunk" => {
                     if let Some(arg) = args.first() {
@@ -11213,7 +11243,7 @@ void tallow_async_runtime_shutdown(void) {
                 "union" => {
                     if let Some(arg) = args.first() {
                         let other = self.emit_expr(&arg.value)?;
-                        return self.emit_array_union(&obj, &other);
+                        return self.emit_array_union(&obj, &other, arr_elem_is_ptr);
                     }
                     return Ok(obj);
                 }
@@ -11942,6 +11972,42 @@ void tallow_async_runtime_shutdown(void) {
         Self::kind_is_native_array(self.infer_kind(expr).as_deref())
     }
 
+    /// The result layout of `method` when called on an array receiver, read
+    /// from the registry (`src/array_methods.rs`) — the single place that
+    /// records "does this method exist and can the native plane lower it".
+    ///
+    /// Before BP22 four separate hand lists in this file answered the same
+    /// question (`expr_is_native_array`, `array_value_shape`,
+    /// `array_expr_elem_is_ptr`, and the `let`-binding tracker), and all four
+    /// fell behind the registry: `zip`, `take`, `chunk`, `enumerate`,
+    /// `flat_map` and `unique` were lowered but not listed, so `.len()` on
+    /// their result strlen'd the array's count word and answered 1 where the
+    /// interpreter answered N. One query, one source.
+    ///
+    /// `None` means "not an array-returning method this plane lowers". The
+    /// caller must still establish that the RECEIVER is an array: `slice`,
+    /// `reverse`, `concat` and `count` are also string methods, and a hand
+    /// list cannot tell the two apart — the receiver can.
+    fn array_result_layout(&self, method: &str) -> Option<ArrayResultLayout> {
+        let row = crate::array_methods::lookup(method)?;
+        if !row.native {
+            return None;
+        }
+        match (method, row.ret) {
+            // `flat_map` concatenates arrays the closure produced: the
+            // receiver's element layout says nothing about the result.
+            ("flat_map", _) => Some(ArrayResultLayout::Unrecoverable),
+            // `map` keeps the optimistic "closure result has the receiver's
+            // layout" reading the emitter already relied on; `filter`/`sort`
+            // and the slicing methods genuinely keep it.
+            (_, crate::array_methods::Ret::Same) | ("map", crate::array_methods::Ret::Mapped) => {
+                Some(ArrayResultLayout::SameAsReceiver)
+            }
+            (_, crate::array_methods::Ret::ArrayOfArray) => Some(ArrayResultLayout::ArrayOfArray),
+            _ => None,
+        }
+    }
+
     fn expr_is_native_array(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Ident(name) => {
@@ -11989,13 +12055,22 @@ void tallow_async_runtime_shutdown(void) {
             // the fallback below missed it: `.len` went to `strlen` on the array buffer
             // (1 for a 2-element array) and `[i]` skipped the `inttoptr`. Same list the
             // `let`-tracking applies (see `variable_is_array` above).
-            ExprKind::MethodCall { method, .. }
-                if matches!(
-                    method.as_str(),
-                    "map" | "filter" | "filter_ok" | "flatten" | "split"
-                ) =>
-            {
-                true
+            //
+            // The registry decides which methods return arrays (BP22). The receiver test
+            // keeps a *string* receiver out: `slice`, `reverse`, `concat` and `count` are
+            // both array methods and string methods, and only the receiver can tell them
+            // apart.
+            ExprKind::MethodCall { method, object, .. } => {
+                if method == "split" {
+                    return true;
+                }
+                if self.array_result_layout(method).is_some()
+                    && (self.expr_is_native_array(object)
+                        || self.array_value_shape(object).is_some())
+                {
+                    return true;
+                }
+                matches!(method.as_str(), "map" | "filter" | "filter_ok" | "flatten")
             }
             // Payload-only array kinds belong here too. Omitting them sent
             // `.len` on `rep.steps` (a field of a Result payload) to `strlen`
@@ -12085,15 +12160,21 @@ void tallow_async_runtime_shutdown(void) {
                 .first()
                 .map(|i| self.expr_is_string_like(i))
                 .unwrap_or(false),
-            // `split` always yields strings; `map`/`filter`/`flatten` inherit the
-            // element shape of whatever they were called on (recursive, so
-            // `doc.select("a").filter(...)[0]` still reads as an element).
+            // `split` always yields strings; every other array-returning method the
+            // registry records (BP22) keeps the receiver's element layout, or — for
+            // `zip`/`chunk`/`enumerate` — holds pointers to inner arrays.
             ExprKind::MethodCall { method, object, .. } if method == "split" => true,
-            ExprKind::MethodCall { method, object, .. }
-                if matches!(method.as_str(), "map" | "filter" | "filter_ok" | "flatten") =>
-            {
-                self.array_expr_elem_is_ptr(object)
-            }
+            ExprKind::MethodCall { method, object, .. } => match self.array_result_layout(method) {
+                Some(ArrayResultLayout::ArrayOfArray) => true,
+                Some(ArrayResultLayout::SameAsReceiver) => self.array_expr_elem_is_ptr(object),
+                _ => matches!(
+                    self.infer_kind(array).as_deref(),
+                    Some("StringArray")
+                        | Some("HtmlElementArray")
+                        | Some("ElementArray")
+                        | Some("ResultArray")
+                ),
+            },
             _ => matches!(
                 self.infer_kind(array).as_deref(),
                 Some("StringArray")
@@ -14815,16 +14896,24 @@ void tallow_async_runtime_shutdown(void) {
                 self.infer_kind(e).as_deref().and_then(array_shape_of_kind)
             }
             ExprKind::MethodCall { object, method, .. } => {
-                match method.as_str() {
-                    // `split(sep)` yields strings whatever the receiver is.
-                    "split" => return Some(ArrayElemShape::Scalar(ELEM_STR)),
-                    // map/filter of an array keep the receiver's element layout.
-                    "map" | "filter" | "filter_ok" => {
-                        if let Some(shape) = self.array_value_shape(object) {
-                            return Some(shape);
-                        }
-                    }
-                    _ => {}
+                // `split(sep)` yields strings whatever the receiver is.
+                if method == "split" {
+                    return Some(ArrayElemShape::Scalar(ELEM_STR));
+                }
+                // Any array-returning method the registry records (BP22): the shape
+                // is the receiver's, a composite inner array, or honestly unknown.
+                // Before this every method outside a four-name hand list answered
+                // `None`, so `[1,2].take(1).unique()` was not even recognised as an
+                // array receiver by the call that followed it.
+                if let Some(layout) = self.array_result_layout(method) {
+                    return match layout {
+                        ArrayResultLayout::ArrayOfArray => Some(ArrayElemShape::NonScalar),
+                        ArrayResultLayout::Unrecoverable => Some(ArrayElemShape::Unknown),
+                        // BP22: only an ARRAY receiver makes this an array result. `reverse` on a
+                        // String returns a String, and defaulting to Unknown here made the print
+                        // guard refuse `print(s.reverse())` as a non-scalar array.
+                        ArrayResultLayout::SameAsReceiver => self.array_value_shape(object),
+                    };
                 }
                 self.infer_kind(e).as_deref().and_then(array_shape_of_kind)
             }
@@ -20117,10 +20206,19 @@ void tallow_async_runtime_shutdown(void) {
     fn emit_array_take(&mut self, arr: &LLValue, n: &str) -> Result<LLValue, String> {
         let len = self.fresh_reg();
         self.emit_line(&format!("{len} = load i64, ptr {}", arr.reg));
+        // The interpreter casts `n` to usize, so a NEGATIVE n takes everything.
+        // The old `select (n < len) ? n : len` kept the negative value, wrote it
+        // as the result length and malloc'd a negative size.
+        let n_neg = self.fresh_reg();
+        self.emit_line(&format!("{n_neg} = icmp slt i64 {n}, 0"));
+        let n_pos = self.fresh_reg();
+        self.emit_line(&format!("{n_pos} = select i1 {n_neg}, i64 {len}, i64 {n}"));
         let cmp = self.fresh_reg();
-        self.emit_line(&format!("{cmp} = icmp slt i64 {n}, {len}"));
+        self.emit_line(&format!("{cmp} = icmp slt i64 {n_pos}, {len}"));
         let actual = self.fresh_reg();
-        self.emit_line(&format!("{actual} = select i1 {cmp}, i64 {n}, i64 {len}"));
+        self.emit_line(&format!(
+            "{actual} = select i1 {cmp}, i64 {n_pos}, i64 {len}"
+        ));
         let slots = self.fresh_reg();
         self.emit_line(&format!("{slots} = add i64 {actual}, 1"));
         let bytes = self.fresh_reg();
@@ -21035,7 +21133,13 @@ void tallow_async_runtime_shutdown(void) {
     }
 
     /// Emit arr.unique() — deduplicate (O(n^2) scan)
-    fn emit_array_unique(&mut self, arr: &LLValue) -> Result<LLValue, String> {
+    ///
+    /// `elem_is_ptr` says the slots hold pointers to C strings, so equality is
+    /// content equality (`strcmp`) — the interpreter compares `as_string()`.
+    /// Comparing the raw slots would keep two equal strings whose literals were
+    /// interned separately and is the reason this method used to need the
+    /// interpreter.
+    fn emit_array_unique(&mut self, arr: &LLValue, elem_is_ptr: bool) -> Result<LLValue, String> {
         let len = self.fresh_reg();
         self.emit_line(&format!("{len} = load i64, ptr {}", arr.reg));
         // Allocate result (worst case same size)
@@ -21101,8 +21205,24 @@ void tallow_async_runtime_shutdown(void) {
         ));
         let r_elem = self.fresh_reg();
         self.emit_line(&format!("{r_elem} = load i64, ptr {rp}"));
-        let eq = self.fresh_reg();
-        self.emit_line(&format!("{eq} = icmp eq i64 {elem}, {r_elem}"));
+        // Value equality, not slot equality: the interpreter keys on
+        // `Value::as_string()`, so two equal strings interned at different
+        // addresses must collapse to one element.
+        let eq = if elem_is_ptr {
+            let a = self.fresh_reg();
+            self.emit_line(&format!("{a} = inttoptr i64 {elem} to ptr"));
+            let b = self.fresh_reg();
+            self.emit_line(&format!("{b} = inttoptr i64 {r_elem} to ptr"));
+            let cmp = self.fresh_reg();
+            self.emit_line(&format!("{cmp} = call i32 @strcmp(ptr {a}, ptr {b})"));
+            let eq = self.fresh_reg();
+            self.emit_line(&format!("{eq} = icmp eq i32 {cmp}, 0"));
+            eq
+        } else {
+            let eq = self.fresh_reg();
+            self.emit_line(&format!("{eq} = icmp eq i64 {elem}, {r_elem}"));
+            eq
+        };
         // If equal, set found flag
         let not_dup = self.fresh_label("uniq.notdup");
         let set_dup = self.fresh_label("uniq.setdup");
@@ -21154,6 +21274,34 @@ void tallow_async_runtime_shutdown(void) {
     fn emit_array_chunk(&mut self, arr: &LLValue, chunk_size: &str) -> Result<LLValue, String> {
         let len = self.fresh_reg();
         self.emit_line(&format!("{len} = load i64, ptr {}", arr.reg));
+        // chunk(0) would divide by zero (a SIGFPE) where the interpreter raises
+        // "chunk size must be > 0"; a NEGATIVE size wraps to usize there and
+        // yields one chunk holding everything. Say the interpreter's sentence
+        // and exit 1, then map a negative size to "one chunk".
+        let is_zero = self.fresh_reg();
+        self.emit_line(&format!("{is_zero} = icmp eq i64 {chunk_size}, 0"));
+        let bad_l = self.fresh_label("chunk.bad");
+        let ok_l = self.fresh_label("chunk.ok");
+        self.emit_line(&format!("br i1 {is_zero}, label %{bad_l}, label %{ok_l}"));
+        self.body.push_str(&format!("{bad_l}:\n"));
+        let msg = self.intern_string("chunk size must be > 0\n");
+        self.emit_stderr_write(&msg);
+        self.emit_line("call void @exit(i32 1)");
+        self.emit_line("unreachable");
+        self.body.push_str(&format!("{ok_l}:\n"));
+        let is_pos = self.fresh_reg();
+        self.emit_line(&format!("{is_pos} = icmp sgt i64 {chunk_size}, 0"));
+        let len_pos = self.fresh_reg();
+        self.emit_line(&format!("{len_pos} = icmp sgt i64 {len}, 0"));
+        let len_floor = self.fresh_reg();
+        self.emit_line(&format!(
+            "{len_floor} = select i1 {len_pos}, i64 {len}, i64 1"
+        ));
+        let size = self.fresh_reg();
+        self.emit_line(&format!(
+            "{size} = select i1 {is_pos}, i64 {chunk_size}, i64 {len_floor}"
+        ));
+        let chunk_size = size.as_str();
         // num_chunks = (len + chunk_size - 1) / chunk_size
         let sum = self.fresh_reg();
         self.emit_line(&format!("{sum} = add i64 {len}, {chunk_size}"));
@@ -22709,7 +22857,12 @@ void tallow_async_runtime_shutdown(void) {
     }
 
     /// Emit arr.union(other) — concatenate then deduplicate
-    fn emit_array_union(&mut self, arr: &LLValue, other: &LLValue) -> Result<LLValue, String> {
+    fn emit_array_union(
+        &mut self,
+        arr: &LLValue,
+        other: &LLValue,
+        elem_is_ptr: bool,
+    ) -> Result<LLValue, String> {
         // Concat both arrays
         let len_a = self.fresh_reg();
         self.emit_line(&format!("{len_a} = load i64, ptr {}", arr.reg));
@@ -22756,9 +22909,10 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!(
             "{_cpb} = call ptr @memcpy(ptr {dst_b}, ptr {src_b}, i64 {bytes_b})"
         ));
-        // Now deduplicate using emit_array_unique
+        // Now deduplicate using emit_array_unique. Union compares by VALUE for
+        // string elements, so it passes the same elem_is_ptr the receiver uses.
         let concat_val = LLValue::new(concat, LLType::I8Ptr);
-        self.emit_array_unique(&concat_val)
+        self.emit_array_unique(&concat_val, elem_is_ptr)
     }
 
     /// Emit arr.intersection(other) — elements in self that are also in other
@@ -41732,16 +41886,22 @@ fn main() {
 
     #[test]
     fn codegen_array_take_method() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // BP22: lowered again; the value gate is tests/bp22_array_lowerings.rs.
         assert!(
-            !crate::array_methods::lookup("take").expect("registry row").native,
-            "Array.take must be refused on the native plane"
+            crate::array_methods::lookup("take")
+                .expect("registry row")
+                .native,
+            "Array.take is lowered"
         );
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let t = [1, 2, 3].take(2)
+                print(t.len())
+            }
+        "#,
+        );
+        assert!(ir.contains("take.cond"), "take loop label, IR:\n{ir}");
     }
 
     #[test]
@@ -42351,16 +42511,24 @@ fn main() {
 
     #[test]
     fn codegen_array_zip() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // BP22: the lowering is correct, so the emitter is reached again. What the
+        // value gate asserts lives in tests/bp22_array_lowerings.rs (both planes,
+        // real binary); this unit test only pins that the arm exists.
         assert!(
-            !crate::array_methods::lookup("zip").expect("registry row").native,
-            "Array.zip must be refused on the native plane"
+            crate::array_methods::lookup("zip")
+                .expect("registry row")
+                .native,
+            "Array.zip is lowered"
         );
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let z = [1, 2].zip([3, 4])
+                print(z.len())
+            }
+        "#,
+        );
+        assert!(ir.contains("zip.cond"), "zip loop label, IR:\n{ir}");
     }
 
     #[test]
@@ -42389,58 +42557,92 @@ fn main() {
 
     #[test]
     fn codegen_array_flat_map() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // BP22: lowered again; the value gate is tests/bp22_array_lowerings.rs.
         assert!(
-            !crate::array_methods::lookup("flat_map").expect("registry row").native,
-            "Array.flat_map must be refused on the native plane"
+            crate::array_methods::lookup("flat_map")
+                .expect("registry row")
+                .native,
+            "Array.flat_map is lowered"
+        );
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let f = [1, 2].flat_map({ x -> [x] })
+                print(f.len())
+            }
+        "#,
+        );
+        assert!(
+            ir.contains("flat.s1.cond") || ir.contains("flat.s2.cond"),
+            "flat_map should flatten the mapped arrays, IR:\n{ir}"
         );
     }
 
     #[test]
     fn codegen_array_unique() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // BP22: lowered again; the value gate is tests/bp22_array_lowerings.rs.
         assert!(
-            !crate::array_methods::lookup("unique").expect("registry row").native,
-            "Array.unique must be refused on the native plane"
+            crate::array_methods::lookup("unique")
+                .expect("registry row")
+                .native,
+            "Array.unique is lowered"
+        );
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let u = [1, 1, 2].unique()
+                print(u.len())
+            }
+        "#,
+        );
+        assert!(
+            ir.contains("uniq.o.cond") && ir.contains("uniq.i.cond"),
+            "unique should scan for duplicates, IR:\n{ir}"
         );
     }
 
     #[test]
     fn codegen_array_chunk() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // BP22: lowered again; the value gate is tests/bp22_array_lowerings.rs.
         assert!(
-            !crate::array_methods::lookup("chunk").expect("registry row").native,
-            "Array.chunk must be refused on the native plane"
+            crate::array_methods::lookup("chunk")
+                .expect("registry row")
+                .native,
+            "Array.chunk is lowered"
+        );
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let c = [1, 2, 3].chunk(2)
+                print(c.len())
+            }
+        "#,
+        );
+        assert!(ir.contains("chunk.cond"), "chunk loop label, IR:\n{ir}");
+        assert!(
+            ir.contains("chunk.bad"),
+            "chunk(0) must be a named runtime error, not a divide by zero, IR:\n{ir}"
         );
     }
 
     #[test]
     fn codegen_array_enumerate() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // BP22: lowered again; the value gate is tests/bp22_array_lowerings.rs.
         assert!(
-            !crate::array_methods::lookup("enumerate").expect("registry row").native,
-            "Array.enumerate must be refused on the native plane"
+            crate::array_methods::lookup("enumerate")
+                .expect("registry row")
+                .native,
+            "Array.enumerate is lowered"
         );
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let e = [10, 20].enumerate()
+                print(e.len())
+            }
+        "#,
+        );
+        assert!(ir.contains("enum.cond"), "enumerate loop label, IR:\n{ir}");
     }
 
     #[test]
