@@ -1,7 +1,7 @@
 // models.tl — data types (imports from base.tl transitively)
 import base
 
-struct Point {
+pub struct Point {
     x: f64,
     y: f64,
 }
@@ -12,7 +12,7 @@ impl Point {
     }
 }
 
-struct Config {
+pub struct Config {
     name: String,
     value: i64,
 }

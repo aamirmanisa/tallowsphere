@@ -11276,7 +11276,7 @@ fn resolve_imports(
     program: &mut tallow::ast::Program,
     main_file: &PathBuf,
 ) -> Vec<tallow::error::Diagnostic> {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     let project_root = main_file
         .parent()
@@ -11287,25 +11287,36 @@ fn resolve_imports(
                 Some(p)
             }
         })
-        .unwrap_or_else(|| std::path::Path::new("."));
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf();
+
+    // G09: the package a `pub(crate)` item is visible to is the directory tree
+    // rooted at the entry file's directory.
+    let package_root = tallow::visibility::package_root(main_file);
+    let entry_canon = main_file
+        .canonicalize()
+        .unwrap_or_else(|_| main_file.clone());
 
     let mut loaded: HashSet<String> = HashSet::new();
-    loaded.insert(
-        main_file
-            .canonicalize()
-            .unwrap_or_else(|_| main_file.clone())
-            .display()
-            .to_string(),
-    );
+    let entry_key = entry_canon.display().to_string();
+    loaded.insert(entry_key.clone());
+
+    // A file imported by two modules is parsed once; the cached items are what
+    // let the *second* importer still be told which names did not reach it.
+    let mut parsed_cache: HashMap<String, Vec<tallow::ast::Item>> = HashMap::new();
+    parsed_cache.insert(entry_key, program.items.clone());
 
     let mut new_items = Vec::new();
-    let mut unresolved = Vec::new();
+    let mut diagnostics = Vec::new();
     resolve_imports_recursive(
         &program.items,
-        project_root,
+        &project_root,
+        &package_root,
+        &entry_canon,
         &mut loaded,
+        &mut parsed_cache,
         &mut new_items,
-        &mut unresolved,
+        &mut diagnostics,
     );
 
     // Merge imported items BEFORE existing items (so declarations are available)
@@ -11314,126 +11325,240 @@ fn resolve_imports(
         program.items = new_items;
     }
 
-    unresolved
+    diagnostics
 }
 
 /// Recursively resolve imports from a list of items.
-/// Transitive imports are followed up to a natural depth limit (the loaded set
-/// prevents cycles). Items from imported files are collected into `out`.
+///
+/// `items` are the items of one file (`importer`), and visibility is decided per
+/// boundary: an item crosses from the file that declares it into `importer` only
+/// when its marker reaches that file (G09). Transitive imports are followed up
+/// to a natural depth limit (the loaded set prevents cycles).
 fn resolve_imports_recursive(
     items: &[tallow::ast::Item],
     project_root: &std::path::Path,
+    package_root: &std::path::Path,
+    importer: &std::path::Path,
     loaded: &mut std::collections::HashSet<String>,
+    parsed_cache: &mut std::collections::HashMap<String, Vec<tallow::ast::Item>>,
     out: &mut Vec<tallow::ast::Item>,
-    unresolved: &mut Vec<tallow::error::Diagnostic>,
+    diagnostics: &mut Vec<tallow::error::Diagnostic>,
 ) {
-    for item in items {
-        if let tallow::ast::Item::Import(import) = item {
-            let path_str = import.path.join(".");
+    use tallow::ast::{Item, Visibility};
 
-            // Skip stdlib imports: `tallow.*` and any bare module name the
-            // runtime registers (`import math`). Those are resolved by the
-            // stdlib router, not by a file on disk.
-            let head = import.path.first().map(|s| s.as_str()).unwrap_or("");
-            if head == "tallow" || tallow::stdlib::is_registered_module(head) {
+    // Names this file declares itself: its own private items are in its scope.
+    let local_names: std::collections::HashSet<String> = items
+        .iter()
+        .filter_map(|i| i.name().map(str::to_string))
+        .collect();
+    // Names that reached this file through an import — a use is satisfied.
+    let mut satisfied: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Names this file may not use, with the marker and file that stopped them.
+    let mut hidden: Vec<(String, Visibility, PathBuf)> = Vec::new();
+
+    for item in items {
+        let Item::Import(import) = item else {
+            continue;
+        };
+
+        // E0154 — `pub import` is a re-export, and re-exports are out of scope
+        // for 2.0. Refused rather than silently ignored.
+        if import.visibility != Visibility::Private {
+            diagnostics.push(
+                tallow::error::Diagnostic::error(
+                    "E0154",
+                    "`pub import` is not supported — a re-export would need a namespace to \
+                     name it through; import the item where it is needed instead",
+                    import.span,
+                )
+                .with_help(
+                    "drop the marker: visibility belongs on the declaration (`pub fn`), \
+                     not on the import",
+                ),
+            );
+            continue;
+        }
+
+        let path_str = import.path.join(".");
+
+        // Skip stdlib imports: `tallow.*` and any bare module name the
+        // runtime registers (`import math`). Those are resolved by the
+        // stdlib router, not by a file on disk.
+        let head = import.path.first().map(|s| s.as_str()).unwrap_or("");
+        if head == "tallow" || tallow::stdlib::is_registered_module(head) {
+            continue;
+        }
+
+        // Resolve file path
+        let rel_path: PathBuf = import.path.iter().collect();
+        let candidates = [
+            project_root
+                .join("src")
+                .join(&rel_path)
+                .with_extension("tl"),
+            project_root.join(&rel_path).with_extension("tl"),
+            project_root.join("src").join(&rel_path).join("mod.tl"),
+        ];
+
+        let mut resolved = false;
+        for candidate in &candidates {
+            if !candidate.exists() {
                 continue;
             }
+            let canon = candidate
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.clone());
+            let canon_str = canon.display().to_string();
 
-            // Resolve file path
-            let rel_path: PathBuf = import.path.iter().collect();
-            let candidates = [
-                project_root
-                    .join("src")
-                    .join(&rel_path)
-                    .with_extension("tl"),
-                project_root.join(&rel_path).with_extension("tl"),
-                project_root.join("src").join(&rel_path).join("mod.tl"),
-            ];
+            // From here on the import resolved to this file, whether or not it
+            // parses: a parse error is its own diagnostic, and reporting
+            // "unresolved" as well would name the wrong fault.
+            resolved = true;
 
-            let mut resolved = false;
-            for candidate in &candidates {
-                if candidate.exists() {
-                    let canon = candidate
-                        .canonicalize()
-                        .unwrap_or_else(|_| candidate.clone());
-                    let canon_str = canon.display().to_string();
-                    if loaded.contains(&canon_str) {
-                        resolved = true;
-                        break; // already loaded, skip (circular import protection)
-                    }
-                    loaded.insert(canon_str);
-
-                    // From here on the import resolved to this file, whether or
-                    // not it parses: a parse error is its own diagnostic, and
-                    // reporting "unresolved" as well would name the wrong fault.
-                    resolved = true;
-                    match std::fs::read_to_string(candidate) {
-                        Ok(source) => {
-                            let (tokens, lex_errors) = tallow::lexer::tokenize(&source);
-                            if !lex_errors.is_empty() {
-                                eprintln!(
-                                    "warning: lex errors in import '{path_str}': {}",
-                                    candidate.display()
-                                );
-                                break;
-                            }
+            let already_loaded = loaded.contains(&canon_str);
+            let parsed_items: Option<Vec<Item>> = if already_loaded {
+                // Resolved by an earlier import: its items are already merged,
+                // but this importer still needs to know which of its names it
+                // may use.
+                parsed_cache.get(&canon_str).cloned()
+            } else {
+                loaded.insert(canon_str.clone());
+                match std::fs::read_to_string(candidate) {
+                    Ok(source) => {
+                        let (tokens, lex_errors) = tallow::lexer::tokenize(&source);
+                        if !lex_errors.is_empty() {
+                            eprintln!(
+                                "warning: lex errors in import '{path_str}': {}",
+                                candidate.display()
+                            );
+                            None
+                        } else {
                             match tallow::parser::Parser::parse(tokens) {
                                 Ok(imported) => {
-                                    // Recursively resolve imports from the imported file first
+                                    // Follow this module's own imports first,
+                                    // with *it* as the importer: visibility is
+                                    // decided at each boundary, not once at the
+                                    // top.
                                     resolve_imports_recursive(
                                         &imported.items,
                                         project_root,
+                                        package_root,
+                                        &canon,
                                         loaded,
+                                        parsed_cache,
                                         out,
-                                        unresolved,
+                                        diagnostics,
                                     );
-                                    // Then add the imported file's own non-import items.
-                                    // `is_imported` is set here, at the one place that
-                                    // knows the item came from another file: the trust
-                                    // root (`main`) is anchored to the entry file, so a
-                                    // library function spelled `main` is not one.
-                                    // `imported_from` records *which* file, so a
-                                    // diagnostic about the item can render its own
-                                    // source instead of the entry file's (audit N-9).
-                                    for mut imp_item in imported.items {
-                                        if matches!(imp_item, tallow::ast::Item::Import(_)) {
-                                            continue;
-                                        }
-                                        if let tallow::ast::Item::Fn(f) = &mut imp_item {
-                                            f.is_imported = true;
-                                            f.imported_from = Some(candidate.clone());
-                                        }
-                                        out.push(imp_item);
-                                    }
+                                    parsed_cache.insert(canon_str.clone(), imported.items.clone());
+                                    Some(imported.items)
                                 }
                                 Err(err) => {
-                                    eprintln!("warning: parse error in import '{path_str}': {err}");
+                                    eprintln!(
+                                        "warning: parse error in import '{path_str}': {err}"
+                                    );
+                                    None
                                 }
                             }
                         }
-                        Err(err) => {
-                            eprintln!("warning: cannot read import '{path_str}': {err}");
-                        }
                     }
-                    break;
+                    Err(err) => {
+                        eprintln!("warning: cannot read import '{path_str}': {err}");
+                        None
+                    }
+                }
+            };
+
+            if let Some(parsed_items) = parsed_items {
+                // G09: only what reaches this importer is merged — plus the
+                // invisible items the module's own visible items use, without
+                // which a `pub` function could not call its helpers.
+                let selection = tallow::visibility::select_imported_items(
+                    parsed_items,
+                    importer,
+                    &canon,
+                    package_root,
+                );
+                satisfied.extend(selection.visible_names.iter().cloned());
+                for (name, visibility) in selection.hidden {
+                    hidden.push((name, visibility, canon.clone()));
+                }
+                if !already_loaded {
+                    // `is_imported` is set here, at the one place that knows
+                    // the item came from another file: the trust root (`main`)
+                    // is anchored to the entry file, so a library function
+                    // spelled `main` is not one. `imported_from` records
+                    // *which* file, so a diagnostic about the item can render
+                    // its own source instead of the entry file's (audit N-9).
+                    for mut imp_item in selection.merge {
+                        if let Item::Fn(f) = &mut imp_item {
+                            f.is_imported = true;
+                            f.imported_from = Some(candidate.clone());
+                        }
+                        out.push(imp_item);
+                    }
                 }
             }
-            if !resolved {
-                // Audit N-10: an import that resolves to nothing used to be
-                // dropped silently, so a program compiled against a module it
-                // never loaded. The module is simply absent, which is a broken
-                // program, not a smaller one.
-                unresolved.push(
-                    tallow::error::Diagnostic::error(
-                        "E0149",
-                        format!("cannot resolve import '{path_str}': no file found"),
-                        import.span,
-                    )
-                    .with_help(format!(
-                        "looked for src/{path_str}.tl, {path_str}.tl and src/{path_str}/mod.tl under the project root; stdlib modules are imported by their bare name (e.g. `import math`)"
-                    )),
-                );
+            break;
+        }
+        if !resolved {
+            // Audit N-10: an import that resolves to nothing used to be
+            // dropped silently, so a program compiled against a module it
+            // never loaded. The module is simply absent, which is a broken
+            // program, not a smaller one.
+            diagnostics.push(
+                tallow::error::Diagnostic::error(
+                    "E0149",
+                    format!("cannot resolve import '{path_str}': no file found"),
+                    import.span,
+                )
+                .with_help(format!(
+                    "looked for src/{path_str}.tl, {path_str}.tl and src/{path_str}/mod.tl under the project root; stdlib modules are imported by their bare name (e.g. `import math`)"
+                )),
+            );
+        }
+    }
+
+    // E0153 — a name this file uses that did not cross the boundary. Reported
+    // before type checking, so no later phase can resolve it by accident; one
+    // diagnostic per name, at its first use in this file.
+    let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in items {
+        for reference in tallow::visibility::item_refs(item) {
+            let name = &reference.name;
+            if local_names.contains(name) || satisfied.contains(name) {
+                continue;
             }
+            let Some((_, visibility, defined_in)) =
+                hidden.iter().find(|(hidden_name, _, _)| hidden_name == name)
+            else {
+                continue;
+            };
+            if !reported.insert(name.clone()) {
+                continue;
+            }
+            let shown = tallow::visibility::display_relative(defined_in, project_root);
+            let diagnostic = match visibility {
+                Visibility::Private => tallow::error::Diagnostic::error(
+                    "E0153",
+                    format!("`{name}` is private to {shown}"),
+                    reference.span,
+                )
+                .with_help(format!(
+                    "mark it `pub` in {shown} to export it, or move the use inside that file"
+                )),
+                _ => tallow::error::Diagnostic::error(
+                    "E0153",
+                    format!(
+                        "`{name}` is `pub(crate)` in {shown}, and this file is outside that package"
+                    ),
+                    reference.span,
+                )
+                .with_help(format!(
+                    "mark it `pub` in {shown} to export it, or move the use inside the package \
+                     (the directory tree rooted at the entry file's directory)"
+                )),
+            };
+            diagnostics.push(diagnostic.with_file(importer.to_path_buf()));
         }
     }
 }

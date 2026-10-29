@@ -1,4 +1,8 @@
 // main.tl — multi-file project demo
+//
+// G09: an item crosses a file boundary only when it is marked `pub` (or
+// `pub(crate)` inside the package), so models.tl and base.tl mark everything
+// this file uses.
 
 import math
 import models

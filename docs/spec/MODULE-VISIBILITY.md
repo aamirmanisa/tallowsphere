@@ -42,12 +42,28 @@ Two files are in the same package when their canonical paths share that root.
 Files outside it are external importers.
 
 Visibility is checked **at import resolution**, not at name lookup: an item that is
-not visible is never merged into the importing program, so no later phase can
-resolve it by accident. This mirrors `resolve_imports`' existing behaviour of
-merging before type checking.
+not visible is never merged into the importing program's *use surface*, so no
+later phase can resolve it by accident. This mirrors `resolve_imports`' existing
+behaviour of merging before type checking.
+
+Exactly what crosses the boundary: the items that are visible to the importer,
+plus the transitive closure of the invisible items *those* items reference. A
+module's `pub fn api` must be able to call the private `helper` beside it, and a
+flat merge leaves no other way for that call to bind; nothing outside that
+closure is merged. A reference from the importing file's own items to a name
+that did not cross is E0153, reported before type checking runs.
 
 `main` keeps its existing rule: an imported file may not contribute a `main`
-(E0147). Visibility does not change that; `pub fn main` is refused as well.
+(E0147). Visibility does not change that; `pub fn main` is refused as well. An
+imported `main` therefore always crosses the merge, whatever its marker, so that
+E0147 — not E0153 — is the refusal a reader sees.
+
+An `impl` block contributes no name of its own: its methods are reached through
+the type it implements, never by importing `impl`. It therefore always crosses
+with its file. The marker is accepted and carried on the AST, but it cannot make
+a type's methods private — a name-level rule cannot express that, and a boundary
+that amputated a visible type's methods would be worse than one that leaves them
+attached.
 
 ### What "visible" does not mean
 

@@ -1553,6 +1553,16 @@ void tallow_async_runtime_shutdown(void) {
         let mut imported_items = Vec::new();
         let source_dir = self.source_dir.as_deref().unwrap_or("");
 
+        // G09: the code generator resolves imports for itself, so it has to
+        // apply the same visibility filter main.rs does — otherwise an item the
+        // compiler refused to merge would reappear in the compiled plane. The
+        // entry file is not known here, so a synthetic path inside the source
+        // directory stands in: it is inside the package (which is what
+        // `pub(crate)` needs) and is never equal to an imported file (which is
+        // what `private` needs).
+        let entry_importer = std::path::PathBuf::from(source_dir).join("__entry__.tl");
+        let package_root = crate::visibility::package_root(&entry_importer);
+
         // Collect imports from the main program as the initial worklist
         let mut worklist: Vec<Vec<String>> = Vec::with_capacity(self.program.items.len());
         for item in &self.program.items {
@@ -1587,7 +1597,13 @@ void tallow_async_runtime_shutdown(void) {
                             worklist.push(sub_import.path.clone());
                         }
                     }
-                    imported_items.extend(parsed.items);
+                    let selection = crate::visibility::select_imported_items(
+                        parsed.items,
+                        &entry_importer,
+                        std::path::Path::new(&file_path),
+                        &package_root,
+                    );
+                    imported_items.extend(selection.merge);
                 }
             }
         }
@@ -4245,6 +4261,7 @@ void tallow_async_runtime_shutdown(void) {
         let specialized_body = substitute_block(&generic_fn.body, &subst);
 
         FnDecl {
+            visibility: generic_fn.visibility,
             annotations: generic_fn.annotations.clone(),
             is_async: generic_fn.is_async,
             is_native: generic_fn.is_native,
@@ -41515,7 +41532,7 @@ fn main() {
         let dir = tempfile::tempdir().expect("temp dir");
         let helper_path = dir.path().join("helper.tl");
         let mut f = std::fs::File::create(&helper_path).unwrap();
-        writeln!(f, "fn helper() -> i64 {{ 42 }}").unwrap();
+        writeln!(f, "pub fn helper() -> i64 {{ 42 }}").unwrap();
         drop(f);
 
         let main_src = "import helper\nfn main() {\n    let x = helper()\n    print(x)\n}\n";
@@ -41538,7 +41555,7 @@ fn main() {
         let dir = tempfile::tempdir().expect("temp dir");
         let helper_path = dir.path().join("types.tl");
         let mut f = std::fs::File::create(&helper_path).unwrap();
-        writeln!(f, "struct Point {{\n    x: i64,\n    y: i64\n}}").unwrap();
+        writeln!(f, "pub struct Point {{\n    x: i64,\n    y: i64\n}}").unwrap();
         drop(f);
 
         let main_src =
@@ -41564,10 +41581,10 @@ fn main() {
         let a_path = dir.path().join("mod_a.tl");
         let b_path = dir.path().join("mod_b.tl");
         let mut fa = std::fs::File::create(&a_path).unwrap();
-        writeln!(fa, "import mod_b\nfn func_a() -> i64 {{ 1 }}").unwrap();
+        writeln!(fa, "import mod_b\npub fn func_a() -> i64 {{ 1 }}").unwrap();
         drop(fa);
         let mut fb = std::fs::File::create(&b_path).unwrap();
-        writeln!(fb, "import mod_a\nfn func_b() -> i64 {{ 2 }}").unwrap();
+        writeln!(fb, "import mod_a\npub fn func_b() -> i64 {{ 2 }}").unwrap();
         drop(fb);
 
         let main_src = "import mod_a\nfn main() {\n    let x = func_a()\n    print(x)\n}\n";

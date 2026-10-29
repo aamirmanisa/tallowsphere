@@ -216,7 +216,7 @@ fn imported_library_function_cannot_absorb_the_effect() {
         "lib.tl",
         r#"
 @legal(basis: .public_data, purpose: "g21 library fixture")
-fn pull(host: String) {
+pub fn pull(host: String) {
     let r = email.connect_imap(host, 993, true)
 }
 "#,
@@ -262,7 +262,7 @@ fn imported_library_that_declares_propagates_to_its_caller() {
         "lib.tl",
         r#"
 @legal(basis: .public_data, purpose: "g21 library fixture")
-fn pull(g: Grant<Net>, host: String) with Net(connect_imap) {
+pub fn pull(g: Grant<Net>, host: String) with Net(connect_imap) {
     let r = email.connect_imap(host, 993, true)
 }
 "#,
@@ -303,7 +303,7 @@ fn main_may_declare_the_effect() {
         "lib.tl",
         r#"
 @legal(basis: .public_data, purpose: "g21 library fixture")
-fn pull(g: Grant<Net>, host: String) with Net(connect_imap) {
+pub fn pull(g: Grant<Net>, host: String) with Net(connect_imap) {
     let r = email.connect_imap(host, 993, true)
 }
 "#,

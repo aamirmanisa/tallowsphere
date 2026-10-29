@@ -158,8 +158,20 @@ impl Parser {
     }
 
     fn parse_item(&mut self) -> Result<Item, ParseError> {
+        // G09: a visibility marker sits at item position, before the keyword.
+        // It is contextual — `pub` stays an ordinary identifier everywhere
+        // else — so this consumes nothing unless the sequence really is
+        // `pub`/`pub(crate)` in front of an item keyword.
+        // The marker may also follow the annotations (`@legal(..)` then
+        // `pub fn`), which is how annotated declarations are written.
+        let marker_before_annotations = self.parse_visibility_marker();
         // Collect annotations
         let annotations = self.parse_annotations()?;
+        let visibility = if marker_before_annotations != Visibility::Private {
+            marker_before_annotations
+        } else {
+            self.parse_visibility_marker()
+        };
         let is_async = self.eat(TokenKind::Async);
         // `native fn name(...) -> T` declares a function implemented by a symbol
         // of the same name at link time (register #129). `native` is not a
@@ -173,42 +185,54 @@ impl Parser {
 
         match self.peek_kind() {
             TokenKind::Fn => {
-                let f = self.parse_fn_decl(annotations, is_async, is_native)?;
+                let mut f = self.parse_fn_decl(annotations, is_async, is_native)?;
+                f.visibility = visibility;
                 Ok(Item::Fn(f))
             }
             TokenKind::Struct => {
                 if !annotations.is_empty() {
                     return Err(self.error("annotations not allowed on struct declarations"));
                 }
-                Ok(Item::Struct(self.parse_struct_decl()?))
+                let mut i = self.parse_struct_decl()?;
+                i.visibility = visibility;
+                Ok(Item::Struct(i))
             }
             TokenKind::Enum => {
                 if !annotations.is_empty() {
                     return Err(self.error("annotations not allowed on enum declarations"));
                 }
-                Ok(Item::Enum(self.parse_enum_decl()?))
+                let mut i = self.parse_enum_decl()?;
+                i.visibility = visibility;
+                Ok(Item::Enum(i))
             }
             TokenKind::Impl => {
                 if !annotations.is_empty() {
                     return Err(self.error("annotations not allowed on impl blocks"));
                 }
-                Ok(Item::Impl(self.parse_impl_block()?))
+                let mut i = self.parse_impl_block()?;
+                i.visibility = visibility;
+                Ok(Item::Impl(i))
             }
             TokenKind::Trait => {
                 if !annotations.is_empty() {
                     return Err(self.error("annotations not allowed on trait declarations"));
                 }
-                Ok(Item::Trait(self.parse_trait_decl()?))
+                let mut i = self.parse_trait_decl()?;
+                i.visibility = visibility;
+                Ok(Item::Trait(i))
             }
             TokenKind::Const => {
                 if !annotations.is_empty() {
                     return Err(self.error("annotations not allowed on const declarations"));
                 }
-                Ok(Item::Const(self.parse_const_decl()?))
+                let mut i = self.parse_const_decl()?;
+                i.visibility = visibility;
+                Ok(Item::Const(i))
             }
             TokenKind::Type => {
                 let mut ta = self.parse_type_alias()?;
                 ta.annotations = annotations;
+                ta.visibility = visibility;
                 Ok(Item::TypeAlias(ta))
             }
             // `newtype UserId = String` (G10). `newtype` is not a keyword: it is
@@ -220,26 +244,76 @@ impl Parser {
             {
                 let mut ta = self.parse_newtype_decl()?;
                 ta.annotations = annotations;
+                ta.visibility = visibility;
                 Ok(Item::TypeAlias(ta))
             }
             TokenKind::Import => {
                 if !annotations.is_empty() {
                     return Err(self.error("annotations not allowed on imports"));
                 }
-                Ok(Item::Import(self.parse_import()?))
+                let mut i = self.parse_import()?;
+                // G09: `pub import` is not a marker on a re-export, it is a
+                // refusal (E0154). The marker is carried to import resolution,
+                // which is the phase that owns imports and can name the code.
+                i.visibility = visibility;
+                Ok(Item::Import(i))
             }
-            // Friendly migration hint: `pub` lexes as a plain identifier now
-            // (Tallow has no visibility modifiers), so item-position `pub`
-            // would otherwise fall through to the generic item error.
-            TokenKind::Ident(name) if name == "pub" => Err(self.error(
-                "found `pub` at item position — Tallow has no visibility modifiers; \
-                 flat imports put every item in one namespace, so remove `pub`",
-            )),
             _ => Err(self.error(format!(
                 "expected item (fn, struct, enum, impl, trait, const, type, import), found {}",
                 self.peek_kind()
             ))),
         }
+    }
+
+    /// G09 — the contextual visibility marker at item position.
+    ///
+    /// `pub` and `pub(crate)` are **not** keywords: the marker is only read
+    /// when `pub` (optionally followed by `(crate)`) sits immediately in front
+    /// of an item keyword. Anything else — `pub` as a binding, a parameter, a
+    /// call target — is left untouched, which is what keeps `pub` usable as an
+    /// ordinary identifier.
+    ///
+    /// `import` is in the lookahead set only so that `pub import` parses far
+    /// enough to be *refused* with E0154 by import resolution; it is not an
+    /// applicable item (re-exports are out of scope for 2.0).
+    fn parse_visibility_marker(&mut self) -> Visibility {
+        if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "pub") {
+            return Visibility::Private;
+        }
+        if Self::is_visibility_target(self.peek_kind_ahead(1)) {
+            self.advance();
+            return Visibility::Pub;
+        }
+        let paren_crate = matches!(self.peek_kind_ahead(1), Some(TokenKind::LParen))
+            && matches!(self.peek_kind_ahead(2), Some(TokenKind::Ident(n)) if n == "crate")
+            && matches!(self.peek_kind_ahead(3), Some(TokenKind::RParen));
+        if paren_crate && Self::is_visibility_target(self.peek_kind_ahead(4)) {
+            for _ in 0..4 {
+                self.advance();
+            }
+            return Visibility::PubCrate;
+        }
+        // `pub` here is an ordinary identifier, not a marker: leave the token
+        // in place and let the item dispatch report what it found.
+        Visibility::Private
+    }
+
+    /// Item keywords a visibility marker may precede (`import` included only so
+    /// that `pub import` can be refused rather than silently ignored).
+    fn is_visibility_target(kind: Option<&TokenKind>) -> bool {
+        matches!(
+            kind,
+            Some(
+                TokenKind::Fn
+                    | TokenKind::Struct
+                    | TokenKind::Enum
+                    | TokenKind::Impl
+                    | TokenKind::Trait
+                    | TokenKind::Const
+                    | TokenKind::Type
+                    | TokenKind::Import
+            )
+        )
     }
 
     // ── Annotations ──────────────────────────────────────────────────────
@@ -548,6 +622,7 @@ impl Parser {
         };
 
         Ok(FnDecl {
+            visibility: Visibility::Private,
             annotations,
             is_async,
             is_native,
@@ -710,6 +785,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
 
         Ok(StructDecl {
+            visibility: Visibility::Private,
             name,
             type_params,
             fields,
@@ -776,6 +852,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
 
         Ok(EnumDecl {
+            visibility: Visibility::Private,
             name,
             type_params,
             variants,
@@ -830,6 +907,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
 
         Ok(ImplBlock {
+            visibility: Visibility::Private,
             trait_name,
             type_params,
             target,
@@ -866,6 +944,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
 
         Ok(TraitDecl {
+            visibility: Visibility::Private,
             name,
             type_params,
             methods,
@@ -921,6 +1000,7 @@ impl Parser {
         let value = self.parse_expr()?;
 
         Ok(ConstDecl {
+            visibility: Visibility::Private,
             name,
             ty,
             value,
@@ -962,6 +1042,7 @@ impl Parser {
         let ty = self.parse_type()?;
 
         Ok(TypeAlias {
+            visibility: Visibility::Private,
             name,
             annotations: vec![],
             qualifier,
@@ -1001,6 +1082,7 @@ impl Parser {
         let ty = self.parse_type()?;
 
         Ok(TypeAlias {
+            visibility: Visibility::Private,
             name,
             annotations: vec![],
             qualifier: None,
@@ -1058,6 +1140,9 @@ impl Parser {
         }
 
         Ok(ImportDecl {
+            // G09: filled in by `parse_item` from the marker it read; an
+            // import taken on its own (as the parser unit tests do) is plain.
+            visibility: Visibility::Private,
             path,
             items,
             span: Span::new(start.start, self.prev_span().end),
@@ -3804,14 +3889,75 @@ mod tests {
         assert!(err.msg.contains("expected identifier"));
     }
 
+    // ── G09 module visibility ────────────────────────────────────────
+
     #[test]
-    fn pub_at_item_start_gives_flat_namespace_hint() {
-        let err = parse_err("pub fn main() { }");
-        assert!(
-            err.msg.contains("no visibility modifiers") && err.msg.contains("remove `pub`"),
-            "expected the friendly `pub` hint, got: {}",
-            err.msg
+    fn pub_marker_is_parsed_on_every_applicable_item() {
+        let program = parse(
+            "pub fn f() { }\n\
+             pub struct S { a: i32 }\n\
+             pub enum E { A }\n\
+             pub impl S { fn m(self) -> i32 { 1 } }\n\
+             pub trait T { fn t(self) -> i32 }\n\
+             pub const C: i32 = 1\n\
+             pub type A = i32",
         );
+        assert_eq!(program.items.len(), 7);
+        for item in &program.items {
+            assert_eq!(
+                item.visibility(),
+                crate::ast::Visibility::Pub,
+                "{} did not carry the pub marker",
+                item.name().unwrap_or("<impl>")
+            );
+        }
+    }
+
+    #[test]
+    fn an_item_with_no_marker_is_private() {
+        let program = parse("fn f() { } struct S { a: i32 } const C: i32 = 1");
+        for item in &program.items {
+            assert_eq!(item.visibility(), crate::ast::Visibility::Private);
+        }
+    }
+
+    #[test]
+    fn pub_crate_marker_is_contextual() {
+        let program = parse("pub(crate) fn f() { }\npub(crate) struct S { a: i32 }");
+        assert_eq!(program.items.len(), 2);
+        for item in &program.items {
+            assert_eq!(item.visibility(), crate::ast::Visibility::PubCrate);
+        }
+    }
+
+    #[test]
+    fn pub_is_an_ordinary_identifier_outside_item_position() {
+        // The marker is contextual: a binding, a parameter and a callee named
+        // `pub` are untouched by the marker parser.
+        let program = parse(
+            "fn pub(pub: i32) -> i32 { return pub }\nfn main() { let pub = 1 }\n",
+        );
+        assert_eq!(program.items.len(), 2);
+        for item in &program.items {
+            assert_eq!(item.visibility(), crate::ast::Visibility::Private);
+        }
+        let Item::Fn(ref f) = program.items[0] else {
+            panic!()
+        };
+        assert_eq!(f.name, "pub");
+        assert_eq!(f.params[0].name, "pub");
+    }
+
+    #[test]
+    fn pub_import_parses_so_resolution_can_refuse_it() {
+        // The syntax is read; E0154 is import resolution's to emit. A marker
+        // that the parser could not represent would be dropped silently
+        // instead of refused.
+        let program = parse("pub import net");
+        let Item::Import(ref i) = program.items[0] else {
+            panic!()
+        };
+        assert_eq!(i.visibility, crate::ast::Visibility::Pub);
     }
 
     #[test]

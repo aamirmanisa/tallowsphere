@@ -512,6 +512,7 @@ mod tests {
 
     fn make_fn(name: &str, params: Vec<Param>, annotations: Vec<Annotation>, body: Vec<Stmt>) -> FnDecl {
         FnDecl {
+            visibility: crate::ast::Visibility::Private,
             annotations,
             is_async: false,
             is_native: false,
@@ -600,6 +601,7 @@ mod tests {
         );
         let method = make_fn("increment", vec![], vec![make_annotation("invariant", cond)], vec![]);
         let struct_decl = StructDecl {
+            visibility: crate::ast::Visibility::Private,
             name: "Counter".to_string(),
             type_params: vec![],
             fields: vec![FieldDecl {
@@ -611,6 +613,7 @@ mod tests {
             span: dummy_span(),
         };
         let impl_block = ImplBlock {
+            visibility: crate::ast::Visibility::Private,
             trait_name: None,
             type_params: vec![],
             target: "Counter".to_string(),
@@ -643,6 +646,7 @@ mod tests {
         );
         let method = make_fn("increment", vec![], vec![make_annotation("invariant", cond)], vec![]);
         let struct_decl = StructDecl {
+            visibility: crate::ast::Visibility::Private,
             name: "Counter".to_string(),
             type_params: vec![],
             fields: vec![FieldDecl {
@@ -654,6 +658,7 @@ mod tests {
             span: dummy_span(),
         };
         let impl_block = ImplBlock {
+            visibility: crate::ast::Visibility::Private,
             trait_name: None,
             type_params: vec![],
             target: "Counter".to_string(),

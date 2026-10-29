@@ -35,12 +35,72 @@ impl Item {
             Item::Import(i) => i.span,
         }
     }
+
+    /// The visibility marker written in front of the item (G09).
+    pub fn visibility(&self) -> Visibility {
+        match self {
+            Item::Fn(f) => f.visibility,
+            Item::Struct(s) => s.visibility,
+            Item::Enum(e) => e.visibility,
+            Item::Impl(i) => i.visibility,
+            Item::Trait(t) => t.visibility,
+            Item::Const(c) => c.visibility,
+            Item::TypeAlias(t) => t.visibility,
+            Item::Import(i) => i.visibility,
+        }
+    }
+
+    /// The name this item contributes to a namespace, when it contributes one.
+    ///
+    /// An `impl` block declares no new name (its methods belong to the target
+    /// type) and an `import` contributes whatever it imports, so both answer
+    /// `None`. This is the name import resolution compares against a use site
+    /// when it decides whether an item crosses a file boundary (G09).
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Item::Fn(f) => Some(&f.name),
+            Item::Struct(s) => Some(&s.name),
+            Item::Enum(e) => Some(&e.name),
+            Item::Impl(_) => None,
+            Item::Trait(t) => Some(&t.name),
+            Item::Const(c) => Some(&c.name),
+            Item::TypeAlias(t) => Some(&t.name),
+            Item::Import(_) => None,
+        }
+    }
+}
+
+// ── Visibility (G09) ─────────────────────────────────────────────────────────
+
+/// The visibility marker in front of an item declaration (G09).
+///
+/// `pub` and `pub(crate)` are contextual: neither is a keyword, and the marker
+/// is only read when it sits at item position in front of `fn`, `struct`,
+/// `enum`, `impl`, `trait`, `const`, `type` (or `import`, which refuses it with
+/// E0154). `pub` therefore remains an ordinary identifier everywhere else.
+///
+/// See `docs/spec/MODULE-VISIBILITY.md`. Enforcement lives in import
+/// resolution (`crate::visibility`), so an item that is not visible to a file
+/// never reaches that file's namespace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    /// No marker: visible only to items declared in the same file.
+    #[default]
+    Private,
+    /// `pub`: visible to every file that imports this module.
+    Pub,
+    /// `pub(crate)`: visible to every file in the same package — the directory
+    /// tree rooted at the entry-point file's directory.
+    PubCrate,
 }
 
 // ── Function Declaration ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    /// `pub` / `pub(crate)` in front of the declaration (G09). No marker is
+    /// [`Visibility::Private`]: visible only inside the declaring file.
+    pub visibility: Visibility,
     pub annotations: Vec<Annotation>,
     pub is_async: bool,
     /// `native fn name(...) -> T` — a declaration with no body, implemented by a
@@ -131,6 +191,8 @@ pub struct Param {
 
 #[derive(Debug, Clone)]
 pub struct StructDecl {
+    /// G09 visibility marker; see [`Visibility`].
+    pub visibility: Visibility,
     pub name: String,
     pub type_params: Vec<String>,
     pub fields: Vec<FieldDecl>,
@@ -149,6 +211,8 @@ pub struct FieldDecl {
 
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
+    /// G09 visibility marker; see [`Visibility`].
+    pub visibility: Visibility,
     pub name: String,
     pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
@@ -166,6 +230,8 @@ pub struct EnumVariant {
 
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
+    /// G09 visibility marker; see [`Visibility`].
+    pub visibility: Visibility,
     pub name: String,
     pub type_params: Vec<String>,
     pub methods: Vec<TraitMethod>,
@@ -186,6 +252,9 @@ pub struct TraitMethod {
 
 #[derive(Debug, Clone)]
 pub struct ImplBlock {
+    /// G09 visibility marker; see [`Visibility`]. An impl contributes no name
+    /// of its own, so the marker is carried but never consulted by resolution.
+    pub visibility: Visibility,
     pub trait_name: Option<String>,
     pub type_params: Vec<String>,
     pub target: String,
@@ -197,6 +266,8 @@ pub struct ImplBlock {
 
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
+    /// G09 visibility marker; see [`Visibility`].
+    pub visibility: Visibility,
     pub name: String,
     pub ty: Option<TypeExpr>,
     pub value: Expr,
@@ -207,6 +278,8 @@ pub struct ConstDecl {
 
 #[derive(Debug, Clone)]
 pub struct TypeAlias {
+    /// G09 visibility marker; see [`Visibility`].
+    pub visibility: Visibility,
     pub name: String,
     pub annotations: Vec<Annotation>,
     pub qualifier: Option<TypeQualifier>,
@@ -270,6 +343,10 @@ impl AgentLevel {
 
 #[derive(Debug, Clone)]
 pub struct ImportDecl {
+    /// A marker written in front of `import`, which is always refused (E0154):
+    /// re-exports are out of scope for 2.0. Carried so import resolution can
+    /// name the refusal instead of the marker being dropped silently.
+    pub visibility: Visibility,
     pub path: Vec<String>,
     /// Destructured imports: `import foo.bar.{Baz, Qux}` → items = ["Baz", "Qux"]
     pub items: Vec<String>,

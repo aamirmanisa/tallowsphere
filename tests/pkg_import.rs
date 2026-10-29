@@ -56,7 +56,7 @@ fn test_import_local_file_resolves() {
     fs::write(
         project_dir.join("src").join("mylib.tl"),
         r#"
-fn greet(name: String) -> String {
+pub fn greet(name: String) -> String {
     "hello {name}"
 }
 "#,
@@ -95,7 +95,7 @@ fn test_import_tallow_modules_resolves() {
     fs::write(
         pkg_dir.join("lib.tl"),
         r#"
-fn add(a: i32, b: i32) -> i32 {
+pub fn add(a: i32, b: i32) -> i32 {
     a + b
 }
 "#,
@@ -172,7 +172,7 @@ fn test_double_import_processed_once() {
     fs::write(
         project_dir.join("src").join("utils.tl"),
         r#"
-fn helper() -> i32 {
+pub fn helper() -> i32 {
     42
 }
 "#,
