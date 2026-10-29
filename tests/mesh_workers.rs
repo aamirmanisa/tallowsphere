@@ -165,7 +165,16 @@ fn a_stalled_worker_does_not_extend_the_wave() {
     let journal = std::fs::read_to_string(&path).expect("journal");
     let mut counts = std::collections::HashMap::new();
     for line in journal.lines() {
-        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        // A record is framed `<blake3-hex-16> <json>`; strip the digest prefix.
+        let json = match line.split_once(' ') {
+            Some((digest, rest))
+                if digest.len() == 16 && digest.bytes().all(|b| b.is_ascii_hexdigit()) =>
+            {
+                rest
+            }
+            _ => line,
+        };
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
         if v["kind"] == "task_committed" {
             *counts.entry(v["task"].as_str().unwrap().to_string()).or_insert(0) += 1;
         }
