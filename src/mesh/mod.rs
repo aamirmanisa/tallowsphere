@@ -320,26 +320,3 @@ mod tests {
         assert_ne!(sample_seed(5, 0), sample_seed(5, 1));
     }
 }
-
-/// Serialise the tests that bind real ports or drive gossip over the wire.
-///
-/// `cargo test --lib` runs a test binary's tests in parallel threads, and CI runs it at
-/// `--test-threads=4`. The mesh tests each open a listening socket and talk to each other,
-/// so in-process parallelism makes them race: measured at `90e4ced`, six of them failed at
-/// default parallelism and all 60 mesh tests passed at `--test-threads=1`. The lock is
-/// crate-wide because the racers live in two modules (`src/stdlib/mesh.rs` and
-/// `src/interp.rs`), and a per-module lock would leave those two racing each other.
-#[cfg(test)]
-pub(crate) mod test_lock {
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    /// Block until this test has the mesh-test lock. Poisoning is ignored: a panicking test
-    /// must fail on its own assertion, not cascade into every later test.
-    pub(crate) fn acquire() -> MutexGuard<'static, ()> {
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}

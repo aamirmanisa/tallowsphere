@@ -50849,7 +50849,6 @@ fn main() {
 
     #[test]
     fn test_mesh_node_creation_from_tallow() {
-        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
         crate::stdlib::mesh::reset_all();
         let source = r#"
@@ -50877,7 +50876,6 @@ fn main() {
 
     #[test]
     fn test_mesh_two_nodes_gossip() {
-        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
         crate::stdlib::mesh::reset_all();
         let source = r#"
@@ -50916,7 +50914,6 @@ fn main() {
 
     #[test]
     fn test_mesh_dht_from_tallow() {
-        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
         crate::stdlib::mesh::reset_all();
         let source = r#"
@@ -50946,7 +50943,6 @@ fn main() {
 
     #[test]
     fn test_mesh_peers_list() {
-        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
         crate::stdlib::mesh::reset_all();
         let source = r#"
