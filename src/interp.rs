@@ -9961,16 +9961,30 @@ impl Interpreter {
                 if !crate::stdlib::log::should_emit(&level) {
                     return Ok(Value::Nil);
                 }
+                // G52: every log line carries the process-wide trace id while
+                // one is set (docs/spec/STRUCTURED-LOGGING.md).
+                let trace = crate::stdlib::log::trace_id();
                 let message = parts.join(" ");
                 let line = if crate::stdlib::log::is_json_format() {
-                    serde_json::json!({
-                        "level": level,
-                        "ts": timestamp,
-                        "msg": message,
-                    })
-                    .to_string()
+                    let mut obj = serde_json::Map::new();
+                    obj.insert(
+                        "level".to_string(),
+                        serde_json::Value::String(level.clone()),
+                    );
+                    obj.insert(
+                        "ts".to_string(),
+                        serde_json::Value::String(timestamp.clone()),
+                    );
+                    if let Some(t) = &trace {
+                        obj.insert("trace".to_string(), serde_json::Value::String(t.clone()));
+                    }
+                    obj.insert("msg".to_string(), serde_json::Value::String(message));
+                    serde_json::Value::Object(obj).to_string()
                 } else {
-                    format!("[{level}] [{timestamp}] {message}")
+                    match &trace {
+                        Some(t) => format!("[{level}] [{timestamp}] [{t}] {message}"),
+                        None => format!("[{level}] [{timestamp}] {message}"),
+                    }
                 };
                 crate::stdlib::log::emit(&line);
                 self.output.push(line);
@@ -9978,6 +9992,62 @@ impl Interpreter {
                     // In interpreter, fatal logs and continues (exit handled by caller)
                     // but we push the output for test capture
                 }
+                return Ok(Value::Nil);
+            }
+            // ── log.record ── structured fields, G52
+            //
+            // `log.record(level, fields)` is the same emission path as
+            // `log.info`: same level filter, same sink, same trace id. The
+            // difference is that the message is one field among others and the
+            // rest are merged into the line (json: top-level keys; text: `k=v`
+            // in insertion order). Validation completes before anything is
+            // emitted, so a refusal never leaves a partial line.
+            "log.record" => {
+                let raw_level = match positional.first() {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Enum { variant, .. }) => variant.clone(),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "log.record expects a Level (string or enum) as its first argument"
+                                .to_string(),
+                        ));
+                    }
+                };
+                let level = match crate::stdlib::log::canonical_level(&raw_level) {
+                    Some(l) => l,
+                    None => {
+                        return Err(RuntimeError::Error(format!(
+                            "log.record: unknown level '{raw_level}' (expected debug, info, warn, \
+                             error or fatal)"
+                        )));
+                    }
+                };
+                let pairs = match positional.get(1) {
+                    Some(Value::Map(pairs)) => pairs.clone(),
+                    _ => {
+                        return Err(RuntimeError::Error(
+                            "log.record expects a Map of field name -> scalar as its second \
+                             argument"
+                                .to_string(),
+                        ));
+                    }
+                };
+                // Validation is unconditional: a field that collides with a
+                // logger-owned key, or carries a nested value, is a program
+                // defect that must not become invisible under a level filter.
+                let fields =
+                    crate::stdlib::log::normalise_fields(&pairs).map_err(RuntimeError::Error)?;
+                if !crate::stdlib::log::should_emit(&level) {
+                    return Ok(Value::Nil);
+                }
+                let epoch_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let timestamp = crate::stdlib::time::epoch_secs_to_iso(epoch_secs);
+                let line = crate::stdlib::log::format_record(&level, &timestamp, &fields);
+                crate::stdlib::log::emit(&line);
+                self.output.push(line);
                 return Ok(Value::Nil);
             }
             // ── http.* methods ── real ureq implementations

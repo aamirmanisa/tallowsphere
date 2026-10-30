@@ -44,6 +44,241 @@ static FORMAT: AtomicU8 = AtomicU8::new(0);
 
 static OUTPUT_PATH: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
+// ── Trace id (G52) ───────────────────────────────────────────────────────────
+//
+// Process-wide, deliberately: task-scope propagation needs the structured
+// concurrency model (G46) that does not exist yet, and a half-propagation
+// mechanism invented now would have to be thrown away when it lands. See
+// docs/spec/STRUCTURED-LOGGING.md.
+
+/// Longest accepted trace id, in characters (spec: "≤64 chars").
+pub const MAX_TRACE_LEN: usize = 64;
+
+static TRACE_ID: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+
+/// The process-wide trace id, or `None` when unset.
+pub fn trace_id() -> Option<String> {
+    TRACE_ID.lock().map(|guard| guard.clone()).unwrap_or(None)
+}
+
+/// Set (`Some`) or clear (`None`) the process-wide trace id.
+///
+/// Refuses an id longer than [`MAX_TRACE_LEN`] *characters* before mutating
+/// anything, so a rejected call leaves the previous id in place.
+pub fn set_trace(id: Option<&str>) -> Result<(), String> {
+    let mut guard = TRACE_ID
+        .lock()
+        .map_err(|_| "log.set_trace: trace id mutex poisoned".to_string())?;
+    match id {
+        None => {
+            *guard = None;
+            Ok(())
+        }
+        Some(raw) => {
+            let len = raw.chars().count();
+            if len > MAX_TRACE_LEN {
+                return Err(format!(
+                    "log.set_trace: trace id is {len} characters, the maximum is {MAX_TRACE_LEN}"
+                ));
+            }
+            *guard = Some(raw.to_string());
+            Ok(())
+        }
+    }
+}
+
+// ── Record fields (G52) ──────────────────────────────────────────────────────
+
+/// Keys the logger writes itself; a field may not claim one.
+pub const RESERVED_KEYS: [&str; 3] = ["level", "ts", "trace"];
+
+/// A field value reduced to something with a defined rendering.
+///
+/// `Private`/`Secret` carry no payload on purpose: the value has already been
+/// replaced by its redaction marker, so it cannot be recovered from here.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldValue {
+    Str(String),
+    Int(i128),
+    Float(f64),
+    Bool(bool),
+    Redacted,
+    Secret,
+}
+
+impl FieldValue {
+    /// The JSON form. Private/Secret render as the marker *string*.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            FieldValue::Str(s) => serde_json::Value::String(s.clone()),
+            FieldValue::Int(n) => serde_json::Number::from_i128(*n)
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
+            FieldValue::Float(f) => serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| serde_json::Value::String(format_float(*f))),
+            FieldValue::Bool(b) => serde_json::Value::Bool(*b),
+            FieldValue::Redacted => serde_json::Value::String("[REDACTED]".to_string()),
+            FieldValue::Secret => serde_json::Value::String("[SECRET]".to_string()),
+        }
+    }
+
+    /// The `k=v` form used by the text format.
+    pub fn to_text(&self) -> String {
+        match self {
+            FieldValue::Str(s) => s.clone(),
+            FieldValue::Int(n) => n.to_string(),
+            FieldValue::Float(f) => format_float(*f),
+            FieldValue::Bool(b) => b.to_string(),
+            FieldValue::Redacted => "[REDACTED]".to_string(),
+            FieldValue::Secret => "[SECRET]".to_string(),
+        }
+    }
+}
+
+fn format_float(f: f64) -> String {
+    if f.is_nan() {
+        "nan".to_string()
+    } else if f.is_infinite() {
+        if f < 0.0 {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        }
+    } else {
+        f.to_string()
+    }
+}
+
+/// One normalised field, in insertion order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordField {
+    pub key: String,
+    pub value: FieldValue,
+}
+
+/// The value-kind name used in refusal messages.
+fn kind_name(value: &Value) -> &'static str {
+    match value {
+        Value::Nil => "Nil",
+        Value::Bool(_) => "Bool",
+        Value::Int(_) => "Int",
+        Value::Float(_) => "Float",
+        Value::String(_) => "String",
+        Value::Module(_) => "Module",
+        Value::Array(_) => "Array",
+        Value::Map(_) => "Map",
+        Value::Ok(_) => "Ok",
+        Value::Err(_) => "Err",
+        Value::Private(_) => "Private",
+        Value::Secret(_) => "Secret",
+        Value::Function { .. } => "Function",
+        Value::Enum { .. } => "Enum",
+        Value::Struct { .. } => "Struct",
+        Value::Range { .. } => "Range",
+        _ => "non-scalar",
+    }
+}
+
+/// The indefinite article for a type name, so refusals read as English.
+fn article(kind: &str) -> &'static str {
+    match kind.chars().next() {
+        Some('A' | 'E' | 'I' | 'O' | 'U') => "an",
+        _ => "a",
+    }
+}
+
+/// Validate a `log.record` field map and reduce it to renderable scalars.
+///
+/// Insertion order is preserved — the text format depends on it. Validation
+/// runs to completion before anything is emitted, so a refusal produces no
+/// partial line.
+pub fn normalise_fields(fields: &[(Value, Value)]) -> Result<Vec<RecordField>, String> {
+    let mut out = Vec::with_capacity(fields.len());
+    for (key, value) in fields {
+        let key = match key {
+            Value::String(k) => k.clone(),
+            other => {
+                return Err(format!(
+                    "log.record: field names must be strings, got {}",
+                    kind_name(other)
+                ));
+            }
+        };
+        if RESERVED_KEYS.contains(&key.as_str()) {
+            return Err(format!(
+                "log.record: field name '{key}' is reserved — the logger owns level, ts and trace"
+            ));
+        }
+        let value = match value {
+            Value::String(s) => FieldValue::Str(s.clone()),
+            Value::Int(n) => FieldValue::Int(*n),
+            Value::Float(f) => FieldValue::Float(*f),
+            Value::Bool(b) => FieldValue::Bool(*b),
+            Value::Private(_) => FieldValue::Redacted,
+            Value::Secret(_) => FieldValue::Secret,
+            other => {
+                return Err(format!(
+                    "log.record: field '{key}' is {} {} value — only string, int, float and bool \
+                     fields are supported (a nested value has no defined rendering)",
+                    article(kind_name(other)),
+                    kind_name(other)
+                ));
+            }
+        };
+        out.push(RecordField { key, value });
+    }
+    Ok(out)
+}
+
+/// Render one record in the configured format.
+///
+/// json: `{"level":…,"ts":…,"msg":…,"trace":…,…fields}` with `msg` taken from
+/// `fields["msg"]` (empty when absent) and the rest merged at the top level.
+/// text: `[LEVEL] [ts] [trace] k=v …`, keys in insertion order.
+pub fn format_record(level: &str, ts: &str, fields: &[RecordField]) -> String {
+    let trace = trace_id();
+    if is_json_format() {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "level".to_string(),
+            serde_json::Value::String(level.to_string()),
+        );
+        obj.insert("ts".to_string(), serde_json::Value::String(ts.to_string()));
+        let msg = fields
+            .iter()
+            .find(|f| f.key == "msg")
+            .map(|f| f.value.to_json())
+            .unwrap_or_else(|| serde_json::Value::String(String::new()));
+        obj.insert("msg".to_string(), msg);
+        if let Some(t) = &trace {
+            obj.insert("trace".to_string(), serde_json::Value::String(t.clone()));
+        }
+        for f in fields {
+            if f.key == "msg" {
+                continue; // already placed, and not duplicated
+            }
+            obj.insert(f.key.clone(), f.value.to_json());
+        }
+        serde_json::Value::Object(obj).to_string()
+    } else {
+        let mut line = format!("[{level}] [{ts}]");
+        if let Some(t) = &trace {
+            line.push_str(&format!(" [{t}]"));
+        }
+        for f in fields {
+            line.push_str(&format!(" {}={}", f.key, f.value.to_text()));
+        }
+        line
+    }
+}
+
+/// The canonical (uppercase) spelling of a level name, or `None` if unknown.
+pub fn canonical_level(name: &str) -> Option<String> {
+    level_rank(name)?;
+    Some(name.to_ascii_uppercase())
+}
+
 // ── Hooks used by the interpreter's log emission ─────────────────────────────
 
 /// Whether a message at `level_name` should be emitted at all.
@@ -100,6 +335,12 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         "set_level" => Some(set_level(args)),
         "set_format" => Some(set_format(args)),
         "set_output" => Some(set_output(args)),
+        // G52: process-wide trace id
+        "set_trace" => Some(set_trace_call(args)),
+        "trace" => Some(Ok(match trace_id() {
+            Some(id) => Value::String(id),
+            None => Value::Nil,
+        })),
 
         _ => None,
     }
@@ -176,6 +417,21 @@ fn set_output(args: Vec<Value>) -> StdlibResult {
     Ok(Value::Nil)
 }
 
+/// `log.set_trace(id)` — a string sets the process-wide id, `nil` clears it.
+fn set_trace_call(args: Vec<Value>) -> StdlibResult {
+    match args.first() {
+        Some(Value::Nil) => {
+            set_trace(None)?;
+            Ok(Value::Nil)
+        }
+        Some(Value::String(s)) => {
+            set_trace(Some(s))?;
+            Ok(Value::Nil)
+        }
+        _ => Err("log.set_trace expects a string trace id, or nil to clear it".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +492,99 @@ mod tests {
     fn unrecognised_level_name_still_emits() {
         // should_emit must not be the thing that silently drops a log line.
         assert!(should_emit("not-a-level"));
+    }
+
+    #[test]
+    fn canonical_level_is_uppercase_and_rejects_unknown() {
+        assert_eq!(canonical_level("info").as_deref(), Some("INFO"));
+        assert_eq!(canonical_level("Warn").as_deref(), Some("WARN"));
+        assert_eq!(canonical_level("verbose"), None);
+    }
+
+    fn f(k: &str, v: Value) -> (Value, Value) {
+        (Value::String(k.to_string()), v)
+    }
+
+    #[test]
+    fn normalise_fields_preserves_insertion_order_and_types() {
+        let fields = vec![
+            f("z", Value::Int(1)),
+            f("a", Value::String("s".into())),
+            f("m", Value::Float(1.5)),
+            f("b", Value::Bool(true)),
+        ];
+        let out = normalise_fields(&fields).expect("fields accepted");
+        let keys: Vec<&str> = out.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, ["z", "a", "m", "b"]);
+        assert_eq!(out[0].value, FieldValue::Int(1));
+        assert_eq!(out[1].value, FieldValue::Str("s".into()));
+        assert_eq!(out[2].value, FieldValue::Float(1.5));
+        assert_eq!(out[3].value, FieldValue::Bool(true));
+        // JSON types survive: a bool is a bool, an int is a number.
+        assert_eq!(out[0].value.to_json(), serde_json::json!(1));
+        assert_eq!(out[3].value.to_json(), serde_json::json!(true));
+        assert_eq!(out[1].value.to_json(), serde_json::json!("s"));
+    }
+
+    #[test]
+    fn normalise_fields_refuses_the_keys_the_logger_owns() {
+        for key in RESERVED_KEYS {
+            let fields = vec![f(key, Value::String("x".into()))];
+            let err = normalise_fields(&fields).expect_err("reserved key must be refused");
+            assert!(
+                err.contains(&format!("'{key}' is reserved")),
+                "error must name the key: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalise_fields_redacts_private_and_secret() {
+        let fields = vec![
+            f("p", Value::Private(Box::new(Value::String("a@b".into())))),
+            f("s", Value::Secret(Box::new(Value::String("tok".into())))),
+        ];
+        let out = normalise_fields(&fields).expect("fields accepted");
+        assert_eq!(out[0].value, FieldValue::Redacted);
+        assert_eq!(out[1].value, FieldValue::Secret);
+        assert_eq!(out[0].value.to_json(), serde_json::json!("[REDACTED]"));
+        assert_eq!(out[1].value.to_json(), serde_json::json!("[SECRET]"));
+        assert_eq!(out[0].value.to_text(), "[REDACTED]");
+        assert_eq!(out[1].value.to_text(), "[SECRET]");
+    }
+
+    #[test]
+    fn normalise_fields_refuses_nested_values_by_name() {
+        let cases = vec![
+            (
+                "arr",
+                Value::Array(vec![Value::Int(1)]),
+                "field 'arr' is an Array value",
+            ),
+            (
+                "mp",
+                Value::Map(vec![f("k", Value::Int(1))]),
+                "field 'mp' is a Map value",
+            ),
+            (
+                "st",
+                Value::Struct {
+                    name: "S".into(),
+                    fields: vec![],
+                },
+                "field 'st' is a Struct value",
+            ),
+        ];
+        for (key, value, expected) in cases {
+            let err = normalise_fields(&[f(key, value)]).expect_err("nested value must be refused");
+            assert!(err.contains(expected), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn normalise_fields_refuses_a_non_string_key() {
+        let err = normalise_fields(&[(Value::Int(1), Value::Int(2))])
+            .expect_err("non-string key must be refused");
+        assert!(err.contains("field names must be strings"), "got: {err}");
     }
 }

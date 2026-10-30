@@ -28,7 +28,9 @@ same level filter and sink as `log.info`:
 
 A `Private` or `Secret` field value is replaced with `[REDACTED]` / `[SECRET]` exactly as `log.info`
 does; an `Array`/`Map`/`Struct` value is refused with a named error rather than stringified, because a
-nested value has no defined rendering here.
+nested value has no defined rendering here. Validation is **not** subject to the level filter: a
+reserved key or a nested value is refused (as an error, terminating the run) even when the level
+filter would have suppressed the line. A defect must not become invisible because a run was quiet.
 
 ### `log.set_trace(id)` / `log.trace()`
 
@@ -38,6 +40,15 @@ nested value has no defined rendering here.
 The trace id is **process-wide, not task-local**, and the spec says so plainly: task-scope propagation
 requires the concurrency model (G46) that does not exist yet. What this row delivers is the field, the
 verb, and the rendering — not a propagation mechanism that would have to be reinvented when G46 lands.
+
+## Implementation plane
+
+`record`, `set_trace` and `trace` are implemented on the **interpreter** plane, alongside
+`log.set_level` / `set_format` / `set_output` and the field rendering of `log.info`. The compiled
+`log.*` arm in `src/codegen.rs` (`emit_stdlib_log`) predates the level/format/sink configuration
+entirely — it prints a bare `[LEVEL] ` prefix to stdout and consults none of it — so it is not a
+reference for this row and does not yet carry `record` or the trace id. The declarations in
+`stdlib/log.tl` are the language surface; the interpreter is where they are bound today.
 
 ## Gates
 

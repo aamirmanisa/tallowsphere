@@ -47,6 +47,23 @@ native fn warn(msg: String, fields: Map<String, Value>)
 // native: structured error log
 native fn error(msg: String, fields: Map<String, Value>)
 
+/// Emit one structured record
+// native: json merges the fields at the top level, with "msg" taken from
+// native: fields["msg"] or ""; text renders [LEVEL] [ts] [trace] k=v in insertion order.
+// native: a field named level/ts/trace is refused (the logger owns those keys);
+// native: Private/Secret values render [REDACTED]/[SECRET]; a nested
+// native: Array/Map/Struct value is refused by name rather than stringified.
+native fn record(level: Level, fields: Map<String, Value>)
+
+/// Set the process-wide trace id
+// native: the id must be at most 64 characters; nil clears it.
+// native: process-wide, not task-local (task-scope propagation needs G46).
+native fn set_trace(id: String?)
+
+/// Read the process-wide trace id
+// native: returns the trace id, or nil when unset
+native fn trace() -> String?
+
 /// Set minimum log level
 // native: sets global minimum log level
 native fn set_level(level: Level)
