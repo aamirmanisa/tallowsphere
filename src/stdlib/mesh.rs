@@ -683,6 +683,7 @@ mod tests {
 
     #[test]
     fn test_mesh_node_new_binds_a_real_port() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let node = mesh_node_new(vec![Value::Int(9000), Value::Array(vec![])]).unwrap();
         let Value::Struct { name, fields } = &node else {
@@ -702,6 +703,7 @@ mod tests {
 
     #[test]
     fn test_mesh_node_join_connects_peers() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let n1 = mesh_node_new(vec![Value::Int(9001), Value::Array(vec![])]).unwrap();
         let n2 = mesh_node_new(vec![
@@ -733,6 +735,7 @@ mod tests {
 
     #[test]
     fn test_mesh_broadcast_and_receive() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let n1 = mesh_node_new(vec![Value::Int(9010), Value::Array(vec![])]).unwrap();
         let id1 = extract_node_id(&n1).unwrap();
@@ -759,6 +762,7 @@ mod tests {
 
     #[test]
     fn test_mesh_gossip_crosses_the_wire() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let a = mesh_node_new(vec![Value::Int(9011), Value::Array(vec![])]).unwrap();
         let b = mesh_node_new(vec![
@@ -791,6 +795,7 @@ mod tests {
 
     #[test]
     fn test_mesh_dht_put_get_roundtrip() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let n1 = mesh_node_new(vec![Value::Int(9020), Value::Array(vec![])]).unwrap();
         let id1 = extract_node_id(&n1).unwrap();
@@ -813,6 +818,7 @@ mod tests {
 
     #[test]
     fn test_mesh_dht_replicates_to_peers() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let a = mesh_node_new(vec![Value::Int(9021), Value::Array(vec![])]).unwrap();
         let b = mesh_node_new(vec![
@@ -841,6 +847,7 @@ mod tests {
 
     #[test]
     fn test_mesh_dht_get_missing_key() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let n = mesh_node_new(vec![Value::Int(9023), Value::Array(vec![])]).unwrap();
         let id = extract_node_id(&n).unwrap();
@@ -854,6 +861,7 @@ mod tests {
 
     #[test]
     fn test_mesh_node_peers_returns_peer_info() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let n1 = mesh_node_new(vec![Value::Int(9030), Value::Array(vec![])]).unwrap();
         let n2 = mesh_node_new(vec![
@@ -884,6 +892,7 @@ mod tests {
 
     #[test]
     fn test_mesh_join_to_a_dead_bootstrap_is_an_error_not_a_fake_peer() {
+        let _mesh_serial = crate::mesh::test_lock::acquire();
         let _lock = setup();
         let a = mesh_node_new(vec![
             Value::Int(9032),
