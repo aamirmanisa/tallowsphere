@@ -28,6 +28,12 @@ pub extern "C" fn tallow_net_connect(addr: *const c_char) -> *mut c_void {
             return std::ptr::null_mut();
         }
     };
+    // Scope gate: deny-by-default, before a socket is opened. The interpreter's
+    // `net.connect` carries the same check, so the two planes refuse together.
+    if let Err(r) = crate::scope::require(addr_str, "CONNECT") {
+        set_last_error(format!("net.connect({addr_str}): {} — {}", r.code(), r.explain()));
+        return std::ptr::null_mut();
+    }
     match TcpStream::connect(addr_str) {
         Ok(stream) => Box::into_raw(Box::new(NetHandle::Stream(stream))) as *mut c_void,
         Err(e) => {

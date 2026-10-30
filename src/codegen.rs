@@ -29709,7 +29709,21 @@ impl<'a> CodeGen<'a> {
                     self.emit_line(&format!(
                         "{result} = call ptr @tallow_net_connect(ptr {addr})"
                     ));
-                    Ok(Some(LLValue::new(result, LLType::I8Ptr)))
+                    // A refused connect returns null with the reason in
+                    // `tallow_last_error`. Returning the null directly made the
+                    // refusal print as `(null)` — a silent no-op that looked
+                    // like a successful call. Substitute the error string so the
+                    // refusal reaches the caller with the same wording the
+                    // interpreter uses. A successful handle is passed through.
+                    let is_null = self.fresh_reg();
+                    self.emit_line(&format!("{is_null} = icmp eq ptr {result}, null"));
+                    let err_ptr = self.fresh_reg();
+                    self.emit_line(&format!("{err_ptr} = call ptr @tallow_last_error()"));
+                    let surfaced = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{surfaced} = select i1 {is_null}, ptr {err_ptr}, ptr {result}"
+                    ));
+                    Ok(Some(LLValue::new(surfaced, LLType::I8Ptr)))
                 } else {
                     self.emit_stdlib_stub("net", method)
                 }

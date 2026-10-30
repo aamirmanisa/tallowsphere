@@ -1722,6 +1722,18 @@ fn net_connect(args: Vec<Value>) -> StdlibResult {
         .map(|v| v.as_string())
         .ok_or_else(|| "net.connect: expected address (host:port) as first argument".to_string())?;
 
+    // Scope gate: deny-by-default, checked before a socket is opened.
+    //
+    // A raw TCP connect used to bypass the authorization register entirely —
+    // `tallow scope check 1.1.1.1` refused while `net.connect("1.1.1.1:443")`
+    // connected, because only `runtime/fetch.rs` consulted the register. The
+    // refused-then-connected pair is what made this the widest egress hole in
+    // the engine. The host is taken from the address so a register entry is
+    // matched against the host, not the `host:port` string.
+    if let Err(r) = crate::scope::require(&addr, "CONNECT") {
+        return Err(format!("net.connect({addr}): {} — {}", r.code(), r.explain()));
+    }
+
     match TcpStream::connect(&addr) {
         Ok(stream) => {
             let id = {
