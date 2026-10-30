@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,10 +69,15 @@ def find_binary(explicit: str | None) -> str:
         p = pathlib.Path(rel)
         if p.exists():
             return str(p.resolve())
-    found = shutil.which("tallow")
-    if found:
-        return found
-    sys.exit("docs_examples: no tallow binary (set TALLOW_BIN or build target/debug/tallow)")
+    # Deliberately NO PATH fallback. A `tallow` on PATH is a different build (this box has an
+    # older one at /usr/local/bin/tallow), and testing the docs against it reports the repo's
+    # examples as wrong when the only wrong thing is the binary. Measured 2026-10-30: after a
+    # reclaim removed target/, the gate fell back to PATH and failed a spec example with
+    # "expected failure ['E0125'], but did not print" instead of saying the binary was missing.
+    sys.exit(
+        "docs_examples: no repo tallow binary — build it (cargo build --bin tallow) or set "
+        "TALLOW_BIN; refusing to fall back to a `tallow` on PATH, which is a different build"
+    )
 
 
 def main() -> int:
