@@ -51,6 +51,7 @@ written (it said 7 shipped), corrected while annotating them:
 | `src/main.rs` | 2 | 16892, 16912 — probe/report runs described as "thread + catch_unwind + hard timeout". Both shipped. |
 | `src/interp.rs` | 4 | 3616, 4645, 4796, 32312 shipped — "prevent panic propagation", "Execute child in catch_unwind for crash isolation". The fifth site was the unit test `secret_type_cannot_be_printed`, which in 4ec8206 stopped being a tautology and now asserts with `assert_eq!`; the count follows the code. |
 | `src/supply_chain.rs` | 2 | `signing_roundtrip_works` — the supply-chain self-test. Both shipped, annotated in place 2026-10-20. |
+| `src/mesh/worker.rs` | 1 | 94 — a worker catches a panicking TASK so one bad task does not take the pool down. Inert in release (`panic = "abort"`); tests run with unwind and use it to prove the worker survives. |
 
 **They do nothing in release.** They work in dev and in `cargo test`, because both use `unwind` — which is
 exactly why two in-tree tests pass while the guarantee they describe is absent from everything that ships:
@@ -83,6 +84,7 @@ artifacts.**
 
 ## Drift gate
 
-`scripts/panic_policy_check.py` reads `Cargo.toml` and counts the call sites, and fails if either stops
-matching what this document says — a new `catch_unwind`, or a changed profile, must update this policy
-rather than silently invalidate it.
+`scripts/panic_policy_check.py` (and `tallow gate panic-policy`) parse the `| file | sites | lines |`
+table above as the declared census, read `Cargo.toml`, and count the call sites. They fail if a file
+is listed here and not in the tree, or in the tree and not here, or if a count or profile drifts —
+a new `catch_unwind`, or a changed profile, must update this policy rather than silently invalidate it.

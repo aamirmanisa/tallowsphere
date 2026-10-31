@@ -2,10 +2,13 @@
 """Panic-policy drift gate (sheet U-J02).
 
 docs/PANIC-POLICY.md states two facts about the tree: the shipped profiles set
-`panic = "abort"`, and there are 7 `catch_unwind` call sites that are therefore
-inert in release (src/main.rs:2, src/interp.rs:5). This recomputes both. If a
-new catch_unwind appears or a profile changes, the policy document is stale and
-this fails -- update the document, do not silently invalidate it.
+`panic = "abort"`, and a `| file | sites | lines |` table lists every
+`catch_unwind` call site. This recomputes both from the tree and from that
+table. If a new catch_unwind appears, a listed file disappears, or a profile
+changes, the policy document is stale and this fails -- update the document,
+do not silently invalidate it.
+
+The table in the document is DECLARED_SITES. There is no second copy here.
 
 Exit: 0 policy matches the tree; 1 drift; 2 could not evaluate.
 """
@@ -20,23 +23,32 @@ REPO = Path(__file__).resolve().parent.parent
 
 # Declared by docs/PANIC-POLICY.md.
 EXPECT_PROFILE_PANIC = {"release": "abort"}   # [profile.max] must inherit release, not restate
-DECLARED_SITES = {
-    "src/main.rs": 2,
-    # 4, not 5: the fifth was the unit test `secret_type_cannot_be_printed`,
-    # which in 4ec8206 stopped being a tautology and now asserts with
-    # `assert_eq!`. This table is a second copy of docs/PANIC-POLICY.md — the
-    # duplication is the defect the lattice lane reports; until the gate parses
-    # the document, the two must be changed together.
-    "src/interp.rs": 4,
-    "src/supply_chain.rs": 2,
-    # A worker catches a panicking TASK so one bad task does not take the pool
-    # down. Inert in release (panic=abort), so this is dev/test crash isolation,
-    # exactly like the interp sites. The catch is still useful: tests run with
-    # unwind and use it to prove the worker survives.
-    "src/mesh/worker.rs": 1,
-}
 # Files that mention catch_unwind but are not shipped code.
 EXCLUDED = {"tests/fuzz_safety.rs"}
+
+HEADER = re.compile(r"^\|\s*file\s*\|\s*sites\s*\|\s*lines\s*\|", re.I)
+ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*(\d+)\s*\|")
+SEP = re.compile(r"^\|[\s:|-]+\|$")
+
+
+def parse_declared_sites(text: str) -> dict[str, int] | None:
+    """Parse the `| file | sites | lines |` table. None if the table is absent."""
+    declared: dict[str, int] = {}
+    in_table = False
+    for line in text.splitlines():
+        s = line.strip()
+        if not in_table:
+            if HEADER.match(s):
+                in_table = True
+            continue
+        if not s.startswith("|"):
+            break
+        if SEP.match(s):
+            continue
+        m = ROW.match(s)
+        if m:
+            declared[m.group(1)] = int(m.group(2))
+    return declared or None
 
 
 def load_profiles(path: Path):
@@ -77,6 +89,17 @@ def main() -> int:
     if profiles is None:
         return 2
 
+    policy_path = REPO / "docs" / "PANIC-POLICY.md"
+    try:
+        policy_text = policy_path.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"  could not parse {policy_path}: {e}")
+        return 2
+    declared = parse_declared_sites(policy_text)
+    if declared is None:
+        print(f"  could not parse {policy_path}: no `| file | sites | lines |` table")
+        return 2
+
     for name, want in EXPECT_PROFILE_PANIC.items():
         got = profiles.get(name, {}).get("panic", "<unset>")
         if got == want:
@@ -113,7 +136,7 @@ def main() -> int:
             if n:
                 found[rel] = n
 
-    for rel, want in sorted(DECLARED_SITES.items()):
+    for rel, want in sorted(declared.items()):
         got = found.get(rel, 0)
         if got == want:
             rows.append(("call-sites", "pass", f"{rel}: {got}"))
@@ -122,7 +145,7 @@ def main() -> int:
             rc = 1
 
     for rel, got in sorted(found.items()):
-        if rel not in DECLARED_SITES:
+        if rel not in declared:
             rows.append(("call-sites", "DRIFT", f"{rel}: {got} undocumented call site(s)"))
             rc = 1
 

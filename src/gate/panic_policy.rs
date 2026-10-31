@@ -1,9 +1,11 @@
 //! Panic-policy drift gate: recompute what `docs/PANIC-POLICY.md` claims.
 //!
 //! Rust port of `scripts/panic_policy_check.py`. The document states two facts
-//! about the tree — the shipped profiles set `panic = "abort"`, and there are a
-//! fixed number of `catch_unwind` call sites. This recomputes both from the tree
-//! so the document cannot silently go stale.
+//! about the tree — the shipped profiles set `panic = "abort"`, and a
+//! `| file | sites | lines |` table lists every `catch_unwind` call site. This
+//! parses that table as the declared census and recomputes both facts from the
+//! tree so the document cannot silently go stale. There is no second copy of
+//! the counts in this file.
 //!
 //! Two properties the Python relied on and this preserves deliberately:
 //!
@@ -23,18 +25,6 @@ use std::path::{Path, PathBuf};
 /// Declared by `docs/PANIC-POLICY.md`. `[profile.max]` must *inherit* release
 /// rather than restate `panic`.
 const EXPECT_PROFILE_PANIC: &[(&str, &str)] = &[("release", "abort")];
-
-/// Declared call-site census, per file.
-const DECLARED_SITES: &[(&str, usize)] = &[
-    ("src/main.rs", 2),
-    ("src/interp.rs", 5),
-    ("src/supply_chain.rs", 2),
-    // A worker catches a panicking TASK so one bad task does not take the pool
-    // down. Inert in release (panic=abort), so this is dev/test crash
-    // isolation, exactly like the interp sites. The catch is still useful:
-    // tests run with unwind and use it to prove the worker survives.
-    ("src/mesh/worker.rs", 1),
-];
 
 /// Files that mention `catch_unwind` but are not shipped code.
 const EXCLUDED: &[&str] = &["tests/fuzz_safety.rs"];
@@ -158,6 +148,66 @@ fn rel_string(p: &Path) -> String {
     s.strip_prefix("./").map(str::to_owned).unwrap_or(s)
 }
 
+/// Parse the `| file | sites | lines |` table. `None` if the table is absent.
+fn parse_declared_sites(text: &str) -> Option<Vec<(String, usize)>> {
+    let mut declared: Vec<(String, usize)> = Vec::new();
+    let mut in_table = false;
+    for line in text.lines() {
+        let s = line.trim();
+        if !in_table {
+            if is_file_sites_header(s) {
+                in_table = true;
+            }
+            continue;
+        }
+        if !s.starts_with('|') {
+            break;
+        }
+        if is_table_separator(s) {
+            continue;
+        }
+        if let Some((file, n)) = parse_file_sites_row(s) {
+            declared.push((file, n));
+        }
+    }
+    if declared.is_empty() {
+        None
+    } else {
+        Some(declared)
+    }
+}
+
+fn is_file_sites_header(s: &str) -> bool {
+    let cells: Vec<&str> = s
+        .split('|')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .collect();
+    cells.len() >= 3
+        && cells[0].eq_ignore_ascii_case("file")
+        && cells[1].eq_ignore_ascii_case("sites")
+        && cells[2].eq_ignore_ascii_case("lines")
+}
+
+fn is_table_separator(s: &str) -> bool {
+    s.chars()
+        .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
+}
+
+fn parse_file_sites_row(s: &str) -> Option<(String, usize)> {
+    let cells: Vec<&str> = s.split('|').map(str::trim).collect();
+    // Leading '|' yields an empty first cell.
+    if cells.len() < 3 {
+        return None;
+    }
+    let file = cells[1].trim_matches('`');
+    if file.is_empty() {
+        return None;
+    }
+    let n = cells[2].parse::<usize>().ok()?;
+    Some((file.to_string(), n))
+}
+
 /// Minimal TOML reader for the two facts that matter: `[profile.<name>]`'s
 /// `panic` and `inherits` keys. Avoids pulling a TOML dependency into the gate
 /// path; anything it cannot see reads as absent, which is what the policy check
@@ -196,6 +246,21 @@ pub fn check(root: &Path) -> Report {
     let manifest_path = root.join("Cargo.toml");
     let Ok(manifest) = fs::read_to_string(&manifest_path) else {
         eprintln!("  could not parse {}: unreadable", manifest_path.display());
+        r.unevaluable = true;
+        return r;
+    };
+
+    let policy_path = root.join("docs/PANIC-POLICY.md");
+    let Ok(policy) = fs::read_to_string(&policy_path) else {
+        eprintln!("  could not parse {}: unreadable", policy_path.display());
+        r.unevaluable = true;
+        return r;
+    };
+    let Some(mut declared) = parse_declared_sites(&policy) else {
+        eprintln!(
+            "  could not parse {}: no `| file | sites | lines |` table",
+            policy_path.display()
+        );
         r.unevaluable = true;
         return r;
     };
@@ -253,7 +318,6 @@ pub fn check(root: &Path) -> Report {
     }
     found.sort();
 
-    let mut declared: Vec<(&str, usize)> = DECLARED_SITES.to_vec();
     declared.sort();
     for (rel, want) in &declared {
         let got = found
@@ -272,7 +336,7 @@ pub fn check(root: &Path) -> Report {
     }
 
     for (rel, got) in &found {
-        if !DECLARED_SITES.iter().any(|(d, _)| d == rel) {
+        if !declared.iter().any(|(d, _)| d == rel) {
             r.drift(
                 "call-sites",
                 format!("{rel}: {got} undocumented call site(s)"),
@@ -286,6 +350,8 @@ pub fn check(root: &Path) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
     #[test]
     fn word_boundary_excludes_longer_identifiers() {
@@ -344,6 +410,108 @@ mod tests {
         assert_eq!(
             profile_keys(manifest, "max"),
             (None, Some("release".into()))
+        );
+    }
+
+    #[test]
+    fn parse_reads_file_sites_table_not_the_profile_table() {
+        let text = "\
+| profile | `panic` | who |\n\
+|---|---|---|\n\
+| `[profile.release]` | `abort` | everything |\n\
+\n\
+| file | sites | lines |\n\
+|---|---|---|\n\
+| `src/main.rs` | 2 | 1, 2 |\n\
+| `src/interp.rs` | 4 | 3 |\n\
+| `src/supply_chain.rs` | 2 | 4 |\n\
+| `src/mesh/worker.rs` | 1 | 5 |\n\
+";
+        let got = parse_declared_sites(text).expect("table");
+        assert_eq!(
+            got,
+            vec![
+                ("src/main.rs".into(), 2),
+                ("src/interp.rs".into(), 4),
+                ("src/supply_chain.rs".into(), 2),
+                ("src/mesh/worker.rs".into(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_returns_none_without_the_table() {
+        assert!(parse_declared_sites("# no table here\n").is_none());
+    }
+
+    fn fixture_manifest() -> &'static str {
+        "[profile.release]\npanic = \"abort\"\n\n[profile.max]\ninherits = \"release\"\n"
+    }
+
+    fn write_policy(root: &Path, rows: &str) {
+        fs::create_dir_all(root.join("docs")).unwrap();
+        let text = format!(
+            "| profile | panic | who |\n|---|---|---|\n| `[profile.release]` | `abort` | all |\n\n| file | sites | lines |\n|---|---|---|\n{rows}"
+        );
+        fs::write(root.join("docs/PANIC-POLICY.md"), text).unwrap();
+    }
+
+    fn write_call(root: &Path, rel: &str) {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        // Built at runtime: a literal token in this file would be an
+        // undocumented call site under src/.
+        let body = format!("fn f() {{ let _ = {}{}|| {{}}); }}\n", "catch_unwind", "(");
+        fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn extra_file_in_document_is_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), fixture_manifest()).unwrap();
+        write_policy(root, "| `src/ghost.rs` | 1 | missing |\n");
+        let report = check(root);
+        assert!(report.drift, "{:?}", report.lines());
+        let text = report.lines().join("\n");
+        assert!(
+            text.contains("src/ghost.rs"),
+            "document-only file must be named\n{text}"
+        );
+    }
+
+    #[test]
+    fn extra_file_in_tree_is_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), fixture_manifest()).unwrap();
+        write_policy(root, "| `src/ok.rs` | 1 | declared |\n");
+        write_call(root, "src/ok.rs");
+        write_call(root, "src/probe.rs");
+        let report = check(root);
+        assert!(report.drift, "{:?}", report.lines());
+        let text = report.lines().join("\n");
+        assert!(
+            text.contains("src/probe.rs") && text.contains("undocumented"),
+            "tree-only file must be named\n{text}"
+        );
+    }
+
+    #[test]
+    fn mutated_count_is_drift() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), fixture_manifest()).unwrap();
+        write_policy(root, "| `src/ok.rs` | 2 | mutated |\n");
+        write_call(root, "src/ok.rs");
+        let report = check(root);
+        assert!(report.drift, "{:?}", report.lines());
+        let text = report.lines().join("\n");
+        assert!(
+            text.contains("src/ok.rs") && text.contains("policy says 2"),
+            "count drift must name the file\n{text}"
         );
     }
 }
