@@ -69,7 +69,7 @@ fn stealth_profile() -> String {
 /// connection — i.e. an interpreter program that forgot to export `TALLOW_TOR`
 /// leaked the box IP while the compiled path did not.
 /// The host component of a URL, lowercased, with any port and userinfo removed.
-fn url_host(url: &str) -> String {
+pub(crate) fn url_host(url: &str) -> String {
     let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
     let host_port = authority
@@ -91,7 +91,7 @@ fn url_host(url: &str) -> String {
 /// *name* — including `localhost` — is resolved through `/etc/hosts` or DNS, so treating one as
 /// "necessarily this machine" would make the bypass a leak waiting on a poisoned resolver. An
 /// IP literal is the only spelling that is loopback by construction.
-fn is_loopback_literal(url: &str) -> bool {
+pub(crate) fn is_loopback_literal(url: &str) -> bool {
     url_host(url)
         .parse::<std::net::IpAddr>()
         .map(|ip| ip.is_loopback())
@@ -594,6 +594,15 @@ pub fn unified_get(
 /// host so the result can be recorded against it. With no ledger configured this
 /// is a no-op returning the host.
 fn egress_guard(url: &str, method: &str) -> Result<String, String> {
+    // Scope gate first: deny-by-default, and before the ledger, the delay or
+    // any request construction. The register is the authorization decision —
+    // the ledger is a spend meter, not a permission — so a refusal here costs
+    // nothing and no socket is opened. This is the interpreter plane's half of
+    // the gate; `runtime/fetch.rs` carries the same check for the compiled
+    // plane, and both name the refusal in the same words.
+    if let Err(r) = crate::scope::require(url, method) {
+        return Err(format!("{} — {}", r.code(), r.explain()));
+    }
     let host = crate::net::egress::host_of(url);
     crate::scope_jurisdiction::check(&host)?;
     if let Some(ledger) = crate::net::egress::ledger() {
@@ -799,6 +808,24 @@ fn http_batch(args: Vec<Value>) -> StdlibResult {
         .into_iter()
         .map(|url| {
             let started = Instant::now();
+            // Register gate, before the loopback branch and before any agent.
+            // Batch keeps its per-URL error contract — a refusal boxes as that
+            // URL's `Err` entry (kind `egress_refused`) rather than aborting the
+            // whole batch — but the refusal still happens before a socket, and
+            // it names the same ground the single-verb path does.
+            if let Err(r) = crate::scope::require(&url, "GET") {
+                let reason = format!("{} — {}", r.code(), r.explain());
+                if let Some(ledger) = crate::net::egress::ledger() {
+                    ledger.record_refusal(&crate::net::egress::host_of(&url), &url, "GET", &reason);
+                }
+                return batch_item(
+                    &url,
+                    false,
+                    elapsed_ms_since(started) as i128,
+                    Value::Nil,
+                    Some(("egress_refused", None, false, reason)),
+                );
+            }
             // Non-loopback targets keep the existing path unchanged (stealth impersonation plus the
             // egress proxy), so this change is scoped to the case the typed model needs.
             if !is_loopback_literal(&url) {
@@ -900,6 +927,17 @@ fn http_post(args: Vec<Value>) -> StdlibResult {
     let headers = extract_headers(&args[2..]);
     let timeout = extract_timeout(&args[2..]);
 
+    // Register check before the stealth branch and before any socket. This was
+    // the widest hole in the class: POST had NO guard at all, so an
+    // unregistered host spent a real connection attempt and returned a
+    // transport error as data. A refusal here is a fatal error (the dispatch
+    // layer turns it into `runtime error:` and a non-zero exit) — it must not
+    // be handed back as `Value::Err`, which is the shape a program can print
+    // and continue from with rc=0.
+    if let Err(reason) = egress_guard(&url, "POST") {
+        return Err(format!("http.post: {reason}"));
+    }
+
     #[cfg(feature = "stealth-http")]
     {
         // Loopback is excluded: see `is_loopback_target`.
@@ -975,6 +1013,11 @@ fn http_request(method: &str, args: Vec<Value>) -> StdlibResult {
     let body = args.get(1).map(|v| v.as_string()).unwrap_or_default();
     let headers = extract_headers(&args[2..]);
     let timeout = extract_timeout(&args[2..]);
+    // Same register gate as GET/POST, keyed by the REAL method so a grant that
+    // names PUT or DELETE is required rather than implied by a GET grant.
+    if let Err(reason) = egress_guard(&url, method) {
+        return Err(format!("http.{}: {reason}", method.to_lowercase()));
+    }
     let agent = get_agent_for(&url, timeout);
 
     let method_lower = method.to_lowercase();

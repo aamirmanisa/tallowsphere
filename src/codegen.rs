@@ -30114,6 +30114,15 @@ impl<'a> CodeGen<'a> {
                     let url_str = self.coerce_to_string(&url)?;
                     let resp = self.fresh_reg();
                     self.emit_line(&format!("{resp} = call ptr @tallow_fetch(ptr {url_str})"));
+                    // Fail-closed, exactly like `net.connect`: the FFI returns
+                    // null with the reason in `tallow_last_error` for a scope
+                    // refusal (deny-by-default, checked inside `tallow_fetch`),
+                    // a proxy refusal or a socket failure. Without this call the
+                    // null reached `print` as `(null)` and the program exited 0:
+                    // a refusal measured as a successful no-op. Statuses stay
+                    // data — the agent is built with `http_status_as_error(false)`
+                    // so a 404 is a response handle, not a null.
+                    self.emit_line(&format!("call void @tallow_check_string(ptr {resp})"));
                     Ok(Some(LLValue::new(resp, LLType::I8Ptr)))
                 } else {
                     Ok(Some(LLValue::new("null".into(), LLType::I8Ptr)))
@@ -30143,6 +30152,14 @@ impl<'a> CodeGen<'a> {
                     self.emit_line(&format!(
                         "{resp} = call ptr @tallow_fetch_method(ptr {url_str}, ptr {method_str}, ptr {body_str}, i64 {body_len})"
                     ));
+                    // Same fatal guard as GET: a null means the register
+                    // refused the REAL method (`crate::scope::require` inside
+                    // `tallow_fetch_method`), the proxy refused, or the socket
+                    // failed. `tallow_check_string` prints `tallow_last_error`
+                    // and exits 1, so a denied POST cannot be printed as
+                    // `(null)` and continued past with rc=0. A non-2xx status is
+                    // NOT a null here (http_status_as_error(false)).
+                    self.emit_line(&format!("call void @tallow_check_string(ptr {resp})"));
                     Ok(Some(LLValue::new(resp, LLType::I8Ptr)))
                 } else {
                     Ok(Some(LLValue::new("null".into(), LLType::I8Ptr)))
