@@ -4,9 +4,13 @@
 # This is the second half of a two-file record. `deny.toml` covers the
 # cargo-deny gate; this file covers `cargo audit`, which resolves the lockfile
 # including optional-feature crates that cargo-deny's feature resolution can miss.
-# The reason for every entry below lives in
+# The reason for every entry below lives
 # docs/operations/dependency-exceptions-2026-10-25.md — read it before changing
-# anything here. Same expiry: 2027-01-31.
+# anything here. That file was removed by the 2026-10-31 docs purge and no longer
+# exists in this tree; the per-entry comments below are the surviving record.
+# Same expiry: 2027-01-31, enforced by scripts/check_deny_expiry.py against the
+# marker below (release gate + CI) rather than by the comment alone.
+# review-deadline: 2027-01-31
 [advisories]
 ignore = [
     # crypto-bigint 0.5.5 — timing variability. Reached via elliptic-curve 0.13
