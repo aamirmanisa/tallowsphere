@@ -30,6 +30,20 @@ pub fn dispatch_method(object: &Value, method: &str, _args: Vec<Value>) -> Optio
 }
 
 /// Detect GraphQL endpoints by scanning common URL patterns and searching page HTML.
+/// Deny-by-default egress gate for this module.
+///
+/// `graphql` opens sockets through `runtime::egress_http` in three places and,
+/// until this was added, consulted no authorization register at all — measured
+/// 2026-10-31: `grep -c 'scope::' src/stdlib/graphql.rs` → 0, while the same
+/// question for `stdlib/http.rs` returns a check on every verb. The register
+/// answers with the same sentence the rest of the engine uses, so a refusal here
+/// reads like a refusal anywhere else.
+fn gate(url: &str, method: &str, what: &str) -> Result<(), String> {
+    crate::scope::require(url, method)
+        .map(|_| ())
+        .map_err(|r| format!("{what}: {} — {}", r.code(), r.explain()))
+}
+
 fn graphql_detect(args: Vec<Value>) -> StdlibResult {
     let page_url = match args.first() {
         Some(Value::String(s)) => s.clone(),
@@ -43,6 +57,8 @@ fn graphql_detect(args: Vec<Value>) -> StdlibResult {
             return Err("graphql.graphql_detect: missing page_url argument".to_string());
         }
     };
+
+    gate(&page_url, "GET", "graphql.graphql_detect")?;
 
     // Parse the base URL
     let base = extract_base_url(&page_url);
@@ -229,6 +245,7 @@ fn graphql_introspect(args: Vec<Value>) -> StdlibResult {
             );
         }
     };
+    gate(&endpoint_url, "POST", "graphql.graphql_introspect")?;
 
     let introspection_query = r#"{"query":"{ __schema { types { name kind } } }"}"#;
 
@@ -269,6 +286,7 @@ fn graphql_query(args: Vec<Value>) -> StdlibResult {
             ));
         }
     };
+    gate(&endpoint_url, "POST", "graphql.graphql_query")?;
 
     let query = match &args[1] {
         Value::String(s) => s.clone(),
