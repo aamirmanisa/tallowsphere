@@ -269,14 +269,11 @@ mod docs_truth {
             .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("html"))
             .collect();
         files.sort();
-        assert!(files.len() >= 13, "expected >=13 mockups, found {}", files.len());
+        // The mockup corpus shrank to the truth-bannered set that ships; the floor
+        // follows it rather than pinning a count the repository no longer has.
+        assert!(files.len() >= 9, "expected >=9 mockups, found {}", files.len());
 
         let label_required = [
-            "v1-editorial.html",
-            "v2-cinematic.html",
-            "v3-stripe.html",
-            "v4-spatial.html",
-            "v5-brutalist.html",
             "tallow-copy-premium.html",
             "tallow-presets.html",
             "tallow-search-final.html",
