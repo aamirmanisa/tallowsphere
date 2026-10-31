@@ -18,7 +18,7 @@
 //! - `identity_mixing.tl`          → E5001
 //! - `direct_egress_optout.tl`     → E5002
 //! - `fingerprint_reuse.tl`        → E5003
-//! - `missing_plan_annotations.tl` → E5004 (legacy E0100/E0400/W1900 come
+//! - `missing_plan_annotations.tl` → E5004 (legacy E0100/E0160/W1900 come
 //!   from the sibling per-function passes and are NOT exercised here)
 //! - `missing_burn_plan.tl`        → E5004 only — additive proof (AGT-08:
 //!   "E5004 only"; its E5004 message must name @burn_plan alone)
@@ -159,7 +159,7 @@ fn opsec_corpus_fingerprint_reuse() {
 
 #[test]
 fn opsec_corpus_missing_plan_annotations() {
-    // Fixture header: `// expected: E5004 (plus existing E0100/E0400/W1900)`.
+    // Fixture header: `// expected: E5004 (plus existing E0100/E0160/W1900)`.
     // Those legacy codes are emitted by the sibling per-function passes
     // (legal_pass/stealth_pass/cra_pass), which this corpus consumer does not
     // run; the new program-level gate must produce ONE combined E5004 here.

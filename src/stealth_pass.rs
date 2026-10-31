@@ -9,7 +9,7 @@
 //! - Evasions values are valid
 //! - @stealth is always accompanied by @legal
 //!
-//! Error codes: E0400-E0404
+//! Error codes: E0160-E0164
 
 use crate::ast::*;
 use crate::error::{Diagnostic, Diagnostics};
@@ -116,11 +116,11 @@ impl<'a> StealthPass<'a> {
         let stealth_ann = f.annotations.iter().find(|a| a.name == "stealth");
         let has_legal = f.annotations.iter().any(|a| a.name == "legal");
 
-        // ── E0400: Browser navigation function missing @stealth ──────────
+        // ── E0160: Browser navigation function missing @stealth ──────────
         if uses_browser_nav && stealth_ann.is_none() {
             self.diags.push(
                 Diagnostic::error(
-                    "E0400",
+                    "E0160",
                     format!(
                         "function `{}` uses browser navigation but has no @stealth annotation",
                         f.name
@@ -139,11 +139,11 @@ impl<'a> StealthPass<'a> {
 
         let info = StealthInfo::from_annotation(ann);
 
-        // ── E0403: @stealth present without @legal ───────────────────────
+        // ── E0163: @stealth present without @legal ───────────────────────
         if !has_legal {
             self.diags.push(
                 Diagnostic::error(
-                    "E0403",
+                    "E0163",
                     format!(
                         "@stealth on `{}` requires a @legal annotation (stealth requires legal basis)",
                         f.name
@@ -154,12 +154,12 @@ impl<'a> StealthPass<'a> {
             );
         }
 
-        // ── E0401: Unknown stealth profile ───────────────────────────────
+        // ── E0161: Unknown stealth profile ───────────────────────────────
         if let Some(ref profile) = info.profile {
             if !VALID_PROFILES.contains(&profile.as_str()) {
                 self.diags.push(
                     Diagnostic::error(
-                        "E0401",
+                        "E0161",
                         format!("unknown stealth profile: .{profile}"),
                         info.span,
                     )
@@ -175,12 +175,12 @@ impl<'a> StealthPass<'a> {
             }
         }
 
-        // ── E0402: Invalid evasions value ────────────────────────────────
+        // ── E0162: Invalid evasions value ────────────────────────────────
         if let Some(ref evasions) = info.evasions {
             if !VALID_EVASIONS.contains(&evasions.as_str()) {
                 self.diags.push(
                     Diagnostic::error(
-                        "E0402",
+                        "E0162",
                         format!("invalid stealth evasions value: .{evasions}"),
                         info.span,
                     )
@@ -196,7 +196,7 @@ impl<'a> StealthPass<'a> {
             }
         }
 
-        // ── E0404: Inconsistent profile configuration (warning) ──────────
+        // ── E0164: Inconsistent profile configuration (warning) ──────────
         // A mobile profile (.mobile_android / .mobile_ios) emulates a physical device and
         // depends on the full standard evasion bundle to mask that environment. Selecting
         // `.minimal` or `.custom` evasions on a mobile profile strips the mobile
@@ -209,7 +209,7 @@ impl<'a> StealthPass<'a> {
             {
                 let evasions = info.evasions.as_deref().unwrap_or("all");
                 self.diags.warning(
-                    "E0404",
+                    "E0164",
                     format!(
                         "@stealth on `{}` uses mobile profile `{}` with evasions: .{} — mobile \
                          profiles require the full evasion bundle (.all) to avoid leaking the mobile \
@@ -254,8 +254,8 @@ fn scrape(url: String) { browser.goto(url) }"#,
         );
         assert!(diags.has_errors());
         assert!(
-            diags.items.iter().any(|d| d.code == "E0400"),
-            "expected E0400, got: {:?}",
+            diags.items.iter().any(|d| d.code == "E0160"),
+            "expected E0160, got: {:?}",
             diags.items
         );
     }
@@ -268,8 +268,8 @@ fn scrape(url: String) { browser.goto(url) }"#,
         );
         assert!(diags.has_errors());
         assert!(
-            diags.items.iter().any(|d| d.code == "E0403"),
-            "expected E0403, got: {:?}",
+            diags.items.iter().any(|d| d.code == "E0163"),
+            "expected E0163, got: {:?}",
             diags.items
         );
     }
@@ -303,8 +303,8 @@ fn scrape(url: String) { browser.goto(url) }"#,
         );
         assert!(diags.has_errors());
         assert!(
-            diags.items.iter().any(|d| d.code == "E0401"),
-            "expected E0401, got: {:?}",
+            diags.items.iter().any(|d| d.code == "E0161"),
+            "expected E0161, got: {:?}",
             diags.items
         );
     }
@@ -318,8 +318,8 @@ fn scrape(url: String) { browser.goto(url) }"#,
         );
         assert!(diags.has_errors());
         assert!(
-            diags.items.iter().any(|d| d.code == "E0402"),
-            "expected E0402, got: {:?}",
+            diags.items.iter().any(|d| d.code == "E0162"),
+            "expected E0162, got: {:?}",
             diags.items
         );
     }
@@ -402,7 +402,7 @@ fn scrape(url: String) { browser.goto(url) }"#,
 fn nav(url: String) { page.navigate(url) }"#,
         );
         assert!(
-            diags.items.iter().any(|d| d.code == "E0400"),
+            diags.items.iter().any(|d| d.code == "E0160"),
             "page.navigate should require @stealth: {:?}",
             diags.items
         );
@@ -414,7 +414,7 @@ fn nav(url: String) { page.navigate(url) }"#,
             r#"@legal(basis: .public_data, purpose: "open")
 fn open(url: String) { browser.new_page(url) }"#,
         );
-        assert!(diags.items.iter().any(|d| d.code == "E0400"));
+        assert!(diags.items.iter().any(|d| d.code == "E0160"));
     }
 
     #[test]
@@ -423,7 +423,7 @@ fn open(url: String) { browser.new_page(url) }"#,
             r#"@legal(basis: .public_data, purpose: "start")
 fn start() { browser.launch() }"#,
         );
-        assert!(diags.items.iter().any(|d| d.code == "E0400"));
+        assert!(diags.items.iter().any(|d| d.code == "E0160"));
     }
 
     #[test]
@@ -455,8 +455,8 @@ fn scrape(url: String) { browser.goto(url) }"#,
 @legal(basis: .public_data, purpose: "scraping")
 fn scrape(url: String) { browser.goto(url) }"#,
         );
-        let e0400_count = diags.items.iter().filter(|d| d.code == "E0400").count();
-        assert_eq!(e0400_count, 1, "only the navigation function should get E0400");
+        let e0400_count = diags.items.iter().filter(|d| d.code == "E0160").count();
+        assert_eq!(e0400_count, 1, "only the navigation function should get E0160");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! This pass is the *program-policy* half of Tallow's OPSEC enforcement. The
 //! per-function gates stay where they are (`opsec_pass.rs` E0900 compartment
-//! isolation, `stealth_pass.rs` E0400/E0403, `legal_pass.rs` E0100,
+//! isolation, `stealth_pass.rs` E0160/E0163, `legal_pass.rs` E0100,
 //! `cra_pass.rs` W1900); this pass closes the "collection run leaks identity
 //! by composition" gap by policing the *mission as a whole*:
 //!
@@ -919,7 +919,7 @@ impl<'a> OpsecGatesPass<'a> {
 
         // ONE combined error listing ONLY the missing categories (present
         // ones must not appear — the required-bundle recap lives in the
-        // module doc). Complements, not replaces, E0100/E0400/W1900.
+        // module doc). Complements, not replaces, E0100/E0160/W1900.
         let mut help = String::from(
             "add the missing annotations to `main` (program scope). \
              @burn_plan(persona: \"<id>\", after: .run, method: .revoke_and_quarantine, \

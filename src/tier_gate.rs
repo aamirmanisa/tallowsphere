@@ -64,7 +64,7 @@
 //! # Relation to the other gates
 //! This gate decides which sensitive modules *exist* for a build/profile; it
 //! complements — does not replace — the per-function `@legal` (`E0100`),
-//! `@stealth` (`E0400–E0404`), and `@cra_class` (`W1900`/`E1900–E1903`) gates.
+//! `@stealth` (`E0160–E0164`), and `@cra_class` (`W1900`/`E1900–E1903`) gates.
 //! Runtime tier checks keep [`crate::tiers::module_allowed`] as the single
 //! authorization query (defense in depth; no runtime call site is wired yet):
 //! a compile-time pass never authorizes a runtime call whose tier check fails.
