@@ -417,33 +417,32 @@ fn decode_bytes(data: *const c_char) -> Result<Vec<u8>, String> {
 }
 
 /// `s[i]` on a String -> a one-character String (a fresh C string), or null
-/// (with `tallow_last_error` set) when the index is past the end.
+/// (with `tallow_last_error` set) when the index is past the character count.
 ///
 /// Strings and native arrays share the `i8*` type, so the index lowering used
-/// to treat every `i8*` as a length-prefixed array: it read the string's first
-/// bytes as an element count and then loaded character data as an i64 slot,
-/// printing a pointer-shaped number instead of `h`. A string has no count
-/// header; it is indexed by BYTE. The interpreter's `Value::String` index is
-/// also by byte, so a multi-byte character answers its first byte here exactly
-/// as it does there — the planes stay in agreement.
+/// to treat every `i8*` as a length-prefixed array. Indexing is by Unicode
+/// scalar (the interpreter's `s.chars().nth(i)`), not by UTF-8 byte: `"αβ"[0]`
+/// is `α`, and an out-of-range index is a runtime error with the same sentence
+/// the tree-walker prints (`index N out of bounds`). Codegen aborts on the
+/// null via `tallow_check_string`.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_string_index(s: *const c_char, idx: i64) -> *mut c_char {
     let Some(text) = (unsafe { cstr_to_str(s) }) else {
         set_last_error("expected a string to index".to_string());
         return std::ptr::null_mut();
     };
-    if idx < 0 || (idx as usize) >= text.len() {
-        set_last_error(format!(
-            "index {idx} out of bounds (string length {})",
-            text.len()
-        ));
+    if idx < 0 {
+        set_last_error(format!("index {idx} out of bounds"));
         return std::ptr::null_mut();
     }
-    let byte = text.as_bytes()[idx as usize];
-    // A byte of a multi-byte sequence is not valid UTF-8 on its own; report the
-    // byte's own character rather than a lossy replacement, so the answer is
-    // the byte the interpreter's indexing also selects.
-    string_to_cstr(&(byte as char).to_string())
+    let i = idx as usize;
+    match text.chars().nth(i) {
+        Some(c) => string_to_cstr(&c.to_string()),
+        None => {
+            set_last_error(format!("index {i} out of bounds"));
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// `Bytes.len` -> the **decoded** byte count, or `-1` (with `tallow_last_error`

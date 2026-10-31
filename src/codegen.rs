@@ -8253,8 +8253,10 @@ void tallow_async_runtime_shutdown(void) {
                     // path treated every i8* receiver as an array: `"hello"[0]`
                     // read the string's first bytes as a count and then loaded
                     // character data as if it were an i64 slot, printing a
-                    // pointer-shaped number. A string has no count header, so it
-                    // is indexed by BYTE through the runtime, nil-checked first.
+                    // pointer-shaped number. A string has no count header; the
+                    // runtime indexes by Unicode scalar (matching the interpreter)
+                    // and returns null + last_error on OOB. `tallow_check_string`
+                    // turns that into `runtime error: index N out of bounds`.
                     if self.expr_is_string_value(object) {
                         let first = self.fresh_reg();
                         self.emit_line(&format!("{first} = load i8, ptr {}", obj.reg));
@@ -8276,6 +8278,7 @@ void tallow_async_runtime_shutdown(void) {
                             "{out} = call ptr @tallow_string_index(ptr {}, i64 {idx_i64})",
                             obj.reg
                         ));
+                        self.emit_line(&format!("call void @tallow_check_string(ptr {out})"));
                         return Ok(LLValue::new(out, LLType::I8Ptr));
                     }
                     // Array index: skip length prefix (element 0), so actual index = idx + 1
