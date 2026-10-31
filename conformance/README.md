@@ -29,8 +29,8 @@ Each case runs on BOTH planes (`--interpret` and `--require-native`) and must
 agree with its `.json` expectation, so a divergent plane fails instead of
 silently shipping.
 
-Cases: 27 · files: 54 ·
-tree sha256: c8852d5dc5c9a6aa022c182e5ab243772fe994ad0cc22b165afa835b04bd00e0
+Cases: 29 · files: 58 ·
+tree sha256: 0e530006afef0e039b579d8012195f1e691b8aa32e73115ca3963c40c47b8293
 
 The digest covers **every file** in `cases/`, computed as
 `find cases -type f | sort | xargs sha256sum | sha256sum`. It is the whole tree,
