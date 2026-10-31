@@ -478,9 +478,14 @@ jobs:
         run: cargo build --locked --bin tallow
       - name: Run the conformance corpus
         # Was release-only until 2026-10-23: a language change could pass every
-        # unit test and only be caught at the next tag. The corpus is small
-        # (18 programs) and runs in under a minute once the binary exists.
-        run: python3 conformance/run.py --tallow target/debug/tallow
+        # unit test and only be caught at the next tag. The runner is a Rust test
+        # target (`tests/conformance_runner.rs`), so the suite goes through the
+        # same `cargo test` path as every other check and has no interpreter
+        # dependency of its own. TALLOW_BIN keeps it pinned to the binary this job
+        # just built rather than anything on PATH.
+        env:
+          TALLOW_BIN: ${{ github.workspace }}/target/debug/tallow
+        run: cargo test --locked --test conformance_runner -- --nocapture
 
   browser:
     name: Browser suites (headless Chrome for Testing)
