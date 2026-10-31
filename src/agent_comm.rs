@@ -143,8 +143,10 @@ pub fn same_trust_group(group_a: &Option<String>, group_b: &Option<String>) -> b
 
 /// Serialize an interpreter Value to JSON bytes for channel transport.
 ///
-/// Supports: Int, Float, String, Bool, Nil, Array, Struct.
-/// Other variants return an error.
+/// Supports: Int, Float, String, Bool, Nil, Array, Struct, Map.
+/// Other variants return an error. Map is tagged `__type=Map` with an
+/// `__entries` list of `[key, value]` pairs so it does not reconstruct as
+/// `Struct("Object")` and does not fall through to empty-bytes → Nil.
 pub fn value_to_channel_bytes(val: &crate::interp::Value) -> Result<Vec<u8>, String> {
     let json_val = value_to_json(val)?;
     serde_json::to_vec(&json_val).map_err(|e| format!("JSON serialization failed: {e}"))
@@ -192,6 +194,29 @@ pub(crate) fn value_to_json(val: &crate::interp::Value) -> Result<serde_json::Va
             }
             Ok(serde_json::Value::Object(map))
         }
+        Value::Map(entries) => {
+            // Preserve the Map variant across the spawn join. A JSON object
+            // without this tag used to reconstruct as Struct("Object"), and a
+            // Map that hit the `_` arm below serialized to nothing — await
+            // then decoded empty bytes as Nil.
+            let mut pairs = Vec::with_capacity(entries.len());
+            for (k, v) in entries {
+                pairs.push(serde_json::Value::Array(vec![
+                    value_to_json(k)?,
+                    value_to_json(v)?,
+                ]));
+            }
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "__type".to_string(),
+                serde_json::Value::String("Map".to_string()),
+            );
+            map.insert(
+                "__entries".to_string(),
+                serde_json::Value::Array(pairs),
+            );
+            Ok(serde_json::Value::Object(map))
+        }
         _ => Err(format!(
             "unsupported type for channel: {}",
             std::mem::discriminant(val).hash_code()
@@ -234,6 +259,22 @@ pub(crate) fn json_to_value(json: &serde_json::Value) -> Result<crate::interp::V
         }
         serde_json::Value::Object(map) => {
             if let Some(serde_json::Value::String(type_name)) = map.get("__type") {
+                if type_name == "Map" {
+                    let Some(serde_json::Value::Array(pairs)) = map.get("__entries") else {
+                        return Err("Map payload missing __entries".to_string());
+                    };
+                    let mut entries = Vec::with_capacity(pairs.len());
+                    for pair in pairs {
+                        let serde_json::Value::Array(kv) = pair else {
+                            return Err("Map entry is not a [key, value] pair".to_string());
+                        };
+                        if kv.len() != 2 {
+                            return Err("Map entry is not a [key, value] pair".to_string());
+                        }
+                        entries.push((json_to_value(&kv[0])?, json_to_value(&kv[1])?));
+                    }
+                    return Ok(Value::Map(entries));
+                }
                 // Reconstruct a struct
                 let fields: Result<Vec<(String, Value)>, String> = map
                     .iter()
@@ -793,6 +834,25 @@ mod tests {
                 assert!(fields.iter().any(|(k, _)| k == "currency"));
             }
             other => panic!("expected Struct, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn value_round_trip_map() {
+        use crate::interp::Value;
+        let val = Value::Map(vec![(
+            Value::String("n".to_string()),
+            Value::Int(50),
+        )]);
+        let bytes = value_to_channel_bytes(&val).unwrap();
+        let restored = channel_bytes_to_value(&bytes).unwrap();
+        match restored {
+            Value::Map(entries) => {
+                assert_eq!(entries.len(), 1);
+                assert!(matches!(&entries[0].0, Value::String(s) if s == "n"));
+                assert!(matches!(entries[0].1, Value::Int(50)));
+            }
+            other => panic!("expected Map, got: {other:?}"),
         }
     }
 
