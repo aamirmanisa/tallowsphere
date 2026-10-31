@@ -116,3 +116,7 @@ broker_probe/
 exposure_discovery.json
 # Phase 1 smoke-ladder receipts are generated, not source.
 artifacts/phase1/
+
+# Committed binaries and IR are build output, not sources
+examples/*.exe
+examples/*.ll
