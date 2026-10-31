@@ -138,6 +138,12 @@ Measured on the tagged tree, recorded rather than hidden:
   The compiled plane has no `Err` value for these calls, so the null handle is
   fatal rather than silently `(null)` — loud, but not parity, and a program that
   inspects the result cannot tell a transient failure from a refusal there.
+- **`http.get` still disagrees on a 404 between the planes.** Measured by the
+  merged `tests/http_status_as_data_parity.rs` (case
+  `http_get_404_planes_agree`, `#[ignore]`d with the values):
+  `--interpret` → `Err("http.get: http status: 404")`, `--require-native` →
+  `status=404 body=missing-body`. `fetch()` and `Client.get` return statuses as
+  data on both planes; the `http.*` verb path does not, on the interpreter side.
 - **The native POST path is dead.** `http.post` returns a null handle on the
   native plane for every case measured (200 and 404), so with the fatal guard a
   native POST now fails loudly instead of silently; the per-call timeout argument
