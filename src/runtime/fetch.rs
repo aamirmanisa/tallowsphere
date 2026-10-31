@@ -225,7 +225,13 @@ pub fn egress_proxy_url_ureq() -> Option<String> {
 /// request attempted. Warn-then-proceed was a silent fallback to the box IP —
 /// the leak class invariant N3 exists to prevent. The message mirrors the
 /// interpreter's refusal (`src/interp.rs`).
-fn fetch_agent() -> Result<ureq::Agent, String> {
+fn fetch_agent(url: &str) -> Result<ureq::Agent, String> {
+    build_agent(crate::stdlib::http::is_loopback_literal(url))
+}
+
+/// Build the native fetch agent. `loopback_direct` bypasses the egress proxy —
+/// only ever true for a literal loopback address (see [`fetch_agent`]).
+fn build_agent(loopback_direct: bool) -> Result<ureq::Agent, String> {
     let mut builder = ureq::Agent::config_builder()
         // HTTP statuses are DATA, not transport failures: 4xx/5xx arrive as
         // ordinary responses (parity with the stdlib client — `governed_get`
@@ -236,19 +242,29 @@ fn fetch_agent() -> Result<ureq::Agent, String> {
         // lose status+body, and the R-01 leg cannot classify 429/5xx/403
         // [measured 2026-09-13: loopback probe returned status=-1 on all].
         .http_status_as_error(false);
-    if let Some(url) = egress_proxy_url_ureq() {
-        // Refuse, never degrade: the request must not fall back to an
-        // unproxied connection just because the proxy URL is junk. The
-        // refusal message is computed in exactly one place (tested pure).
-        refusal_for_proxy_url(&url)?;
-        // Validated on the line above; `ureq::Proxy::new` is pure and
-        // deterministic over this exact input, so this cannot fail.
-        let proxy = ureq::Proxy::new(&url).expect("proxy URL validated one line above");
-        builder = builder
-            .proxy(Some(proxy))
-            .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_recv_response(Some(Duration::from_secs(60)))
-            .timeout_recv_body(Some(Duration::from_secs(60)));
+    // A LITERAL loopback address cannot resolve anywhere but this machine, so
+    // it is not an anonymity plane and must not be sent through the proxy: the
+    // SOCKS allowlist denies 127.0.0.0/8 by design, which turned a registered
+    // loopback GET into `connection not allowed by ruleset` instead of reaching
+    // the socket. The interpreter plane has always taken this branch
+    // (`stdlib::http::get_agent_for` → DIRECT_AGENT), so this restores parity
+    // and makes "registered host is reachable" measurable on the compiled
+    // plane. Names — including `localhost` — are NOT bypassed: they resolve.
+    if !loopback_direct {
+        if let Some(url) = egress_proxy_url_ureq() {
+            // Refuse, never degrade: the request must not fall back to an
+            // unproxied connection just because the proxy URL is junk. The
+            // refusal message is computed in exactly one place (tested pure).
+            refusal_for_proxy_url(&url)?;
+            // Validated on the line above; `ureq::Proxy::new` is pure and
+            // deterministic over this exact input, so this cannot fail.
+            let proxy = ureq::Proxy::new(&url).expect("proxy URL validated one line above");
+            builder = builder
+                .proxy(Some(proxy))
+                .timeout_connect(Some(Duration::from_secs(30)))
+                .timeout_recv_response(Some(Duration::from_secs(60)))
+                .timeout_recv_body(Some(Duration::from_secs(60)));
+        }
     }
     if let Some(rc) = crate::runtime::egress_http::ca_bundle_root_certs() {
         // Mesh/internal-CA trust (`TALLOW_CA_BUNDLE`): same env var and
@@ -320,7 +336,7 @@ pub extern "C" fn tallow_fetch(url: *const c_char) -> *mut c_void {
 
     // Refuse before waiting or sending anything when the configured proxy is
     // unusable (N3: fail closed, never egress unproxied by accident).
-    let agent = match fetch_agent() {
+    let agent = match fetch_agent(url_str) {
         Ok(agent) => agent,
         Err(e) => {
             set_last_error(e);
@@ -385,7 +401,7 @@ pub extern "C" fn tallow_fetch_method(
 
     // Refuse before waiting or sending anything when the configured proxy is
     // unusable (N3: fail closed, never egress unproxied by accident).
-    let agent = match fetch_agent() {
+    let agent = match fetch_agent(url_str) {
         Ok(agent) => agent,
         Err(e) => {
             set_last_error(e);
@@ -569,7 +585,17 @@ pub extern "C" fn tallow_http_batch(urls: *mut c_void, concurrency: i64) -> *mut
     // *every* URL with the same reason and no request attempted (N3) instead
     // of degrading to a direct connection — that path stays sequential (there
     // is nothing to parallelise when no request is allowed).
-    let agent = fetch_agent();
+    // The batch keeps one agent for the whole run (proxy policy is per run, not
+    // per URL); a literal-loopback batch is not proxied and is the case the
+    // register's loopback GET grant is exercised by.
+    // The agent is shared, so the bypass is all-or-nothing: a batch of literal
+    // loopback URLs is direct, a batch containing any other host keeps the
+    // proxy (a mixed batch is not silently split into two policies).
+    let loopback_batch = slots.iter().all(|slot| {
+        let url = unsafe { cstr_to_str(*slot as *const c_char) }.unwrap_or("");
+        crate::stdlib::http::is_loopback_literal(url)
+    });
+    let agent = build_agent(loopback_batch);
 
     let entries: Vec<i64> = match &agent {
         Err(e) => slots.iter().map(|slot| err_entry(*slot, e)).collect(),
@@ -911,7 +937,7 @@ mod tests {
             std::env::remove_var("TALLOW_PROXY");
             std::env::set_var("TALLOW_ALLOW_DIRECT", "1");
         }
-        let agent = fetch_agent().expect("direct-mode agent must build");
+        let agent = build_agent(false).expect("direct-mode agent must build");
         assert!(
             !agent.config().http_status_as_error(),
             "native fetch must surface 4xx/5xx as responses, never collapse to Err/null"

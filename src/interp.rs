@@ -10125,6 +10125,25 @@ impl Interpreter {
                 let method_str = name.split('.').nth(1).unwrap_or("get").to_uppercase();
                 if let Some(url) = positional.first() {
                     let url_str = url.as_string();
+                    // Register gate: deny-by-default, before the ledger, before
+                    // the request is built and before any socket. A refusal is
+                    // FATAL here — `Err(RuntimeError::Error(..))` exits non-zero
+                    // with `runtime error: <sentence>` — not `Value::Err`, which
+                    // a program prints and then continues from with rc=0.
+                    //
+                    // In practice a module-qualified `http.get(..)` from a
+                    // program is routed to `crate::stdlib::dispatch` above (see
+                    // `src/stdlib/http.rs::egress_guard`, the real interpreter
+                    // plane gate); this arm is the fallback builtin path and
+                    // carries the same check so no route can skip it.
+                    if let Err(r) = crate::scope::require(&url_str, &method_str) {
+                        return Err(RuntimeError::Error(format!(
+                            "http.{}: {} — {}",
+                            method_str.to_lowercase(),
+                            r.code(),
+                            r.explain()
+                        )));
+                    }
                     // Egress ledger: budget and the stop-on-403/429 rule are
                     // checked here because this is the path `http.get` actually
                     // takes (the stdlib dispatcher's copy is not reached from a
