@@ -311,6 +311,7 @@ jobs:
           --test browser_sentinels_tl
           --test directorate_desks
           --test egress_census
+          --test egress_scope_gate
           --test process_contract
           --test request_plan_cli
           --test perf_binary_startup

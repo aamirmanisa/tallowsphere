@@ -25,4 +25,3 @@ stdlib_native_lowering | perf | alden | builds one native binary per stdlib modu
 topology_scan | host | alden | raw SYN scanning needs CAP_NET_RAW and a loopback fixture service; GitHub-hosted runners do not grant raw sockets | 2027-03-31
 topology_adversarial | host | alden | same privileged raw-socket requirement as topology_scan | 2027-03-31
 topology_ipv6 | host | alden | ICMPv6 echo and v6 connect scans need raw v6 sockets and a ::1 grant | 2027-03-31
-egress_scope_gate | triage | alden | KNOWN RED on the v1.6.0 RC, measured 2026-10-31 on build 03:59:57Z: --require-native prints the scope refusal and the program CONTINUES (prints CONNECTED, exits 0) while --interpret aborts; the file's other 2 cases pass. A deny-by-default refusal must be fatal on both planes; fix the native net.connect path, then delete this line rather than re-bucketing it | 2026-11-21
