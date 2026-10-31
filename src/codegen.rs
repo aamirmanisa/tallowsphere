@@ -30081,21 +30081,27 @@ impl<'a> CodeGen<'a> {
                     self.emit_line(&format!(
                         "{result} = call ptr @tallow_net_connect(ptr {addr})"
                     ));
-                    // A refused connect returns null with the reason in
-                    // `tallow_last_error`. Returning the null directly made the
-                    // refusal print as `(null)` — a silent no-op that looked
-                    // like a successful call. Substitute the error string so the
-                    // refusal reaches the caller with the same wording the
-                    // interpreter uses. A successful handle is passed through.
-                    let is_null = self.fresh_reg();
-                    self.emit_line(&format!("{is_null} = icmp eq ptr {result}, null"));
-                    let err_ptr = self.fresh_reg();
-                    self.emit_line(&format!("{err_ptr} = call ptr @tallow_last_error()"));
-                    let surfaced = self.fresh_reg();
-                    self.emit_line(&format!(
-                        "{surfaced} = select i1 {is_null}, ptr {err_ptr}, ptr {result}"
-                    ));
-                    Ok(Some(LLValue::new(surfaced, LLType::I8Ptr)))
+                    // Fail-closed, matching the interpreter's contract. The FFI
+                    // returns null with the reason in `tallow_last_error` for
+                    // both a scope refusal (deny-by-default) and a socket
+                    // failure. `tallow_check_string` prints that reason to
+                    // stderr and exits 1 before the handle can be used, which is
+                    // what the interpreter does when `net.connect` returns Err.
+                    //
+                    // The previous lowering substituted the error string for the
+                    // null (`select`), so a refused connect was an ordinary
+                    // value: the refusal was printed, `print(s)` printed the
+                    // message, and the program continued with rc=0. Substitution
+                    // is not a gate — it reports the refusal and then ignores it.
+                    //
+                    // This does not refuse every call: an authorized host still
+                    // reaches the socket layer, and a socket failure there
+                    // (e.g. loopback port 1) aborts with "Connection refused",
+                    // which is exactly the interpreter's behaviour and leaves
+                    // the positive control able to tell "not listed" apart from
+                    // "reached the socket".
+                    self.emit_line(&format!("call void @tallow_check_string(ptr {result})"));
+                    Ok(Some(LLValue::new(result, LLType::I8Ptr)))
                 } else {
                     self.emit_stdlib_stub("net", method)
                 }
@@ -40517,6 +40523,28 @@ mod tests {
         assert!(
             ir.contains("@tallow_net_connect"),
             "net.connect should call tallow_net_connect FFI"
+        );
+    }
+
+    #[test]
+    fn codegen_stdlib_net_connect_is_fail_closed() {
+        // A null handle from `tallow_net_connect` means the scope gate refused
+        // the host (or the socket failed). The lowering must hand that null to
+        // the fatal guard, which prints `tallow_last_error` and exits 1; it
+        // must NOT substitute the error string for the handle and let the
+        // program continue. This pins the mechanism, not the message: the
+        // `select`-substitution lowering this replaced made `--require-native`
+        // print the refusal and then exit 0.
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                let s = net.connect("localhost")
+            }
+        "#,
+        );
+        assert!(
+            ir.contains("call void @tallow_check_string(ptr"),
+            "net.connect must abort on a refused/failed connect via tallow_check_string: {ir}"
         );
     }
 
