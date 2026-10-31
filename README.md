@@ -10,7 +10,7 @@
 
 <sub><a href="#extraction-in-five-minutes">Extraction</a> &nbsp;·&nbsp; <a href="#install">Install</a> &nbsp;·&nbsp; <a href="#the-language-underneath">The language</a> &nbsp;·&nbsp; <a href="#architecture">Architecture</a> &nbsp;·&nbsp; <a href="#building-from-source">Build</a> &nbsp;·&nbsp; <a href="#hosting-and-deployment">Deploy</a> &nbsp;·&nbsp; <a href="#what-it-does-not-do-yet">Limits</a></sub>
 
-![release 1.5.8](https://img.shields.io/badge/release-1.5.8-E39B3E?style=flat-square&labelColor=171513)
+![release 1.6.0](https://img.shields.io/badge/release-1.6.0-E39B3E?style=flat-square&labelColor=171513)
 ![rust 1.98.1](https://img.shields.io/badge/rust-1.98.1-dea584?style=flat-square&labelColor=171513&logo=rust&logoColor=white)
 ![linux-aarch64](https://img.shields.io/badge/linux--aarch64-published-2F7A53?style=flat-square&labelColor=171513)
 ![extraction local · no egress](https://img.shields.io/badge/extraction-local%20%C2%B7%20no%20egress-E39B3E?style=flat-square&labelColor=171513)
@@ -33,7 +33,7 @@ Two properties shape everything here.
 
 | You came for | Entry point | What is verified |
 |---|---|---|
-| **Extraction** | `tallow schema check`, `tallow extract`, `tallow plan dry-run` | [`schemas/tallow/examples/`](schemas/tallow/examples/), [`docs/extraction-engine/`](docs/extraction-engine/) |
+| **Extraction** | `tallow schema check`, `tallow extract`, `tallow plan dry-run` | [`schemas/tallow/examples/`](schemas/tallow/examples/), and the row contract in `src/cli/extract_cmd.rs` — the `docs/extraction-engine/` documents were removed from the tree on 2026-10-31 ([record](MANIFEST.md)) |
 | **The language** | `tallow check`, `build`, `run --interpret`, `fmt`, `lint` | [`conformance/`](conformance/), [`docs/spec/`](docs/spec/) |
 | **Operations** | `tallow-reader`, `tallow-daemon`, `tallow-locator`, `tallow-jobs` | [`crates/`](crates/), [`docs/operations/`](docs/operations/) |
 
@@ -55,9 +55,34 @@ extract: 1 item(s) → 1 row(s)
   schema: example.product_listing.v1 (no egress performed)
 ```
 
-[measured 2026-10-26 · release `v1.5.8` · `schema check` exit 0; `extract` exit 0 with one row and an empty quarantine file against a three-field fixture — and, against a page that does not carry the expected fields, `unknown:` lines naming the selectors that yielded nothing rather than a guessed row]
+[measured 2026-10-31 · `tallow 1.6.0` at `62ecd79` · `schema check` exit 0. `extract` exited 0 with
+one row against a fixture whose three fields all resolve, and — against the same schema on a page
+without the `<a>` that supplies the optional `url` field — still exit 0, with `unknown: product: field
+"url" not yielded by selector ".product a"` on stderr. That row is `"status":"quarantined"`
+(`row_confidence` 0.667, below the schema's `quality.min_row_confidence` 0.75) and is written to
+**both** files, byte-identical (`md5sum` equal); the quarantine file is empty only when no row
+is quarantined.]
 
-Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust. A field that cannot be filled at the required confidence is quarantined instead of becoming a plausible guess.
+Each line of `run-<pid>.rows.jsonl` is a `tallow.extraction_row.v1` object. Every field records its `value`, the `selector` that produced it, its `selector_kind`, its `confidence`, and `source_evidence` — a row you can argue with rather than only trust.
+
+`rows.jsonl` carries **every** row; `<pid>.quarantine.jsonl` carries the quarantined subset, and the
+two are byte-identical when every row is quarantined. Status is decided by the contract's own `quality`
+block, and there are two ways in: `row_confidence` below `quality.min_row_confidence`, or more null
+required fields than `quality.max_null_required_fields`. A quarantined row still counts in the `→ N
+row(s)` line, still exits `0`, and is **not** a refusal — it is a record of a partial extraction that
+you can filter on `"status"` [measured 2026-10-31, `tallow 1.6.0` at `0eed9d1`].
+
+Two limits of this path, named rather than rounded off:
+
+- **A missing required field does not exit 1 here.** `src/cli/extract_cmd.rs:52` returns `0` once rows
+  are written; the only exit-`1` paths are a contract that yields no item at all and an unloadable
+  contract. A page with no `.product .name` produced `1 row(s)`, `"status":"quarantined"`,
+  `quarantine_reasons: ["required_field_null: name", "row_confidence_below_min"]`, and exit `0`.
+- **`coercion` is honoured for the type transform, not for whitespace, and unknown names are accepted.**
+  `money` coerces (`$4.99` → `"499"`), but `.product .name` holding `Solo  Spaced` comes back with both
+  spaces although the contract declares `trim` + `normalize_whitespace`; and a contract declaring
+  `"not_a_real_coercion"` passes `schema check` (exit 0) and extracts without a warning
+  (`src/cli/schema_cmd.rs:76`, `src/browser/llm_extract.rs:1529`).
 
 ```json
 {"row_index":0,"status":"accepted","row_confidence":1.0,
@@ -145,14 +170,17 @@ $ ./install.sh --from ./tallow-linux-aarch64-<version>.tar.gz    # air-gapped
 
 ```console
 $ tallow --version
-tallow 1.5.8
+tallow 1.6.0
   platform: linux
   arch: aarch64
-  build: 2026-10-26T02:01:30Z
-  git: 6aa9fcfb14
+  build: 2026-10-31T20:39:41Z
+  git: 0eed9d13f8
 ```
 
-[measured 2026-10-26 · the binary installed by the one-line installer on this host]
+[measured 2026-10-31 · the debug build produced from this tree at `0eed9d1`; `Cargo.toml:3` is
+`version = "1.6.0"`. Both `build` and `git` move on every rebuild — they are the provenance of the
+binary you are holding, not of the release, so compare the shape, not the digits. The published
+v1.6.0 tarball reports its own build stamp.]
 
 The `git:` line is provenance: a release artifact reports the commit it was built from, and a debug build reports `(dirty)` so the two are distinguishable.
 
@@ -176,6 +204,11 @@ hello, grace
 hello, edsger
 ```
 
+[measured 2026-10-31 · `tallow 1.6.0`. When the deps archive is newer than the linked archive the run
+first prints one conditional line — `runtime archive: …/deps/libtallow-<hash>.a is newer than
+…/libtallow.a; linking the newer deps archive` (`src/codegen.rs:31596`) — before the program's own
+output; the block above is the program's output alone.]
+
 **Two execution planes, one language.** Every program runs in the interpreter (`tallow run --interpret`) and compiles to a native binary (`tallow build`). That is not a convenience — it is the correctness harness: a codegen bug appears as a disagreement between planes, and every test that touches behaviour runs both.
 
 **Nothing hidden at run time.** A compiled program is a normal ELF binary linked against `libc` and the Tallow archive. No garbage collector, no VM handshake, no configuration lookup at startup.
@@ -198,11 +231,29 @@ fn main() {
 ```
 
 ```console
+$ printf 'a\nb\nc' > notes.txt      # no trailing newline
 $ chmod +x lines.tl && ./lines.tl notes.txt
 3 lines in notes.txt
 ```
 
-The shebang line is blanked rather than removed, so diagnostics still point at the line you wrote, and arguments after the path reach the program. Complete examples live in the language repository: [`wc.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/wc.tl), [`todo.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/todo.tl).
+`notes.txt` here holds three lines with no trailing newline (`printf 'a\nb\nc' > notes.txt`). Read a
+file that ends in a newline and the count is one higher — text files ordinarily do: `printf
+'a\nb\nc\n' > notes.txt` prints `4 lines in notes.txt`, because `"a\nb\nc\n".split("\n")` yields four
+elements on both planes, the trailing separator opening a final empty one [measured 2026-10-31,
+`tallow 1.6.0` at `0eed9d1`].
+
+The shebang line is blanked rather than removed, so diagnostics still point at the line you wrote. Two
+limits on the executable form, both measured at `0eed9d1`:
+
+- **The file must end in `.tl`.** `src/main.rs:2791` only rewrites a bare `argv[1]` into `run <path>`
+  when it ends in `.tl`, so `./lines.sh` — shebang and all — is read as a subcommand and exits `2`
+  with `error: unrecognized subcommand './lines.sh'`. A plain `#!/bin/sh` script of the same shape
+  runs fine, so this is the dispatcher, not the kernel ignoring the shebang.
+- **`tallow run` needs `--` before program arguments.** `tallow run lines.tl notes.txt` exits `2`
+  (`error: unexpected argument 'notes.txt' found`); `tallow run lines.tl -- notes.txt` works, and so
+  does `./lines.tl notes.txt`, which the rewrite above turns into the `--` form for you.
+
+Complete examples live in the language repository: [`wc.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/wc.tl), [`todo.tl`](https://github.com/aamirmanisa/Tallow-Language/blob/main/examples/scripts/todo.tl).
 
 The **language surface** — specification, tutorial, conformance cases — is a separate repository, [Tallow-Language](https://github.com/aamirmanisa/Tallow-Language). There is exactly one implementation of the compiler, and it lives here.
 
@@ -223,7 +274,7 @@ The **language surface** — specification, tutorial, conformance cases — is a
 
 Operational verbs are documented in [`docs/`](docs/) and in `tallow --help`, which lists all of them with exit codes.
 
-**Exit codes.** `0` success · `1` program failed or diagnostics · `2` usage · `64` bad invocation · `69` refused by policy · `70` internal. A build that produces no binary never exits `0`.
+**Exit codes.** `0` success · `1` program failed or diagnostics, or `extract` found nothing usable · `2` unknown command or CLI parse error · `64` per-verb usage error or unreadable input · `69` refused by policy · `70` internal. A build that produces no binary never exits `0`. Measured distinction: `tallow bogusverb` and bare `tallow` exit `2`, while `tallow extract` with no arguments and `tallow extract --schema /nonexistent.json …` both exit `64`; `tallow extract` against a page whose contract matched no item exits `1`. [measured 2026-10-31, `tallow 1.6.0` at `0eed9d1`]
 
 ## Architecture
 
@@ -233,12 +284,12 @@ Operational verbs are documented in [`docs/`](docs/) and in `tallow --help`, whi
 | Back end | IR construction and emission, lowering of every stdlib call, link step | `src/codegen.rs` |
 | Interpreter | Independent execution plane for the same AST | `src/interp.rs` |
 | Extraction tier | Schema application, model tier, HAR import, provenance, smart extract | `src/browser/llm_extract.rs`, `src/browser/har_import.rs` |
-| Standard library | 114 Rust modules behind 88 declared `.tl` modules: text, collections, files, JSON, HTTP, crypto, database, browser, CLI [measured 2026-10-26: `ls src/stdlib/*.rs \| wc -l` = 114; `ls stdlib/*.tl \| wc -l` = 88] | `src/stdlib/`, `stdlib/` |
-| Browser runtime | Chrome over CDP: 139 files / 104,068 lines, 163 device profiles, stealth and CAPTCHA handling | `src/browser/` |
+| Standard library | 119 Rust modules behind 92 declared `.tl` modules: text, collections, files, JSON, HTTP, crypto, database, browser, CLI [measured 2026-10-31: `ls src/stdlib/*.rs \| wc -l` = 119; `ls stdlib/*.tl \| wc -l` = 92] | `src/stdlib/`, `stdlib/` |
+| Browser runtime | Chrome over CDP: 139 files / 104,076 lines, 163 device profiles, stealth and CAPTCHA handling [measured 2026-10-31: `find src/browser -type f \| wc -l` = 139; `cat` over the same set \| `wc -l` = 104,076] | `src/browser/` |
 | Toolchain | Build, run, check, fmt, lint, test, doc, repl, lsp, packages, SBOM, signing | `src/main.rs`, `src/cli/` |
 | Fleet crates | Daemon, jobs, admission, registry, mesh, reader, crypto, net, protocol, SVID, locator, advisory, copy engine | `crates/` |
 
-The engine is 554,133 lines of Rust across `src/**/*.rs` [measured 2026-10-25; comments and blank lines included]. The browser runtime is not a side artefact of the extraction tier — it is why the repository carries device profiles, CDP profiles and CAPTCHA handling at all.
+The engine is 588,930 lines of Rust across 596 files under `src/**/*.rs` [measured 2026-10-31; comments and blank lines included]. The browser runtime is not a side artefact of the extraction tier — it is why the repository carries device profiles, CDP profiles and CAPTCHA handling at all.
 
 ### The crates
 
@@ -392,12 +443,12 @@ $ cargo test --lib -- --test-threads=2
 | **musl targets** | The browser backend needs BoringSSL's C++, which has no musl `g++` on this host (`MUSL_RC=101`) | blocked; needs an Alpine build host |
 | **Archive size** | `libtallow.a` is 528 MB; `strip` recovers ~11%, so the fix is a `cdylib` or a crate split | open |
 | **Platform builds** | Only `linux-aarch64` has a published artifact; x86_64, macOS and Windows have no CI-produced binary | open |
-| **Declared types vs values** | `let x: i64 = "nope"` passes `check` with 0 warnings — the annotation is not enforced against the initialiser | open (#137) |
+| **Declared types vs values** | `let x: i64 = "nope"` fails `check` with `error[E0117]: cannot bind a str literal to int` (`check failed: 1 error(s), 0 warning(s)`, exit 1); the control `let x: i64 = 5` passes [measured 2026-10-31, `tallow 1.6.0` at `0eed9d1`] | closed (#137) |
 | **Interpreter coercion** | In some stdlib arms the interpreter coerces an argument where the compiled leg refuses, so a wrong-typed call can pass `check` and return a plausible answer | open; recorded as a language-level question |
 
 ## Documentation
 
-- [`docs/extraction-engine/`](docs/extraction-engine/) — the extraction product's spec, checklist and runbook
+- the extraction product's spec, checklist and runbook (`docs/extraction-engine/`) were **removed from this tree on 2026-10-31**; [`MANIFEST.md`](MANIFEST.md) records what they were and why they are not here
 - [`TALLOW_SPEC.md`](TALLOW_SPEC.md) — the language specification carried in this tree
 - [`stdlib/README.md`](stdlib/README.md) — the standard library map
 - [`conformance/README.md`](conformance/README.md) — the conformance harness
