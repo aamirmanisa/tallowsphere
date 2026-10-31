@@ -22,11 +22,20 @@
 use std::process::Command;
 
 /// Run a one-file Tallow program on the given plane and return (stdout, stderr, success).
+///
+/// The temp directory is keyed by a hash of the program, not just by the plane:
+/// the four cases in this file run in parallel in one process, and the first
+/// version keyed the directory on `{pid}-{plane}` alone, so two cases wrote and
+/// read the same `prog.tl` — one test measured the other's program and failed on
+/// a refusal its own source never contains.
 fn run_plane(src: &str, plane: &str) -> (String, String, bool) {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    src.hash(&mut h);
+    plane.hash(&mut h);
     let dir = std::env::temp_dir().join(format!(
-        "tallow-egress-gate-{}-{}",
-        std::process::id(),
-        plane
+        "tallow-egress-gate-{:016x}",
+        h.finish()
     ));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("prog.tl");
@@ -114,15 +123,6 @@ fn main() with Net(connect) {{
 }
 
 #[test]
-#[ignore = "GAP (measured 2026-10-31, tallow 1.5.8+3 fixes @ 808d270): http.post/put/delete do not \
-            consult the authorization register on EITHER plane. Measured with \
-            `fn main() with Net(post) { print(http.post(\"https://192.0.2.1/x\", \"body\")) }` \
-            (192.0.2.1 is RFC 5737 TEST-NET-1, unregistered): \
-            --interpret -> Err(\"http.post: stealth post: error sending request for uri ... \
-            operation timed out\"), rc=0 - it spent the connection attempt; \
-            --require-native -> (null), rc=0. Re-enable only when both planes refuse with \
-            `not in the authorization register` before opening a socket; recorded in \
-            CHANGELOG.md v1.6.0 'Known at tag time'."]
 fn http_write_verbs_refuse_a_host_absent_from_the_register() {
     // post / put / delete share one gate; batch delegates to get.
     //
@@ -191,15 +191,6 @@ fn main() with Net(get) {{
 }
 
 #[test]
-#[ignore = "GAP (measured 2026-10-31, tallow 1.5.8+3 fixes @ 572cffe): the same program on \
-            --require-native runs, prints (null) and exits 0 — the http FFI returns a null \
-            handle for a socket failure and never surfaces tallow_last_error, so the compiled \
-            plane cannot tell 'connection refused' from 'not authorized'. Measured: \
-            `fn main() with Net(get) { print(http.get(\"http://127.0.0.1:1/\")) }` \
-            --interpret -> Err(\"http.get: io: Connection refused (os error 111)\"), rc=0; \
-            --require-native -> (null), rc=0. Re-enable when the native http path surfaces \
-            the error the way net.connect now does; recorded in CHANGELOG.md v1.6.0 \
-            'Known at tag time'."]
 fn a_registered_host_is_reachable_on_the_native_plane() {
     let src = format!(
         r#"{NET_ANNOTATIONS}
