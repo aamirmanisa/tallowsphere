@@ -351,6 +351,7 @@ jobs:
           --test transfer_bwlimit
           --test crawler_parity
           --test interp_codegen_parity
+          --test string_index_bounds
           --test generated_tl_parity
           --test optional_parity
           --test process_exec_parity

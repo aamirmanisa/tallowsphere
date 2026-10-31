@@ -7,8 +7,9 @@
 //
 // Fixed on the native plane by a string-vs-array dispatch in the index
 // lowering plus `tallow_string_index` in the runtime: a string is indexed by
-// byte, nil-checked first, and an out-of-bounds read exits 1 with a message.
-// This case pins the in-bounds read, which is the ordinary path.
+// Unicode scalar (same as the interpreter), nil-checked first, and an
+// out-of-bounds read exits 1 with `runtime error: index N out of bounds`.
+// This case pins the in-bounds ASCII read, which is the ordinary path.
 fn main() {
     let s = "hello"
     print(s[0])
