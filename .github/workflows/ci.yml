@@ -337,6 +337,7 @@ jobs:
           --test ombuds_mesh_tl
           --test fingerprint_audit_cli
           --test http_result_model
+          --test http_status_as_data_parity
           --test pkg_cli
           --test replay_determinism
           --test scope_gate
