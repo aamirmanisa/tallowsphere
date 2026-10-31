@@ -9,6 +9,142 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.6.0] — 2026-10-31 — Eight compiler defects closed, and the gates move into the binary
+
+### Added
+
+- `tallow gate <name>`: the nine repository gates (ffi-symbols, census-surface,
+  census-page-methods, capability-registry, crypto-inventory, docs-examples,
+  panic-policy, release-body, sbom) now run from the compiler binary instead of a
+  pile of Python scripts, so the same claim can be checked on any checkout with
+  one command. Unit tests live in `src/gate/`; `tests/gate_*_parity.rs` compares
+  every gate against the script it replaces, on the live tree.
+- Conformance cases 41–47: closure write capture, string index, logical
+  short-circuit, map `len`, index assignment, block shadowing, and `nil` into a
+  non-optional destination. The corpus is 27 cases / 54 files and its digest now
+  covers every file under `cases/`.
+- `tests/conformance_runner.rs`, which runs the whole corpus through
+  `cargo test` on both planes, takes the compiler under test from `TALLOW_BIN`,
+  and refuses to pin a case whose two planes disagree.
+- `tests/async_await_idempotent.rs`: awaiting one handle twice, and awaiting the
+  same handle twice inside a comparison, on both planes.
+- `E0116`, the diagnostic that refuses `nil` where a non-optional type is
+  required, with the optional-typed remedy in the help line.
+
+### What was wrong
+
+- **String indexing read a pointer as a character.** Strings and native arrays
+  share the `i8*` type, so the index lowering treated the string's first bytes as
+  an element count and loaded character data as an `i64` slot: `"hello"[0]`
+  printed `281474234531448` on the native plane while the interpreter printed
+  `h`. In-bounds access, not an edge case.
+- **`map.len` was 1 for every non-empty map.** The field-read path fell through
+  to `strlen` on the payload slot; the method-call spelling already guarded for
+  maps, the field spelling did not.
+- **Index assignment was dropped.** `a[1] = 20` never reached the element on the
+  native plane, so a program that then printed `a[1]` printed the old value.
+- **`&&` and `||` were not short-circuit.** Both operands were evaluated, so a
+  side effect on the right-hand side ran even when the left decided the answer.
+- **Block shadowing leaked.** A binding declared in an inner block stayed visible
+  after the block on the native plane.
+- **`spawn`/`await` returned 0 instead of the task's value.** The native await
+  returned the raw wrapper pointer rather than the result payload, and even
+  after the wrapper was unwrapped the value slot was loaded as `i64` for every
+  payload kind: awaiting a `String` printed pointer bits that changed each run,
+  and awaiting a `Map` printed pointer bits where the interpreter printed `nil`.
+- **Awaiting one handle twice aborted the binary.** `let a = h.await; let
+  b = h.await` died with `free(): double free detected in tcache 2`, exit 134,
+  on 5 of 5 runs.
+- **`defer` in a loop ran three times and all three bodies saw the final loop
+  value**, so `defer { close(h) }` in a loop closed the last handle three times.
+- **`let x: i64 = nil` passed the checker with zero diagnostics**, and the two
+  planes then disagreed about what `x` held (interpreter `nil`, native `0`).
+- **A refused `net.connect` was reported and then ignored.** The compiled plane
+  printed the scope refusal, printed whatever came next and exited 0, while the
+  interpreter aborted with exit 1 — the refusal was an ordinary value, not a
+  gate.
+- **A fetched 404 arrived as a transport error on the native plane.** `ureq`
+  reports `4xx`/`5xx` as `Err`, so the interpreter returned a `Response` and the
+  native path returned a failure, for the same URL.
+- **The conformance digest covered 19 of 26 cases.** Seven cases shipped beside a
+  manifest that did not include them, so the corpus could grow without its own
+  digest noticing.
+
+### What was fixed
+
+- `src/runtime/fs_ffi.rs`, `src/codegen.rs` — `tallow_string_index` indexes a
+  string by Unicode scalar, which is what the interpreter's `s.chars().nth(i)`
+  already did, and returns null with `index N out of bounds` past the end; the
+  index lowering routes that null through `tallow_check_string`, so both planes
+  abort with the same sentence. `"αβ"[0]` is `α` on both planes, not the first
+  UTF-8 byte.
+- `src/codegen.rs` — a map receiver routes to the count slot before the string
+  path, so `m.len` reads the entry count; the index-store path targets the
+  element slot; `&&`/`||` lower to branches; scope restore is emitted at every
+  block exit; the await arm unwraps the `TallowResult` value slot, carries the
+  spawn handle's declared payload kind (`variable_spawn_payload`) so a `String`
+  or `Map` payload is not loaded as `i64`, and refuses at compile time when the
+  kind cannot be recovered instead of guessing; a `net.connect` handle that is
+  null after the FFI call goes through `tallow_check_string`, so a scope refusal
+  aborts the program; handle release happens once per handle rather than once
+  per await; defer registrations capture the iteration's value at registration
+  and drain LIFO.
+- `src/interp.rs` — the recorded task result is kept in an idempotent cache, so a
+  second await returns the same value instead of draining a single-shot channel;
+  defer order and per-iteration capture match the native plane.
+- `src/typeck.rs` — `E0116`: `nil` into a non-optional destination is refused
+  instead of silently accepted.
+- `src/stdlib/net.rs`, `stdlib/http.tl`, `stdlib/net.tl` — the fetch agent is
+  built with `http_status_as_error(false)`, and `fetch`, `Client.get`,
+  `Client.post`, `TorPool.fetch` and `ProxyChain.fetch` return `Response`
+  instead of `Result<Response>`: a status the program can inspect is data, not a
+  failure the runtime invents.
+- `tests/defer_parity.rs` — the loop expectations are corrected to the language's
+  per-registration, LIFO rule (the FIFO expectation was the test's bug), and each
+  case gets a private temp directory so two parallel legs stop deleting each
+  other's files.
+- `conformance/run.py` is deleted in favour of `tests/conformance_runner.rs`; both
+  workflows call it, and the release workflow points `TALLOW_BIN` at the unpacked
+  artifact so the packaged binary is what gets proven.
+- `conformance/README.md` — the count, the file count and the digest are
+  regenerated over the whole corpus.
+
+### Known at tag time
+
+Measured on the tagged tree, recorded rather than hidden:
+
+- **The egress register is enforced on the paths this release tests, not on every
+  path.** The interpreter's `http.post`/`put`/`delete` return a `Response` for an
+  unregistered host and perform real egress (measured: `Response { status: 301 }`,
+  exit 0); the native plane prints `(null)` and continues — the class this
+  release closed for `net.connect` only. `tests/egress_scope_gate.rs` still
+  carries two cases that measure less than their names claim: the positive
+  control's `net.connect` is refused by method (the shipped register grants
+  loopback `GET`/`HEAD` only) and its result is dead-code-eliminated, and the
+  write-verbs case does not parse (`Budget(bytes: 1048576)`), so only its
+  non-zero-exit disjunct passes. An `atlas` census counts 18 stdlib modules
+  holding socket primitives with no `crate::scope::` call, and 113 socket sites
+  under `src/browser/` with none.
+- **Six of the nine gates cannot fail on today's tree** (`capability-registry`,
+  `ffi-symbols`, `census-surface`, `docs-examples`, `census-page-methods`,
+  `panic-policy`, and `release-body`'s substring-heading check): mutating a
+  scratch copy turned every other check red and left these green. The parity
+  suites prove binary-equals-script, which is not the same as proving the gate
+  detects the defect it names.
+- **`tallow gate --help` does not list the nine gates.** A bare `tallow gate`
+  lists two; an unknown name refuses and lists ten, including `test-summary`.
+- **The native POST path is dead.** `http.post` returns a null handle on the
+  native plane for every case measured (200 and 404), and the per-call timeout
+  argument to `http.get` is ignored there while the interpreter honours it.
+- **The release gate is wider than the merge gate in one direction and narrower
+  in another.** The tag path runs 113 fewer suites, never runs the SBOM drift
+  check, and `tests/gate_release_parity.rs` does not carry `v1.6.0` in its
+  version list, so the Rust `release-body` port is unproven on this release's
+  body.
+- `scripts/check_backlog_evidence.py` fails `G07` (the row points at
+  `src/interp.rs:23659`, which does not mention `bind_binding_pattern`);
+  pre-existing, not introduced here.
+
 ## [v1.5.8] — 2026-10-26 — UTF-8 literals, and two names the checker called undefined
 
 ### Added
