@@ -444,53 +444,73 @@ fn connection_refused_measured_values() {
         "interp refused print moved: {:?}",
         interp_print.stdout
     );
-    assert_eq!(
+    // UPDATED 2026-10-31 after the egress-register merge (86d44a5): the compiled
+    // plane no longer returns -1/(null) with exit 0 for a transport failure. The
+    // null handle now goes through tallow_check_string, so the program aborts with
+    // `runtime error: fetch: io: Connection refused (os error 111)` and exit 1.
+    // Loud instead of silent — still not parity, because the interpreter returns
+    // the Err as a value (measured above, exit 0).
+    assert_ne!(
         native_fields.code, 0,
-        "native refused:\\n{}{}",
+        "native plane exited 0 on a refused connection: \n{}{}",
         native_fields.stdout, native_fields.stderr
     );
     assert_native_ran(&native_fields);
-    assert_eq!(native_fields.stdout, "-1\n(null)\n");
+    assert!(
+        native_fields.stderr.contains("runtime error:")
+            && native_fields.stderr.contains("Connection refused"),
+        "native abort message moved: {:?}",
+        native_fields.stderr
+    );
+    assert!(native_fields.stdout.trim().is_empty(), "native printed a value: {:?}", native_fields.stdout);
 }
 
 #[test]
 fn post_404_measured_values() {
+    // REWRITTEN 2026-10-31. This case used to measure "a 404 POST is data on the
+    // native plane and an error in the interpreter". It cannot measure that any
+    // more, and the reason is a fix, not a regression: the loopback entry in
+    // configs/tallow/scope/authorized-hosts.toml grants methods = ["GET","HEAD"],
+    // so http.post to it is refused as scope:method-not-allowed on BOTH planes
+    // before a socket opens. What is measured here is that refusal.
+    //
+    // The status-as-data question for POST is now unmeasurable until either the
+    // register grants POST to a fixture host or the POST FFI stops returning a
+    // null handle for a 200. Both are recorded in CHANGELOG.md "Known at tag
+    // time"; this test pins the behaviour that exists instead of pretending.
     let base = spawn_loopback();
     let fields = write_prog("fields", &fields_program());
     let printed = write_prog("print", &print_program());
     let url = format!("{base}/missing");
+    let ok_url = format!("{base}/ok");
 
     let interp_print = run(&printed, &["--interpret"], "POST", &url);
     let native_fields = run(&fields, &["--require-native"], "POST", &url);
-    let native_ok = run(
-        &fields,
-        &["--require-native"],
-        "POST",
-        &format!("{base}/ok"),
-    );
+    let native_ok = run(&fields, &["--require-native"], "POST", &ok_url);
     let _ = std::fs::remove_file(&fields);
     let _ = std::fs::remove_file(&printed);
 
-    assert_eq!(interp_print.code, 0);
+    let interp_all = format!("{}{}", interp_print.stdout, interp_print.stderr);
+    assert_ne!(
+        interp_print.code, 0,
+        "interp POST to loopback exited 0; the register grants GET/HEAD only: {interp_all}"
+    );
     assert!(
-        interp_print
-            .stdout
-            .contains("Err(\"http.post: http status: 404\")"),
-        "interp POST 404 print moved: {:?}",
-        interp_print.stdout
+        interp_all.contains("register") || interp_all.contains("method-not-allowed"),
+        "interp POST refusal message moved: {interp_all}"
     );
-    assert_eq!(native_fields.code, 0);
-    assert_native_ran(&native_fields);
-    assert_eq!(
-        native_fields.stdout, "-1\n(null)\n",
-        "native POST 404 moved: {:?}",
-        native_fields.stdout
-    );
-    assert_eq!(
-        native_ok.stdout, "-1\n(null)\n",
-        "native POST /ok is also a null handle (not a 404-as-error): {:?}",
-        native_ok.stdout
-    );
+
+    for (label, out) in [("404", &native_fields), ("200", &native_ok)] {
+        let native_all = format!("{}{}", out.stdout, out.stderr);
+        assert_ne!(
+            out.code, 0,
+            "native POST to loopback ({label}) exited 0; the register grants GET/HEAD only: {native_all}"
+        );
+        assert!(
+            native_all.contains("register") || native_all.contains("method-not-allowed"),
+            "native POST refusal message moved ({label}): {native_all}"
+        );
+    }
 }
 
 #[test]
