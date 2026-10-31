@@ -410,6 +410,19 @@ fn is_map_kind(kind: &str) -> bool {
     kind == "Map" || kind == "StringMap" || kind.starts_with("Map<")
 }
 
+fn await_expr_shape(e: &Expr) -> &'static str {
+    match &e.kind {
+        ExprKind::Ident(_) => "ident",
+        ExprKind::Spawn { .. } => "spawn",
+        ExprKind::Call { .. } => "call",
+        ExprKind::FieldAccess { .. } => "field",
+        ExprKind::Index { .. } => "index",
+        ExprKind::MethodCall { .. } => "method",
+        ExprKind::Await(_) => "await",
+        _ => "other",
+    }
+}
+
 /// Does this declared kind say its map keys are strings?
 ///
 /// `Some(true)` for `Map<String,…>` and `StringMap`, `Some(false)` for a map with any other
@@ -774,6 +787,10 @@ pub struct CodeGen<'a> {
 
     // Variable → true if this variable holds a map (not array/string)
     variable_is_map: HashMap<String, bool>,
+    /// Spawn/async-call handle → the declared payload kind of the awaited T.
+    /// `h.await` has no shape of its own; without this the value slot was
+    /// always loaded as i64 and pointer payloads printed as addresses.
+    variable_spawn_payload: HashMap<String, String>,
 
     // Variable → arity if this variable holds a tuple (heap-allocated, no length prefix)
     variable_is_tuple: HashMap<String, usize>,
@@ -1010,6 +1027,7 @@ impl<'a> CodeGen<'a> {
             variable_result_payload_kind: HashMap::new(),
             string_variables: HashSet::new(),
             variable_is_map: HashMap::new(),
+            variable_spawn_payload: HashMap::new(),
             variable_is_tuple: HashMap::new(),
             variable_map_key_is_string: HashMap::new(),
             variable_array_element_type: HashMap::new(),
@@ -1078,7 +1096,11 @@ impl<'a> CodeGen<'a> {
                 continue;
             }
             if let TypeExprKind::Named(n) = &ty.kind {
-                if n == "String" || n == "Bytes" || self.struct_layouts.contains_key(n.as_str()) {
+                if n == "String"
+                    || n == "Bytes"
+                    || n == "Map"
+                    || self.struct_layouts.contains_key(n.as_str())
+                {
                     self.fn_return_kinds.insert(f.name.clone(), n.clone());
                 } else {
                     // Primitives matter as much as strings here: `?` on a
@@ -4446,6 +4468,7 @@ void tallow_async_runtime_shutdown(void) {
         self.variable_is_string.clear();
         self.variable_data_enum.clear();
         self.variable_is_fn.clear();
+        self.variable_spawn_payload.clear();
         self.variable_array_element_type.clear();
         self.variable_privacy.clear();
         self.variable_is_tuple.clear();
@@ -4658,6 +4681,92 @@ void tallow_async_runtime_shutdown(void) {
 
         self.body.push_str("}\n\n");
         Ok(())
+    }
+
+    /// Static T of an awaited spawn/async call. A silent i64 guess is the
+    /// defect: if the type cannot be recovered, refuse and name the shape.
+    fn await_payload_kind(&self, inner: &Expr) -> Result<String, String> {
+        self.await_payload_kind_opt(inner).ok_or_else(|| {
+            format!(
+                "await: cannot recover the static payload type of this expression \
+                 (shape: {}); the compiled plane will not guess i64 — bind the \
+                 spawn handle from `spawn <fn>(…)` or an async call whose return \
+                 type is declared, then await that binding",
+                await_expr_shape(inner)
+            )
+        })
+    }
+
+    fn await_payload_kind_opt(&self, inner: &Expr) -> Option<String> {
+        match &inner.kind {
+            ExprKind::Spawn { func, .. } => self.callee_declared_return_kind(func),
+            ExprKind::Call { callee, .. } => self.callee_declared_return_kind(callee),
+            ExprKind::Ident(name) => self.variable_spawn_payload.get(name).cloned(),
+            ExprKind::Await(inner) => self.await_payload_kind_opt(inner),
+            _ => None,
+        }
+    }
+
+    fn callee_declared_return_kind(&self, callee: &Expr) -> Option<String> {
+        let ExprKind::Ident(fname) = &callee.kind else {
+            return None;
+        };
+        self.fn_return_kinds.get(fname).cloned()
+    }
+
+    fn spawn_or_async_payload_kind(&self, value: &Expr) -> Option<String> {
+        match &value.kind {
+            ExprKind::Spawn { func, .. } => self.callee_declared_return_kind(func),
+            ExprKind::Call { callee, .. } => {
+                let ExprKind::Ident(n) = &callee.kind else {
+                    return None;
+                };
+                if self.async_functions.contains(n) {
+                    self.callee_declared_return_kind(callee)
+                } else {
+                    None
+                }
+            }
+            ExprKind::Await(inner) => self.await_payload_kind_opt(inner),
+            _ => None,
+        }
+    }
+
+    /// Load TallowResult.value using the awaited T's representation.
+    fn load_await_payload(&mut self, result_reg: &str, kind: &str) -> Result<LLValue, String> {
+        let val_gep = self.fresh_reg();
+        self.emit_line(&format!(
+            "{val_gep} = getelementptr %struct.TallowResult, ptr {result_reg}, i64 0, i32 1"
+        ));
+        let val = self.fresh_reg();
+        self.emit_line(&format!("{val} = load i64, ptr {val_gep}"));
+        let wants_ptr = is_map_kind(kind)
+            || Self::is_handle_kind(kind)
+            || self.struct_layouts.contains_key(kind)
+            || matches!(
+                kind,
+                "String" | "Bytes" | "StringArray" | "BytesArray" | "ResultArray" | "Array"
+            );
+        if wants_ptr {
+            let ptr = self.fresh_reg();
+            self.emit_line(&format!("{ptr} = inttoptr i64 {val} to ptr"));
+            Ok(LLValue::new(ptr, LLType::I8Ptr))
+        } else if kind == "bool" || kind == "Bool" {
+            let b = self.fresh_reg();
+            self.emit_line(&format!("{b} = trunc i64 {val} to i1"));
+            Ok(LLValue::new(b, LLType::I1))
+        } else if matches!(kind, "f64" | "Float" | "float") {
+            let f = self.fresh_reg();
+            self.emit_line(&format!("{f} = bitcast i64 {val} to double"));
+            Ok(LLValue::new(f, LLType::F64))
+        } else if matches!(kind, "i64" | "i32" | "int" | "Int") {
+            Ok(LLValue::new(val, LLType::I64))
+        } else {
+            Err(format!(
+                "await: recovered payload kind `{kind}` has no compiled representation \
+                 for the value slot; refusing rather than loading it as i64"
+            ))
+        }
     }
 
     // ── Compiled `spawn` (E-3-04) ───────────────────────────────────────────
@@ -4991,6 +5100,7 @@ void tallow_async_runtime_shutdown(void) {
         self.variable_privacy.clear();
         self.current_fn_name = Some(func.name.clone());
         self.variable_is_tuple.clear();
+        self.variable_spawn_payload.clear();
 
         // ── @legal enforcement: network-touching functions need @legal ──────
         self.check_legal_annotation(func);
@@ -5439,6 +5549,7 @@ void tallow_async_runtime_shutdown(void) {
         // shape is restored together, or the flags drift from the slots.
         let outer_variables = self.variables.clone();
         let outer_var_is_map = self.variable_is_map.clone();
+        let outer_spawn_payload = self.variable_spawn_payload.clone();
         let outer_var_is_array = self.variable_is_array.clone();
         let outer_var_is_string = self.variable_is_string.clone();
         let outer_struct_types = self.variable_struct_types.clone();
@@ -5479,6 +5590,7 @@ void tallow_async_runtime_shutdown(void) {
         self.mutable_locals = outer_mutable;
         self.variables = outer_variables;
         self.variable_is_map = outer_var_is_map;
+        self.variable_spawn_payload = outer_spawn_payload;
         self.variable_is_array = outer_var_is_array;
         self.variable_is_string = outer_var_is_string;
         self.variable_struct_types = outer_struct_types;
@@ -6021,8 +6133,23 @@ void tallow_async_runtime_shutdown(void) {
                             self.variable_array_elem_is_ptr.insert(name.clone(), true);
                             self.variable_is_array.insert(name.clone(), true);
                         }
+                        if let Some(kind) = self.variable_spawn_payload.get(src).cloned() {
+                            self.variable_spawn_payload.insert(name.clone(), kind);
+                        }
                     }
                     _ => {}
+                }
+
+                if let Some(kind) = self.spawn_or_async_payload_kind(value) {
+                    match &value.kind {
+                        ExprKind::Spawn { .. } | ExprKind::Call { .. } => {
+                            self.variable_spawn_payload.insert(name.clone(), kind);
+                        }
+                        ExprKind::Await(_) => {
+                            self.apply_binding_kind(name, &kind);
+                        }
+                        _ => {}
+                    }
                 }
 
                 // Track maps and their key types
@@ -8141,21 +8268,15 @@ void tallow_async_runtime_shutdown(void) {
                 // Call tallow_async_await to block until the future completes. The
                 // return is the task's `%struct.TallowResult` Ok wrapper (built by
                 // `<fn>.task`); unwrap its `value` slot so `h.await` yields the
-                // recorded result, not the wrapper pointer. The common case is an
-                // integer result (value_type 0, i64 payload); float/ptr returns are
-                // still carried by value_type and are not unwrapped here.
+                // recorded result, not the wrapper pointer. The load type is the
+                // spawned call's declared T — never a silent i64 guess.
+                let kind = self.await_payload_kind(inner)?;
                 let raw = self.fresh_reg();
                 self.emit_line(&format!(
                     "{raw} = call ptr @tallow_async_await(ptr {})",
                     future.reg
                 ));
-                let val_gep = self.fresh_reg();
-                self.emit_line(&format!(
-                    "{val_gep} = getelementptr %struct.TallowResult, ptr {raw}, i64 0, i32 1"
-                ));
-                let val = self.fresh_reg();
-                self.emit_line(&format!("{val} = load i64, ptr {val_gep}"));
-                Ok(LLValue::new(val, LLType::I64))
+                self.load_await_payload(&raw, &kind)
             }
 
             // ── Struct literal ──────────────────────────────────────────
@@ -24962,6 +25083,13 @@ void tallow_async_runtime_shutdown(void) {
             }
             "String" => {
                 self.variable_is_string.insert(name.to_string(), true);
+            }
+            k if is_map_kind(k) => {
+                self.variable_is_map.insert(name.to_string(), true);
+                self.variable_map_key_is_string.insert(
+                    name.to_string(),
+                    map_kind_is_string_keyed(k).unwrap_or(true),
+                );
             }
             other if self.struct_layouts.contains_key(other) => {
                 self.variable_struct_types

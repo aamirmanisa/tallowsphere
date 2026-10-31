@@ -425,6 +425,7 @@ jobs:
           --test defer_parity
           --test codegen_fallthrough
           --test async_await_idempotent
+          --test await_payload_kinds
           --test gate_capability_registry_parity
           --test gate_census_page_methods_parity
           --test gate_census_surface_parity
