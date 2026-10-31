@@ -114,12 +114,26 @@ fn main() with Net(connect) {{
 }
 
 #[test]
+#[ignore = "GAP (measured 2026-10-31, tallow 1.5.8+3 fixes @ 808d270): http.post/put/delete do not \
+            consult the authorization register on EITHER plane. Measured with \
+            `fn main() with Net(post) { print(http.post(\"https://192.0.2.1/x\", \"body\")) }` \
+            (192.0.2.1 is RFC 5737 TEST-NET-1, unregistered): \
+            --interpret -> Err(\"http.post: stealth post: error sending request for uri ... \
+            operation timed out\"), rc=0 - it spent the connection attempt; \
+            --require-native -> (null), rc=0. Re-enable only when both planes refuse with \
+            `not in the authorization register` before opening a socket; recorded in \
+            CHANGELOG.md v1.6.0 'Known at tag time'."]
 fn http_write_verbs_refuse_a_host_absent_from_the_register() {
     // post / put / delete share one gate; batch delegates to get.
+    //
+    // The program this case used to carry did not parse: `Budget(bytes: 1048576)` is a
+    // blueprint target, not implemented syntax (see docs/egress-gate-open-defects.md), so
+    // both planes exited 1 at the parser and only the `!ok` disjunct carried the pass. The
+    // corrected program declares the effect the checker actually demands (`Net(post)`).
     let src = format!(
         r#"{NET_ANNOTATIONS}
-fn main() with Net(connect), Budget(bytes: 1048576), Plane(egress) {{
-    print(http.post("https://1.1.1.1/x", "body"))
+fn main() with Net(post) {{
+    print(http.post("https://192.0.2.1/x", "body"))
 }}
 "#
     );
@@ -134,34 +148,45 @@ fn main() with Net(connect), Budget(bytes: 1048576), Plane(egress) {{
             continue;
         }
         assert!(
-            combined.to_lowercase().contains("not listed")
-                || combined.to_lowercase().contains("refus")
-                || !ok,
-            "[{plane}] http.post to an unregistered host was not refused: {combined}"
+            combined.to_lowercase().contains("not in the authorization register")
+                || combined.to_lowercase().contains("not listed"),
+            "[{plane}] http.post to an unregistered host was not refused by the register: {combined}"
         );
+        assert!(!ok, "[{plane}] exited 0 on a refused http.post: {combined}");
     }
 }
 
 #[test]
 fn a_registered_host_is_still_reachable() {
-    // Positive control. Loopback is in the shipped register and is exempt from
-    // the register check in http.rs, so this asserts the gate is not a blanket
-    // refusal. It binds a local listener and does not leave the machine.
+    // Positive control. Loopback is in the shipped register with methods GET/HEAD, so the
+    // granted verb is http.get — NOT net.connect: the register grants no CONNECT, so a
+    // net.connect control is refused scope:method-not-allowed on both planes and asserts
+    // nothing about reachability. (The earlier control also bound the connect to `s` and
+    // never observed it, so the compiled plane eliminated the call entirely.)
+    //
+    // Port 1 is closed, so the request fails at the socket layer. What we assert is that
+    // the failure is a connection failure rather than a register refusal: reaching the
+    // socket is what proves the gate is not a blanket refusal.
     let src = format!(
         r#"{NET_ANNOTATIONS}
-fn main() with Net(connect) {{
-    let s = net.connect("127.0.0.1:1")
-    print("REACHED")
+fn main() with Net(get) {{
+    print(http.get("http://127.0.0.1:1/"))
 }}
 "#
     );
-    // Port 1 is closed, so the connect fails at the socket layer rather than the
-    // gate. What we assert is that the failure is NOT the register refusal:
-    // reaching connection-refused proves the gate let it through.
-    let (stdout, stderr, _ok) = run_plane(&src, "--interpret");
-    let combined = format!("{stdout}{stderr}");
-    assert!(
-        !combined.to_lowercase().contains("not listed"),
-        "loopback was refused by the register, which would make this gate a blanket refusal: {combined}"
-    );
+    for plane in ["--interpret", "--require-native"] {
+        let (stdout, stderr, _ok) = run_plane(&src, plane);
+        let combined = format!("{stdout}{stderr}");
+        assert!(
+            !combined.to_lowercase().contains("not in the authorization register")
+                && !combined.to_lowercase().contains("not listed"),
+            "[{plane}] loopback was refused by the register, which would make this gate a \
+             blanket refusal: {combined}"
+        );
+        assert!(
+            combined.to_lowercase().contains("connection refused"),
+            "[{plane}] loopback did not reach the socket layer, so this control proves \
+             nothing about a registered host: {combined}"
+        );
+    }
 }
