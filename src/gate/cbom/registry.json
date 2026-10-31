@@ -1,0 +1,708 @@
+{
+ "aeadCoverPatterns": [
+  "AES-?256(?:-GCM)?",
+  "Aes256Gcm",
+  "AES[-_]?128(?:[-_]GCM)?\\b",
+  "XChaCha20(?:Poly1305)?",
+  "ChaCha20(?:Poly1305)?",
+  "AEGIS-?256",
+  "Aegis256",
+  "aegis_?256",
+  "AEGIS-?128L\\b",
+  "Aegis128L",
+  "aegis_?128l",
+  "AES-?256-?GCM-?SIV",
+  "AES-?GCM-?SIV",
+  "(?<![0-9A-Za-z_])GCM-?SIV",
+  "AES-?256-?KW",
+  "(?<![0-9A-Za-z_])Noise\\w*",
+  "(?<![0-9A-Za-z_])noise_\\w+"
+ ],
+ "aeadShape": "GCM|OCB\\d*|CCM|EAX|SIV|AES|ChaCha|AEGIS|Ascon\\w*|Deoxys\\w*|NORX\\w*|MORUS\\w*|Xoodyak\\w*|Elephant\\w*|ISAP\\w*|Ketje\\w*|Gimli\\w*|Salsa20\\w*",
+ "aegisAllowlist": {
+  "src/stdlib/crypto.rs": "explicit crypto.encrypt_aegis / crypto.decrypt_aegis entry points (#[allow(dead_code)]; feature-gated behind the non-default 'aegis' feature as of W2-11; reachable only via explicit crypto.* dispatch); the ONLY permitted AEGIS site outside crates/tallow-crypto/"
+ },
+ "aegisCeiling": {
+  "src/stdlib/crypto.rs": 30
+ },
+ "aegisVariants": [
+  "AEGIS-128L",
+  "AEGIS-256"
+ ],
+ "cipherSuiteRoles": [
+  "aead",
+  "keywrap",
+  "protocol"
+ ],
+ "defaultRoots": [
+  "crates/tallow-crypto/src",
+  "crates/tallow-net/src",
+  "src/vault",
+  "src/stdlib/crypto.rs"
+ ],
+ "discovery": "AES-\\d+-(?:GCM-SIV|GCMSIV|OCB\\d*|CCM\\d*|SIV|EAX|XTS|KW|CBC|CTR\\d*)|(?<![0-9A-Za-z_])(?:AES-)?GCM-?SIV\\b|(?<![0-9A-Za-z_])OCB\\d*\\b|(?<![0-9A-Za-z_])(?:X)?Salsa20\\w*|(?<![0-9A-Za-z_])(?:Ascon|Deoxys|NORX|MORUS|Xoodyak|Elephant|ISAP|Ketje|Gimli)[-\\w]*|XChaCha20Poly1305|ChaCha20Poly1305|XChaCha20|ChaCha20|X25519(?:MLKEM768)?|Curve25519|Ed25519|Ed448|X448|ML-?KEM-?\\d*|MLKEM\\d*|MlKem\\d*|Kyber\\d*|ML-?DSA-?\\d*|MLDSA\\d*|MlDsa\\d*|Dilithium\\d*|Falcon-?\\d*|AES-\\d+(?:-GCM)?|Aes\\d{3}Gcm|AEGIS-?128L\\b|AEGIS-?\\d+|Argon2\\w*|HKDF(?:-SHA\\d+)?|PBKDF2|scrypt|SHA3(?:-?\\d+)?|SHA-?\\d{3}|SHAKE\\d+|BLAKE[23]\\w*|HMAC|Poly1305|Ristretto\\w*|CPace|SPHINCS\\+?|SLH-?DSA\\w*|SlhDsa\\w*|secp256k1|P-25[56]|(?<![0-9A-Za-z_])[Ss][Mm]-?[234]|(?<![0-9A-Za-z_])[Ss]treebog\\w*|(?<![0-9A-Za-z_])[Kk]uznyechik\\w*|(?<![0-9A-Za-z_])[Bb]crypt\\w*|(?<![0-9A-Za-z_])BLS\\w*|(?<![0-9A-Za-z_])blst\\w*|(?<![0-9A-Za-z_])[Ss][Pp][Aa][Kk][Ee]2\\w*|(?<![0-9A-Za-z_])OPAQUE\\w*|(?<![0-9A-Za-z_])[Oo]paque\\w*|(?<![0-9A-Za-z_])BBS\\+?|(?<![0-9A-Za-z_])bbs_\\w+|(?<![0-9A-Za-z_])FROST\\b|(?<![0-9A-Za-z_])OPRF\\b|(?<![0-9A-Za-z_])oprf_\\w+|(?<![0-9A-Za-z_])ECVRF\\w*|(?<![0-9A-Za-z_])VRF\\b|(?<![0-9A-Za-z_])vrf_\\w+|(?<![0-9A-Za-z_])FF1\\b|(?<![0-9A-Za-z_])ff1_\\w+|(?<![0-9A-Za-z_])Noise\\w*|(?<![0-9A-Za-z_])noise_\\w+",
+ "entryUnions": {
+  "AEGIS-128L": "(?:AEGIS-?128L\\b)|(?:Aegis128L)|(?:aegis_?128l)",
+  "AEGIS-256": "(?:AEGIS-?256)|(?:Aegis256)|(?:aegis_?256)",
+  "AES-128-GCM": "(?:AES[-_]?128(?:[-_]GCM)?\\b)",
+  "AES-256-GCM": "(?:AES-?256(?:-GCM)?)|(?:Aes256Gcm)",
+  "AES-256-GCM-SIV": "(?:AES-?256-?GCM-?SIV)|(?:AES-?GCM-?SIV)|(?:(?<![0-9A-Za-z_])GCM-?SIV)",
+  "AES-256-KW": "(?:AES-?256-?KW)",
+  "Argon2id": "(?:Argon2\\w*)",
+  "BBS": "(?:(?<![0-9A-Za-z_])BBS\\+?)|(?:(?<![0-9A-Za-z_])bbs_\\w+)",
+  "BLAKE2s": "(?:BLAKE2s)",
+  "BLAKE3": "(?:BLAKE3)",
+  "BLS": "(?:(?<![0-9A-Za-z_])BLS\\w*)|(?:(?<![0-9A-Za-z_])blst\\w*)",
+  "CPace": "(?:CPace)",
+  "ChaCha20-Poly1305": "(?:XChaCha20(?:Poly1305)?)|(?:ChaCha20(?:Poly1305)?)",
+  "Ed25519": "(?:Ed25519)",
+  "FF1": "(?:(?<![0-9A-Za-z_])FF1\\b)|(?:(?<![0-9A-Za-z_])ff1_\\w+)",
+  "FROST": "(?:(?<![0-9A-Za-z_])FROST\\b)",
+  "Falcon": "(?:Falcon-?\\d*)",
+  "HKDF": "(?:HKDF(?:-SHA\\d+)?)",
+  "HMAC": "(?:HMAC)",
+  "Kuznyechik": "(?:(?<![0-9A-Za-z_])[Kk]uznyechik\\w*)",
+  "ML-DSA": "(?:ML-?DSA(?:-?\\d+)?)|(?:MlDsa\\d*)|(?:Dilithium\\d*)",
+  "ML-KEM": "(?:ML-?KEM(?:-?\\d+)?)|(?:MlKem\\d*)|(?:Kyber\\d*)",
+  "Noise": "(?:(?<![0-9A-Za-z_])Noise\\w*)|(?:(?<![0-9A-Za-z_])noise_\\w+)",
+  "OPAQUE": "(?:(?<![0-9A-Za-z_])OPAQUE\\w*)|(?:(?<![0-9A-Za-z_])[Oo]paque\\w*)",
+  "OPRF": "(?:(?<![0-9A-Za-z_])OPRF\\b)|(?:(?<![0-9A-Za-z_])oprf_\\w+)",
+  "PBKDF2": "(?:PBKDF2)",
+  "Poly1305": "(?:(?<!ChaCha20)Poly1305)",
+  "Ristretto255": "(?:Ristretto\\w*)",
+  "SHA-256": "(?:SHA-?256)",
+  "SHA-384": "(?:SHA-?384)",
+  "SHA-512": "(?:SHA-?512)",
+  "SHA3-256": "(?:SHA3(?:-?\\d+)?)",
+  "SHAKE128": "(?:SHAKE128)",
+  "SHAKE256": "(?:SHAKE256)",
+  "SLH-DSA": "(?:SLH-?DSA\\w*)|(?:SlhDsa\\w*)|(?:SPHINCS\\+?)",
+  "SM2": "(?:(?<![0-9A-Za-z_])[Ss][Mm]-?2)",
+  "SM3": "(?:(?<![0-9A-Za-z_])[Ss][Mm]-?3)",
+  "SM4": "(?:(?<![0-9A-Za-z_])[Ss][Mm]-?4)",
+  "SPAKE2": "(?:(?<![0-9A-Za-z_])[Ss][Pp][Aa][Kk][Ee]2\\w*)",
+  "Streebog": "(?:(?<![0-9A-Za-z_])[Ss]treebog\\w*)",
+  "VRF": "(?:(?<![0-9A-Za-z_])ECVRF\\w*)|(?:(?<![0-9A-Za-z_])VRF\\b)|(?:(?<![0-9A-Za-z_])vrf_\\w+)",
+  "X25519": "(?:X25519)|(?:Curve25519)",
+  "bcrypt": "(?:(?<![0-9A-Za-z_])[Bb]crypt\\w*)",
+  "scrypt": "(?:[Ss]crypt)"
+ },
+ "policy": {
+  "aegisStance": {
+   "enforcement": "AEGIS use sites (both registered variants, per E-3-08) must stay inside crates/tallow-crypto/, with exactly one explicit annotated exception (E-2-01: AEGIS_OUTSIDE_ALLOWLIST — the stdlib entry points in src/stdlib/crypto.rs); aegisSitesOutsideTallowCrypto must be empty (it lists only unexcused sites) and aegisAllowedOutsideTallowCrypto records every conscious exception — a single-file allowance, never a blanket rule; the allowance is occurrence-ceilinged (aegisAllowanceCeiling vs aegisAllowanceOccurrences, W2-11) so a second AEGIS endpoint in the allowed file cannot land silently. The feature gate is asserted on BOTH sides: the crates/tallow-crypto manifest (optional dep behind 'aegis') and, since W2-11, the root manifest (aegis dependency optional behind the non-default 'aegis' feature; the stdlib entry points compile to honest 'not enabled' errors without it) — E-2-01 §1(c)/§3's dependency-gate recommendation, narrower option.",
+   "policyRef": "phase10-crypto-profiles/10-crypto-target-draft.md §10.6 item 8; P10-R14",
+   "rule": "AEGIS (AEGIS-128L / AEGIS-256) stays feature-gated and optional at most - never a default AEAD"
+  },
+  "novelAeadRule": {
+   "detection": "AEAD-shaped tokens captured by DISCOVERY that do not full-match a registered aead pattern (novelAeadCandidates must be empty)",
+   "registeredAeadSet": "REGISTRY entries with role 'aead'",
+   "rule": "no novel AEADs: an AEAD/cipher-suite token outside the registered AEAD set must be consciously registered (with rationale) or removed before --check can pass"
+  },
+  "oneParamsSource": {
+   "enforcement": "--check fails on any crypto-shaped token not covered by a REGISTRY entry; the committed artifact is byte-gated, so registry/parameter changes land atomically with the artifact update (--write in the same change)",
+   "history": "P10-F6 — Argon2id constants were duplicated x4 (crate vs vault plumbing); fix = one implementation + versioned params in the container header",
+   "paramsSource": "scripts/crypto-inventory.py:REGISTRY (bound by registrySha256 in this artifact)",
+   "rule": "REGISTRY (scripts/crypto-inventory.py) is the single source of truth for the primitive set; algorithm parameters at use sites must derive from / be cross-checked against the central tallow-crypto definitions, never a second algorithm/params table"
+  },
+  "policyRef": [
+   "P10-R14 (small primitive set guardrail)",
+   "matrix #172",
+   "matrix #173",
+   "final/06-crypto-architecture.md §6.2 guardrails",
+   "phase10-crypto-profiles/10-crypto-target-draft.md §10.6 items 2 & 8"
+  ],
+  "rejectedPrimitives": [
+   {
+    "name": "Ed448",
+    "policyRef": "P10-R14 / matrix #172,#173",
+    "reason": "exotic curve: no interop demand, larger keys, not in crate (report §10.6 item 2; agent-01 R-12)"
+   },
+   {
+    "name": "X448",
+    "policyRef": "P10-R14 / matrix #172,#173",
+    "reason": "exotic curve: no interop demand, larger keys, not in crate (report §10.6 item 2; agent-01 R-12)"
+   }
+  ]
+ },
+ "registry": [
+  {
+   "family": "ML-KEM (FIPS 203, ex-Kyber)",
+   "name": "ML-KEM",
+   "patterns": [
+    "ML-?KEM(?:-?\\d+)?",
+    "MlKem\\d*",
+    "Kyber\\d*"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "post-quantum",
+   "role": "kem",
+   "state": "active"
+  },
+  {
+   "family": "ML-DSA (FIPS 204, ex-Dilithium)",
+   "name": "ML-DSA",
+   "patterns": [
+    "ML-?DSA(?:-?\\d+)?",
+    "MlDsa\\d*",
+    "Dilithium\\d*"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "post-quantum",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "SLH-DSA (FIPS 205, ex-SPHINCS+)",
+   "name": "SLH-DSA",
+   "patterns": [
+    "SLH-?DSA\\w*",
+    "SlhDsa\\w*",
+    "SPHINCS\\+?"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "post-quantum",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "X25519 / Curve25519 (RFC 7748)",
+   "name": "X25519",
+   "patterns": [
+    "X25519",
+    "Curve25519"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "kem",
+   "state": "active"
+  },
+  {
+   "family": "Ed25519 (RFC 8032)",
+   "name": "Ed25519",
+   "patterns": [
+    "Ed25519"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "AES-256-GCM (FIPS 197 / SP 800-38D)",
+   "name": "AES-256-GCM",
+   "patterns": [
+    "AES-?256(?:-GCM)?",
+    "Aes256Gcm"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "aead",
+   "state": "active"
+  },
+  {
+   "family": "AES-128-GCM / TLS_AES_128_GCM_SHA256 (FIPS 197, SP 800-38D) — RFC 9849 ECH mandatory HPKE suite (ECHConfig + GREASE placeholder); not a payload-protection primitive",
+   "name": "AES-128-GCM",
+   "patterns": [
+    "AES[-_]?128(?:[-_]GCM)?\\b"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "aead",
+   "state": "active"
+  },
+  {
+   "family": "ChaCha20-Poly1305 (RFC 8439; XChaCha20: draft-irtf-cfrg-xchacha)",
+   "name": "ChaCha20-Poly1305",
+   "patterns": [
+    "XChaCha20(?:Poly1305)?",
+    "ChaCha20(?:Poly1305)?"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "aead",
+   "state": "active"
+  },
+  {
+   "family": "AEGIS (AEGIS-256, IRTF CFRG draft) — variant-explicit entry (the stdlib crypto.encrypt_aegis default variant is AEGIS-128L; own entry)",
+   "name": "AEGIS-256",
+   "patterns": [
+    "AEGIS-?256",
+    "Aegis256",
+    "aegis_?256"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "aead",
+   "state": "active"
+  },
+  {
+   "family": "AEGIS-128L (IRTF CFRG draft) — default variant of the stdlib crypto.encrypt_aegis / crypto.decrypt_aegis entry points",
+   "name": "AEGIS-128L",
+   "patterns": [
+    "AEGIS-?128L\\b",
+    "Aegis128L",
+    "aegis_?128l"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "aead",
+   "state": "active"
+  },
+  {
+   "family": "Argon2 (RFC 9106)",
+   "name": "Argon2id",
+   "patterns": [
+    "Argon2\\w*"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "kdf",
+   "state": "active"
+  },
+  {
+   "family": "HKDF (RFC 5869)",
+   "name": "HKDF",
+   "patterns": [
+    "HKDF(?:-SHA\\d+)?"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "kdf",
+   "state": "active"
+  },
+  {
+   "family": "BLAKE3",
+   "name": "BLAKE3",
+   "patterns": [
+    "BLAKE3"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "SHA-3 (FIPS 202)",
+   "name": "SHA3-256",
+   "patterns": [
+    "SHA3(?:-?\\d+)?"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "SHA-2 (FIPS 180-4)",
+   "name": "SHA-256",
+   "patterns": [
+    "SHA-?256"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "HMAC (RFC 2104)",
+   "name": "HMAC",
+   "patterns": [
+    "HMAC"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "mac",
+   "state": "active"
+  },
+  {
+   "family": "Poly1305 (RFC 8439)",
+   "name": "Poly1305",
+   "patterns": [
+    "(?<!ChaCha20)Poly1305"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "mac",
+   "state": "active"
+  },
+  {
+   "family": "Ristretto255 (RFC 9496)",
+   "name": "Ristretto255",
+   "patterns": [
+    "Ristretto\\w*"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "group",
+   "state": "active"
+  },
+  {
+   "family": "CPace (draft-irtf-cfrg-cpace)",
+   "name": "CPace",
+   "patterns": [
+    "CPace"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "pake",
+   "state": "active"
+  },
+  {
+   "family": "BLAKE2s (RFC 7693) — Noise handshake-hash spelling (_25519_ChaChaPoly_BLAKE2s suite)",
+   "name": "BLAKE2s",
+   "patterns": [
+    "BLAKE2s"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "Falcon (NIST PQC signature; pqcrypto-falcon — C-backed PQClean, distinct trust class, not pure-Rust) — covers Falcon / Falcon-512 / Falcon-1024",
+   "name": "Falcon",
+   "patterns": [
+    "Falcon-?\\d*"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "post-quantum",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "PBKDF2 (RFC 8018 / SP 800-132) — PBKDF2-HMAC-SHA-256, 600K iterations (stdlib password-KDF alongside Argon2id)",
+   "name": "PBKDF2",
+   "patterns": [
+    "PBKDF2"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "kdf",
+   "state": "active"
+  },
+  {
+   "family": "SHA-384 (FIPS 180-4) — hash / HMAC-SHA-384 / HKDF-SHA-384 wiring in the stdlib crypto suite",
+   "name": "SHA-384",
+   "patterns": [
+    "SHA-?384"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "SHA-512 (FIPS 180-4) — covers the SHA-512 and SHA512 spellings (stdlib crypto + TOTP/ECVRF uses)",
+   "name": "SHA-512",
+   "patterns": [
+    "SHA-?512"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "SHAKE128 (FIPS 202 XOF) — extendable-output function",
+   "name": "SHAKE128",
+   "patterns": [
+    "SHAKE128"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "SHAKE256 (FIPS 202 XOF) — extendable-output function",
+   "name": "SHAKE256",
+   "patterns": [
+    "SHAKE256"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "scrypt (RFC 7914) — password hashing for crypto.hash_password / verify_password (alongside Argon2id and PBKDF2)",
+   "name": "scrypt",
+   "patterns": [
+    "[Ss]crypt"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "kdf",
+   "state": "active"
+  },
+  {
+   "family": "AES-256-GCM-SIV (RFC 8452, misuse-resistant AEAD) — covers the AES-256-GCM-SIV / AES-GCM-SIV / GCM-SIV spellings (explicit stdlib surface, not a default AEAD)",
+   "name": "AES-256-GCM-SIV",
+   "patterns": [
+    "AES-?256-?GCM-?SIV",
+    "AES-?GCM-?SIV",
+    "(?<![0-9A-Za-z_])GCM-?SIV"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "aead",
+   "state": "active"
+  },
+  {
+   "family": "AES-256-KW (SP 800-38F / RFC 3394 key wrap) — key-wrapping cipher suite (crypto.key_wrap / crypto.aes_key_wrap); not an AEAD",
+   "name": "AES-256-KW",
+   "patterns": [
+    "AES-?256-?KW"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "keywrap",
+   "state": "active"
+  },
+  {
+   "family": "SM2 (OSCCA GM/T 0003 SM2DSA) — REAL via the sm2 crate (stdlib sm2_sign/sm2_verify; Ed25519-era simulation comment superseded)",
+   "name": "SM2",
+   "patterns": [
+    "(?<![0-9A-Za-z_])[Ss][Mm]-?2"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "SM3 (OSCCA GM/T 0004) — REAL via the sm3 crate (stdlib sm3_hash)",
+   "name": "SM3",
+   "patterns": [
+    "(?<![0-9A-Za-z_])[Ss][Mm]-?3"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "SM4 (OSCCA GB/T 32907, 128-bit block cipher) — REAL via the sm4+cbc crates in CBC mode (stdlib sm4_encrypt/sm4_decrypt; not an AEAD)",
+   "name": "SM4",
+   "patterns": [
+    "(?<![0-9A-Za-z_])[Ss][Mm]-?4"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "cipher",
+   "state": "active"
+  },
+  {
+   "family": "Streebog (GOST R 34.11-2012, 256-bit) — REAL via the streebog crate (stdlib gost_hash)",
+   "name": "Streebog",
+   "patterns": [
+    "(?<![0-9A-Za-z_])[Ss]treebog\\w*"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "hash",
+   "state": "active"
+  },
+  {
+   "family": "Kuznyechik / Grasshopper (GOST R 34.12-2015, 128-bit block cipher) — REAL via the kuznyechik+cbc crates in CBC mode (stdlib gost_encrypt/gost_decrypt; not an AEAD)",
+   "name": "Kuznyechik",
+   "patterns": [
+    "(?<![0-9A-Za-z_])[Kk]uznyechik\\w*"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "cipher",
+   "state": "active"
+  },
+  {
+   "family": "bcrypt (OpenBSD/Provos-Song password hashing) — REAL via the bcrypt crate (crypto.hash_password 'bcrypt', DEFAULT_COST)",
+   "name": "bcrypt",
+   "patterns": [
+    "(?<![0-9A-Za-z_])[Bb]crypt\\w*"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "kdf",
+   "state": "active"
+  },
+  {
+   "family": "BLS signatures (BLS12-381, min_pk) — REAL via the blst crate (bls_sign/bls_verify/bls_aggregate; covers the blst crate/type spellings)",
+   "name": "BLS",
+   "patterns": [
+    "(?<![0-9A-Za-z_])BLS\\w*",
+    "(?<![0-9A-Za-z_])blst\\w*"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "SPAKE2 PAKE (RFC 9382) — REAL via the spake2 crate over Ed25519Group (stdlib spake2_exchange/spake2_start)",
+   "name": "SPAKE2",
+   "patterns": [
+    "(?<![0-9A-Za-z_])[Ss][Pp][Aa][Kk][Ee]2\\w*"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "pake",
+   "state": "active"
+  },
+  {
+   "family": "OPAQUE-style aPAKE — EXPERIMENTAL Argon2id + Ed25519 + BLAKE3 keyed-hash envelope approximation; NOT RFC 9392 OPAQUE (no OPRF — the separate OPRF entry is a distinct surface); fails closed per source notes",
+   "name": "OPAQUE",
+   "patterns": [
+    "(?<![0-9A-Za-z_])OPAQUE\\w*",
+    "(?<![0-9A-Za-z_])[Oo]paque\\w*"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "pake",
+   "state": "active"
+  },
+  {
+   "family": "BBS+ anonymous credentials — EXPERIMENTAL Ed25519 commitment + signature approximation (NOT pairing-based BBS+; no selective disclosure) — covers BBS / BBS+ / bbs_* helper spellings",
+   "name": "BBS",
+   "patterns": [
+    "(?<![0-9A-Za-z_])BBS\\+?",
+    "(?<![0-9A-Za-z_])bbs_\\w+"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "FROST threshold signatures — EXPERIMENTAL Shamir-split Ed25519 approximation; NOT RFC 9591 FROST (no DKG/aggregation, threshold property absent per source notes)",
+   "name": "FROST",
+   "patterns": [
+    "(?<![0-9A-Za-z_])FROST\\b"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "OPRF — REAL HMAC-based oblivious pseudorandom function using BLAKE3 keyed hash (stdlib oprf_setup/oprf_blind/oprf_evaluate/oprf_finalize)",
+   "name": "OPRF",
+   "patterns": [
+    "(?<![0-9A-Za-z_])OPRF\\b",
+    "(?<![0-9A-Za-z_])oprf_\\w+"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "mac",
+   "state": "active"
+  },
+  {
+   "family": "VRF / ECVRF (draft-irtf-cfrg-vrf-15, Ed25519-SHA512-TAI) — Ed25519-based ECVRF (vrf_generate_keypair/vrf_prove/vrf_verify)",
+   "name": "VRF",
+   "patterns": [
+    "(?<![0-9A-Za-z_])ECVRF\\w*",
+    "(?<![0-9A-Za-z_])VRF\\b",
+    "(?<![0-9A-Za-z_])vrf_\\w+"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "sig",
+   "state": "active"
+  },
+  {
+   "family": "FF1-style format-preserving encryption (NIST SP 800-38G family) — Feistel construction with BLAKE3 PRF (fpe_tokenize/fpe_detokenize, ff1_encrypt); not an AEAD",
+   "name": "FF1",
+   "patterns": [
+    "(?<![0-9A-Za-z_])FF1\\b",
+    "(?<![0-9A-Za-z_])ff1_\\w+"
+   ],
+   "pqTransition": null,
+   "quantumResistance": "symmetric-grover-halved",
+   "role": "cipher",
+   "state": "active"
+  },
+  {
+   "family": "Noise Protocol Framework — REAL via the snow crate (suite Noise_<pattern>_25519_ChaChaPoly_BLAKE2s; stdlib noise_handshake/noise_encrypt/noise_decrypt; AEAD component = registered ChaCha20-Poly1305)",
+   "name": "Noise",
+   "patterns": [
+    "(?<![0-9A-Za-z_])Noise\\w*",
+    "(?<![0-9A-Za-z_])noise_\\w+"
+   ],
+   "pqTransition": {
+    "deprecate": "2030",
+    "disallow": "2035",
+    "source": "NIST IR 8547"
+   },
+   "quantumResistance": "classical-vulnerable",
+   "role": "protocol",
+   "state": "active"
+  }
+ ],
+ "rejectedPrimitives": [
+  {
+   "name": "Ed448",
+   "patterns": [
+    "(?<![0-9A-Za-z_])Ed448\\w*",
+    "(?<![0-9A-Za-z_])ed448\\w*"
+   ],
+   "policyRef": "P10-R14 / matrix #172,#173",
+   "reason": "exotic curve: no interop demand, larger keys, not in crate (report §10.6 item 2; agent-01 R-12)"
+  },
+  {
+   "name": "X448",
+   "patterns": [
+    "(?<![0-9A-Za-z_])X448\\b",
+    "(?<![0-9A-Za-z_])x448\\b"
+   ],
+   "policyRef": "P10-R14 / matrix #172,#173",
+   "reason": "exotic curve: no interop demand, larger keys, not in crate (report §10.6 item 2; agent-01 R-12)"
+  }
+ ],
+ "rejectedUnions": {
+  "Ed448": "(?:(?<![0-9A-Za-z_])Ed448\\w*)|(?:(?<![0-9A-Za-z_])ed448\\w*)",
+  "X448": "(?:(?<![0-9A-Za-z_])X448\\b)|(?:(?<![0-9A-Za-z_])x448\\b)"
+ }
+}

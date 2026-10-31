@@ -197,6 +197,14 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Repository gates that a healthy tree must pass, as one binary instead of
+    /// a pile of scripts: `tallow gate ffi-symbols`.
+    #[command(name = "gate")]
+    Gate {
+        /// The gate to run, e.g. `ffi-symbols`
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Veil egress control: assert a transport rung, announce it, and hand
     /// off env for child runs (`tallow veil connect tor|mesh|direct`).
     /// Bridge server: `tallow veil bridge serve`.
@@ -2858,6 +2866,9 @@ fn real_main() -> anyhow::Result<()> {
         }
         Command::Veil { args } => {
             std::process::exit(tallow::cli::veil_cmd::run_veil_args(&args));
+        }
+        Command::Gate { args } => {
+            std::process::exit(tallow::gate::run_cli(&args));
         }
         Command::NeverCheck => {
             std::process::exit(tallow::cli::never_probe::run_never_probe());

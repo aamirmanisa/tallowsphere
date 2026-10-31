@@ -33,6 +33,7 @@ pub mod canary_tokens;
 pub mod caveats;
 pub mod claim_typing;
 pub mod cli;
+pub mod gate;
 pub mod codegen;
 pub mod compartment;
 pub mod config;
