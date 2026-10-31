@@ -2823,9 +2823,34 @@ impl<'a> TypeChecker<'a> {
         position: &str,
         span: Span,
     ) {
-        // A `T?` destination accepts everything a `T` destination does; an
-        // unknown destination is inference's placeholder, not evidence.
+        // An `Optional` destination accepts everything a `T` destination does; an
+        // unknown destination is inference's placeholder, not evidence. The nil
+        // direction below applies to BOTH, so do not return before it.
         if matches!(declared, Type::Optional(_) | Type::Unknown) {
+            return;
+        }
+        // `nil` into a non-optional destination. This is the direction the checker
+        // never had: `let x: i64 = nil` was ACCEPTED with 0 warnings, and the two
+        // planes then disagreed about what `x` held (interpreter: nil, native: 0).
+        // No non-optional type has an absent value, so there is nothing to infer -
+        // the program is refused rather than given a silent placeholder.
+        if matches!(&value.kind, ExprKind::Nil) {
+            self.diags.push(
+                crate::error::Diagnostic::error(
+                    "E0116",
+                    format!(
+                        "cannot {position} `nil` where `{}` is required: the destination is not \
+                         an optional, so there is no absent value it can hold",
+                        self.type_display(declared),
+                    ),
+                    span,
+                )
+                .with_help(format!(
+                    "declare the destination optional (`{}?`) if absent is a real state, or \
+                     supply a value",
+                    self.type_display(declared),
+                )),
+            );
             return;
         }
         // A dominating `if v == nil { .. }` has excluded the absent case before

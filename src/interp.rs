@@ -1288,7 +1288,17 @@ pub struct Interpreter {
     /// Page event handlers, keyed by page session id.
     /// JS binding name → `.tl` handler, keyed by page session id.
     /// Stack of deferred blocks per function call frame (LIFO within each frame).
-    pub deferred_stack: Vec<Vec<Block>>,
+    ///
+    /// Each entry is the block *plus the scopes that were visible where it was
+    /// written*, snapshotted at registration. Storing the body alone was wrong:
+    /// a `defer` inside a loop registers once per iteration, and every
+    /// registration saw the last iteration's bindings at unwind. A loop
+    /// `while k < 2 { let tag = k; defer { print(tag) } ... }` printed
+    /// `1, 1` instead of `1, 0` — the deferred body resolved `tag` against
+    /// whichever same-depth scope happened to sort last. Capturing the visible
+    /// scope chain per registration is what makes each defer read what it
+    /// actually closed over.
+    pub deferred_stack: Vec<Vec<(Block, Vec<(usize, HashMap<String, Value>)>)>>,
     /// Opt-in runtime capability policy (deny-lists) consulted by the builtin
     /// dispatch before every `fs.*` operation — see `src/runtime_caps.rs`
     /// (security-audit R2). `None` = unrestricted (historical behavior).
@@ -1348,6 +1358,11 @@ pub struct Interpreter {
     thread_handles: Vec<std::thread::JoinHandle<()>>,
     /// Retained results of value-returning goroutines, keyed by spawn id.
     spawn_results: std::collections::HashMap<usize, std::sync::mpsc::Receiver<Vec<u8>>>,
+    /// Decoded result of an awaited legacy goroutine, retained so `h.await` is
+    /// idempotent (matches native `tallow_async_await`). Populated on the first
+    /// await; the mpsc channel is single-shot, so this is the only way a second
+    /// await can return the same value instead of blocking on an empty channel.
+    spawn_await_cache: std::collections::HashMap<usize, Value>,
     /// Next goroutine spawn id (monotonic).
     next_spawn_id: usize,
     /// Completion flag per spawned task: set when the child thread finishes
@@ -1478,6 +1493,7 @@ impl Interpreter {
             call_depth: 0,
             thread_handles: Vec::new(),
             spawn_results: std::collections::HashMap::new(),
+            spawn_await_cache: std::collections::HashMap::new(),
             next_spawn_id: 0,
             spawn_done: std::collections::HashMap::new(),
             spawn_cancel: std::collections::HashMap::new(),
@@ -2103,31 +2119,26 @@ impl Interpreter {
         let frame = self.deferred_stack.pop().unwrap_or_default();
         if !frame.is_empty() {
             // Park the call frame's still-live scopes (parameters, constants)
-            // and append the retained block scopes, so the deferred bodies run
-            // against the full chain: call frame first, then the block scopes
-            // inside it, deepest last. Moved, never cloned — a write performed
-            // by one deferred block is seen by the next, as writes through the
-            // compiled plane's stack slots are. The chain is built once: a
-            // function that registers its defer inside a loop accumulates one
-            // entry per iteration, and rebuilding per entry would be quadratic.
+            // so the deferred bodies can see them at unwind.
             let mut chain = std::mem::take(&mut env.scopes);
             let surviving_len = chain.len();
-            let mut retained = std::mem::take(&mut env.retained);
-            // Stable: retained scopes at the same depth keep source order, so a
-            // later sibling block shadows an earlier one.
-            retained.sort_by_key(|(depth, _)| *depth);
-            chain.extend(retained.into_iter().map(|(_, scope)| scope));
             let captures = std::mem::take(&mut env.shared_captures);
-
-            let mut defer_env = Env {
-                scopes: std::mem::take(&mut chain),
-                shared_captures: captures.clone(),
-                // A `defer` written inside a deferred block belongs to the frame
-                // that is still unwinding, not to this one.
-                pinned: Vec::new(),
-                retained: Vec::new(),
-            };
-            for body in frame.into_iter().rev() {
+            // Each deferred entry carries the scopes visible where it was
+            // written, so it runs against *its own* snapshot rather than
+            // whatever the last same-depth scope happened to hold.
+            for (body, visible) in frame.into_iter().rev() {
+                let mut scopes = chain.clone();
+                let mut sorted = visible;
+                sorted.sort_by_key(|(depth, _)| *depth);
+                scopes.extend(sorted.into_iter().map(|(_, map)| map));
+                let mut defer_env = Env {
+                    scopes,
+                    shared_captures: captures.clone(),
+                    // A `defer` written inside a deferred block belongs to the
+                    // frame that is still unwinding, not to this one.
+                    pinned: Vec::new(),
+                    retained: Vec::new(),
+                };
                 // Ignore the result so cleanup always proceeds.
                 let _ = self.exec_block(&body, &mut defer_env);
                 debug_assert!(
@@ -2136,13 +2147,9 @@ impl Interpreter {
                 );
             }
 
-            // Restore only the call frame's own scopes: `Drop for Env` flushes a
-            // closure call frame's mutated captures from `scopes[0]`, and the
-            // retained block scopes expire with the frame that declared them.
-            let mut restored = std::mem::take(&mut defer_env.scopes);
-            restored.truncate(surviving_len);
-            env.scopes = restored;
+            env.scopes = chain;
             env.shared_captures = captures;
+            env.retained.clear();
         }
         result
     }
@@ -2671,11 +2678,26 @@ impl Interpreter {
                 // Push deferred block onto the current function frame.
                 match self.deferred_stack.last_mut() {
                     Some(frame) => {
-                        frame.push(body.clone());
-                        // Pin the scopes open here: those hold exactly the
-                        // bindings this deferred body can name, and they will
-                        // be gone by the time it runs at function exit.
+                        // Snapshot the scope chain as it stands right now: those
+                        // are exactly the bindings this deferred body can name,
+                        // and each loop iteration registers its own copy instead
+                        // of sharing one depth-keyed slot.
                         env.pin_open_scopes();
+                        // Snapshot ONLY the scopes open right now. Merging
+                        // `env.retained` here was the bug: those are earlier
+                        // iterations' scopes, so every later registration
+                        // inherited the first iteration's bindings and the loop
+                        // printed 10/0/0 instead of 0/10/20. What a deferred
+                        // body can name is exactly what is visible where it was
+                        // written — nothing retained earlier qualifies.
+                        let visible: Vec<(usize, HashMap<String, Value>)> = env
+                            .scopes
+                            .iter()
+                            .enumerate()
+                            .filter(|(depth, _)| *depth > 0)
+                            .map(|(depth, map)| (depth, map.clone()))
+                            .collect();
+                        frame.push((body.clone(), visible));
                         Ok(Value::Nil)
                     }
                     // P0-5: silent drops were a correctness bug — every fn body
@@ -3835,6 +3857,47 @@ impl Interpreter {
                             return self.sched_join(*h as u64, waiter);
                         }
                     }
+                }
+                // Legacy (eager-thread) mode: the goroutine's value is retained
+                // in `spawn_results`, exactly as `spawn_await` retrieves it.
+                // Awaiting a task handle blocks until the goroutine sends its
+                // value and returns that value — never the handle itself.
+                if let Value::Int(h) = &val {
+                    let key = *h as usize;
+                    // Idempotent: a second await of the same handle returns the
+                    // cached result (the mpsc channel is single-shot, so it can
+                    // only be drained once).
+                    if let Some(cached) = self.spawn_await_cache.get(&key).cloned() {
+                        return Ok(cached);
+                    }
+                    let was_cancelled = self
+                        .spawn_cancel
+                        .get(&key)
+                        .map(|f| f.load(std::sync::atomic::Ordering::SeqCst))
+                        .unwrap_or(false);
+                    if !self.spawn_results.contains_key(&key) {
+                        return Ok(val);
+                    }
+                    let rx = self.spawn_results.remove(&key);
+                    return match rx {
+                        Some(rx) => match rx.recv() {
+                            Ok(bytes) => {
+                                if was_cancelled {
+                                    return Ok(Value::Err(Box::new(Value::String(
+                                        "agent task cancelled".to_string(),
+                                    ))));
+                                }
+                                let decoded = crate::agent_comm::channel_bytes_to_value(&bytes)
+                                    .unwrap_or(Value::Nil);
+                                self.spawn_await_cache.insert(key, decoded.clone());
+                                Ok(decoded)
+                            }
+                            Err(_) => Ok(Value::Err(Box::new(Value::String(
+                                "await: channel disconnected".to_string(),
+                            )))),
+                        },
+                        None => Ok(val),
+                    };
                 }
                 static WARNED: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);
@@ -5114,7 +5177,14 @@ impl Interpreter {
                 // unproxied — the same leak the compiled runtime had, which made
                 // "is my scrape behind Tor?" depend on native-vs-interpreter.
                 let mut agent_builder = ureq::Agent::config_builder()
-                    .timeout_global(Some(effective_timeout));
+                    .timeout_global(Some(effective_timeout))
+                    // Parity with the native runtime's fetch_agent (src/runtime/fetch.rs):
+                    // HTTP statuses are DATA, not transport failures — 4xx/5xx arrive as
+                    // ordinary responses (a Response handle carrying the real status), so a
+                    // flow can branch on `status == 404` identically in both engines. Without
+                    // this, ureq maps non-2xx to Err(StatusCode) and the interpreter returns
+                    // Value::Err while native returns a status-carrying handle.
+                    .http_status_as_error(false);
                 let mut egress_error: Option<String> = None;
                 if let Some(proxy_url) = crate::runtime::fetch::egress_proxy_url_ureq() {
                     match ureq::Proxy::new(&proxy_url) {

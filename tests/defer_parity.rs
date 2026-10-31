@@ -78,7 +78,19 @@ impl Leg {
 }
 
 fn workdir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tallow-defer-parity-{tag}"));
+    // Unique per CALL, not per tag: `both_planes` runs two legs under one tag,
+    // and wiping a shared directory between them removed the file the other leg
+    // was still using. Running the suite in parallel turned that into eight
+    // spurious failures at the `--require-native` fallback assert, which read
+    // like a compiler regression and was not one. A process-wide counter makes
+    // each call's directory private.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "tallow-defer-parity-{tag}-{}-{seq}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create work dir");
     dir
@@ -302,9 +314,11 @@ fn main() {
 /// once at the epilogue, which makes the count a property of the source, not
 /// of the run. The ruling: the interpreter's count is the contract.
 ///
-/// Both planes print `k2` — the *value* does not diverge here, only the count:
-/// the captured `k` is read when the deferred bodies run, at function exit,
-/// where the loop's binding holds the last iteration's value on both planes.
+/// Both planes print `k2`, `k1`, `k0` — the deferred body closes over the
+/// value its iteration had at *registration*, and the drain is LIFO at function
+/// exit (see test 6 and `docs/intel/handle-registry-design.md`). Reading at
+/// function exit would make all three print `k2` and
+/// turn `defer { close(h) }` in a loop into three closes of the last handle.
 #[test]
 fn a_defer_in_a_loop_body_registers_once_per_iteration() {
     let source = r#"
@@ -319,7 +333,7 @@ fn main() {
 "#;
     let (interpreted, native) = both_planes("loop-registration", source);
 
-    let expected = "d:k2\nd:k2\nd:k2\n";
+    let expected = "d:k2\nd:k1\nd:k0\n";
     assert_eq!(
         interpreted.stdout_text(),
         expected,
@@ -360,7 +374,7 @@ fn main() {
     let (interpreted, native) = both_planes("loop-two-sites", source);
 
     // `out` was registered last, so it runs first; `i` is 3 by then.
-    let expected = "body\nout\nB3\nA3\nB3\nA3\nB3\nA3\n";
+    let expected = "body\nout\nB2\nA2\nB1\nA1\nB0\nA0\n";
     assert_eq!(
         interpreted.stdout_text(),
         expected,
@@ -378,11 +392,11 @@ fn main() {
 /// 7. A `defer` in a block nested inside a loop body registers once per entry
 ///    to that block — two iterations, two registrations, drained LIFO.
 ///
-/// The interpreter control prints `body` and then `n:t1` twice: both bodies
-/// read the binding at function exit, where the last iteration's `t` is
-/// visible, exactly as in case 5. What this case adds is the nested scope: the
-/// registration has to survive the block that declared it, and the drain must
-/// still find it.
+/// The interpreter control prints `body` and then `n:t0`, `n:t1`: each
+/// registration closes over the binding as its own block entry had it, so the
+/// nested scope has to be snapshotted per entry, not shared by depth. What this
+/// case adds over case 5 is exactly that — the registration must survive the
+/// block that declared it and keep its own copy of the binding.
 #[test]
 fn a_defer_in_a_nested_block_registers_once_per_entry() {
     let source = r#"
@@ -400,7 +414,7 @@ fn main() {
 "#;
     let (interpreted, native) = both_planes("nested-block", source);
 
-    let expected = "body\nn:t1\nn:t1\n";
+    let expected = "body\nn:t1\nn:t0\n";
     assert_eq!(
         interpreted.stdout_text(),
         expected,

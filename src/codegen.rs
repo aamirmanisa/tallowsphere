@@ -666,6 +666,16 @@ pub struct CodeGen<'a> {
     // SSA register counter (per-function, reset on each function)
     next_reg: u32,
 
+    /// When set, `fresh_reg` returns a NAMED SSA value instead of an unnamed
+    /// `%N`. Case bodies of the defer drain are generated into a scratch buffer
+    /// and appended after the drain scaffolding, so unnamed temporaries inside
+    /// them would be numbered lower than the scaffolding written textually
+    /// before them — LLVM numbers unnamed values by textual position and
+    /// rejects that ("instruction expected to be numbered '%N' or greater").
+    /// Named values have no ordering constraint. Set only while a defer case
+    /// body is being emitted.
+    force_named_regs: bool,
+
     // Label counter (per-function)
     next_label: u32,
 
@@ -857,6 +867,11 @@ pub struct CodeGen<'a> {
     // hit and nothing to silently drop. Peak memory is O(registrations still
     // pending), and every node is freed at the drain.
     defer_sites: Vec<Block>,
+    /// Name → type of every local visible where each defer site was lowered,
+    /// sorted by name, index-aligned with `defer_sites`. The registration
+    /// stores these values into a malloc'd env record and the drain reads them
+    /// back from it, so a loop's defer sees its own iteration's values.
+    defer_captures: Vec<Vec<(String, LLType)>>,
     /// Site id by the AST block's address. A drain emits deferred bodies, which
     /// re-executes `StmtKind::Defer` lowering for any `defer` nested inside one;
     /// keying on the source block keeps that from minting a duplicate id.
@@ -961,6 +976,7 @@ impl<'a> CodeGen<'a> {
             string_intern: HashMap::new(),
             next_str: 0,
             next_reg: 0,
+            force_named_regs: false,
             next_label: 0,
             variables: HashMap::new(),
             functions: HashMap::new(),
@@ -1017,6 +1033,7 @@ impl<'a> CodeGen<'a> {
             variable_privacy: HashMap::new(),
             current_fn_name: None,
             defer_sites: Vec::new(),
+            defer_captures: Vec::new(),
             defer_site_ids: HashMap::new(),
             defer_head: None,
             defer_cursor: None,
@@ -1487,6 +1504,7 @@ typedef struct tl_task {
     void             *args;   /* argument pointer (may be NULL)      */
     void             *result; /* set by worker when task completes   */
     int               done;   /* 1 once the task function returns    */
+    int               reaped; /* 1 once an await consumed the result  */
     tl_mutex_t        mtx;    /* protects done + result              */
     tl_cond_t         cv;     /* signalled when done becomes 1       */
     tl_thread_t       thread; /* OS thread running this task         */
@@ -1614,6 +1632,18 @@ void* tallow_async_await(void *handle) {
     while (!t->done) {
         tl_cond_wait(&t->cv, &t->mtx);
     }
+    /* Await is IDEMPOTENT. The first await reaps the node; every later await
+       of the same handle returns the already-recorded result instead of
+       re-entering the (destroyed) mutex and free()ing the node a second time.
+       Without this, `let a = h.await  let b = h.await` aborted the process
+       with "free(): double free detected in tcache 2" — and `tallow run`
+       masked it by re-running in the interpreter and exiting 0. */
+    if (t->reaped) {
+        void *already = t->result;
+        tl_mutex_unlock(&t->mtx);
+        return already;
+    }
+    t->reaped = 1;
     tl_mutex_unlock(&t->mtx);
 
 #ifdef _WIN32
@@ -1623,10 +1653,13 @@ void* tallow_async_await(void *handle) {
 
     void *result = t->result;
 
-    /* Clean up the task */
+    /* Clean up the task. The node is NOT freed here: a second await still
+       holds this handle and must be able to read `reaped`/`result` without
+       touching freed memory. Reclaiming it needs an ownership hook the
+       emitter does not yet emit; leaking one small node per awaited task is
+       strictly better than a use-after-free. Tracked separately. */
     tl_mutex_destroy(&t->mtx);
     tl_cond_destroy(&t->cv);
-    free(t);
 
     return result;
 }
@@ -1979,6 +2012,7 @@ void tallow_async_runtime_shutdown(void) {
         // returns, so the compiled `.len` / `.hex()` / `hash_bytes` must decode
         // it — `strlen` would report the encoded length.
         ir.push_str("declare i64 @tallow_bytes_len(ptr)\n");
+        ir.push_str("declare ptr @tallow_string_index(ptr, i64)\n");
         ir.push_str("declare ptr @tallow_bytes_hex(ptr)\n");
         ir.push_str("declare ptr @tallow_bytes_sha256(ptr)\n");
         ir.push_str("declare ptr @tallow_compress_with(ptr, ptr, i32)\n");
@@ -4527,6 +4561,7 @@ void tallow_async_runtime_shutdown(void) {
         // The next function's sites start from zero: leaving these behind would
         // dispatch its registrations to another function's bodies.
         self.defer_sites.clear();
+        self.defer_captures.clear();
         self.defer_site_ids.clear();
         self.defer_head = None;
 
@@ -5134,6 +5169,7 @@ void tallow_async_runtime_shutdown(void) {
         // The next function's sites start from zero: leaving these behind would
         // dispatch its registrations to another function's bodies.
         self.defer_sites.clear();
+        self.defer_captures.clear();
         self.defer_site_ids.clear();
         self.defer_head = None;
         Ok(())
@@ -5165,15 +5201,25 @@ void tallow_async_runtime_shutdown(void) {
     /// dispatches on. Keyed on the source block's address so that a drain
     /// re-emitting a deferred body (and therefore its nested `defer`s) reuses
     /// the id instead of minting a second one for the same statement.
-    fn register_defer_site(&mut self, body: &Block) -> usize {
+    fn register_defer_site(&mut self, body: &Block) -> (usize, Vec<(String, LLType)>) {
         let key = body as *const Block as usize;
         if let Some(id) = self.defer_site_ids.get(&key) {
-            return *id;
+            return (*id, self.defer_captures[*id].clone());
         }
+        // Capture list is fixed at the site's FIRST lowering and reused for
+        // every execution: the env layout the registration stores into has to
+        // be the same one the drain reads out of, so it cannot vary per
+        // iteration.
+        let mut capture: Vec<(String, LLType)> = Vec::new();
+        for (name, (_, ty)) in self.variables.iter() {
+            capture.push((name.clone(), ty.clone()));
+        }
+        capture.sort_by(|a, b| a.0.cmp(&b.0));
         let id = self.defer_sites.len();
         self.defer_sites.push(body.clone());
+        self.defer_captures.push(capture.clone());
         self.defer_site_ids.insert(key, id);
-        id
+        (id, capture)
     }
 
     /// Drain the runtime defer list (LIFO) at a function exit point.
@@ -5236,6 +5282,8 @@ void tallow_async_runtime_shutdown(void) {
         let left_null = self.fresh_named("leftnull");
         let left_next_slot = self.fresh_named("leftnextslot");
         let left_next = self.fresh_named("leftnext");
+        let env_slot_r = self.fresh_named("envslot");
+        let env_ptr = self.fresh_named("envptr");
 
         // Emit the case bodies first, into a scratch buffer. A deferred body may
         // itself contain a `defer`, whose site is only discovered here — and its
@@ -5243,16 +5291,61 @@ void tallow_async_runtime_shutdown(void) {
         // Grow the case list to a fixpoint before writing the switch.
         let outer_body = std::mem::take(&mut self.body);
         let outer_draining = std::mem::replace(&mut self.in_defer_drain, true);
+        // Case bodies are generated here but appended after the scaffolding
+        // below, so none of their values may consume an unnamed number: LLVM
+        // orders unnamed values by textual position and the scaffolding already
+        // claimed later numbers. Every register a case body allocates is named.
+        let outer_forced = std::mem::replace(&mut self.force_named_regs, true);
+        // Reserve one named register per (case label, captured name) before any
+        // case body is emitted, so every slot has a textually-earlier number.
+        // Reserve one named register per (site index, capture index) before any
+        // case body is emitted, so every slot has a textually-earlier number.
+        let mut case_slots: Vec<Vec<String>> = Vec::new();
+        {
+            let n_sites = self.defer_sites.len();
+            for site in 0..n_sites {
+                let cap = self.defer_captures[site].len();
+                let mut row = Vec::with_capacity(cap);
+                for i in 0..cap {
+                    row.push(self.fresh_named(&format!("dresv.{site}.{i}")));
+                }
+                case_slots.push(row);
+            }
+        }
         let mut cases: Vec<(String, String)> = Vec::new();
         let mut emitted = 0usize;
         while emitted < self.defer_sites.len() {
             let block = self.defer_sites[emitted].clone();
+            let capture = self.defer_captures[emitted].clone();
             let label = self.fresh_label("defer.case");
             let saved = std::mem::take(&mut self.body);
+            // Rebind every captured name to a slot INSIDE this registration's
+            // env record, so the case body reads the values its iteration had
+            // when it ran, not whatever the live alloca holds at exit.
+            //
+            // The GEPs are part of the case body (they must follow the `envptr`
+            // load in emission order), but the slots themselves are named
+            // registers reserved before the scaffolding, so the body has their
+            // bindings available before it emits a single instruction.
+            let outer_vars = self.variables.clone();
+            let mut prelude = String::new();
+            for (i, (name, ty)) in capture.iter().enumerate() {
+                let Some(slot) = case_slots.get(emitted).and_then(|r| r.get(i)) else {
+                    continue;
+                };
+                let off = i * 8;
+                prelude.push_str(&format!(
+                    "  {slot} = getelementptr i8, ptr {env_ptr}, i64 {off}\n"
+                ));
+                self.variables.insert(name.clone(), (slot.clone(), ty.clone()));
+            }
             let emitted_body = self.emit_block(&block);
-            let code = std::mem::replace(&mut self.body, saved);
+            self.variables = outer_vars;
+            let mut code = std::mem::replace(&mut self.body, saved);
+            code.insert_str(0, &prelude);
             if let Err(e) = emitted_body {
                 self.in_defer_drain = outer_draining;
+                self.force_named_regs = outer_forced;
                 self.body = outer_body;
                 return Err(e);
             }
@@ -5260,6 +5353,7 @@ void tallow_async_runtime_shutdown(void) {
             emitted += 1;
         }
         self.in_defer_drain = outer_draining;
+        self.force_named_regs = outer_forced;
         self.body = outer_body;
 
         // Take the list this drain owns: seed the cursor from the head and clear
@@ -5287,6 +5381,10 @@ void tallow_async_runtime_shutdown(void) {
         // Advance before dispatching, so the loop's own cursor is not disturbed
         // by anything a deferred body does.
         self.emit_line(&format!("store ptr {next}, ptr {cursor}"));
+        // Load this node's env record: the case bodies index into it.
+        let env_field = self.fresh_named("envfield");
+        self.emit_line(&format!("{env_field} = getelementptr i8, ptr {node}, i64 16"));
+        self.emit_line(&format!("{env_ptr} = load ptr, ptr {env_field}"));
 
         let mut switch = format!("switch i64 {site}, label %{cont} [");
         for (id, (label, _)) in cases.iter().enumerate() {
@@ -5335,6 +5433,15 @@ void tallow_async_runtime_shutdown(void) {
         // here must not outlive it. Both are restored on the way out.
         let outer_non_nil = self.non_nil_locals.clone();
         let outer_mutable = self.mutable_locals.clone();
+        // Bindings are block-scoped too. Before this snapshot an inner `let a`
+        // overwrote the outer slot permanently: `{ let a = 2; print(a) }` then
+        // `print(a)` printed 2 twice. Every table that maps a name to a binding
+        // shape is restored together, or the flags drift from the slots.
+        let outer_variables = self.variables.clone();
+        let outer_var_is_map = self.variable_is_map.clone();
+        let outer_var_is_array = self.variable_is_array.clone();
+        let outer_var_is_string = self.variable_is_string.clone();
+        let outer_struct_types = self.variable_struct_types.clone();
         let mut last_val = None;
         let total = block.stmts.len();
         for (i, stmt) in block.stmts.iter().enumerate() {
@@ -5370,6 +5477,11 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_bridge_releases(block, bindings);
         self.non_nil_locals = outer_non_nil;
         self.mutable_locals = outer_mutable;
+        self.variables = outer_variables;
+        self.variable_is_map = outer_var_is_map;
+        self.variable_is_array = outer_var_is_array;
+        self.variable_is_string = outer_var_is_string;
+        self.variable_struct_types = outer_struct_types;
         Ok(last_val)
     }
 
@@ -6468,22 +6580,51 @@ void tallow_async_runtime_shutdown(void) {
             StmtKind::Defer { body } => {
                 // A `defer` registers when its statement EXECUTES — once per
                 // iteration of an enclosing loop, never in a branch that is not
-                // taken. Push a node `{ i64 site_id; ptr next }` onto this
-                // function's runtime list; `emit_defer_cleanup` drains it LIFO
-                // at every `ret`.
-                let id = self.register_defer_site(body);
+                // taken. Push a node `{ i64 site_id; ptr next; ptr env }` onto
+                // this function's runtime list; `emit_defer_cleanup` drains it
+                // LIFO at every `ret`.
+                //
+                // `env` is the registration-time snapshot of the locals this
+                // site can name. Reading the names back at exit (the original
+                // design) made a loop's three defers all see the LAST
+                // iteration's binding: `d:k2` x3 instead of `d:k0/d:k1/d:k2`.
+                // See tests/defer_parity.rs case 5 for the ruling.
+                let (id, capture) = self.register_defer_site(body);
                 let head = self.defer_head.clone().ok_or_else(|| {
                     "internal: `defer` lowered outside a function prologue, so there \
                      is no runtime defer-list head to push onto"
                         .to_string()
                 })?;
                 let node = self.fresh_reg();
-                self.emit_line(&format!("{node} = call ptr @malloc(i64 16)"));
+                self.emit_line(&format!("{node} = call ptr @malloc(i64 24)"));
                 let id_slot = self.fresh_reg();
                 self.emit_line(&format!("{id_slot} = getelementptr i8, ptr {node}, i64 0"));
                 self.emit_line(&format!("store i64 {id}, ptr {id_slot}"));
                 let next_slot = self.fresh_reg();
                 self.emit_line(&format!("{next_slot} = getelementptr i8, ptr {node}, i64 8"));
+                let env_slot = self.fresh_reg();
+                self.emit_line(&format!("{env_slot} = getelementptr i8, ptr {node}, i64 16"));
+                if capture.is_empty() {
+                    self.emit_line(&format!("store ptr null, ptr {env_slot}"));
+                } else {
+                    // Layout is uniform: field i of the site's capture list at
+                    // offset 8*i, so the drain can index it without metadata.
+                    let env = self.fresh_reg();
+                    let size = capture.len() * 8;
+                    self.emit_line(&format!("{env} = call ptr @malloc(i64 {size})"));
+                    for (i, (name, ty)) in capture.iter().enumerate() {
+                        let Some((slot, _)) = self.variables.get(name).cloned() else {
+                            continue;
+                        };
+                        let off = i * 8;
+                        let dst = self.fresh_reg();
+                        self.emit_line(&format!("{dst} = getelementptr i8, ptr {env}, i64 {off}"));
+                        let val = self.fresh_reg();
+                        self.emit_line(&format!("{val} = load {}, ptr {slot}", ty.to_ir()));
+                        self.emit_line(&format!("store {} {val}, ptr {dst}", ty.to_ir()));
+                    }
+                    self.emit_line(&format!("store ptr {env}, ptr {env_slot}"));
+                }
                 let old_head = self.fresh_reg();
                 self.emit_line(&format!("{old_head} = load ptr, ptr {head}"));
                 self.emit_line(&format!("store ptr {old_head}, ptr {next_slot}"));
@@ -6999,6 +7140,22 @@ void tallow_async_runtime_shutdown(void) {
 
                 // 3/4. .len — differentiate array vs string vs Bytes
                 if field == "len" && obj.ty == LLType::I8Ptr {
+                    // A map receiver: the payload is a length-prefixed composite
+                    // whose slot 0 is the entry COUNT, so the array read below is
+                    // the right one — the bug was that a map was never recognised
+                    // as one and fell through to strlen, which read the payload's
+                    // low byte and answered 1 for every non-empty map.
+                    let obj_is_map = if let ExprKind::Ident(var_name) = &object.kind {
+                        self.variable_is_map.get(var_name).copied().unwrap_or(false)
+                    } else {
+                        self.declared_map_kind(&object.kind).is_some()
+                    };
+                    if obj_is_map {
+                        let len_reg = self.fresh_reg();
+                        self.emit_line(&format!("{len_reg} = load i64, ptr {}", obj.reg));
+                        return Ok(LLValue::new(len_reg, LLType::I64));
+                    }
+
                     // A `Bytes` receiver: the value is the base64 text, so
                     // `strlen` below would answer 24 for 16 raw bytes. The
                     // interpreter's `.len` on `Value::Bytes` is the raw byte
@@ -7537,7 +7694,59 @@ void tallow_async_runtime_shutdown(void) {
                     ));
                     self.emit_line(&format!("store {} {coerced}, ptr {gep}", fty.to_ir()));
                     Ok(val)
+                } else if let ExprKind::Index { object, index } = &target.kind {
+                    // `a[1] = 20` and `m["a"] = 5` used to fall into the discard
+                    // branch below: the right-hand side was computed and thrown
+                    // away, so the program exited 0 with the old value still in
+                    // place — a store that silently did not store.
+                    let val = self.emit_expr(value)?;
+                    let val_i64 = self.coerce_to_i64(&val)?;
+                    let obj = self.emit_expr(object)?;
+                    let obj = if obj.ty == LLType::ResultPtr {
+                        self.unwrap_result_receiver(obj)
+                    } else {
+                        obj
+                    };
+                    let idx = self.emit_expr(index)?;
+                    let idx_i64 = self.coerce_to_i64(&idx)?;
+
+                    let declared_map = self.declared_map_kind(&object.kind);
+                    let obj_is_map = if let ExprKind::Ident(var_name) = &object.kind {
+                        self.variable_is_map.get(var_name).copied().unwrap_or(false)
+                    } else {
+                        declared_map.is_some()
+                    };
+                    // A map receiver is a composite regardless of the index's
+                    // static type: `m["a"]` on a map must route to the map store
+                    // even if the key expression is not recognised as a string,
+                    // and must never be refused as an immutable String.
+                    if obj_is_map || obj.ty == LLType::Tagged || idx.ty == LLType::I8Ptr {
+                        let string_keys = idx.ty == LLType::I8Ptr;
+                        let var_name = if let ExprKind::Ident(n) = &object.kind {
+                            Some(n.as_str())
+                        } else {
+                            None
+                        };
+                        self.emit_map_set(&obj, &idx_i64, &val_i64, string_keys, var_name)?;
+                        return Ok(val);
+                    }
+
+                    // Native array: slot `idx + 1` (element 0 is the count).
+                    // `I8Ptr` here means "pointer-shaped, not a map, not a
+                    // Tagged box" — a native array is an i8* too, with a count
+                    // prefix. Only a genuine String receiver is immutable.
+                    if obj.ty == LLType::I8Ptr && self.expr_is_string_value(object) {
+                        return Err(
+                            "index assignment on a String receiver: strings are immutable here; \
+                             build a new one with concatenation"
+                                .to_string(),
+                        );
+                    }
+                    self.emit_array_store(&obj, &idx_i64, &val_i64)?;
+                    Ok(val)
                 } else {
+                    // Any other assign target: compute the value, store nothing.
+                    // Kept fail-visible rather than silently discarded.
                     let val = self.emit_expr(value)?;
                     Ok(val)
                 }
@@ -7929,13 +8138,24 @@ void tallow_async_runtime_shutdown(void) {
             ExprKind::Await(inner) => {
                 // Emit the inner expression (should return a future handle ptr)
                 let future = self.emit_expr(inner)?;
-                // Call tallow_async_await to block until the future completes
-                let result = self.fresh_reg();
+                // Call tallow_async_await to block until the future completes. The
+                // return is the task's `%struct.TallowResult` Ok wrapper (built by
+                // `<fn>.task`); unwrap its `value` slot so `h.await` yields the
+                // recorded result, not the wrapper pointer. The common case is an
+                // integer result (value_type 0, i64 payload); float/ptr returns are
+                // still carried by value_type and are not unwrapped here.
+                let raw = self.fresh_reg();
                 self.emit_line(&format!(
-                    "{result} = call ptr @tallow_async_await(ptr {})",
+                    "{raw} = call ptr @tallow_async_await(ptr {})",
                     future.reg
                 ));
-                Ok(LLValue::new(result, LLType::I8Ptr))
+                let val_gep = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{val_gep} = getelementptr %struct.TallowResult, ptr {raw}, i64 0, i32 1"
+                ));
+                let val = self.fresh_reg();
+                self.emit_line(&format!("{val} = load i64, ptr {val_gep}"));
+                Ok(LLValue::new(val, LLType::I64))
             }
 
             // ── Struct literal ──────────────────────────────────────────
@@ -8029,6 +8249,35 @@ void tallow_async_runtime_shutdown(void) {
                     matches!(self.infer_kind(object).as_deref(), Some("ResultArray"));
 
                 if obj.ty == LLType::I8Ptr {
+                    // A String and a length-prefixed array are both i8*, and this
+                    // path treated every i8* receiver as an array: `"hello"[0]`
+                    // read the string's first bytes as a count and then loaded
+                    // character data as if it were an i64 slot, printing a
+                    // pointer-shaped number. A string has no count header, so it
+                    // is indexed by BYTE through the runtime, nil-checked first.
+                    if self.expr_is_string_value(object) {
+                        let first = self.fresh_reg();
+                        self.emit_line(&format!("{first} = load i8, ptr {}", obj.reg));
+                        let is_null = self.fresh_reg();
+                        self.emit_line(&format!("{is_null} = icmp eq i8 {first}, 0"));
+                        let nul_b = self.fresh_label("stridx.nil");
+                        let ok_b = self.fresh_label("stridx.ok");
+                        self.emit_line(&format!(
+                            "br i1 {is_null}, label %{nul_b}, label %{ok_b}"
+                        ));
+                        self.body.push_str(&format!("{nul_b}:\n"));
+                        let nul_msg = self.intern_string("cannot index nil\n");
+                        self.emit_stderr_write(&nul_msg);
+                        self.emit_line("call void @exit(i32 1)");
+                        self.emit_line("unreachable");
+                        self.body.push_str(&format!("{ok_b}:\n"));
+                        let out = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{out} = call ptr @tallow_string_index(ptr {}, i64 {idx_i64})",
+                            obj.reg
+                        ));
+                        return Ok(LLValue::new(out, LLType::I8Ptr));
+                    }
                     // Array index: skip length prefix (element 0), so actual index = idx + 1
                     let offset = self.fresh_reg();
                     self.emit_line(&format!("{offset} = add i64 {idx_i64}, 1"));
@@ -8116,6 +8365,54 @@ void tallow_async_runtime_shutdown(void) {
     // ── Binary Expression Helpers ────────────────────────────────────────────
 
     fn emit_binary(&mut self, op: BinOp, left: &Expr, right: &Expr) -> Result<LLValue, String> {
+        // `&&` and `||` short-circuit: the right operand is evaluated ONLY when
+        // the left has not already decided the answer. Lowering both as `and`/
+        // `or` on i64 evaluated `side()` in `false && side()`, so a guard that
+        // was meant to protect the right operand still ran it, and the result
+        // was 0/1 instead of a Bool. This must come BEFORE `right` is emitted.
+        if matches!(op, BinOp::And | BinOp::Or) {
+            let is_and = op == BinOp::And;
+            let l = self.emit_expr(left)?;
+            let l_i64 = self.coerce_to_i64(&l)?;
+            let l_truth = self.fresh_reg();
+            self.emit_line(&format!("{l_truth} = icmp ne i64 {l_i64}, 0"));
+            let short_b = self.fresh_label("logical.short");
+            let eval_b = self.fresh_label("logical.eval");
+            let done_b = self.fresh_label("logical.done");
+            // && : left false → answer false. || : left true → answer true.
+            if is_and {
+                self.emit_line(&format!(
+                    "br i1 {l_truth}, label %{eval_b}, label %{short_b}"
+                ));
+            } else {
+                self.emit_line(&format!(
+                    "br i1 {l_truth}, label %{short_b}, label %{eval_b}"
+                ));
+            }
+            self.body.push_str(&format!("{short_b}:\n"));
+            let short_val = if is_and { "0" } else { "1" };
+            self.emit_line(&format!("br label %{done_b}"));
+            self.body.push_str(&format!("{eval_b}:\n"));
+            let r = self.emit_expr(right)?;
+            let r_i64 = self.coerce_to_i64(&r)?;
+            let r_truth = self.fresh_reg();
+            self.emit_line(&format!("{r_truth} = icmp ne i64 {r_i64}, 0"));
+            let r_val = self.fresh_reg();
+            self.emit_line(&format!("{r_val} = zext i1 {r_truth} to i64"));
+            self.emit_line(&format!("br label %{done_b}"));
+            self.body.push_str(&format!("{done_b}:\n"));
+            let result = self.fresh_reg();
+            self.emit_line(&format!(
+                "{result} = phi i64 [ {short_val}, %{short_b} ], [ {r_val}, %{eval_b} ]"
+            ));
+            // The result of `&&`/`||` is a Bool, not a number: printing the i64
+            // form rendered `false` as 0. Answer I1 so every consumer — print,
+            // comparisons, conditions — sees the same type the interpreter does.
+            let as_bool = self.fresh_reg();
+            self.emit_line(&format!("{as_bool} = icmp ne i64 {result}, 0"));
+            return Ok(LLValue::new(as_bool, LLType::I1));
+        }
+
         // Special case: string concatenation
         if op == BinOp::Add {
             if let (ExprKind::StringLit(_), _)
@@ -12095,6 +12392,29 @@ void tallow_async_runtime_shutdown(void) {
     /// — "first item is a string literal" — missed `[a.text(), b.text()]` and
     /// `[s]` for a string variable `s`, which then printed raw addresses while
     /// the interpreter printed the strings.
+    fn expr_is_string_value(&self, e: &Expr) -> bool {
+        let is_array = self.expr_is_native_array(e)
+            || self
+                .browser_variables
+                .get(match &e.kind {
+                    ExprKind::Ident(n) => n.as_str(),
+                    _ => "",
+                })
+                .is_some_and(|k| k.ends_with("Array"));
+        if is_array {
+            return false;
+        }
+        if let ExprKind::Ident(name) = &e.kind {
+            if self.variable_is_map.get(name).copied().unwrap_or(false) {
+                return false;
+            }
+            if self.string_variables.contains(name) {
+                return true;
+            }
+        }
+        self.expr_is_string_like(e)
+    }
+
     fn expr_is_string_like(&self, e: &Expr) -> bool {
         match &e.kind {
             ExprKind::StringLit(_) | ExprKind::Interpolation(_) => true,
@@ -22069,6 +22389,51 @@ void tallow_async_runtime_shutdown(void) {
         Ok(LLValue::new(result, LLType::I1))
     }
 
+    fn emit_array_store(
+        &mut self,
+        array: &LLValue,
+        idx_i64: &str,
+        val_i64: &str,
+    ) -> Result<LLValue, String> {
+        // Element 0 is the count; element N lives at slot N + 1. Bounds-check the
+        // same way the read path does, so a bad store is refused loudly instead
+        // of corrupting the heap that follows the array.
+        let len_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{len_ptr} = getelementptr i64, ptr {}, i32 0",
+            array.reg
+        ));
+        let arr_len = self.fresh_reg();
+        self.emit_line(&format!("{arr_len} = load i64, ptr {len_ptr}"));
+        let oob = self.fresh_reg();
+        self.emit_line(&format!("{oob} = icmp uge i64 {idx_i64}, {arr_len}"));
+        let ok_b = self.fresh_label("idxset.ok");
+        let fail_b = self.fresh_label("idxset.oob");
+        self.emit_line(&format!(
+            "br i1 {oob}, label %{fail_b}, label %{ok_b}"
+        ));
+        self.body.push_str(&format!("{fail_b}:\n"));
+        let msg = self.intern_string("index ");
+        let shown_idx =
+            self.scalar_to_string_ext(&LLValue::new(idx_i64.to_string(), LLType::I64))?;
+        let suff = self.intern_string(" out of bounds (native error)\n");
+        self.emit_stderr_write(&msg);
+        self.emit_stderr_write(&shown_idx);
+        self.emit_stderr_write(&suff);
+        self.emit_line("call void @exit(i32 1)");
+        self.emit_line("unreachable");
+        self.body.push_str(&format!("{ok_b}:\n"));
+        let offset = self.fresh_reg();
+        self.emit_line(&format!("{offset} = add i64 {idx_i64}, 1"));
+        let slot = self.fresh_reg();
+        self.emit_line(&format!(
+            "{slot} = getelementptr i64, ptr {}, i64 {offset}",
+            array.reg
+        ));
+        self.emit_line(&format!("store i64 {val_i64}, ptr {slot}"));
+        Ok(LLValue::new(val_i64.to_string(), LLType::I64))
+    }
+
     fn emit_map_set(
         &mut self,
         map: &LLValue,
@@ -24416,6 +24781,13 @@ void tallow_async_runtime_shutdown(void) {
     }
 
     fn fresh_reg(&mut self) -> String {
+        if self.force_named_regs {
+            // Body of a defer case: emitted out of textual order, so it may not
+            // consume unnamed numbers. The `dbody.` prefix marks these; a dump
+            // can be checked for stray unnamed values between a case label and
+            // its terminator.
+            return self.fresh_named("dbody");
+        }
         let n = self.next_reg;
         self.next_reg += 1;
         format!("%{n}")
@@ -30853,14 +31225,14 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
     // runs linked an outdated runtime); the newest archive wins and the
     // legacy order only breaks ties (a full build uplifts the same archive
     // into several locations).
-    let mut legacy: Option<std::path::PathBuf> = None;
+    let mut legacy: Option<RuntimeArchive> = None;
     if host_compatible {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 // 1. Next to the tallow binary
                 for candidate in [dir.join(primary), dir.join(fallback)] {
                     if candidate.exists() {
-                        legacy = Some(candidate);
+                        legacy = Some(RuntimeArchive::at(candidate));
                         break;
                     }
                 }
@@ -30871,7 +31243,7 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
                         dir.join("lib").join(fallback),
                     ] {
                         if candidate.exists() {
-                            legacy = Some(candidate);
+                            legacy = Some(RuntimeArchive::at(candidate));
                             break;
                         }
                     }
@@ -30885,7 +31257,7 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
                 Path::new("target/release").join(fallback),
             ] {
                 if candidate.exists() {
-                    legacy = Some(candidate);
+                    legacy = Some(RuntimeArchive::at(candidate));
                     break;
                 }
             }
@@ -30897,7 +31269,7 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
                 Path::new("target/debug").join(fallback),
             ] {
                 if candidate.exists() {
-                    legacy = Some(candidate);
+                    legacy = Some(RuntimeArchive::at(candidate));
                     break;
                 }
             }
@@ -30913,7 +31285,7 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
     //    back to the interpreter). Fall back to the newest matching archive
     //    there — the linker extracts only the archive members that resolve
     //    undefined symbols, so passing the full staticlib is safe.
-    let mut deps_candidates: Vec<std::path::PathBuf> = Vec::new();
+    let mut deps_candidates: Vec<RuntimeArchive> = Vec::new();
     if host_compatible {
         // 5a. Next to the tallow binary (e.g. target/debug/tallow -> target/debug/deps/)
         if let Ok(exe) = std::env::current_exe() {
@@ -30930,7 +31302,67 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
             );
         }
     }
-    pick_runtime_archive(legacy, deps_candidates).map(|p| p.display().to_string())
+    pick_runtime_archive(legacy, deps_candidates, Profile::running())
+        .map(|p| p.display().to_string())
+}
+
+/// Which cargo profile an artifact was built for. The runtime archive must come
+/// from the same profile as the compiler that links it, because the two are
+/// different expansions of this crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Profile {
+    Debug,
+    Release,
+    Unknown,
+}
+
+impl Profile {
+    fn as_str(self) -> &'static str {
+        match self {
+            Profile::Debug => "debug",
+            Profile::Release => "release",
+            Profile::Unknown => "unknown",
+        }
+    }
+
+    /// The profile of the compiler doing the linking. `cfg!(debug_assertions)`
+    /// is the reliable signal: it is exactly what makes two builds of this crate
+    /// non-interchangeable as runtimes.
+    fn running() -> Self {
+        if cfg!(debug_assertions) {
+            Profile::Debug
+        } else {
+            Profile::Release
+        }
+    }
+
+    /// The profile a path was built under, from its `target/<profile>/` component.
+    fn from_path(path: &std::path::Path) -> Self {
+        for comp in path.components() {
+            if let std::path::Component::Normal(s) = comp {
+                match s.to_string_lossy().as_ref() {
+                    "debug" => return Profile::Debug,
+                    "release" => return Profile::Release,
+                    _ => {}
+                }
+            }
+        }
+        Profile::Unknown
+    }
+}
+
+/// A runtime archive candidate together with the profile it was built for.
+#[derive(Debug, Clone)]
+struct RuntimeArchive {
+    path: std::path::PathBuf,
+    profile: Profile,
+}
+
+impl RuntimeArchive {
+    fn at(path: std::path::PathBuf) -> Self {
+        let profile = Profile::from_path(&path);
+        Self { path, profile }
+    }
 }
 
 /// Choose the runtime archive between the legacy first-found candidate and the
@@ -30938,37 +31370,87 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
 /// silently outvote a fresh build; ties prefer `legacy` (a full-crate build
 /// uplifts the same archive to every location, mtimes equal). `None` when no
 /// archive exists anywhere.
+///
+/// `running_profile` is the cargo profile of the compiler doing the linking
+/// (`debug` or `release`). A runtime archive from the SAME profile always beats
+/// one from a different profile, whatever their mtimes: the two are built with
+/// different `#[cfg(debug_assertions)]` expansions of this crate, so a debug
+/// archive can be *missing* a runtime function the shipping compiler emits — a
+/// link error under `--require-native` — and, because both planes are `i8*`-shaped,
+/// a *stale* one can link cleanly and miscompile. Mtime alone cannot see this.
 fn pick_runtime_archive(
-    legacy: Option<std::path::PathBuf>,
-    mut deps_candidates: Vec<std::path::PathBuf>,
+    legacy: Option<RuntimeArchive>,
+    mut deps_candidates: Vec<RuntimeArchive>,
+    running_profile: Profile,
 ) -> Option<std::path::PathBuf> {
-    deps_candidates.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
-    let newest_deps = deps_candidates.pop();
-    match (legacy, newest_deps) {
-        (Some(l), Some(d)) => {
-            let lm = std::fs::metadata(&l).and_then(|m| m.modified()).ok();
-            let dm = std::fs::metadata(&d).and_then(|m| m.modified()).ok();
-            if dm > lm {
-                // Fail-visible: never silently swap runtimes.
-                eprintln!(
-                    "runtime archive: {} is newer than {}; linking the newer deps archive",
-                    d.display(),
-                    l.display()
-                );
-                Some(d)
-            } else {
-                Some(l)
-            }
+    // Same-profile candidates first; a different profile only participates when
+    // nothing from the running profile exists.
+    let mut same: Vec<RuntimeArchive> = deps_candidates
+        .iter()
+        .filter(|c| c.profile == running_profile)
+        .cloned()
+        .collect();
+    let mut other: Vec<RuntimeArchive> = deps_candidates
+        .drain(..)
+        .filter(|c| c.profile != running_profile)
+        .collect();
+
+    let legacy_same = legacy.as_ref().is_some_and(|l| l.profile == running_profile);
+    let mut pool: Vec<RuntimeArchive> = if legacy_same {
+        let mut v = same;
+        if let Some(l) = legacy.clone() {
+            v.push(l);
         }
-        (Some(l), None) => Some(l),
-        (None, Some(d)) => Some(d),
-        (None, None) => None,
+        v
+    } else if !same.is_empty() {
+        same
+    } else {
+        // Nothing built for the running profile: fall back to whatever exists.
+        let mut v = other.clone();
+        if let Some(l) = legacy.clone() {
+            v.push(l);
+        }
+        v
+    };
+    if pool.is_empty() {
+        return None;
     }
+    pool.sort_by_key(|p| std::fs::metadata(&p.path).and_then(|m| m.modified()).ok());
+    let newest = pool.pop()?;
+    if let Some(l) = &legacy {
+        if l.profile == running_profile && newest.profile != running_profile {
+            // Unreachable with the pool rules above; kept so the invariant is explicit.
+            eprintln!(
+                "runtime archive: {} is a {} build but the compiler is {}; refusing to link it",
+                newest.path.display(),
+                newest.profile.as_str(),
+                running_profile.as_str()
+            );
+            return Some(l.path.clone());
+        }
+        if l.profile != newest.profile {
+            eprintln!(
+                "runtime archive: linking the {} build at {} in preference to the {} build at {}",
+                newest.profile.as_str(),
+                newest.path.display(),
+                l.profile.as_str(),
+                l.path.display()
+            );
+        } else if newest.path != l.path {
+            // Fail-visible: never silently swap runtimes.
+            eprintln!(
+                "runtime archive: {} is newer than {}; linking the newer deps archive",
+                newest.path.display(),
+                l.path.display()
+            );
+        }
+    }
+    Some(newest.path)
 }
 
 /// Collect `deps/` static-lib archives named `<stem>-<hash><ext>` for an
 /// expected `<stem><ext>` (e.g. `libtallow.a` -> `libtallow-*.a`).
-fn collect_deps_archives(dir: &Path, expected_name: &str, out: &mut Vec<std::path::PathBuf>) {
+fn collect_deps_archives(dir: &Path, expected_name: &str, out: &mut Vec<RuntimeArchive>) {
     let (prefix, suffix) = if let Some(stem) = expected_name.strip_suffix(".a") {
         (format!("{stem}-"), ".a")
     } else if let Some(stem) = expected_name.strip_suffix(".lib") {
@@ -30984,7 +31466,7 @@ fn collect_deps_archives(dir: &Path, expected_name: &str, out: &mut Vec<std::pat
         let file_name = entry.file_name();
         if let Some(name) = file_name.to_str() {
             if name.starts_with(&prefix) && name.ends_with(suffix) && entry.path().is_file() {
-                out.push(entry.path());
+                out.push(RuntimeArchive::at(entry.path()));
             }
         }
     }
@@ -32772,8 +33254,14 @@ mod tests {
             }
         "#,
         );
-        assert!(ir.contains("and i64"));
-        assert!(ir.contains("or i64"));
+        // Short-circuit is a branch, not a bitwise op. Asserting `and i64`/`or i64`
+        // here pinned the miscompile that made `false && side()` run `side()`.
+        assert!(ir.contains("logical.eval"), "{ir}");
+        assert!(ir.contains("phi i64"), "{ir}");
+        assert!(
+            !ir.contains("and i64") && !ir.contains("or i64"),
+            "&& / || must not lower to a bitwise op: {ir}"
+        );
     }
 
     #[test]
@@ -34341,9 +34829,13 @@ mod tests {
             }
         "#,
         );
-        // Logical and/or implemented as bitwise and/or on i64
-        assert!(ir.contains("and i64"));
-        assert!(ir.contains("or i64"));
+        // Logical and/or short-circuit through a branch + phi, and yield a Bool.
+        assert!(ir.contains("logical.eval"), "{ir}");
+        assert!(ir.contains("phi i64"), "{ir}");
+        assert!(
+            !ir.contains("and i64") && !ir.contains("or i64"),
+            "&& / || must not lower to a bitwise op: {ir}"
+        );
     }
 
     #[test]
@@ -36250,8 +36742,14 @@ mod tests {
             }
         "#,
         );
-        assert!(ir.contains("and i1") || ir.contains("and i64"));
-        assert!(ir.contains("or i1") || ir.contains("or i64"));
+        // A branch per operand, and a phi to merge the two answers.
+        assert!(ir.contains("logical.eval"), "{ir}");
+        assert!(ir.contains("logical.short"), "{ir}");
+        assert!(ir.contains("phi i64"), "{ir}");
+        assert!(
+            !ir.contains("and i64") && !ir.contains("or i64"),
+            "&& / || must not lower to a bitwise op: {ir}"
+        );
     }
 
     // ── Array indexing ──────────────────────────────────────────────
@@ -44566,12 +45064,11 @@ fn main() {
 #[cfg(test)]
 mod runtime_archive_selection {
     use super::*;
-    use std::time::{Duration, SystemTime};
 
     fn touch(path: &std::path::Path, secs: u64) {
-        let f = std::fs::File::options().write(true).open(path).unwrap();
-        f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
-            .unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        f.set_modified(t).unwrap();
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
@@ -44582,67 +45079,112 @@ mod runtime_archive_selection {
         dir
     }
 
+    /// A candidate in a directory named after its profile, so `from_path` sees it.
+    fn candidate(dir: &std::path::Path, profile: &str, name: &str, secs: u64) -> RuntimeArchive {
+        let p = dir.join(profile).join(name);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"x").unwrap();
+        touch(&p, secs);
+        RuntimeArchive::at(p)
+    }
+
     #[test]
     fn newer_deps_archive_beats_stale_top_level() {
         let dir = scratch("newer-deps");
-        let legacy = dir.join("libtallow.a");
-        let fresh = dir.join("libtallow-aaaa1111.a");
-        std::fs::write(&legacy, b"old runtime").unwrap();
-        std::fs::write(&fresh, b"new runtime").unwrap();
-        touch(&legacy, 1_750_000_000);
-        touch(&fresh, 1_750_003_600);
-        let picked = pick_runtime_archive(Some(legacy), vec![fresh.clone()]);
-        assert_eq!(picked, Some(fresh));
+        let legacy = candidate(&dir, "debug", "libtallow.a", 1_750_000_000);
+        let fresh = candidate(&dir, "debug", "libtallow-aaaa1111.a", 1_750_003_600);
+        let want = fresh.path.clone();
+        assert_eq!(
+            pick_runtime_archive(Some(legacy), vec![fresh], Profile::Debug),
+            Some(want)
+        );
     }
 
     #[test]
     fn tie_prefers_legacy() {
         let dir = scratch("tie");
-        let legacy = dir.join("libtallow.a");
-        let dep = dir.join("libtallow-bbbb2222.a");
-        std::fs::write(&legacy, b"x").unwrap();
-        std::fs::write(&dep, b"x").unwrap();
-        touch(&legacy, 1_750_000_000);
-        touch(&dep, 1_750_000_000);
+        let legacy = candidate(&dir, "debug", "libtallow.a", 1_750_000_000);
+        let dep = candidate(&dir, "debug", "libtallow-bbbb2222.a", 1_750_000_000);
+        let want = legacy.path.clone();
         assert_eq!(
-            pick_runtime_archive(Some(legacy.clone()), vec![dep]),
-            Some(legacy)
+            pick_runtime_archive(Some(legacy), vec![dep], Profile::Debug),
+            Some(want)
         );
     }
 
     #[test]
     fn legacy_newer_than_deps_stays() {
         let dir = scratch("legacy-newer");
-        let legacy = dir.join("libtallow.a");
-        let dep = dir.join("libtallow-cccc3333.a");
-        std::fs::write(&legacy, b"x").unwrap();
-        std::fs::write(&dep, b"x").unwrap();
-        touch(&legacy, 1_750_010_000);
-        touch(&dep, 1_750_000_000);
+        let legacy = candidate(&dir, "debug", "libtallow.a", 1_750_010_000);
+        let dep = candidate(&dir, "debug", "libtallow-cccc3333.a", 1_750_000_000);
+        let want = legacy.path.clone();
         assert_eq!(
-            pick_runtime_archive(Some(legacy.clone()), vec![dep]),
-            Some(legacy)
+            pick_runtime_archive(Some(legacy), vec![dep], Profile::Debug),
+            Some(want)
         );
     }
 
     #[test]
     fn newest_of_many_deps_wins() {
         let dir = scratch("many-deps");
-        let a = dir.join("libtallow-1111.a");
-        let b = dir.join("libtallow-2222.a");
-        let c = dir.join("libtallow-3333.a");
-        for p in [&a, &b, &c] {
-            std::fs::write(p, b"x").unwrap();
-        }
-        touch(&a, 1_750_000_000);
-        touch(&b, 1_750_030_000);
-        touch(&c, 1_750_010_000);
-        assert_eq!(pick_runtime_archive(None, vec![a, b.clone(), c]), Some(b));
+        let a = candidate(&dir, "debug", "libtallow-1111.a", 1_750_000_000);
+        let b = candidate(&dir, "debug", "libtallow-2222.a", 1_750_030_000);
+        let c = candidate(&dir, "debug", "libtallow-3333.a", 1_750_010_000);
+        let want = b.path.clone();
+        assert_eq!(
+            pick_runtime_archive(None, vec![a, b, c], Profile::Debug),
+            Some(want)
+        );
+    }
+
+    /// The regression this rule exists for: a *newer* debug archive must not be
+    /// linked into a release compiler. Observed live — `target/debug/deps`
+    /// outvoted `target/release/libtallow.a` purely on mtime, so a release
+    /// binary referenced a runtime function only the release archive defined
+    /// and every native build failed with `undefined reference`.
+    #[test]
+    fn newer_foreign_profile_never_beats_running_profile() {
+        let dir = scratch("foreign-profile");
+        let release_legacy = candidate(&dir, "release", "libtallow.a", 1_750_000_000);
+        let newer_debug = candidate(&dir, "debug", "libtallow-dddd4444.a", 1_750_090_000);
+        let want = release_legacy.path.clone();
+        assert_eq!(
+            pick_runtime_archive(Some(release_legacy), vec![newer_debug], Profile::Release),
+            Some(want),
+            "a debug archive must not be linked into a release compiler"
+        );
+    }
+
+    /// Same rule from the other side: a release archive must not be linked into
+    /// a debug compiler, no matter how new it is.
+    #[test]
+    fn newer_release_archive_never_beats_debug_compiler() {
+        let dir = scratch("foreign-profile-2");
+        let debug_legacy = candidate(&dir, "debug", "libtallow.a", 1_750_000_000);
+        let newer_release = candidate(&dir, "release", "libtallow-eeee5555.a", 1_750_090_000);
+        let want = debug_legacy.path.clone();
+        assert_eq!(
+            pick_runtime_archive(Some(debug_legacy), vec![newer_release], Profile::Debug),
+            Some(want)
+        );
+    }
+
+    /// With nothing built for the running profile, the other profile is still
+    /// used rather than failing to link at all.
+    #[test]
+    fn foreign_profile_is_used_when_nothing_else_exists() {
+        let dir = scratch("only-foreign");
+        let dep = candidate(&dir, "release", "libtallow-ffff6666.a", 1_750_000_000);
+        let want = dep.path.clone();
+        assert_eq!(
+            pick_runtime_archive(None, vec![dep], Profile::Debug),
+            Some(want)
+        );
     }
 
     #[test]
     fn nothing_exists_is_none() {
-        assert_eq!(pick_runtime_archive(None, Vec::new()), None);
+        assert_eq!(pick_runtime_archive(None, Vec::new(), Profile::Debug), None);
     }
 }
 
