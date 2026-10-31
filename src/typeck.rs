@@ -2271,6 +2271,44 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// `bail` (and its parser desugar `return Err(...)`) is only legal when the
+    /// enclosing function returns `Result<T>` (spec 03-types). Void (`None`)
+    /// and every other concrete type are E0126.
+    fn check_bail_return_slot(&mut self, span: Span) {
+        if self.enclosing_return_is_result() {
+            return;
+        }
+        let found = match &self.current_return_type {
+            Some(ty) => self.type_display(ty),
+            None => "void".to_string(),
+        };
+        self.diags.error(
+            "E0126",
+            format!(
+                "`bail` requires the enclosing function to return `Result<T>`, found `{found}`"
+            ),
+            span,
+        );
+    }
+
+    fn enclosing_return_is_result(&self) -> bool {
+        match &self.current_return_type {
+            Some(Type::Result(_)) => true,
+            Some(Type::Named(n)) if n == "Result" => true,
+            Some(Type::Unknown) => true,
+            _ => false,
+        }
+    }
+
+    fn expr_is_err_constructor(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Call { callee, .. } => {
+                matches!(&callee.kind, ExprKind::Ident(name) if name == "Err")
+            }
+            _ => false,
+        }
+    }
+
     /// Check that all code paths return a value when the function has a non-void return type.
     fn check_return_coverage(&mut self, f: &FnDecl, _declared_return: &Type) {
         // A `native fn` has no body by definition: its implementation is a
@@ -2570,6 +2608,12 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Return(Some(expr)) => {
                 self.check_expr(expr, locals);
+                // `bail expr` is parsed as `return Err(expr)` (`parse_bail_stmt`).
+                // The Bail AST arms never see that form, so the Result-slot
+                // rule is enforced here on the desugared constructor.
+                if Self::expr_is_err_constructor(expr) {
+                    self.check_bail_return_slot(stmt.span);
+                }
                 // G01 P0.2: an explicit `return` is a producer position — the
                 // declared return type is the slot. A `return` inside a
                 // closure returns from the closure, so the check is suspended
@@ -2663,6 +2707,7 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Bail(expr) => {
                 self.check_expr(expr, locals);
+                self.check_bail_return_slot(stmt.span);
             }
             StmtKind::Loop { label, body } => {
                 let mut inner_locals = locals.clone();
@@ -4376,6 +4421,7 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::Bail(e) => {
                 self.check_expr(e, locals);
+                self.check_bail_return_slot(expr.span);
             }
             // ── Concurrency (Phase 1) ───────────────────────────────────
             //
@@ -5711,6 +5757,26 @@ mod tests {
         let sig = env.functions.get("add").unwrap();
         assert_eq!(sig.params.len(), 2);
         assert_eq!(sig.return_type, Type::Int(IntSize::I32));
+    }
+
+    #[test]
+    fn bail_outside_result_is_e0126() {
+        let (_, diags) = check("fn f() -> i64 { bail \"no\" }\nfn main() { print(f()) }");
+        assert!(
+            diags.items.iter().any(|d| d.code == "E0126"),
+            "expected E0126, got {:?}",
+            diags.items
+        );
+    }
+
+    #[test]
+    fn bail_inside_result_is_not_e0126() {
+        let (_, diags) = check("fn f() -> Result<i64> { bail \"no\" }\nfn main() {}");
+        assert!(
+            !diags.items.iter().any(|d| d.code == "E0126"),
+            "Result-returning bail must stay legal: {:?}",
+            diags.items
+        );
     }
 
     #[test]

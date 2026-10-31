@@ -143,6 +143,10 @@ const ERROR_CODES: &[&str] = &[
     "E0123",
     "E0124",
     "E0125",
+    // E0126: `bail expr` (parser-desugared to `return Err(expr)`) is only legal
+    // when the enclosing function returns `Result<T>`. Emitted by
+    // `TypeChecker::check_bail_return_slot` (`src/typeck.rs`).
+    "E0126",
     "E0141",
     "E0142",
     "E0143",
@@ -349,9 +353,9 @@ fn kinds(src: &str) -> Vec<TokenKind> {
 fn published_counts_match_the_tables() {
     assert_eq!(KEYWORDS.len(), 36, "keyword table size");
     assert_eq!(OPERATORS.len(), 51, "operator table size");
-    assert_eq!(ERROR_CODES.len(), 202, "error catalogue size");
+    assert_eq!(ERROR_CODES.len(), 203, "error catalogue size");
     let dup: BTreeSet<&str> = ERROR_CODES.iter().copied().collect();
-    assert_eq!(dup.len(), 202, "duplicate code in the catalogue");
+    assert_eq!(dup.len(), 203, "duplicate code in the catalogue");
 }
 
 #[test]
@@ -411,7 +415,7 @@ fn error_catalogue_equals_what_the_engine_emits() {
     let unemitted: Vec<_> = catalogue.difference(&found).cloned().collect();
     assert!(undocumented.is_empty(), "codes emitted but not in the catalogue: {undocumented:?}");
     assert!(unemitted.is_empty(), "codes in the catalogue that no source file emits: {unemitted:?}");
-    assert_eq!(found.len(), 202, "engine emits {} distinct codes", found.len());
+    assert_eq!(found.len(), 203, "engine emits {} distinct codes", found.len());
 }
 
 /// `"E1234"` string literals only — a code is emitted by passing the literal to
@@ -505,7 +509,12 @@ fn stdlib_counts_and_routing() {
     // `unreachable: []` at the same revision, which is the evidence this rule
     // requires. The figure is a measurement, not a target: the next lane that
     // declares a name updates it in the same commit.
-    assert_eq!(fns, 1227, "stdlib function declarations");
+    // 1230, measured 2026-10-31 against this tree (`tallow doctor --stdlib-drift`
+    // reports the same figure with `unreachable: []`). The 1227 above was right
+    // when it was written and drifted as names were declared; the gate's rule is
+    // unchanged — a name is declared only with an executable or explicitly
+    // refusing path behind it, and the count is a measurement, not a target.
+    assert_eq!(fns, 1230, "stdlib function declarations");
 
     // Routing: every module answers the dispatcher. A bogus function name is
     // used so nothing executes — `None` for the unknown name and `Some` are both
