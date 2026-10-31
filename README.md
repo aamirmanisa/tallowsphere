@@ -397,9 +397,7 @@ $ cargo test --lib -- --test-threads=2
 
 ## Documentation
 
-- [`docs/README.md`](docs/README.md) — the documentation index: architecture, operations, security, release
 - [`docs/extraction-engine/`](docs/extraction-engine/) — the extraction product's spec, checklist and runbook
-- [`docs/INSTALL.md`](docs/INSTALL.md) — install, upgrade, uninstall
 - [`TALLOW_SPEC.md`](TALLOW_SPEC.md) — the language specification carried in this tree
 - [`stdlib/README.md`](stdlib/README.md) — the standard library map
 - [`conformance/README.md`](conformance/README.md) — the conformance harness
