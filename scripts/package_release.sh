@@ -59,18 +59,37 @@ mkdir -p "$OUT"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
+# ── Reproducibility ────────────────────────────────────────────────────────────
+# The archive bytes must depend only on the inputs, not on when the packer ran.
+# Without this, `cp` stamps the staged copies with "now", and tar/zip record that
+# mtime in every member header — so two runs over the *same* binary produced
+# different sha256 (measured 2026-10-31: two consecutive runs differed at byte 14).
+# Pin the timestamp and normalise ownership/order so a rebuild of the same commit
+# yields the same bytes.
+EPOCH="${SOURCE_DATE_EPOCH:-}"
+if [ -z "$EPOCH" ]; then
+    # Fall back to the commit time (stable for a given tree), then to 0.
+    EPOCH="$(git -C "$ROOT" log -1 --format=%ct 2>/dev/null || true)"
+fi
+[ -n "$EPOCH" ] || EPOCH=0
+export TZ=UTC LC_ALL=C
+umask 022
+
 ARCHIVE="$OUT/tallow-$LABEL-$VERSION.$EXT"
 rm -f "$ARCHIVE" "$ARCHIVE.sha256"
 
+# Stamp both staged files at the fixed epoch, and hand tar the same value.
+fix_time() { touch -d "@$EPOCH" "$1" 2>/dev/null || touch -t 197001010000.00 "$1"; }
+
 if [ "$EXT" = "zip" ]; then
-    cp "$BIN" "$STAGE/tallow.exe"
-    cp "$RUNTIME_A" "$STAGE/tallow.lib"
+    cp "$BIN" "$STAGE/tallow.exe"; fix_time "$STAGE/tallow.exe"
+    cp "$RUNTIME_A" "$STAGE/tallow.lib"; fix_time "$STAGE/tallow.lib"
     # `zip` is not on the Windows runner's PATH (measured 2026-10-21: the
     # release failed with "zip: command not found" after a clean build). Git
     # Bash has cygpath but no zip; 7-Zip is installed on the GitHub Windows
     # images, and Compress-Archive is the last resort.
     if command -v zip >/dev/null 2>&1; then
-        (cd "$STAGE" && zip -q -6 "$ARCHIVE" tallow.exe tallow.lib)
+        (cd "$STAGE" && zip -X -q -6 "$ARCHIVE" tallow.exe tallow.lib)
     elif [ -x "/c/Program Files/7-Zip/7z.exe" ]; then
         WARCHIVE="$(cygpath -w "$ARCHIVE")"
         # -mx=5, not -mx=9. Measured on this payload shape (46 MB exe + 241 MB
@@ -86,9 +105,13 @@ if [ "$EXT" = "zip" ]; then
         powershell -NoProfile -Command "Compress-Archive -Path '$WPATH','$WLIB' -DestinationPath '$WARCHIVE' -Force"
     fi
 else
-    cp "$BIN" "$STAGE/tallow"
-    cp "$RUNTIME_A" "$STAGE/libtallow.a"
-    tar czf "$ARCHIVE" -C "$STAGE" tallow libtallow.a
+    cp "$BIN" "$STAGE/tallow"; fix_time "$STAGE/tallow"
+    cp "$RUNTIME_A" "$STAGE/libtallow.a"; fix_time "$STAGE/libtallow.a"
+    # Sorted members, zeroed owner/group, fixed mtime, gzip with -n (no name or
+    # timestamp in the header). `tar czf` alone is NOT reproducible: it records
+    # the staged files' mtimes, which `cp` sets to the moment of packing.
+    tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$EPOCH" \
+        -cf - -C "$STAGE" libtallow.a tallow | gzip -n -9 > "$ARCHIVE"
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then
