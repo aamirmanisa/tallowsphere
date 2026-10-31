@@ -89,6 +89,14 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
   aborts the program; handle release happens once per handle rather than once
   per await; defer registrations capture the iteration's value at registration
   and drain LIFO.
+- `src/stdlib/http.rs`, `src/interp.rs`, `src/codegen.rs`, `src/runtime/fetch.rs` —
+  the authorization register is consulted by `http.get`, `http.post`,
+  `http.put`, `http.delete` and `http.batch` before any socket on both planes,
+  and a refusal is fatal on both. POST previously consulted nothing at all: it
+  spent the connection attempt and returned a transport error as data, while the
+  compiled plane printed `(null)` and exited 0. A literal loopback address no
+  longer goes through the egress proxy, which is the branch the interpreter's
+  agent has always taken.
 - `src/interp.rs` — the recorded task result is kept in an idempotent cache, so a
   second await returns the same value instead of draining a single-shot channel;
   defer order and per-iteration capture match the native plane.
@@ -113,18 +121,27 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 Measured on the tagged tree, recorded rather than hidden:
 
-- **The egress register is enforced on the paths this release tests, not on every
-  path.** The interpreter's `http.post`/`put`/`delete` return a `Response` for an
-  unregistered host and perform real egress (measured: `Response { status: 301 }`,
-  exit 0); the native plane prints `(null)` and continues — the class this
-  release closed for `net.connect` only. `tests/egress_scope_gate.rs` still
-  carries two cases that measure less than their names claim: the positive
-  control's `net.connect` is refused by method (the shipped register grants
-  loopback `GET`/`HEAD` only) and its result is dead-code-eliminated, and the
-  write-verbs case does not parse (`Budget(bytes: 1048576)`), so only its
-  non-zero-exit disjunct passes. An `atlas` census counts 18 stdlib modules
-  holding socket primitives with no `crate::scope::` call, and 113 socket sites
-  under `src/browser/` with none.
+- **The egress register is a chokepoint on the paths this release tests, not on
+  every path.** `net.connect`, `http.get`, `http.post`, `http.put`,
+  `http.delete` and `http.batch` consult it on both planes and a refusal is
+  fatal on both (measured 2026-10-31, tallow 1.5.8+4 merges: `http.post` to
+  192.0.2.1 → `runtime error: … not in the authorization register`, exit 1, no
+  socket). Still uncovered: an `atlas` census counts 18 stdlib modules holding
+  socket primitives with no `crate::scope::` call (`http, ws, osint, transfer,
+  transfer_net, mesh, email, llm, medium, substack, beehiiv, ghost, cxense,
+  cnam_dip, lrn_dip, sitescan, sync, wordpress`) and 113 socket sites under
+  `src/browser/` with none.
+- **A transport failure aborts on the native plane where the interpreter returns
+  a value.** Measured on a loopback GET to a closed port: `--interpret` →
+  `Err("http.get: io: Connection refused (os error 111)")`, exit 0;
+  `--require-native` → `runtime error: fetch: io: Connection refused`, exit 1.
+  The compiled plane has no `Err` value for these calls, so the null handle is
+  fatal rather than silently `(null)` — loud, but not parity, and a program that
+  inspects the result cannot tell a transient failure from a refusal there.
+- **The native POST path is dead.** `http.post` returns a null handle on the
+  native plane for every case measured (200 and 404), so with the fatal guard a
+  native POST now fails loudly instead of silently; the per-call timeout argument
+  to `http.get` is ignored there while the interpreter honours it.
 - **Six of the nine gates cannot fail on today's tree** (`capability-registry`,
   `ffi-symbols`, `census-surface`, `docs-examples`, `census-page-methods`,
   `panic-policy`, and `release-body`'s substring-heading check): mutating a
