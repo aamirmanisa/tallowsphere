@@ -520,7 +520,7 @@ jobs:
       # Publishing is the last step, not the first: the draft must exist with
       # the expected asset count and a body before it becomes public. A release
       # that uploads ten of fifteen assets stays a draft and fails the job.
-      - name: Verify the draft, then publish it
+      - name: Verify the draft
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -533,5 +533,19 @@ jobs:
           [ "$n" -ge 15 ] || { echo "expected at least 15 assets, found $n — staying draft"; exit 1; }
           one=$(ls release-assets/tallow-linux-x86_64-*.tar.gz | head -1)
           (cd release-assets && sha256sum -c "$(basename "$one").sha256")
+
+      # EXPLICIT ONLY. The file header promises "nothing is published automatically",
+      # but this step used to run on every v* tag push and flip the draft public
+      # (`gh release edit --draft=false`), so a tag published with no human in the
+      # loop. A tag now stops at the verified draft; publishing requires a
+      # workflow_dispatch with inputs.publish=true.
+      - name: Publish (explicit dispatch only)
+        if: inputs.publish == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
           gh release edit "$TAG" --draft=false
           echo "published $TAG"
