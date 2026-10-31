@@ -1,0 +1,414 @@
+# Unified integration and fix plan
+
+Date: 2026-10-23. Baseline: engine `9cd968d` (v1.4.0), spec `9a7fd3d`.
+Status: plan only. No code changed by the audit that produced it.
+
+---
+
+## 0. Baseline — what exists, measured
+
+| Area | State | Evidence |
+| --- | --- | --- |
+| Engine | 548 Rust files, 541,627 lines in `src/`, 13 crates, 799 locked packages | `find`/`wc` at `9cd968d` |
+| Tests | 9,212 passed / 0 failed / 33 ignored | `cargo test --locked --lib` |
+| Integration | language_surface 5, llm_providers 7, mesh_plan_tl 3, mesh_workers 5, mesh_remote 3 | targeted runs |
+| Stdlib | 87 modules, 1,130 declarations, `tallow check` 87/87 clean | check sweep |
+| Invariants | 0 `todo!()`/`unimplemented!()`, 0 empty declarations, 0 unmentioned declarations | `census_surface.py` |
+| Supply chain | advisories/bans/licenses/sources ok | `cargo deny` |
+| Spec | 7 docs + `generated.json`, 18 conformance programs, **no CI** | `ls .github` (empty) |
+| Cross-repo | conformance 0 failures against released v1.4.0 | `conformance/run.py` |
+| Gaps | topology simulated; `Mesh.run` absent; 25 interpreter-only helpers; spec drift unchecked; 38 excluded suites | audit, below |
+
+**Two repositories, one interface.** The engine owns all executable code. The spec repo
+owns prose + `generated.json`, both derived from the engine's `stdlib/*.tl` by
+`tools/generate.py`. There is no runtime coupling; the contract is (a) the declaration
+manifest, (b) the conformance corpus, (c) the provenance SHA.
+
+---
+
+## 1. Target architecture
+
+```
+        ┌──────────────────────── Tallow-Language ────────────────────────┐
+        │ spec/ (7 docs) · generated.json · conformance/ (18 programs) · CI   │
+        └───────────────▲─────────────────────────────────┬───────────────┘
+        regenerate (SHA)│                                 │ conformance run
+        ┌───────────────┴─────────────────────────────────▼───────────────┐
+        │                        tallowsphere (engine)                    │
+        │  lex → parse → typecheck → policy → codegen | interp → runtime   │
+        │  stdlib/ (87 modules) ⇄ src/stdlib/*.rs (dispatch)               │
+        │  mesh: planning/journal (real) · wire (real) · topology (TO BUILD)│
+        │  llm: providers/models/complete/verify (real)                    │
+        └───────────────▲─────────────────────────────────────────────────┘
+                        │ tasks, checkpoints, journals
+        ┌───────────────┴─────────────────────────────────────────────────┐
+        │ Directorate: SENTINEL · ORACLE · GHOST · CARTOGRAPHER · QUARTERMASTER │
+        │ each = @agent_task fns + stdlib tools + a mesh task graph        │
+        └──────────────────────────────────────────────────────────────────┘
+```
+
+Dependency edges: directorate → stdlib tools → runtime; directorate → mesh (scheduling);
+directorate → llm (cognition, recorded); mesh → wire → TCP; spec ← generator ← stdlib;
+conformance → engine binary.
+
+---
+
+## 2. Remediation register
+
+Each row is independently shippable. `Gate` is the measurement that closes it.
+
+### Integrity and cross-repo gates
+
+**R1 — Spec drift is silent.**
+Evidence: regenerating against `9cd968d` changes 4 files (`engine_sha` only); no CI in
+`Tallow-Language`.
+Fix: workflow `spec-freshness.yml`: checkout spec + engine at the SHA in
+`generated.json`, run `tools/generate.py --engine <engine>`, fail if `git diff` is
+non-empty; second job runs `conformance/run.py` against the engine's release binary.
+Tag the spec `spec-vX.Y.Z` per engine release.
+Gate: a stale spec turns CI red; a green run posts the diff-free SHA pair.
+
+**R2 — Conformance is only exercised during release.** — **DONE** (2026-10-24)
+Conformance now runs in `ci.yml` ("Conformance corpus" step: `python3 conformance/run.py --tallow target/debug/tallow`), and again in the release gate with its log captured into the body's Verified section.
+
+Original evidence:
+Evidence: `conformance/run.py` appears in `release.yml:329` only.
+Fix: add a `conformance` job to `ci.yml` that builds the binary and runs the corpus on
+every push; keep the release copy as the last gate.
+Gate: CI job present and green on main.
+
+**R3 — 38 integration suites are excluded.** — **1 remains** (2026-10-24)
+Down from 38: 25 are wired (23 browser suites + directorate_desks), and this
+iteration removed two more by fixing why they could not run:
+
+* `injection_redteam` — 8/8 pass, no browser needed; now in the contract job.
+* `parity_runner` — the suite was failing because the runner treated every
+  non-zero *interpreter* exit as an error, so the three `*_refusal` fixtures
+  could never land in a named class. Added `Expect::RefuseBoth`: a refusal
+  fixture must be refused on both planes, and both legs must refuse for the same
+  reason. Result: 10 MATCH, 4 REFUSED, 0 divergences, 0 errors — and the suite
+  now runs in CI with a built binary.
+
+Then six more, by fixing the causes rather than the registrations:
+
+* **interpreter defect, found by `browser_array_parity_n`**: `page.query_selector_all(sel).len`
+  answered 0 for a one-element result because field access did not unwrap the
+  `Ok(…)` wrapper the interpreter uses for CDP results (`Index` and `for` already
+  did). Measured: interp `[0,0,3]` vs native `[0,1,3]`. With the unwrap,
+  browser_array_parity_{n,cookies,links} and browser_flow_runtime_integration all
+  pass.
+* **`egress_census`** was failing because five egress-capable files were never
+  classified: `browser/socks_shim.rs`, `cli/plan_cmd.rs`, `cli/veil_cmd.rs`,
+  `mesh/remote.rs`, `stdlib/llm.rs`. Each now carries a written reason (loopback
+  relay, self-check string, operator-configured relay, operator-run mesh peers,
+  the inference plane). The gate was doing its job.
+* **`transfer_transport`** failed on a stale fixture room code: the mint accepts
+  8 symbols and the test passed a descriptive string, so it failed the validator
+  instead of exercising the transport.
+
+Then two "host" suites, by fixing the defect they exposed:
+
+* **`process_contract`** asserted that the compiled path must *refuse*
+  `process.exec`, because the lowering could not capture output. It now captures
+  it, so the assertion was inverted — and updating it surfaced a second, real
+  defect: `"code=" + o.exit_code` printed `code=nil` natively because
+  `coerce_to_string` had arms for i64/i1/f64/Result but not i32, and
+  `exit_code: i32` is exactly that width. Sign-extend + format is now an arm of
+  its own; compiled output matches the interpreter (`code=0`).
+* **`stdlib_method_refusals`** passed as soon as it was given the built binary;
+  it was never host-specific.
+
+Then the parked U-218 entry, by implementing the verbs instead of re-registering
+the suite:
+
+* **`run-plan`** — the gate stack (approval, compliance-report sha binding,
+  header hygiene, output isolation, manifest allow/deny, browser/artifact
+  refusals, vault refs as hashes only) plus live execution with redacted
+  artifacts and a hashed artifact manifest.
+* **`validate-manifest`**, **`build-plan`**, **`package-report`** — the local
+  half of the workflow; `build-plan` attaches the manifest sha256 so `run-plan`
+  can prove the pair still matches, and `package-report` excludes its own output
+  by file identity, not by string comparison.
+* **`fmt --check`** — verifies without rewriting, comparing against the
+  formatted body because a generated file's `// @generated_by` header is not
+  reproduced by the AST formatter.
+* **`lint --profile scraper`** — `E-SCRAPER-IMPORT` and `E-SCRAPER-LEGAL`, and an
+  import alone is not HTTP work.
+
+All 38 tests now run unignored in the contract job.
+
+Then `wordpress_login`, which only ever needed the fixture to exist: the suite
+passes 1/1 against the live `tallow-wp` container (6 s), and CI now starts the
+same fixture with `scripts/wordpress_fixture.sh up`, installs the pinned
+Chrome-for-Testing build and runs the test with `--ignored`. `TALLOW_ALLOW_DIRECT`
+stays an operator opt-in — the browser zone routes through Tor by contract and
+Tor cannot reach a loopback fixture — so the guard stays in the test and CI
+opts in explicitly.
+
+Then two of the three perf suites, after measuring them instead of assuming they
+were per-commit-hostile: `perf_binary_startup`'s startup case has a 100 ms bound
+and passes in 0.02 s, and `perf_install` passes 2/2 in 0.18 s. Both now run in the
+contract job. `compiler_bench` stays out with a measured reason: in a debug build
+the interpreted fibonacci case overflows the default test stack (RUST_MIN_STACK=64M
+fixes that) and blake3/1MB measures 54 MB/s against a release-build threshold —
+14/15 pass, so the failure is the build profile.
+
+One perf suite remains, with that reason recorded. No triage, host, parked or
+service entries left.
+
+Evidence: `ci-excluded-suites.txt` (38 entries; the file states the goal is empty).
+Fix: triage into three buckets — (a) needs a service (WordPress, docker) → run in a
+container job; (b) needs Chrome → run in the existing browser job with a headless
+Chromium; (c) genuinely obsolete → delete the target and its entry.
+Gate: registry shrinks every PR; count published in the release body.
+
+**R4 — `cargo deny` prints a stale-ignore warning.** — **DONE** (2026-10-24)
+Not stale: `RUSTSEC-2026-0167` (pqcrypto-classicmceliece) matches only in the `--all-features` graph, which is the graph CI gates on; a plain `cargo deny check` therefore reports it as not-detected. Verified both ways — `cargo deny check` → advisories ok, `cargo deny --all-features check` → the advisory fires. `deny.toml` now says so at the entry.
+
+Original evidence:
+Evidence: `deny.toml:52` ignores `RUSTSEC-2026-0167`, which matches no crate.
+Fix: remove the stale ignore after confirming the crate is above the patched version.
+Gate: `cargo deny check` clean with no warnings.
+
+### Mesh
+
+**R5 — Topology plane is simulated.** — **DONE** (2026-10-24)
+Closed by `74f7029` (heartbeats, liveness, SIGSTOP/SIGCONT test) and `0de3e29`
+(`MeshNode` is a real TCP peer: listener, hello handshake, gossip and DHT over
+sockets; `simulated` derived from the handshake). The evidence below is the
+state that motivated the work, kept for the record.
+Evidence: `src/stdlib/mesh.rs:175` `("simulated", true)`; `:339` connectivity simulated.
+Fix: back membership with `src/mesh/wire.rs`: signed `join`/`heartbeat` frames, a peer
+table fed by completed handshakes, `simulated` computed per node from
+(handshake ∧ one committed task) — the rule M4 already applies on the execution side.
+Deprecate the in-process node map; keep the DHT as an explicitly `research` module or
+delete it.
+Gate: two-process test — node A joins, is SIGSTOPped, disappears from the table within
+the heartbeat budget; SIGCONT restores it; `simulated` is false only for committed nodes.
+
+**R6 — `Mesh.run` is unpublished, so plans cannot execute Tallow functions.** — **DONE** (2026-10-24)
+`Mesh.run` is implemented and exercised: `tests/mesh_run_tl` (5/5) runs a real task graph through the published surface, and the signed-manifest gate refuses unlisted ids. `examples/directorate/directorate.tl` plans 5 waves and commits 15 tasks.
+
+Original evidence:
+Evidence: `stdlib/mesh.tl` declares only `plan`/`replay`; workers run built-in
+`hash`/`sleep:<ms>` executors.
+Fix: worker-side executor: one interpreter per worker thread (the M1 pattern),
+`TaskFn` resolved by function name through the existing function table; task class
+`llm` recorded as prompt/response hashes for replay; attempt caps unchanged.
+Gate: a Tallow program whose tasks are Tallow functions produces identical checkpoint
+hashes at 1 and 8 workers; a `llm` task replays with the model detached.
+
+**R7 — Speculative duplicates are in-process only.** — **DONE** (2026-10-24)
+Decided, not extended: §9 of `docs/architecture/tallow-mesh-execution-plane-2026-10-23.md`
+("speculation stays in-process") states the choice and the reason — speculation
+answers "slow but alive", lease reassignment answers "gone", and mixing them
+makes neither provable. The wire has no `speculate` frame. No code change, as the
+gate required.
+Original fix: decide explicitly. Recommendation: do not extend speculation to the wire
+(reassignment covers "gone"); document the decision in the architecture doc so it is
+not re-litigated.
+Gate: doc line + no code change.
+
+### LLM
+
+**R8 — Providers are verified against a protocol mock, not vendors.** — **DONE** (2026-10-24)
+`scripts/llm_verify_matrix.py` reads the same `llm.toml` the engine reads, runs
+`tallow llm verify <id>` per provider, and writes a dated table
+(`docs/operations/llm-verify-2026-10-24.md`: provider, protocol, model count,
+latency, status, detail). It refuses to run when a configured `key_file` is
+group/other readable (verified: mode 0644 → exit 1 with the reason) and never
+reads or prints key material. First run found a real defect in the local
+provider config: `model_path` had been set to the chat path, so verification
+requested `/v1/v1/chat/completions` and got a 404; corrected to `/models`, and
+the provider now answers (1 model, 4 ms).
+Original evidence: `tests/llm_providers.rs` runs against a local server; no keys in CI.
+Fix: `scripts/llm_verify_matrix.py` — reads `~/.config/tallow/llm.toml`, calls
+`tallow llm verify <p>` for each configured provider, writes a dated table (provider,
+protocol, model count, latency, status) to `docs/operations/llm-verify-<date>.md`.
+Never prints keys; refuses to run if a key file is world-readable.
+Gate: table with ≥1 live provider and no key material in the artifact.
+
+**R9 — `llm` calls are not journalled as mesh tasks.**
+Fix: `Mesh` task class `llm` wraps `llm.complete`; journal stores prompt hash, response
+hash, and the response text **only** for `public` data class; private class marks the
+task non-replayable and `Mesh.replay` refuses that journal with a reason.
+Gate: replay of a public-class run succeeds with the model detached; replay of a
+private-class run fails with "non-replayable: private data class".
+
+**R10 — `llm` and `Mesh` had no native lowering.** — **DONE** (2026-10-24)
+
+All six functions lower now, each proven on both planes:
+
+* **`llm.complete`** — the runtime fills a heap `%struct.Completion` record from
+  the same `stdlib::llm::dispatch` the interpreter calls; codegen declares the
+  struct and reads its eight fields through the ordinary GEP path.
+* **`llm.models`, `llm.providers`** — native arrays `[count][ptr…]` of
+  `ModelInfo` / `ProviderInfo` records, the shape `Transfer.chunk` uses.
+* **`llm.verify`** — a mixed record (two strings, a bool, two counters).
+* **`Mesh.plan`** — takes an array of a struct the *program* declares, so the
+  lowering does not assume a layout: codegen reads that declaration, requires the
+  five contract fields, verifies their types (`String, String, []String, String,
+  String?`), computes each field's byte offset from it and passes the offsets to
+  `tallow_mesh_plan`. A reordered struct plans correctly; a declaration the
+  backend cannot read (`deps: String`) is refused at compile time with the field
+  named — never read at the wrong offsets.
+* **`Mesh.replay`** — returns `MeshReplay { waves, ok, checkpoints:
+  []WaveCheckpoint }`. The element kind is attached to the `checkpoints` field so
+  `.len`, `[i]` and `[i].wave` resolve natively.
+
+Four silent-wrong-answer traps had to be closed along the way, each of which
+produced a plausible number rather than an error:
+
+1. `infer_kind` consulted `browser_variables` but not `variable_struct_types`, so
+   a struct binding had a type for field reads but not for the array test —
+   `p.wave_sizes.len` strlen'd the buffer and answered 1 for a 3-element array.
+2. `[]T` struct fields were not recognised as native arrays; that now comes from
+   the declaration rather than a name list.
+3. `(module, method) → struct` entries were missing for the new calls, so a field
+   shared by two structs (`provider`, `elapsed_ms`) was ambiguous and refused.
+4. Container field kinds were dropped when the *program* declared a struct with
+   the same name (its entry is created first by the struct scan, making every
+   `or_insert_with` in `collect_structs` a no-op) — applied after the scan now.
+
+**Gate, met:** a program using all six functions builds with `--require-native`
+and prints byte-identical output on both planes. `tests/llm_native_parity.rs`
+covers the four `llm` calls against a mock provider; `tests/mesh_plan_parity.rs`
+covers plan (canonical, reordered, refusal) and replay (a journal written by a
+real `Mesh.run`, plus the missing-journal refusal).
+
+Failure behaviour is a documented difference: the compiled path aborts with the
+redacted sentence and exit 1 where the interpreter returns `Err(sentence)` —
+never a zero-filled struct.
+
+### Directorate
+
+**R11 — Four of five desks exist only as a design.** — **DONE** (2026-10-24)
+All five desks are programs: `examples/directorate/{sentinel,oracle,ghost,cartographer,quartermaster}.tl`.
+Each runs on real stdlib calls (`TLSProfile.list`, `process.exec`, `provenance.*`),
+writes a graded provenance record, and has a refusal branch that fires on a real
+condition (ORACLE: inventory too thin to rank; GHOST: private data on a
+non-anonymous plane; CARTOGRAPHER: fewer than two subjects/axes; QUARTERMASTER:
+a plan with no rollback; SENTINEL: grade below the dissemination threshold).
+Each declares the task ids it contributes in `fragment()`, and
+`tests/directorate_desks.rs` fails if one of those ids is not planned by
+`directorate.tl`. Evidence from the audit:
+Fix: one program per desk following the SENTINEL pattern — real stdlib calls, a
+provenance record, one refusal branch, and a task-graph fragment consumed by
+`directorate.tl`.
+Gate: each desk runs end-to-end on fixtures; `directorate.tl` still plans 5 waves.
+
+**R12 — No agent cognition is wired.** — **DONE** (2026-10-24)
+`directorate.tl` runs the full graph against the local model: 5 waves [5,5,3,1,1],
+15 tasks committed, 0 failed, `replayable=true`. The journal carries
+`{"kind":"llm_recorded","model":"MiniCPM","prompt_hash":…,"response":…,"response_hash":…}`
+for CARTOGRAPHER's brief. SENTINEL's verdict stays rule-based, as the plan required.
+Original fix: D3 from the architecture doc — CARTOGRAPHER's `brief` task becomes an `llm` task
+with a fixed prompt template and a recorded response; SENTINEL's verdict stays
+rule-based until the llm path is proven.
+Gate: one directorate run whose journal shows an `llm` task with prompt/response
+hashes, replayable per R9.
+
+**R13 — Research controls are design, not code.** — **DONE** (2026-10-24)
+All four controls are code, each with a test that fails when bypassed:
+egress ledger `f4593a0` (budget + stop on 403/429, fail-closed JSONL);
+jurisdiction gate `e889bf1` (explicit table, checked before the budget);
+scope manifest `5f697b7` (Ed25519 over canonical bytes, unlisted task refused
+by name, expired authorizes nothing); ombuds channel `src/ombuds.rs` (append
++ fsync, hash chain + Ed25519 over each entry, key must be 0600, restart
+resumes the chain). A `Mesh.run` refusal is written to the channel when one is
+configured — tests/ombuds_mesh_tl proves it end to end and verifies the log
+with the public key alone.
+Evidence kept from the audit:
+Fix: implement in this order — (1) scope manifest as a signed JSON object checked at
+task creation, (2) egress ledger (per-target budget, stop on 403/429) inside `http`,
+(3) jurisdiction table checked before a collection task is planned, (4) ombuds as an
+append-only log with its own credentials.
+Gate: each has a test that fails when the control is bypassed.
+
+### Release engineering
+
+**R14 — Drafts can sit unpublished, and bodies can drift.** — **DONE** (2026-10-24)
+`release.yml` drafts, then a separate job verifies body ≥ 500 bytes, ≥ 15 assets, one archive's `sha256sum -c`, and only then flips `--draft=false`. A release that uploads ten of fifteen assets stays draft and fails.
+
+Original evidence:
+Evidence: v1.2.2 sat draft with 15 assets; v1.2.1 shipped an empty body before the gate.
+Fix: workflow step after upload — verify `sha256sum -c` on one asset, assert body
+length > 0, then `draft: false`. Keep the manual promotion as an option behind an input.
+Gate: next release is published by CI, body non-empty, one asset checksum verified.
+
+**R15 — Release notes tell the reader what they get.** — **DONE** (2026-10-24)
+`scripts/release_body.py` requires `## Added` and `## Fixed`; the body's `## Verified` section is generated by `scripts/test_summary.py` from this run's `lib.log` and `conformance.log` and the workflow greps for the heading before publishing.
+
+Original evidence:
+Done: `scripts/release_body.py` requires `## Added` and `## Fixed`; all 9 live releases
+rewritten (`9cd968d`). Remaining: add a `## Verified` section auto-filled from the test
+counts, so the body carries its own evidence.
+
+---
+
+## 3. Phases
+
+Each phase has an entry condition, a bounded task list, and an exit gate. Nothing in a
+later phase starts while an earlier gate is red.
+
+**Phase 0 — Freeze the baseline (0.5 day).**
+Tasks: tag the plan; record R1–R15 as issues; publish the audit numbers in the README
+`[measured]` labels.
+Exit: issue list exists; baseline table reproduced by one command.
+
+**Phase 1 — Cross-repo integrity (2–3 days). R1, R2, R3, R4, R14.**
+Why first: every later phase changes the surface, and without the freshness and
+conformance gates each change adds silent drift.
+Exit: spec CI green and stale-detecting; conformance in main CI; excluded suites down
+by at least 10; `cargo deny` warning-free; next release auto-published.
+
+**Phase 2 — Mesh completeness (5–7 days). R6, R5, R7.**
+Order inside the phase: `Mesh.run` (R6) before topology (R5), because topology needs a
+real committed task to define "real".
+Exit: R6 and R5 gates; architecture doc updated with the speculation decision.
+
+**Phase 3 — Cognition (3–4 days). R9, R12.**
+Exit: an `llm` task in a directorate journal, replayable with the model detached, and a
+private-class run that refuses replay.
+
+**Phase 4 — Directorate breadth (4–5 days). R11, R13.**
+Exit: five desks running; four controls with bypass tests.
+
+**Phase 5 — Performance and parity (4–6 days). R10, R8.**
+Exit: `--require-native` parity for `llm`/`Mesh`; live verify table published.
+
+**Phase 6 — Hardening (3–4 days). R3 tail, R15, release 1.5.0.**
+Exit: excluded suites ≤ 15; release body carries Added/Fixed/Verified; assets verified.
+
+Total: **21–28 engineering days** of focused work; the critical path is Phase 1 → 2 → 3.
+
+---
+
+## 4. Requirement coverage (no omission check)
+
+| Requirement (source) | Where satisfied |
+| --- | --- |
+| M0 plan/seeds/journal/replay | done (`c7a8da7`), `Mesh.plan/replay` |
+| M1 workers/leases/retry | done (`758167a`) |
+| M2 stragglers/speculation | done (`14cdcf2`); wire decision R7 |
+| M3 memory/control | done (`14cdcf2`) |
+| M4 real wire | done (`2d2a0cf`), R5 completes topology |
+| M5 publish surface | done (`22c7b40`) |
+| Five agents, 11 research domains | design + research done; R11/R12/R13 complete it |
+| Zero stubs / no simulation | 0 stubs; topology simulation R5 |
+| 20 providers, custom endpoints, discovery, key security | done v1.4.0; R8 live matrix, R10 native |
+| Release bodies Added/Fixed | done (`9cd968d`); R14 auto-publish, R15 verified section |
+| Measured claims, no unverified assertions | baseline table; every gate is a command |
+| Egress discipline | `llm` documented exception; R13 egress ledger |
+
+---
+
+## 5. Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Topology rewrite destabilises the execution plane | R5 touches only `src/stdlib/mesh.rs` + wire heartbeats; execution tests unchanged |
+| Spec CI needs engine source in the spec repo | check out engine by SHA in the workflow; no submodule |
+| `llm` live matrix needs operator keys | operator-run script, results committed without secrets; skip-list when absent |
+| Native lowering diverges from interpreter | parity test per function, same pattern as `4d2cad5` |
+| Phase 1 grows (38 suites) | timebox to 10 suites; remainder stays debt with a published count |

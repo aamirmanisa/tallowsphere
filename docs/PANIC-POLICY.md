@@ -49,7 +49,7 @@ written (it said 7 shipped), corrected while annotating them:
 | file | sites | lines |
 |---|---|---|
 | `src/main.rs` | 2 | 16892, 16912 — probe/report runs described as "thread + catch_unwind + hard timeout". Both shipped. |
-| `src/interp.rs` | 5 | 3616, 4645, 4796, 32312 shipped — "prevent panic propagation", "Execute child in catch_unwind for crash isolation". **42810 is inside the unit test `secret_type_cannot_be_printed`.** |
+| `src/interp.rs` | 4 | 3616, 4645, 4796, 32312 shipped — "prevent panic propagation", "Execute child in catch_unwind for crash isolation". The fifth site was the unit test `secret_type_cannot_be_printed`, which in 4ec8206 stopped being a tautology and now asserts with `assert_eq!`; the count follows the code. |
 | `src/supply_chain.rs` | 2 | `signing_roundtrip_works` — the supply-chain self-test. Both shipped, annotated in place 2026-10-20. |
 
 **They do nothing in release.** They work in dev and in `cargo test`, because both use `unwind` — which is

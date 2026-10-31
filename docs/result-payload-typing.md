@@ -1,0 +1,151 @@
+# Typing `Result<T>` payloads (closes #120)
+
+Status: **steps 1-3 landed and verified on a real page (2026-10-19); steps 4-5 remain.**
+
+Previous status: steps 1–2 landed (payload carried on the value and through `let`);
+step 3 attempted and reverted — measured crash, see below.** Blocks the four remaining `wait_*` arms and any
+native program that reads a field off a browser call's result.
+
+## The defect, measured
+
+`page.wait_for_url(...)` is statically `Result<WaitResult>`. Codegen carries that value as
+`LLType::I8Ptr` (a pointer to the tagged result box), so when the program writes `r.url`:
+
+1. the `Member` emitter cannot see the payload type — it only has an `I8Ptr`;
+2. it falls back to guessing a struct layout by field name (guard added in `52b9f9e` refuses
+   when more than one struct owns the field);
+3. before that guard it picked the first match and loaded an unrelated offset, printing `0`
+   where the interpreter raises `unknown method: .result() on Ok`.
+
+So the *storage* is correct — the arm returns a real `Result` — and the *read* is untyped.
+
+## Design
+
+Carry the payload struct name alongside the value, and unwrap at the read.
+
+- Add `result_payloads: HashMap<String, String>` keyed by the result-box register, or simpler:
+  a `LLValue` field `payload_struct: Option<String>` set by the call arm that built the Result
+  (`build_result_struct` already knows the struct name).
+- In `Member`:
+  - if the object is a `Result` with a known payload struct, emit a tag check first:
+    `tag = load i64, ptr box` (offset 0 of the tagged box); `if tag != 0` → jump to an error
+    block that prints the Err payload and calls `exit(1)`. Both engines then refuse the same
+    program the same way rather than one printing `Ok(...)` and the other `0`.
+  - then `payload = load ptr, ptr box+8` (offset of the payload) and resolve the field against
+    `struct_layouts[payload_struct]`.
+- Variables bound to such a value (`let r = ...`) must keep the payload name: store it in the
+  same slot as the alloca/type pair, so the read path works after the assignment, not only on a
+  temporary.
+
+## Why not "return the bare payload"
+
+It removes the tag, so a failing call cannot be distinguished from a successful one, and the
+interpreter keeps returning `Ok(...)`. That is the divergence the parity harness exists to
+catch — rejected.
+
+## Order of work
+
+1. `LLValue.payload_struct` + set it in `build_result_struct` (no behaviour change on its own).
+2. Variable binding preserves it.
+3. `Member` unwraps with tag check; unit test asserts the `icmp`/branch and the `getelementptr`
+   into the payload.
+4. `tests/optional_parity.rs` grows a `wait_for_url` case: both legs must print the same
+   `result`/`url` values from a real page.
+5. Only then: `wait_for_function`, `wait_for_event`, `wait_for_request`, `wait_for_response`
+   arms — same out-parameter shape as `tallow_page_wait_for_url`.
+
+## Measured attempt at step 3 (reverted)
+
+The unwrap branch was written and run against `wait_native.tl` with
+`--require-native`. It compiled and linked, and the native leg aborted:
+
+```
+panicked at src/runtime/mod.rs:132:17:
+misaligned pointer dereference: address must be a multiple of 0x8 but is 0xa
+```
+
+`0xa` is an integer payload read where a box pointer belongs, so the field load
+returned a value rather than a pointer: either the payload offset inside
+`%struct.TallowResult` is not the one the unwrap used, or `WaitResult`'s stored
+field list and the layout used to read it disagree. The next step is to dump the
+generated `.ll` for this program and compare the `store` offsets in
+`build_result_struct` with the `getelementptr` indices in the read path — do not
+re-guess, diff the IR.
+
+The unwrap branch is not in the tree; only the carrier (step 1) and the `let`
+recording (step 2) are, so nothing half-working ships.
+
+## IR evidence from the crashed build
+
+The failing build's IR survives at `/tmp/tallow_native_run_3568592.ll` (it was
+written before clang failed on the duplicate `exit` declaration). Two facts from it:
+
+- `%struct.WaitResult = type { ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }` — nine
+  pointer slots, as intended.
+- **Correction:** the `getelementptr %struct.WaitResult, ptr null, i32 1` is the
+  malloc-size idiom (`src/codegen.rs:19245`), not a bad store. My first reading of it
+  as the cause was wrong. The 0xa read is still unexplained and the IR that produced
+  it no longer exists on disk.
+
+Next: re-apply the unwrap branch and capture the IR **before** running it — use
+`tallow build <prog>` (which writes the `.ll` beside the output and does not delete
+it) instead of `tallow run`, then read the field offsets in that file. The previous
+attempt lost its IR, which is why this took two passes.
+
+## Step 3 verified
+
+`wait_native.tl` (goto → wait_for_url → print r.result, r.url) now builds and runs
+natively and prints:
+
+```
+true
+http://127.0.0.1:18101/
+```
+
+The two bugs found on the way, both measured from the IR:
+1. the payload name was stored in `variable_struct_types`, so the box was read as a
+   WaitResult (offset 40 into 24 bytes) — fixed by a dedicated map;
+2. the unwrap branch had been inserted inside the `object_is_response` branch, so it
+   only ever ran for `fetch()` results — moved to the top of the FieldAccess arm.
+
+## The network waits were never broken
+
+The `false` results from `wait_for_response` were my test's doing, not the engine's.
+`glob_match` requires the pattern to match the **whole** URL, so `"slow.txt"` never
+matched `http://127.0.0.1:18111/slow.txt`. With `"*slow.txt*"` both legs report:
+
+```
+true
+http://127.0.0.1:18111/slow.txt
+```
+
+`TALLOW_TRACE_EVENTS` (a temporary eprintln in the CDP read loop) showed
+`Network.responseReceived` arriving twice during the wait, which is what exposed the
+pattern as the cause. The instrumentation is removed; `tests/wait_net_parity.rs` is
+the standing proof and it passes.
+
+## Field access needs a binding, not a call receiver
+
+`page.authenticated_get(url).status` used to read **0** on the native plane
+(measured 2026-10-20: native `["0","0"]` vs interpreter `["201","201"]`). Codegen now
+refuses the shape by name — "bind the result first" — and the interpreter rejects it
+as a type error, so neither plane returns a silent zero.
+
+Cause: the unwrap path is limited to `ExprKind::Ident` receivers on purpose —
+unwrapping a call receiver would have to emit the call a second time (the IR shows
+the `tallow_page_authenticated_request` call duplicated at lines 434 and 458 of the
+generated module). A call receiver therefore reaches the generic field path, and the
+field is not in the `%struct.TallowResult` wrapper, so the read falls through to a
+literal 0.
+
+Correct shape, and what `tests/browser_authenticated_parity.rs` pins:
+
+```tl skip:fragment needing page and url in scope
+let first = page.authenticated_get(url)
+print(first.status)      // real status on both planes
+```
+
+Pinned by `tests/browser_result_field_refusal.rs`: native fails with the fix in the
+message, the interpreter fails with a generic type error naming `.status`. Supporting
+the shorthand outright would need the call emitted once and unwrapped — the shape the
+bound-variable path already implements.

@@ -22,7 +22,12 @@ REPO = Path(__file__).resolve().parent.parent
 EXPECT_PROFILE_PANIC = {"release": "abort"}   # [profile.max] must inherit release, not restate
 DECLARED_SITES = {
     "src/main.rs": 2,
-    "src/interp.rs": 5,
+    # 4, not 5: the fifth was the unit test `secret_type_cannot_be_printed`,
+    # which in 4ec8206 stopped being a tautology and now asserts with
+    # `assert_eq!`. This table is a second copy of docs/PANIC-POLICY.md — the
+    # duplication is the defect the lattice lane reports; until the gate parses
+    # the document, the two must be changed together.
+    "src/interp.rs": 4,
     "src/supply_chain.rs": 2,
     # A worker catches a panicking TASK so one bad task does not take the pool
     # down. Inert in release (panic=abort), so this is dev/test crash isolation,
