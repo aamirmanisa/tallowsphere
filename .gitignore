@@ -120,3 +120,8 @@ artifacts/phase1/
 # Committed binaries and IR are build output, not sources
 examples/*.exe
 examples/*.ll
+
+# One-off evidence bundles and test-written artifact trees (the tests recreate them)
+out-gate/
+artifacts/phase4/
+artifacts/deals/
