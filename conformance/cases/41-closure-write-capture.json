@@ -1,0 +1,5 @@
+{
+  "kind": "accept",
+  "stdout": "1\n2\n0\n",
+  "_note": "Capture is by snapshot (documented in src/interp.rs Env::from_captures): the closure accumulates 1 then 2; the defining frame keeps its creation-time value, 0. Both planes agree. Not a defect."
+}
