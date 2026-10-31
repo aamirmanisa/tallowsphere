@@ -378,8 +378,8 @@ The packer refuses a dirty tree — a tarball must never claim `git: … (dirty)
 | Install probe | compiles and runs a program from the installed archive | v1.5.8, 2026-10-26 [measured] |
 
 ```console
-$ python3 conformance/run.py --tallow $(command -v tallow)   # 20 run, 2 skipped (zk, fhe)
-$ python3 conformance/run.py --tallow … --features zk,fhe    # all 22
+$ cargo test --test conformance_runner                      # 27 cases, both planes
+$ TALLOW_BIN=/path/to/tallow cargo test --test conformance_runner   # a specific binary
 $ cargo test --lib -- --test-threads=2
 ```
 
