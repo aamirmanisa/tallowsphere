@@ -33,7 +33,7 @@ name: CI
 #
 #   cbom-drift   scripts/crypto-inventory.py --check scripts/crypto-inventory.json
 #                44 registered, 44 present, 2,124 occurrences, 0 unregistered candidates
-#   sbom-drift   scripts/sbom-gen.py --check scripts/sbom.snapshot.json   (721 packages)
+#   sbom-drift   scripts/sbom-gen.py --check scripts/sbom.snapshot.json   (751 packages)
 #
 # A stale figure still circulates in the development tree's ci.yml: "463 occurrences across 16
 # algorithms". The artifact says otherwise — 44 algorithms — and has for some time. The number is a
@@ -805,6 +805,11 @@ jobs:
         with:
           command: check
           arguments: --all-features
+      # The ignore lists carry a review deadline that nothing read until 2026-10-31.
+      # cargo-deny has no expiry for `ignore` entries, so the date in the comments was
+      # decorative; this step makes a passed deadline fail the job.
+      - name: Ignored-advisory review deadlines
+        run: python3 scripts/check_deny_expiry.py
 
   sbom:
     name: Generate CycloneDX SBOM

@@ -18,6 +18,10 @@ unmaintained = "all"
 # (artifacts/sendtallow-w5-dependency-decisions-2026-09-26/logs/audit-post-A+B.json).
 # Re-check on every dependency refresh.
 yanked = "warn"
+# Machine-enforced review deadline (scripts/check_deny_expiry.py, run by the
+# release gate and CI). Past this date the gate fails and names every entry that
+# needs re-deciding, so the decision is re-made rather than inherited.
+# review-deadline: 2027-01-31
 ignore = [
     # atomic-polyfill (unmaintained, no vulnerability) — transitive via
     # heapless 0.7 <- postcard 1.1.3 (latest). Unfixable until postcard moves
@@ -64,8 +68,14 @@ ignore = [
     "RUSTSEC-2020-0168",
     # ── 2026-10-25 dependency audit ──────────────────────────────────────────
     # Full record, scope and fix path: docs/operations/dependency-exceptions-2026-10-25.md
-    # Every entry below expires 2027-01-31; the gate fails again on that date so
-    # the decision is re-made rather than inherited.
+    #   ...that file was removed from the tree by the 2026-10-31 docs purge and
+    #   is NOT resolvable here; the per-entry rationale below is the surviving
+    #   record. Measured 2026-10-31: `[ -f docs/operations/dependency-exceptions-
+    #   2026-10-25.md ]` → absent, docs/ holds 58 files.
+    # Every entry below expires 2027-01-31. The expiry is enforced:
+    # scripts/check_deny_expiry.py (release gate + CI) fails on any date after the
+    # `review-deadline` marker above. Before 2026-10-31 nothing read it — that
+    # comment claimed a gate that did not exist.
     #
     # crypto-bigint 0.5.5 — timing variability in operations meant to be
     # constant-time. Reached via elliptic-curve 0.13 <- p256 <- hpke/age, and via

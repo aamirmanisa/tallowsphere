@@ -1,7 +1,7 @@
 MIT License
 Scope: this license covers the root Cargo workspace of this repository only — the
 `tallow` language implementation declared in the repository-root `Cargo.toml`
-(package `tallow` 1.0.0, `license = "MIT"`, line 6) and its workspace members. It does
+(package `tallow` 1.6.0, `license = "MIT"`, line 6 of `Cargo.toml`) and its workspace members. It does
 NOT cover `Tallow/`, which is licensed AGPL-3.0-or-later, nor third-party material
 vendored elsewhere in this tree (each such component carries its own license). See the
 repository `NOTICE` file for the MIT / AGPL composition.

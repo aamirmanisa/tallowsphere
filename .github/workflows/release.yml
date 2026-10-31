@@ -5,8 +5,13 @@ name: Release
 # Why this file exists: until now the only release workflow lived in the `~/Nixe`
 # workspace and built from a filtered copy of this tree, so a tag here could not
 # produce an artifact and nothing in this repository proved that the five shipped
-# targets compile. A tag now builds, checksums, signs and drafts a release from
-# this tree — nothing is published automatically.
+# targets compile. A tag builds, checksums and signs the five targets and stops at a
+# *draft* release; flipping it public is a separate, explicit act — a
+# `workflow_dispatch` with `inputs.publish=true`, and only from a tag (the publish job
+# requires the version-consistency gate). Until 9440e6b this comment was the other way
+# round: it promised that nothing published automatically while the step below ran
+# `gh release edit --draft=false` on every `v*` tag. The comment now describes the
+# gate, not a wish.
 #
 # LOCALITY: actions are pinned to full commit SHAs (resolved with `git ls-remote`).
 
@@ -61,6 +66,42 @@ jobs:
           python3 scripts/check_capability_registry.py
           python3 scripts/check_ffi_symbols.py
           python3 scripts/check_test_coverage.py
+          python3 scripts/check_deny_expiry.py
+
+      - name: Dependency advisories (blocking)
+        # `deny.toml` states that advisory verdicts are BLOCKING and that the CI `deny` job no
+        # longer carries `continue-on-error`. That was true of CI and false of this file: until now
+        # the release gate ran the five static scripts and went straight to the build, so a tag
+        # could publish an artifact whose dependency graph fails `cargo deny`.
+        #
+        # Measured 2026-10-31 (advisory-db 2295466c, 2026-10-30), same arguments CI uses:
+        #   cargo deny --all-features check advisories
+        #   error[vulnerability] zstd 0.13.3      RUSTSEC-2026-0391  (>=0.14.3)
+        #   error[vulnerability] zstd-safe 7.3.0  RUSTSEC-2026-0398  (>=8.2.0)
+        #   error[vulnerability] zstd-safe 7.3.0  RUSTSEC-2026-0403  (>=8.2.0)
+        # Three vulnerabilities found, exit 1 — and v1.6.0 was published from this tree anyway,
+        # because nothing in this file asked. This step makes the release gate red until zstd is
+        # off 0.13.3. That is the intended behaviour: a gate that cannot fail is not a gate.
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          # CI runs the superset (`--all-features`); the released artifact is the default graph.
+          # Checking both is free here and the all-features run is the one deny.toml is written
+          # against, so it is the one gated on.
+          command: check
+          arguments: --all-features
+
+      - name: SBOM drift (blocking)
+        # `tests/gate_sbom_parity.rs` compares the two *implementations* of the SBOM generator on
+        # whatever the tree currently says; it passes on a drifted tree as long as both agree. The
+        # drift check itself (`--check`, which compares committed bytes against a regenerated
+        # artifact) ran in CI's `sbom-drift` job and nowhere in this workflow.
+        shell: bash
+        run: python3 scripts/sbom-gen.py --check scripts/sbom.snapshot.json
+
+      - name: CBOM drift (blocking)
+        # Same shape: CI's `cbom-drift` job, absent from the release gate.
+        shell: bash
+        run: python3 scripts/crypto-inventory.py --check scripts/crypto-inventory.json
 
       - name: Full lib suite
         shell: bash
@@ -450,7 +491,12 @@ jobs:
   publish:
     name: draft release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    # A release may only be cut from a tag. The version-consistency step above is skipped for
+    # non-tag refs, and this job used to run on `inputs.publish` alone — so a `workflow_dispatch`
+    # from a branch would build, draft a release whose `tag_name` is the *branch* name (softprops
+    # creates that tag), and flip it public with a Cargo.toml version that nothing compared to
+    # anything. Measured 2026-10-31: `if: startsWith(github.ref, 'refs/tags/v') || inputs.publish`.
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-24.04
     permissions:
       contents: write

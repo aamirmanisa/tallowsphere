@@ -78,8 +78,17 @@ umask 022
 ARCHIVE="$OUT/tallow-$LABEL-$VERSION.$EXT"
 rm -f "$ARCHIVE" "$ARCHIVE.sha256"
 
-# Stamp both staged files at the fixed epoch, and hand tar the same value.
+# Stamp every staged file at the fixed epoch, and hand tar the same value.
 fix_time() { touch -d "@$EPOCH" "$1" 2>/dev/null || touch -t 197001010000.00 "$1"; }
+
+# The licence travels with the artifact. MIT (LICENSE, 1.5 KB) requires the
+# copyright and permission notice to be included in all copies or substantial
+# portions; until 2026-10-31 the archives carried the binary and the runtime
+# archive and nothing else, so every downloaded tarball was redistributed under
+# terms it did not reproduce. NOTICE is shipped beside it because it states the
+# repository's licence composition (this workspace is MIT; Tallow/ is AGPL).
+cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$STAGE/"
+fix_time "$STAGE/LICENSE"; fix_time "$STAGE/NOTICE"
 
 if [ "$EXT" = "zip" ]; then
     cp "$BIN" "$STAGE/tallow.exe"; fix_time "$STAGE/tallow.exe"
@@ -89,7 +98,7 @@ if [ "$EXT" = "zip" ]; then
     # Bash has cygpath but no zip; 7-Zip is installed on the GitHub Windows
     # images, and Compress-Archive is the last resort.
     if command -v zip >/dev/null 2>&1; then
-        (cd "$STAGE" && zip -X -q -6 "$ARCHIVE" tallow.exe tallow.lib)
+        (cd "$STAGE" && zip -X -q -6 "$ARCHIVE" tallow.exe tallow.lib LICENSE NOTICE)
     elif [ -x "/c/Program Files/7-Zip/7z.exe" ]; then
         WARCHIVE="$(cygpath -w "$ARCHIVE")"
         # -mx=5, not -mx=9. Measured on this payload shape (46 MB exe + 241 MB
@@ -97,12 +106,14 @@ if [ "$EXT" = "zip" ]; then
         # mx=5 21 s / 91 MB, mx=1 5 s / 95 MB. Level 9 buys ~2% archive size for
         # ~8x the time, and on the 573 MB Windows payload that is the difference
         # between ~40 s and the 190-238 s the release jobs measured.
-        (cd "$STAGE" && "/c/Program Files/7-Zip/7z.exe" a -tzip -mmt=4 -mx=5 "$WARCHIVE" tallow.exe tallow.lib >/dev/null)
+        (cd "$STAGE" && "/c/Program Files/7-Zip/7z.exe" a -tzip -mmt=4 -mx=5 "$WARCHIVE" tallow.exe tallow.lib LICENSE NOTICE >/dev/null)
     else
         WPATH="$(cygpath -w "$STAGE")\\tallow.exe"
         WLIB="$(cygpath -w "$STAGE")\\tallow.lib"
+        WLIC="$(cygpath -w "$STAGE")\\LICENSE"
+        WNOT="$(cygpath -w "$STAGE")\\NOTICE"
         WARCHIVE="$(cygpath -w "$ARCHIVE")"
-        powershell -NoProfile -Command "Compress-Archive -Path '$WPATH','$WLIB' -DestinationPath '$WARCHIVE' -Force"
+        powershell -NoProfile -Command "Compress-Archive -Path '$WPATH','$WLIB','$WLIC','$WNOT' -DestinationPath '$WARCHIVE' -Force"
     fi
 else
     cp "$BIN" "$STAGE/tallow"; fix_time "$STAGE/tallow"
@@ -111,7 +122,7 @@ else
     # timestamp in the header). `tar czf` alone is NOT reproducible: it records
     # the staged files' mtimes, which `cp` sets to the moment of packing.
     tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$EPOCH" \
-        -cf - -C "$STAGE" libtallow.a tallow | gzip -n -9 > "$ARCHIVE"
+        -cf - -C "$STAGE" LICENSE NOTICE libtallow.a tallow | gzip -n -9 > "$ARCHIVE"
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then
