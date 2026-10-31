@@ -141,7 +141,7 @@ native fn tor_pool_create(size: i32) -> TorPool
 
 impl TorPool {
     // Fetches URL through Tor network (onion-routed, real egress)
-    native fn fetch(self, url: String) -> Result<Response>
+    native fn fetch(self, url: String) -> Response
 
     // REAL circuit rotation (SIGNAL NEWNYM) when the daemon is reachable;
     // honest "tor daemon not reachable" error otherwise
@@ -187,7 +187,7 @@ native fn proxy_chain_create(hops: []String) -> ProxyChain
 
 impl ProxyChain {
     // Routes fetch through proxy hops sequentially
-    native fn fetch(self, url: String) -> Result<Response>
+    native fn fetch(self, url: String) -> Response
 
     // Rotates to next available proxy in pool
     native fn rotate(self) -> Result<bool>

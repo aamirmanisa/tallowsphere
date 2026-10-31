@@ -59,11 +59,11 @@ struct Client {
 }
 
 impl Client {
-    fn get(self, url: String) -> Result<Response> {
+    fn get(self, url: String) -> Response {
         fetch(url)
     }
 
-    fn post(self, url: String, body: String) -> Result<Response> {
+    fn post(self, url: String, body: String) -> Response {
         fetch(url, method: .POST, body: body)
     }
 }

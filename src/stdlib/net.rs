@@ -1131,6 +1131,7 @@ fn tor_fetch(tor_id: u64, args: Vec<Value>) -> StdlibResult {
         ureq::Proxy::new(&proxy_url).map_err(|e| format!("tor proxy config: {e}"))?;
     let agent = ureq::Agent::config_builder()
         .proxy(Some(proxy))
+        .http_status_as_error(false) // statuses are DATA, not transport failures (fetch parity)
         .build()
         .new_agent();
     let result = agent.get(&url).call();
@@ -1373,6 +1374,7 @@ fn proxy_chain_fetch(chain_id: u64, args: Vec<Value>) -> StdlibResult {
     let proxy = ureq::Proxy::new(&proxy_url).map_err(|e| format!("proxy config: {e}"))?;
     let agent = ureq::Agent::config_builder()
         .proxy(Some(proxy))
+        .http_status_as_error(false) // statuses are DATA, not transport failures (fetch parity)
         .build()
         .new_agent();
     let result = agent.get(&url).call();
