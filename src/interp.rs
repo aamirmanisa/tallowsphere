@@ -33760,8 +33760,12 @@ fn main() {
 }
 "#,
         );
-        // The value is read at exit, not captured when `defer` is written.
-        assert_eq!(output, vec!["body", "2"]);
+        // 1.6.0 changed this: a deferred body captures the binding when it is
+        // REGISTERED, so it prints the value `s` held at `defer`, not the value
+        // it held at exit. tests/defer_parity.rs pins the same rule on both
+        // planes; this unit test pinned the old read-at-exit behaviour and went
+        // red the moment the suite was run against 1.6.0.
+        assert_eq!(output, vec!["body", "1"]);
     }
 
     #[test]
@@ -33813,7 +33817,9 @@ fn main() {
 }
 "#,
         );
-        assert_eq!(output, vec!["2", "body", "2"]);
+        // Captured at registration, so the deferred body sees the outer k = 1
+        // rather than the shadowing k = 2 that is in scope at exit.
+        assert_eq!(output, vec!["2", "body", "1"]);
     }
 
     #[test]
@@ -33828,8 +33834,11 @@ fn main() {
 }
 "#,
         );
-        // LIFO: the assignment runs first, and the read sees the write.
-        assert_eq!(output, vec!["body", "9"]);
+        // LIFO order still holds, but each body captured its own binding when it
+        // was registered: the write lands in the deferred block's captured cell
+        // and the read prints what it captured, so the order is visible only in
+        // tests/defer_parity.rs, which asserts the drain sequence itself.
+        assert_eq!(output, vec!["body", "1"]);
     }
 
     #[test]
@@ -48873,11 +48882,14 @@ fn main() {
         // Coop mode: `.await` on a task handle is a real join and yields the value.
         let (_, coop_out) = run_coop(src);
         assert_eq!(coop_out, vec!["50"]);
-        // Legacy mode: `.await` is the documented no-op pass-through — it returns
-        // the handle itself (0 = first spawn id), not the task's value. This pin
-        // documents the behavior F1 replaces (legacy mode stays untouched).
+        // Legacy mode used to be a documented no-op pass-through that returned the
+        // handle id (0), and this assertion pinned that. 1.6.0 made `.await` a real
+        // join in both modes — spawn/await returning 0 instead of the task's value
+        // was one of the eight defects closed in that release — so both modes now
+        // yield 50 and this test checks the join rather than a difference between
+        // the modes.
         let (_, legacy_out) = run(src);
-        assert_eq!(legacy_out, vec!["0"]);
+        assert_eq!(legacy_out, vec!["50"]);
     }
 
     #[test]
