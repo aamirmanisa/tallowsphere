@@ -426,7 +426,15 @@ fn solve_captcha_task_json(
     // Step 1: Submit task
     let body: String = crate::runtime::egress_http::post(&create_url)
         .send_json(&payload)
-        .map_err(|e| BrowserError::CaptchaError(format!("failed to create solver task: {}\n{}", e, payload)))?
+        // The payload carries `clientKey` (the solver account key). Interpolating
+        // it into the error published the credential to anything that logged the
+        // BrowserError, so only the URL and the transport error are reported.
+        .map_err(|e| {
+            BrowserError::CaptchaError(format!(
+                "failed to create solver task at {create_url}: {e} \
+                 (payload withheld: it carries the solver client key)"
+            ))
+        })?
         .into_body()
         .read_to_string()
         .map_err(|e| BrowserError::CaptchaError(format!("failed to read create response: {}", e)))?;

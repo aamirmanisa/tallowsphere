@@ -44260,19 +44260,33 @@ world
     // ── Secret type enforcement ─────────────────────────────────────
 
     #[test]
-    fn secret_type_cannot_be_printed() {
-        // Attempting to print a secret type should error
-        let result = std::panic::catch_unwind(|| {
-            run(r#"
-                type Password = secret String
-                fn main() {
-                    let pw: Password = "s3cret"
-                    print(pw)
-                }
-            "#)
-        });
-        // Either panics or returns error output
-        assert!(result.is_err() || true); // Just verifying it doesn't crash
+    fn the_interpreter_alone_does_not_enforce_secret_types() {
+        // What this test used to be: `assert!(result.is_err() || true)`, a tautology
+        // that could not fail and proved nothing about the property in its name.
+        //
+        // What is true, measured: `run()` here goes straight to the interpreter and
+        // does NOT run the privacy pass, so a program that prints a secret type
+        // completes and prints the secret. The refusal the CLI gives —
+        // `error[E0201]: cannot pass secret type to print/log`, exit 1 — comes from
+        // the front-end pass, whose own test asserts it
+        // (src/privacy_pass.rs::secret_cannot_be_printed_at_all).
+        //
+        // So the guarantee is "the pass runs before the program", not "the
+        // interpreter refuses". This test pins the bypass so the difference is
+        // recorded: if someone adds a runtime guard, this assertion fails and the
+        // change gets noticed instead of silently doubling the enforcement.
+        let (_, output) = run(r#"
+            type Password = secret String
+            fn main() {
+                let pw: Password = "s3cret"
+                print(pw)
+            }
+        "#);
+        assert_eq!(
+            output,
+            vec!["s3cret"],
+            "the interpreter now refuses a secret print on its own; the privacy pass is no              longer the only enforcement point, so update privacy_pass's test and this one"
+        );
     }
 
     // ── Complex expression chains ──────────────────────────────────
