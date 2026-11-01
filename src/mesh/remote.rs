@@ -599,6 +599,21 @@ pub fn run_worker(
         .map_err(|e| format!("resolve {connect}: {e}"))?
         .next()
         .ok_or_else(|| format!("resolve {connect}: no address"))?;
+    // Loopback is a local coordinator on this box, not register-governed
+    // egress. Shipped register grants GET/HEAD only on 127.0.0.1 and refuses
+    // CONNECT; gating the local worker would break `tallow mesh worker
+    // --connect 127.0.0.1:…`. Non-loopback is engine-internal TCP: gate the
+    // address actually dialled, verb CONNECT, before the socket opens.
+    // Returned: `run_mesh_worker` propagates `Err` via `?` to the CLI.
+    if !addr.ip().is_loopback() {
+        if let Err(r) = crate::scope::require(&addr.to_string(), "CONNECT") {
+            return Err(format!(
+                "connect {addr}: {} — {}",
+                r.code(),
+                r.explain()
+            ));
+        }
+    }
     let mut stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
     let _ = stream.set_nodelay(true);
     let key = key_from_seed(&seed);
@@ -718,6 +733,43 @@ pub fn local_checkpoints(tasks: &[Task], mesh_seed: u64) -> Result<Vec<String>, 
         out.push(checkpoint_hash(&results));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    /// `run_worker` must consult the register on the resolved address, verb
+    /// CONNECT, before `TcpStream::connect`. Loopback is skipped. Refusal is
+    /// returned because `run_mesh_worker` propagates `Err` via `?`.
+    #[test]
+    fn run_worker_consults_the_register_before_connect() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/mesh/remote.rs"
+        ))
+        .expect("read src/mesh/remote.rs");
+        let start = src
+            .find("pub fn run_worker(")
+            .expect("run_worker must exist");
+        let body = &src[start..];
+        let require_at = body
+            .find("crate::scope::require(&addr.to_string(), \"CONNECT\")")
+            .expect("run_worker must call scope::require on the resolved addr");
+        let connect_at = body
+            .find("TcpStream::connect(addr)")
+            .expect("TcpStream::connect missing");
+        assert!(
+            require_at < connect_at,
+            "scope::require must run before TcpStream::connect"
+        );
+        assert!(
+            body.contains("addr.ip().is_loopback()"),
+            "loopback coordinator must skip the register"
+        );
+        assert!(
+            !body[..connect_at].contains("std::process::exit(1)"),
+            "run_mesh_worker propagates Err — refusal is returned, not fatal"
+        );
+    }
 }
 
 /// Silence an unused-import warning if the write trait is only used indirectly.

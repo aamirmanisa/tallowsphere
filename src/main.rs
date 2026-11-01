@@ -2308,6 +2308,15 @@ const DEFAULT_SIGNAL_SERVER: &str = "signal.github.com/aamirmanisa/tallowsphere:
 /// Detect this machine's local outbound IP address.
 /// For true public IP detection use an external service; this returns the
 /// interface IP that would be used to reach the internet.
+///
+/// Bootstrap exception (system-egress wave): this opens a TCP socket to
+/// `8.8.8.8:80` so `local_addr()` names the outbound interface. `tallow signal`
+/// calls it at bind time, before any operator register is required, and maps
+/// failure to `"unknown"`. A fatal `scope::require` would stop the signal
+/// server on a deny-by-default register; a returned refusal would print as
+/// `"unknown"` (the doctrine's trigger for fatal). The probe is therefore
+/// left ungated so startup cannot fail closed. Follow-up: stop probing
+/// 8.8.8.8 (print the listener address, or UDP-associate without a SYN).
 fn detect_public_ip() -> Option<String> {
     match std::net::TcpStream::connect("8.8.8.8:80") {
         Ok(stream) => stream.local_addr().ok().map(|a| a.ip().to_string()),
@@ -2328,6 +2337,25 @@ fn write_analytics_pac(socks_port: u16) -> Option<String> {
         return None;
     }
     Some(format!("file://{path}"))
+}
+
+/// True when `host:port` names this machine. Loopback relay chat is a local
+/// control socket (`tallow relay` on this box), not register-governed egress.
+fn relay_addr_is_loopback(relay_addr: &str) -> bool {
+    tallow::stdlib::llm::is_loopback_url(relay_addr)
+}
+
+/// Register gate for a non-loopback relay dial. Fatal: the three connect
+/// sites in `run_relay_chat` swallow `Err` (`if let Ok`, `let _ =`, log-and-
+/// continue), so a returned refusal would not stop the next poll.
+fn gate_relay_dial(relay_addr: &str) {
+    if relay_addr_is_loopback(relay_addr) {
+        return;
+    }
+    if let Err(r) = tallow::scope::require(relay_addr, "CONNECT") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
 }
 
 /// Handle a single client connection on the signal server.
@@ -2510,6 +2538,7 @@ fn run_relay_chat(name: &str, code: &str, relay_addr: &str) {
         .name("tallow-chat-recv".to_string())
         .spawn(move || {
             loop {
+                gate_relay_dial(&relay_owned);
                 if let Ok(mut s) = TcpStream::connect(&relay_owned) {
                     let _ = s.set_read_timeout(Some(Duration::from_millis(500)));
                     let req = format!("TALLOW-RECV\n{}\n", code_owned);
@@ -2537,6 +2566,7 @@ fn run_relay_chat(name: &str, code: &str, relay_addr: &str) {
                                 // sender that keeps grabbing + re-pushing its
                                 // own message can starve the peer's poller;
                                 // the backoff gives the peer a clear window.
+                                gate_relay_dial(&relay_owned);
                                 let _ = TcpStream::connect(&relay_owned).and_then(|mut s| {
                                     let _ = s.set_write_timeout(Some(Duration::from_secs(3)));
                                     s.write_all(
@@ -2588,6 +2618,7 @@ fn run_relay_chat(name: &str, code: &str, relay_addr: &str) {
             break;
         }
         let payload = format!("{}: {}", name, line);
+        gate_relay_dial(relay_addr);
         match TcpStream::connect(relay_addr) {
             Ok(mut s) => {
                 let _ = s.set_write_timeout(Some(Duration::from_secs(3)));
@@ -21954,6 +21985,71 @@ fn main() {
         assert!(
             threads.get_env().is_some(),
             "throughput_threads should have an env binding"
+        );
+    }
+
+    /// Public-IP detection is a bootstrap probe: it must stay ungated so
+    /// `tallow signal` cannot fail closed on an empty register.
+    #[test]
+    fn detect_public_ip_is_ungated_bootstrap() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+            .expect("read src/main.rs");
+        let start = src
+            .find("fn detect_public_ip()")
+            .expect("detect_public_ip must exist");
+        let next = src[start + 1..]
+            .find("\nfn ")
+            .map(|i| start + 1 + i)
+            .unwrap_or(src.len());
+        let body = &src[start..next];
+        assert!(
+            body.contains("TcpStream::connect(\"8.8.8.8:80\")"),
+            "probe target is the hardcoded public resolver"
+        );
+        assert!(
+            !body.contains("scope::require"),
+            "bootstrap probe must not consult the register"
+        );
+    }
+
+    /// Non-loopback relay dials consult the register, verb CONNECT, before
+    /// each `TcpStream::connect`. Refusal is fatal because the three sites
+    /// swallow `Err`.
+    #[test]
+    fn run_relay_chat_gates_non_loopback_dials() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+            .expect("read src/main.rs");
+        let start = src
+            .find("fn run_relay_chat(")
+            .expect("run_relay_chat must exist");
+        let next = src[start + 1..]
+            .find("\nfn ")
+            .map(|i| start + 1 + i)
+            .unwrap_or(src.len());
+        let body = &src[start..next];
+        let connects = body.matches("TcpStream::connect").count();
+        let gates = body.matches("gate_relay_dial(").count();
+        assert_eq!(connects, 3, "run_relay_chat has three dials");
+        assert_eq!(gates, 3, "each dial is preceded by gate_relay_dial");
+        let helper = src
+            .find("fn gate_relay_dial(")
+            .expect("gate_relay_dial must exist");
+        let helper_end = src[helper + 1..]
+            .find("\nfn ")
+            .map(|i| helper + 1 + i)
+            .unwrap_or(src.len());
+        let helper_body = &src[helper..helper_end];
+        assert!(
+            helper_body.contains("scope::require(relay_addr, \"CONNECT\")"),
+            "gate uses CONNECT on the address actually dialled"
+        );
+        assert!(
+            helper_body.contains("std::process::exit(1)"),
+            "swallowed connect Err — refusal is fatal"
+        );
+        assert!(
+            helper_body.contains("relay_addr_is_loopback"),
+            "loopback relay is a local control socket"
         );
     }
 }
