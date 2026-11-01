@@ -24,7 +24,10 @@
 //! Known divergence this test does NOT paper over: the interpreter's entries are
 //! the declared `BatchResponse` structs, the compiled plane's are `Result` boxes,
 //! so the two programs below read their entries in each plane's own idiom and the
-//! comparison is on the refusal sentence and the permitted fetch.
+//! comparison is on the refusal sentence and the permitted fetch. Measured on
+//! `1da11e0`, the native half cannot even build its own idiom (`v.status` has no
+//! struct layout) and the interpreted half cannot run the native idiom
+//! (`non-exhaustive match`) — see `reports/ledger-batch-entry-type.md`.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -222,10 +225,39 @@ fn interp_batch_refusal_matches_the_register_and_the_listed_url_still_runs() {
 /// `src/codegen.rs` / `src/runtime/fetch.rs` (give the batch entry a struct type
 /// with `ok` / `error` / `response` fields on both planes), not in this test.
 ///
+/// Re-measured 2026-11-01 on `1da11e0`, four runs, and the gap is wider than the
+/// message above suggests — no field of an entry is readable on this plane, by
+/// any idiom, with or without an annotation:
+///
+/// ```text
+/// rs[0].ok                                  -> field access `.ok`: the receiver has no
+///                                              known struct layout with that field on
+///                                              the native plane
+/// let rs2: []BatchResponse = http.batch(…)   -> same refusal (no %struct.BatchResponse
+///                                              exists: `grep -c` on codegen.rs is 0)
+/// let e: BatchResponse = rs[0]; e.ok         -> cannot resolve `e.ok`: 2 known structs
+///                                              (MeshReplay, VerifyReport)
+/// match rs[1] { Ok(v) -> v.status() }        -> no lowering for method 'status'
+/// ```
+///
+/// and the counter-direction is a RUNTIME failure, not a compile error: this
+/// test's `native_program` under `--interpret` dies with
+/// `runtime error: non-exhaustive match (at 8:5)`, because interpreter entries are
+/// `BatchResponse` structs that match neither `Ok` nor `Err`. Only a batch whose
+/// entries are never read works on both planes, which is the state this test
+/// exists to end.
+///
+/// `reports/ledger-batch-entry-type.md` records the full measurement and the
+/// design (two new codegen layouts, a repr(C) mirror in `runtime/fetch.rs` behind
+/// a NEW `tallow_http_batch_entries` — the existing FFI is shared with
+/// `pool.map` — plus the array-kind ripple). It is an ABI addition, not a
+/// one-line kind fix, so it was not landed here: a half-typed entry would turn
+/// "cannot infer" into "wrong field".
+///
 /// Ignored with the measured text rather than deleted or relaxed: when the entry
 /// type lands, this test starts running and either passes or names the next gap.
 #[test]
-#[ignore = "native http.batch entries are untyped: cannot resolve `v.status` (3 candidate structs); see the doc comment for the measured message"]
+#[ignore = "native http.batch entries are untyped end to end: `rs[0].ok` hits the no-known-layout refusal, `v.status()` has no lowering, and an explicit `BatchResponse` annotation does not help because no %struct.BatchResponse exists; see reports/ledger-batch-entry-type.md"]
 fn native_plane_batch_refusal_matches_interpreter() {
     let refusal = tallow::scope::require(UNLISTED, "GET")
         .expect_err("127.0.0.2 must be unlisted in the shipped register");
