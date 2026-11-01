@@ -21,13 +21,13 @@
 //! The expected sentence is derived from `tallow::scope::require`, not hardcoded,
 //! so a register or wording change fails here instead of silently drifting.
 //!
-//! Known divergence this test does NOT paper over: the interpreter's entries are
-//! the declared `BatchResponse` structs, the compiled plane's are `Result` boxes,
-//! so the two programs below read their entries in each plane's own idiom and the
-//! comparison is on the refusal sentence and the permitted fetch. Measured on
-//! `1da11e0`, the native half cannot even build its own idiom (`v.status` has no
-//! struct layout) and the interpreted half cannot run the native idiom
-//! (`non-exhaustive match`) — see `reports/ledger-batch-entry-type.md`.
+//! Known divergence this test used to paper over, now closed: the interpreter's
+//! entries are the declared `BatchResponse` structs and the compiled plane's
+//! used to be `Result` boxes, so the two halves below read their entries in each
+//! plane's own idiom. Since the typed entry landed (`tallow_http_batch_entries`
+//! in `src/runtime/fetch.rs`, `%struct.BatchResponse` in `src/codegen.rs`) ONE
+//! program — [`batch_program`] — runs on both planes and prints the same lines;
+//! `native_plane_batch_refusal_matches_interpreter` asserts exactly that.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -79,8 +79,11 @@ fn annotations() -> &'static str {
 "#
 }
 
-/// The interpreter's idiom: `[]BatchResponse` with `ok` / `error.message`.
-fn interpreter_program(unlisted: &str, listed: &str) -> String {
+/// ONE program for both planes: the declared `[]BatchResponse` model
+/// (`stdlib/http.tl`) — `ok` / `error.message` / `response.status`. Before the
+/// typed entry existed this only ran under `--interpret`; the compiled plane had
+/// to read entries as `Result`s in a second program it could not even build.
+fn batch_program(unlisted: &str, listed: &str) -> String {
     format!(
         r#"import tallow.http
 {ann}
@@ -98,28 +101,6 @@ fn main() with Net(batch) {{
         print("listed status=" + listed_entry.response.status.to_string())
     }} else {{
         print("listed error=" + listed_entry.error.message)
-    }}
-}}
-"#,
-        ann = annotations()
-    )
-}
-
-/// The compiled plane's idiom: `Result` entries read with `match`.
-fn native_program(unlisted: &str, listed: &str) -> String {
-    format!(
-        r#"import tallow.http
-{ann}
-fn main() with Net(batch) {{
-    let urls = ["{unlisted}", "{listed}"]
-    let rs = http.batch(urls, 1, {{}})
-    match rs[0] {{
-        Ok(v) -> print("refused=<unlisted ran>"),
-        Err(m) -> print("refused=" + m),
-    }}
-    match rs[1] {{
-        Ok(v) -> print("listed status=" + v.status.to_string()),
-        Err(m) -> print("listed error=" + m),
     }}
 }}
 "#,
@@ -188,7 +169,7 @@ fn interp_batch_refusal_matches_the_register_and_the_listed_url_still_runs() {
     let dir = std::env::temp_dir().join(format!("tallow-batch-scope-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
 
-    let interp = run_plane(&dir, &interpreter_program(UNLISTED, &listed), "--interpret");
+    let interp = run_plane(&dir, &batch_program(UNLISTED, &listed), "--interpret");
 
     assert_eq!(
         refused_line(&interp),
@@ -208,56 +189,20 @@ fn interp_batch_refusal_matches_the_register_and_the_listed_url_still_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The compiled plane's half of the parity, which CANNOT PASS today.
+/// BOTH planes, ONE program: the typed `BatchResponse` entry.
 ///
-/// Measured 2026-11-01 06:35Z on `43a23aa`, unmodified program, `--require-native`:
+/// This test was `#[ignore]`d because the compiled plane's `http.batch` returned
+/// `Result` boxes: `rs[0].ok` had no layout to read, `error.message` was the Err
+/// payload, and `response.status` was a method on an opaque handle. The typed
+/// entry closed that — `tallow_http_batch_entries` builds `%struct.BatchResponse`
+/// records in `src/runtime/fetch.rs`, codegen routes the kind-tagged `response`
+/// field to `tallow_response_status`, and the null `error` pointer is guarded —
+/// so the SAME program now runs compiled and prints what the interpreter prints.
 ///
-/// ```text
-/// native build unavailable (cannot resolve `v.status`: the field exists on 3 known
-/// structs (AuthenticatedResponse, ProviderInfo, WaitResult), so the struct type
-/// cannot be inferred; annotate the variable or use a typed accessor);
-/// --require-native refuses the interpreter fallback
-/// ```
-///
-/// So the divergence is not the refusal sentence — it is that the compiled plane's
-/// `http.batch` returns entries the type checker cannot name at all, while the
-/// interpreter's are the declared `BatchResponse`. Fixing that lives in
-/// `src/codegen.rs` / `src/runtime/fetch.rs` (give the batch entry a struct type
-/// with `ok` / `error` / `response` fields on both planes), not in this test.
-///
-/// Re-measured 2026-11-01 on `1da11e0`, four runs, and the gap is wider than the
-/// message above suggests — no field of an entry is readable on this plane, by
-/// any idiom, with or without an annotation:
-///
-/// ```text
-/// rs[0].ok                                  -> field access `.ok`: the receiver has no
-///                                              known struct layout with that field on
-///                                              the native plane
-/// let rs2: []BatchResponse = http.batch(…)   -> same refusal (no %struct.BatchResponse
-///                                              exists: `grep -c` on codegen.rs is 0)
-/// let e: BatchResponse = rs[0]; e.ok         -> cannot resolve `e.ok`: 2 known structs
-///                                              (MeshReplay, VerifyReport)
-/// match rs[1] { Ok(v) -> v.status() }        -> no lowering for method 'status'
-/// ```
-///
-/// and the counter-direction is a RUNTIME failure, not a compile error: this
-/// test's `native_program` under `--interpret` dies with
-/// `runtime error: non-exhaustive match (at 8:5)`, because interpreter entries are
-/// `BatchResponse` structs that match neither `Ok` nor `Err`. Only a batch whose
-/// entries are never read works on both planes, which is the state this test
-/// exists to end.
-///
-/// `reports/ledger-batch-entry-type.md` records the full measurement and the
-/// design (two new codegen layouts, a repr(C) mirror in `runtime/fetch.rs` behind
-/// a NEW `tallow_http_batch_entries` — the existing FFI is shared with
-/// `pool.map` — plus the array-kind ripple). It is an ABI addition, not a
-/// one-line kind fix, so it was not landed here: a half-typed entry would turn
-/// "cannot infer" into "wrong field".
-///
-/// Ignored with the measured text rather than deleted or relaxed: when the entry
-/// type lands, this test starts running and either passes or names the next gap.
+/// The register's sentence is still derived from `tallow::scope::require` (not
+/// hardcoded), and the listed URL is still fetched inside the same batch: a
+/// refusal that also killed the permitted URL would pass a weaker test.
 #[test]
-#[ignore = "native http.batch entries are untyped end to end: `rs[0].ok` hits the no-known-layout refusal, `v.status()` has no lowering, and an explicit `BatchResponse` annotation does not help because no %struct.BatchResponse exists; see reports/ledger-batch-entry-type.md"]
 fn native_plane_batch_refusal_matches_interpreter() {
     let refusal = tallow::scope::require(UNLISTED, "GET")
         .expect_err("127.0.0.2 must be unlisted in the shipped register");
@@ -266,20 +211,43 @@ fn native_plane_batch_refusal_matches_interpreter() {
         refusal.code(),
         refusal.explain()
     );
+
     let listed = spawn_listed_server();
+    let program = batch_program(UNLISTED, &listed);
     let dir = std::env::temp_dir().join(format!("tallow-batch-scope-native-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
-    let native = run_plane(&dir, &native_program(UNLISTED, &listed), "--require-native");
+
+    let interp = run_plane(&dir, &program, "--interpret");
+    let native = run_plane(&dir, &program, "--require-native");
+
     assert_eq!(
         refused_line(&native),
         expected,
-        "compiled-plane refusal sentence drifted from the register\nstderr:\n{}",
+        "compiled-plane refusal sentence drifted from the register\nstdout:\n{}\nstderr:\n{}",
+        native.stdout,
         native.stderr
     );
     assert!(
         native.stdout.contains("listed status=200"),
-        "the permitted URL must still run under --require-native:\n{}",
-        native.stdout
+        "the permitted URL must still run under --require-native:\n{}\nstderr:\n{}",
+        native.stdout,
+        native.stderr
     );
+
+    // The other half of the parity, on the same program.
+    assert_eq!(
+        refused_line(&interp),
+        expected,
+        "interpreter refusal sentence drifted from the register\nstdout:\n{}\nstderr:\n{}",
+        interp.stdout,
+        interp.stderr
+    );
+    assert_eq!(
+        native.stdout, interp.stdout,
+        "one program must print the same lines on both planes\n\
+         native stderr:\n{}\ninterpreter stderr:\n{}",
+        native.stderr, interp.stderr
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }

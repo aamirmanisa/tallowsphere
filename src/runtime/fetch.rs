@@ -536,6 +536,170 @@ const VTYPE_STRING: i64 = 2;
 /// binds it as an i64 handle value.
 const VTYPE_HANDLE: i64 = 3;
 
+// ── http.batch: the TYPED entry ABI (`tallow_http_batch_entries`) ──────────
+//
+// `tallow_http_batch` above renders each slot as a `%struct.TallowResult`
+// box. That shape is shared with `pool.map` (`codegen.rs`), documented, and
+// must not drift — so the `http.batch` verb gets its OWN entry point that
+// renders the declared `[]BatchResponse` model (`stdlib/http.tl`):
+//
+//   %struct.HttpError     = type { i8*, i8*, i64, i1, i8* }
+//                           ; kind, url, status?, retryable, message
+//   %struct.BatchResponse = type { i8*, i1, i64, i64, i8*, i8* }
+//                           ; url, ok, attempts, elapsed_ms, response, error
+//
+// The Rust mirrors below must stay `#[repr(C)]` and field-for-field identical:
+// a wrong order or a missing bool pad is a silently wrong READ at run time,
+// not a build error. `response` is the opaque `FetchResponse` handle (usable
+// with `tallow_response_*`), NOT a materialised `Response` — the compiled
+// plane has no in-record representation for `body: Bytes` /
+// `headers: Map<..>`. `error` is a pointer that is NULL on a successful entry;
+// codegen guards the null rather than dereferencing it.
+
+/// `%struct.HttpError` (`{ i8*, i8*, i64, i1, i8* }`).
+#[repr(C)]
+struct HttpErrorRecord {
+    kind: *const c_char,
+    url: *const c_char,
+    status: i64,
+    retryable: bool,
+    message: *const c_char,
+}
+
+/// `%struct.BatchResponse` (`{ i8*, i1, i64, i64, i8*, i8* }`).
+#[repr(C)]
+struct BatchResponseRecord {
+    url: *const c_char,
+    ok: bool,
+    attempts: i64,
+    elapsed_ms: i64,
+    response: *mut c_void,
+    error: *mut HttpErrorRecord,
+}
+
+/// One per-URL failure, in the declared `HttpError` model (`stdlib/http.tl`):
+/// `kind` is `egress_refused` (the register / jurisdiction / ledger refused it)
+/// or `transport`; `status` is present only for an HTTP status.
+struct EntryError {
+    kind: &'static str,
+    status: Option<i64>,
+    retryable: bool,
+    message: String,
+}
+
+/// The outcome of one batch slot, independent of which entry ABI renders it.
+///
+/// Both `tallow_http_batch` (Result boxes, shared with `pool.map`) and
+/// `tallow_http_batch_entries` (BatchResponse records, `http.batch` only) are
+/// built from this, so the two ABIs cannot drift on gating or on wording.
+struct EntryOutcome {
+    url: String,
+    /// A response handle came back — the `Ok`/`Err` split of the shared
+    /// `Result` ABI. Deliberately NOT the same thing as `BatchResponse.ok`: a
+    /// fetched 4xx is `Ok(handle)` there and `ok=false` here, because the
+    /// interpreter's typed model reports a 4xx as a result carrying both the
+    /// body and an `HttpError`.
+    fetched: bool,
+    status: Option<i64>,
+    elapsed_ms: i64,
+    response: *mut c_void,
+    error: Option<EntryError>,
+}
+
+impl EntryOutcome {
+    /// A failed slot: nothing was fetched, one `HttpError` names the ground.
+    fn refused(
+        url: &str,
+        kind: &'static str,
+        status: Option<i64>,
+        retryable: bool,
+        message: String,
+    ) -> Self {
+        Self {
+            url: url.to_string(),
+            fetched: false,
+            status,
+            elapsed_ms: 0,
+            response: std::ptr::null_mut(),
+            error: Some(EntryError {
+                kind,
+                status,
+                retryable,
+                message,
+            }),
+        }
+    }
+
+    /// The shared-ABI rendering (`%struct.TallowResult`), byte-identical to
+    /// what `fetch_entry` produced before the typed ABI existed.
+    fn result_box(&self) -> i64 {
+        if self.fetched {
+            result_box(0, self.response, VTYPE_HANDLE)
+        } else {
+            let message = self
+                .error
+                .as_ref()
+                .map(|e| e.message.clone())
+                .unwrap_or_default();
+            result_box(1, string_to_cstr(&message) as *mut c_void, VTYPE_STRING)
+        }
+    }
+
+    /// The typed-ABI rendering (`*mut BatchResponseRecord`, as an i64 slot).
+    fn record(&self) -> i64 {
+        // A fetched 4xx/5xx is a *result* in the declared model, not a
+        // transport failure: `ok=false` with the handle still attached, so the
+        // body stays readable — the same split the interpreter's `classify`
+        // makes (`stdlib/http.rs`).
+        let derived_error: Option<(String, Option<i64>, bool, String)> =
+            match (&self.error, self.fetched, self.status) {
+                (None, true, Some(status)) if status >= 400 => {
+                    let kind = if status < 500 { "http_4xx" } else { "http_5xx" };
+                    Some((
+                        kind.to_string(),
+                        Some(status),
+                        false,
+                        format!("HTTP {status} for {}", self.url),
+                    ))
+                }
+                (None, _, _) => None,
+                (Some(e), _, _) => Some((
+                    e.kind.to_string(),
+                    e.status,
+                    e.retryable,
+                    e.message.clone(),
+                )),
+            };
+        let ok = derived_error.is_none() && self.fetched;
+        let error = match derived_error {
+            Some((kind, status, retryable, message)) => Box::into_raw(Box::new(HttpErrorRecord {
+                kind: string_to_cstr(&kind),
+                url: string_to_cstr(&self.url),
+                // The declaration is `status: Int?`; 0 on the wire is the
+                // "absent" sentinel codegen documents for the optional.
+                status: status.unwrap_or(0),
+                retryable,
+                message: string_to_cstr(&message),
+            })),
+            None => std::ptr::null_mut(),
+        };
+        Box::into_raw(Box::new(BatchResponseRecord {
+            url: string_to_cstr(&self.url),
+            ok,
+            // The batch path makes exactly one attempt per URL (the
+            // interpreter's model reports the same constant).
+            attempts: 1,
+            elapsed_ms: self.elapsed_ms,
+            response: if self.fetched {
+                self.response
+            } else {
+                std::ptr::null_mut()
+            },
+            error,
+        })) as i64
+    }
+}
+
 fn result_box(tag: i64, payload: *mut c_void, value_type: i64) -> i64 {
     Box::into_raw(Box::new(BatchResultBox {
         tag,
@@ -565,14 +729,10 @@ fn result_box(tag: i64, payload: *mut c_void, value_type: i64) -> i64 {
 /// calling in.
 #[unsafe(no_mangle)]
 pub extern "C" fn tallow_http_batch(urls: *mut c_void, concurrency: i64) -> *mut c_void {
-    if urls.is_null() {
+    let Some(slots) = batch_slots(urls) else {
         set_last_error("http.batch requires a [String] URLs argument".to_string());
         return crate::runtime::browser::native_array(Vec::new());
-    }
-
-    // Native-array layout: [count][elem…], i64 slots.
-    let count = unsafe { *(urls as *const i64) }.max(0) as usize;
-    let slots: &[i64] = unsafe { std::slice::from_raw_parts((urls as *const i64).add(1), count) };
+    };
 
     let concurrency = batch_concurrency(concurrency);
 
@@ -580,18 +740,9 @@ pub extern "C" fn tallow_http_batch(urls: *mut c_void, concurrency: i64) -> *mut
     // *every* URL with the same reason and no request attempted (N3) instead
     // of degrading to a direct connection — that path stays sequential (there
     // is nothing to parallelise when no request is allowed).
-    // The batch keeps one agent for the whole run (proxy policy is per run, not
-    // per URL); a literal-loopback batch is not proxied and is the case the
-    // register's loopback GET grant is exercised by.
-    // The agent is shared, so the bypass is all-or-nothing: a batch of literal
-    // loopback URLs is direct, a batch containing any other host keeps the
-    // proxy (a mixed batch is not silently split into two policies).
-    let loopback_batch = slots.iter().all(|slot| {
-        let url = unsafe { cstr_to_str(*slot as *const c_char) }.unwrap_or("");
-        crate::stdlib::http::is_loopback_literal(url)
-    });
-    let agent = build_agent(loopback_batch);
+    let agent = batch_agent(&slots);
 
+    let count = slots.len();
     let entries: Vec<i64> = match &agent {
         Err(e) => slots.iter().map(|slot| err_entry(*slot, e)).collect(),
         Ok(agent) => run_bounded_pool(count, concurrency, |i| fetch_entry(agent, slots[i])),
@@ -600,37 +751,132 @@ pub extern "C" fn tallow_http_batch(urls: *mut c_void, concurrency: i64) -> *mut
     crate::runtime::browser::native_array(entries)
 }
 
+/// `http.batch(urls, concurrency)` with the **typed** entry ABI: one
+/// `*mut BatchResponseRecord` per URL, in input order, as a native array of
+/// i64 slots (codegen `inttoptr`s each slot before the field GEP).
+///
+/// Same gates, same worker pool and same sentences as `tallow_http_batch` —
+/// both are built from [`EntryOutcome`] — but the element is the declared
+/// `BatchResponse` record rather than a `%struct.TallowResult` box. That is
+/// why this is a second entry point and not a change to the first:
+/// `pool.map` shares `tallow_http_batch` and its documented `Result` element
+/// shape must not drift with `http.batch`.
+///
+/// Per-URL failures still never abort the batch. `error` is NULL on a
+/// successful entry; codegen guards the null instead of dereferencing it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tallow_http_batch_entries(urls: *mut c_void, concurrency: i64) -> *mut c_void {
+    let Some(slots) = batch_slots(urls) else {
+        set_last_error("http.batch requires a [String] URLs argument".to_string());
+        return crate::runtime::browser::native_array(Vec::new());
+    };
+
+    let concurrency = batch_concurrency(concurrency);
+    let agent = batch_agent(&slots);
+
+    let count = slots.len();
+    let entries: Vec<i64> = match &agent {
+        Err(e) => slots
+            .iter()
+            .map(|slot| err_entry_record(*slot, e))
+            .collect(),
+        Ok(agent) => run_bounded_pool(count, concurrency, |i| {
+            fetch_entry_record(agent, slots[i])
+        }),
+    };
+
+    crate::runtime::browser::native_array(entries)
+}
+
+/// Read the native `[String]` array argument (`[count: i64][slot: i64 …]`,
+/// slots holding `*const c_char` bitcast to i64) into owned i64 slots.
+/// `None` for a null array — the interpreter's `nil`, a hard argument error.
+/// Shared by both batch entry points so they cannot drift on the contract.
+fn batch_slots(urls: *mut c_void) -> Option<Vec<i64>> {
+    if urls.is_null() {
+        return None;
+    }
+    let count = unsafe { *(urls as *const i64) }.max(0) as usize;
+    let slots: &[i64] = unsafe { std::slice::from_raw_parts((urls as *const i64).add(1), count) };
+    Some(slots.to_vec())
+}
+
+/// The one agent for a whole batch.
+///
+/// The batch keeps one agent for the whole run (proxy policy is per run, not
+/// per URL); a literal-loopback batch is not proxied and is the case the
+/// register's loopback GET grant is exercised by. The agent is shared, so the
+/// bypass is all-or-nothing: a batch of literal loopback URLs is direct, a
+/// batch containing any other host keeps the proxy (a mixed batch is not
+/// silently split into two policies).
+fn batch_agent(slots: &[i64]) -> Result<ureq::Agent, String> {
+    let loopback_batch = slots.iter().all(|slot| {
+        let url = unsafe { cstr_to_str(*slot as *const c_char) }.unwrap_or("");
+        crate::stdlib::http::is_loopback_literal(url)
+    });
+    build_agent(loopback_batch)
+}
+
 /// Fetch one slot and box the outcome: `Ok(handle)` for a fetched response,
 /// `Err(\"http.batch[<url>]: <reason>\")` otherwise. Never fails the batch.
 fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
+    fetch_outcome(agent, slot).result_box()
+}
+
+/// Fetch one slot and render the outcome as a `BatchResponse` record.
+fn fetch_entry_record(agent: &ureq::Agent, slot: i64) -> i64 {
+    fetch_outcome(agent, slot).record()
+}
+
+/// Milliseconds since `started`, saturating rather than wrapping.
+fn elapsed_ms_since(started: std::time::Instant) -> i64 {
+    started.elapsed().as_millis().min(i64::MAX as u128) as i64
+}
+
+/// Fetch one slot and describe the outcome in ABIs-independent terms.
+///
+/// The gates are unchanged and are the ones this file already carried, in the
+/// same order: the **register** first (verb `GET` — the verb the batch
+/// actually sends), then jurisdiction, then the egress ledger, then the
+/// request itself (whose redirect hops are re-gated by `egress_http::follow`).
+/// The decision to *return* a per-URL refusal rather than abort is the batch
+/// contract: `http.batch` never fails whole, and both entry ABIs render the
+/// returned entry (see `reports/ledger-batch-stage2.md` §per-site table).
+fn fetch_outcome(agent: &ureq::Agent, slot: i64) -> EntryOutcome {
+    let started = std::time::Instant::now();
     let url = match unsafe { cstr_to_str(slot as *const c_char) } {
         Some(u) => u.to_string(),
         None => {
-            return result_box(
-                1,
-                string_to_cstr("http.batch[<invalid url>]: null or non-UTF-8 URL") as *mut c_void,
-                VTYPE_STRING,
+            return EntryOutcome::refused(
+                "<invalid url>",
+                "transport",
+                None,
+                false,
+                "http.batch[<invalid url>]: null or non-UTF-8 URL".to_string(),
             );
         }
     };
 
     // Scope gate for the batch path (deny-by-default, same register).
     if let Err(r) = crate::scope::require(&url, "GET") {
-        return result_box(
-            1,
-            string_to_cstr(&format!("http.batch[{url}]: {} — {}", r.code(), r.explain()))
-                as *mut c_void,
-            VTYPE_STRING,
+        return EntryOutcome::refused(
+            &url,
+            "egress_refused",
+            None,
+            false,
+            format!("http.batch[{url}]: {} — {}", r.code(), r.explain()),
         );
     }
     // Jurisdiction is checked before the budget: a host we may not touch at all
     // should not consume a request slot or a ledger line.
     let host = crate::net::egress::host_of(&url);
     if let Err(reason) = crate::scope_jurisdiction::check(&host) {
-        return result_box(
-            1,
-            string_to_cstr(&format!("http.batch[{url}]: {reason}")) as *mut c_void,
-            VTYPE_STRING,
+        return EntryOutcome::refused(
+            &url,
+            "egress_refused",
+            None,
+            false,
+            format!("http.batch[{url}]: {reason}"),
         );
     }
     // The egress ledger applies to the native batch path too, or the control
@@ -638,10 +884,12 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
     if let Some(ledger) = crate::net::egress::ledger() {
         if let Err(reason) = ledger.permit(&host) {
             ledger.record_refusal(&host, &url, "GET", &reason);
-            return result_box(
-                1,
-                string_to_cstr(&format!("http.batch[{url}]: {reason}")) as *mut c_void,
-                VTYPE_STRING,
+            return EntryOutcome::refused(
+                &url,
+                "egress_refused",
+                None,
+                false,
+                format!("http.batch[{url}]: {reason}"),
             );
         }
     }
@@ -657,12 +905,21 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
                     if let Some(ledger) = crate::net::egress::ledger() {
                         ledger.record(&host, &url, "GET", status);
                     }
-                    result_box(0, handle, VTYPE_HANDLE)
+                    EntryOutcome {
+                        url,
+                        fetched: true,
+                        status: Some(i64::from(status)),
+                        elapsed_ms: elapsed_ms_since(started),
+                        response: handle,
+                        error: None,
+                    }
                 }
-                Err(e) => result_box(
-                    1,
-                    string_to_cstr(&format!("http.batch[{url}]: {e}")) as *mut c_void,
-                    VTYPE_STRING,
+                Err(e) => EntryOutcome::refused(
+                    &url,
+                    "transport",
+                    Some(i64::from(status)),
+                    true,
+                    format!("http.batch[{url}]: {e}"),
                 ),
             }
         }
@@ -670,10 +927,12 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
             if let Some(ledger) = crate::net::egress::ledger() {
                 ledger.record(&host, &url, "GET", 0);
             }
-            result_box(
-                1,
-                string_to_cstr(&format!("http.batch[{url}]: fetch: {refusal}")) as *mut c_void,
-                VTYPE_STRING,
+            EntryOutcome::refused(
+                &url,
+                "transport",
+                None,
+                true,
+                format!("http.batch[{url}]: fetch: {refusal}"),
             )
         }
     }
@@ -688,6 +947,21 @@ fn err_entry(slot: i64, reason: &str) -> i64 {
         string_to_cstr(&format!("http.batch[{url}]: {reason}")) as *mut c_void,
         VTYPE_STRING,
     )
+}
+
+/// Typed-ABI twin of [`err_entry`]: the whole batch refused to send anything
+/// (unusable configured proxy), so every URL gets the same reason as its own
+/// `BatchResponse` record. Still one entry per URL, never a failed batch.
+fn err_entry_record(slot: i64, reason: &str) -> i64 {
+    let url = unsafe { cstr_to_str(slot as *const c_char) }.unwrap_or("<invalid url>");
+    EntryOutcome::refused(
+        url,
+        "transport",
+        None,
+        true,
+        format!("http.batch[{url}]: {reason}"),
+    )
+    .record()
 }
 
 /// Run `task(i)` for every `i in 0..count` with at most `workers` threads and
