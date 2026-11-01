@@ -48,6 +48,11 @@
 # ---------------------------------------------------------------------------
 
 # Loopback — the workspace's own infrastructure. Self-hosted by definition.
+#
+# POST is granted here and only here: a local model server (llama.cpp, Ollama,
+# vLLM) and every self-hosted API this workspace runs take their request as a
+# POST, and the llm completion path is a POST. The grant is still host-scoped and
+# still denies CONNECT — a raw socket to loopback needs its own operator line.
 [[authorized]]
 host = "127.0.0.1"
 basis = "self-hosted"
@@ -55,7 +60,7 @@ granted_by = "operator (workspace default)"
 granted_at = "2026-10-16"
 expires_at = "2027-10-16"
 evidence = "loopback interface on this host"
-methods = ["GET", "HEAD"]
+methods = ["GET", "HEAD", "POST"]
 notes = "local development and health checks"
 
 [[authorized]]
@@ -65,7 +70,7 @@ granted_by = "operator (workspace default)"
 granted_at = "2026-10-16"
 expires_at = "2027-10-16"
 evidence = "loopback interface on this host"
-methods = ["GET", "HEAD"]
+methods = ["GET", "HEAD", "POST"]
 notes = "local development and health checks"
 
 # IPv6 loopback — same interface, same grant as 127.0.0.1. Added 2026-10-26 with
@@ -79,7 +84,7 @@ granted_by = "operator (workspace default)"
 granted_at = "2026-10-26"
 expires_at = "2027-10-16"
 evidence = "loopback interface on this host"
-methods = ["GET", "HEAD"]
+methods = ["GET", "HEAD", "POST"]
 notes = "local development and health checks over IPv6"
 
 # IANA-reserved documentation domain (RFC 2606): published for exactly this
