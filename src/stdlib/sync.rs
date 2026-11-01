@@ -34,15 +34,37 @@ fn daemon_url(endpoint: &str) -> Result<String, String> {
     Ok(format!("http://127.0.0.1:{}{}", port, endpoint))
 }
 
+/// Ask the register before a daemon request goes out. Loopback is a *grant* in
+/// `configs/tallow/scope/authorized-hosts.toml`, not an exemption: the daemon
+/// is local, but "local" is a line in the register, so the same gate that
+/// guards public egress guards this one. The refusal is formatted exactly as
+/// `stdlib/http.rs` formats it — code, em dash, the register's own sentence.
+fn scope_gate(url: &str, method: &str) -> Result<(), String> {
+    crate::scope::require(url, method)
+        .map(|_| ())
+        .map_err(|r| format!("{} — {}", r.code(), r.explain()))
+}
+
 /// Perform an authenticated POST request to the daemon.
 fn daemon_post(
     endpoint: &str,
     body: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     let url = daemon_url(endpoint)?;
+    daemon_post_url(&url, body)
+}
+
+/// POST an already-built daemon URL. Split from [`daemon_post`] so the gated
+/// request path can be exercised against a listener without standing up
+/// `~/.tallow/daemon/port`.
+fn daemon_post_url(
+    url: &str,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    scope_gate(url, "POST")?;
     let token = read_daemon_token().unwrap_or_default();
     let client = reqwest::blocking::Client::new();
-    let mut req = client.post(&url).header("Authorization", format!("Bearer {}", token));
+    let mut req = client.post(url).header("Authorization", format!("Bearer {}", token));
     if let Some(b) = &body {
         req = req.json(b);
     }
@@ -65,10 +87,18 @@ fn daemon_post(
 /// Perform an authenticated GET request to the daemon.
 fn daemon_get(endpoint: &str) -> Result<serde_json::Value, String> {
     let url = daemon_url(endpoint)?;
+    daemon_get_url(&url)
+}
+
+/// GET an already-built daemon URL. Split from [`daemon_get`] for the same
+/// reason as [`daemon_post_url`]: the gate and the request are testable
+/// together against a listener the test owns.
+fn daemon_get_url(url: &str) -> Result<serde_json::Value, String> {
+    scope_gate(url, "GET")?;
     let token = read_daemon_token().unwrap_or_default();
     let client = reqwest::blocking::Client::new();
     let resp = client
-        .get(&url)
+        .get(url)
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .map_err(|e| {
@@ -1116,5 +1146,91 @@ mod tests {
     fn sync_unknown_function_returns_none() {
         let result = dispatch("nonexistent_sync_fn", vec![]);
         assert!(result.is_none(), "unknown sync function should return None");
+    }
+
+    // ── The daemon gate: loopback is a grant, not an exemption ──────────────
+
+    /// One-shot HTTP server on an ephemeral loopback port: answers 200 with
+    /// `{"ok":true}` and hands back the request line it received. Returns the
+    /// port and the join handle, so a test can assert both what went on the
+    /// wire and that nothing did.
+    fn one_shot_listener() -> (u16, std::thread::JoinHandle<String>) {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(sock.try_clone().expect("clone socket"));
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).expect("read request line");
+            let mut header = String::new();
+            loop {
+                header.clear();
+                match reader.read_line(&mut header) {
+                    Ok(0) => break,
+                    Ok(_) if header == "\r\n" => break,
+                    Ok(_) => {}
+                    Err(e) => panic!("read headers: {e}"),
+                }
+            }
+            let body = "{\"ok\":true}";
+            write!(
+                sock,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+            request_line.trim_end().to_string()
+        });
+        (port, handle)
+    }
+
+    /// Allowed leg: a loopback URL the register grants is actually dialled —
+    /// the gate passes it through to the transport, it does not merely return
+    /// `Ok` and stop.
+    #[test]
+    fn daemon_get_reaches_loopback_when_the_register_grants_it() {
+        let _register = crate::scope::override_register(
+            crate::scope::ScopeRegister::granting(&[("127.0.0.1", &["GET", "POST"])]),
+        );
+        let (port, server) = one_shot_listener();
+
+        let json = daemon_get_url(&format!("http://127.0.0.1:{port}/sync/pairs"))
+            .expect("a granted loopback GET must reach the listener");
+        assert_eq!(json["ok"].as_bool(), Some(true));
+        assert_eq!(
+            server.join().expect("server thread"),
+            "GET /sync/pairs HTTP/1.1",
+            "the request must be the GET the gate approved"
+        );
+    }
+
+    /// Refused leg: with the register not listing loopback, the same call is
+    /// refused in the register's own words and **no socket is opened** — the
+    /// listener proves the refusal happened before the request.
+    #[test]
+    fn daemon_get_refuses_loopback_the_register_does_not_list() {
+        let _register =
+            crate::scope::override_register(crate::scope::ScopeRegister::empty());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        listener.set_nonblocking(true).expect("nonblocking");
+
+        let err = daemon_get_url(&format!("http://127.0.0.1:{port}/sync/pairs"))
+            .expect_err("an unlisted loopback host must be refused");
+        assert!(err.contains("scope:not-listed"), "refusal code missing: {err}");
+        assert!(
+            err.contains(
+                "refused: 127.0.0.1 is not in the authorization register (deny-by-default)"
+            ),
+            "the register's own sentence must survive: {err}"
+        );
+        match listener.accept() {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            other => panic!("the refusal must not dial the daemon: {other:?}"),
+        }
     }
 }
