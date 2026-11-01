@@ -142,6 +142,7 @@ docs/api/
 # else there (probes, scans, generated data) stays ignored.
 reports/*
 !reports/*.md
+!reports/*.py
 
 # Harvested or client-derived fixtures are regenerated from a synthetic source,
 # never committed. The 2026-11-01 pass removed one such directory from history;
