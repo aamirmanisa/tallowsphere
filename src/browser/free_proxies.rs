@@ -47,6 +47,9 @@ pub async fn fetch_proxy_lists() -> Vec<String> {
     let mut all_proxies = std::collections::HashSet::new();
 
     for source in PROXY_SOURCES {
+        // Register first, on the URL that will be sent. `Err(_) => continue`
+        // below would turn a returned refusal into "try the next list".
+        gate_proxy_url(source, "GET");
         match client.get(*source).send().await {
             Ok(resp) => {
                 if let Ok(text) = resp.text().await {
@@ -99,7 +102,11 @@ pub async fn validate_proxies(
                 .build()
                 .ok()?;
 
-            match client.get("https://httpbin.org/ip").send().await {
+            const VALIDATE_URL: &str = "https://httpbin.org/ip";
+            // Register first. `_ => None` below would turn a returned refusal
+            // into "this proxy is dead" and keep probing the rest.
+            gate_proxy_url(VALIDATE_URL, "GET");
+            match client.get(VALIDATE_URL).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     let latency = start.elapsed().as_millis() as u64;
                     Some(FreeProxy {
@@ -252,6 +259,16 @@ impl ProxyPool {
     }
 }
 
+/// Register gate for a free-proxy hop. Fatal: `fetch_proxy_lists` continues on
+/// `Err`, and `validate_proxies` maps failure to `None`. A returned refusal
+/// would not stop the GitHub GET or the httpbin GET.
+fn gate_proxy_url(url: &str, method: &str) {
+    if let Err(r) = crate::scope::require(url, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +287,51 @@ mod tests {
         };
         assert!(p.alive);
         assert_eq!(p.latency_ms, 150);
+    }
+
+    /// Each list GET and the httpbin validation GET must consult the register
+    /// on the URL actually sent, with GET, before `client.get`.
+    #[test]
+    fn proxy_fetches_consult_the_register_before_get() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/free_proxies.rs"
+        ))
+        .expect("read src/browser/free_proxies.rs");
+
+        let list_start = src
+            .find("pub async fn fetch_proxy_lists")
+            .expect("fetch_proxy_lists missing");
+        let validate_start = src
+            .find("pub async fn validate_proxies")
+            .expect("validate_proxies missing");
+        let list_body = &src[list_start..validate_start];
+        let validate_body = &src[validate_start..];
+
+        let list_gate = list_body
+            .find("gate_proxy_url(source, \"GET\")")
+            .expect("fetch_proxy_lists must gate GET on source");
+        let list_get = list_body
+            .find("client.get(*source)")
+            .expect("list GET missing");
+        assert!(
+            list_gate < list_get,
+            "scope::require must run before the GitHub list GET"
+        );
+
+        let val_gate = validate_body
+            .find("gate_proxy_url(VALIDATE_URL, \"GET\")")
+            .expect("validate_proxies must gate GET on httpbin");
+        let val_get = validate_body
+            .find("client.get(VALIDATE_URL)")
+            .expect("httpbin GET missing");
+        assert!(
+            val_gate < val_get,
+            "scope::require must run before the httpbin GET"
+        );
+        assert!(
+            src.contains("std::process::exit(1)"),
+            "fetch continues on Err and validate maps to None — refusal is fatal"
+        );
     }
 }

@@ -256,6 +256,23 @@ pub struct LlmExtractor {
     ollama_available: Option<bool>,
 }
 
+/// Register gate for an LLM-engine hop. Fatal on WAN: `check_*` map transport
+/// failure to `false`, and generation sits behind `if let Ok`. A returned
+/// refusal would become "engine unavailable".
+///
+/// Loopback (default Ollama on localhost:11434) never leaves the box. The
+/// shipped register grants GET/HEAD only, so a POST gate would kill the
+/// in-zone path. Doctrine: do not gate loopback; say so.
+fn gate_llm_url(url: &str, method: &str) {
+    if crate::browser::zone::is_in_zone_target(url) {
+        return;
+    }
+    if let Err(r) = crate::scope::require(url, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 impl LlmExtractor {
     /// Create a new `LlmExtractor` with default settings.
     pub fn new() -> Self {
@@ -708,6 +725,7 @@ impl LlmExtractor {
             return avail;
         }
         let url = format!("{}/api/tags", self.ollama_url);
+        gate_llm_url(&url, "GET");
         let available = self
             .client
             .get(&url)
@@ -742,6 +760,7 @@ impl LlmExtractor {
             return avail;
         }
         let url = format!("{}/v1/models", self.ollama_url);
+        gate_llm_url(&url, "GET");
         let available = self
             .client
             .get(&url)
@@ -903,6 +922,7 @@ impl LlmExtractor {
         let key = resolve_api_key_live()?;
         let url = format!("{}/v1/chat/completions", self.ollama_url);
         let body = openai_request_body(&self.model, prompt);
+        gate_llm_url(&url, "POST");
 
         let resp = self
             .client
@@ -932,6 +952,7 @@ impl LlmExtractor {
     /// Call the Ollama generate API.
     async fn call_ollama(&self, prompt: &str) -> Result<String, ExtractError> {
         let url = format!("{}/api/generate", self.ollama_url);
+        gate_llm_url(&url, "POST");
 
         let body = serde_json::json!({
             "model": self.model,
@@ -3317,5 +3338,73 @@ mod tests {
     #[test]
     fn test_cleanup() {
         let _ = std::fs::remove_dir_all(".tallow-schemas-test");
+    }
+
+    /// Each engine hop must consult the register on the URL actually sent,
+    /// with the verb that hop uses, before the reqwest send. Loopback skip
+    /// lives inside `gate_llm_url`; the call still has to precede the send.
+    #[test]
+    fn engine_hops_consult_the_register_before_send() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/llm_extract.rs"
+        ))
+        .expect("read src/browser/llm_extract.rs");
+
+        let ollama_probe = src
+            .find("async fn check_ollama_available")
+            .expect("check_ollama_available missing");
+        let openai_probe = src
+            .find("async fn check_openai_compatible_available")
+            .expect("check_openai_compatible_available missing");
+        let openai_call = src
+            .find("async fn call_openai_compatible")
+            .expect("call_openai_compatible missing");
+        let ollama_call = src
+            .find("async fn call_ollama")
+            .expect("call_ollama missing");
+        let prepare = src
+            .find("fn prepare_html_sample")
+            .expect("prepare_html_sample missing");
+
+        let tags = &src[ollama_probe..openai_probe];
+        let models = &src[openai_probe..openai_call];
+        let completions = &src[openai_call..ollama_call];
+        let generate = &src[ollama_call..prepare];
+
+        let g1 = tags
+            .find("gate_llm_url(&url, \"GET\")")
+            .expect("ollama probe must gate GET");
+        let s1 = tags.find(".get(&url)").expect("ollama GET missing");
+        assert!(g1 < s1, "gate must run before GET /api/tags");
+
+        let g2 = models
+            .find("gate_llm_url(&url, \"GET\")")
+            .expect("openai probe must gate GET");
+        let s2 = models.find(".get(&url)").expect("openai GET missing");
+        assert!(g2 < s2, "gate must run before GET /v1/models");
+
+        let g3 = completions
+            .find("gate_llm_url(&url, \"POST\")")
+            .expect("openai call must gate POST");
+        let s3 = completions
+            .find(".post(&url)")
+            .expect("openai POST missing");
+        assert!(g3 < s3, "gate must run before POST /v1/chat/completions");
+
+        let g4 = generate
+            .find("gate_llm_url(&url, \"POST\")")
+            .expect("ollama call must gate POST");
+        let s4 = generate.find(".post(&url)").expect("ollama POST missing");
+        assert!(g4 < s4, "gate must run before POST /api/generate");
+
+        assert!(
+            src.contains("is_in_zone_target"),
+            "loopback skip must be explicit"
+        );
+        assert!(
+            src.contains("std::process::exit(1)"),
+            "check_* convert Err to false — WAN refusal is fatal"
+        );
     }
 }
