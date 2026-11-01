@@ -94,6 +94,11 @@ const CONTRACT_MARKERS: &[&str] = &[
 ];
 
 const CENSUS: &[(&str, Class, &str)] = &[
+    // Added 2026-11-01 (wave 9 + the crypto surface). Each entry names what the
+    // file actually does, not what would be convenient to claim.
+    ("src/stdlib/intel_api.rs", Contract, "method matrix gates base_url via scope::require (L2578); probe() builds raw ureq requests outside the shared client — recorded gap"),
+    ("src/stdlib/topology.rs", Allowlist, "raw TcpStream::connect + UdpSocket::bind for traceroute/port probes; every target passes scope::require(CONNECT/GET) before the socket; no shared HTTP client by design"),
+    ("src/typeck.rs", Allowlist, "no egress: every primitive match is a comment describing other modules' request paths (L488-532), not a call"),
     // ── contract-keyed: a routing marker must be present (machine-checked) ──
     ("src/interp.rs", Contract, "request paths via egress_http:: shims (L8215+, L22633); agent config L3497 validates via ureq::Proxy"),
     ("src/main.rs", Contract, "egress_http::/egress_refusal wiring present; relay/SIG sockets are local plumbing"),
@@ -187,6 +192,7 @@ const CENSUS: &[(&str, Class, &str)] = &[
 /// Resolver-primitive census (row #61). `doh == true` entries must contain
 /// `CLOUDFLARE`; `extra` pins per-file structural evidence.
 const RESOLVER_CENSUS: &[(&str, bool, &[&str], &str)] = &[
+    ("src/stdlib/topology.rs", false, &["scope::require"], "route/trace resolution via to_socket_addrs (L393/L483) after scope::require authorises the target; the resolver is the system one, and the host is gated before any name is looked up"),
     ("src/browser/dpi_bypass.rs", true, &[], "HTTPS RR lookups via hickory DoH (CLOUDFLARE) — routed"),
     ("src/stdlib/net.rs", true, &["resolve_doh", "dns_guard::"], "DoH resolver present (resolve_doh); raw sites L349/L866/L950 adopt dns_guard (T-122b)"),
     ("src/browser/network_stealth.rs", false, &["dns_guard::"], "stealth TCP probes resolve via tokio lookup_host (L223/L290) gated by dns_guard::plain_dns_refusal (T-122b)"),
