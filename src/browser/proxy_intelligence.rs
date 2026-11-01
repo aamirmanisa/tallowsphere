@@ -147,13 +147,23 @@ fn fetch_external_reputation(ip: &str) -> Option<ReputationRecord> {
 /// IPQualityScore lookup (needs `TALLOW_IPQS_KEY`). Gives proxy/fraud/ASN/geo.
 fn fetch_ipqs(ip: &str, key: &str) -> Option<ReputationRecord> {
     let url = format!("https://ipqualityscore.com/api/json/ip/{key}/{ip}");
+    // Register first, on the URL that will be sent (key in the path).
+    // `.ok()?` below, then fail-open `neutral`, would turn a returned
+    // refusal into "this IP is fine".
+    gate_reputation(&url);
     // T-207: contract-bound lookup — egress reputation is only meaningful
     // when the query itself rides the egress.
     let agent = crate::runtime::egress_http::agent_with_timeouts(
         Some(std::time::Duration::from_secs(10)),
         None,
     );
-    let body = agent.get(&url).call().ok()?.body_mut().read_to_string().ok()?;
+    let body = agent
+        .get(&url)
+        .call()
+        .ok()?
+        .body_mut()
+        .read_to_string()
+        .ok()?;
     let v: serde_json::Value = serde_json::from_str(&body).ok()?;
     if !v.get("success").and_then(|x| x.as_bool()).unwrap_or(false) {
         return None;
@@ -171,14 +181,26 @@ fn fetch_ipqs(ip: &str, key: &str) -> Option<ReputationRecord> {
         .and_then(|x| x.as_str())
         .and_then(|s| s.trim_start_matches("AS").parse::<u32>().ok())
         .unwrap_or(0);
-    let asn_org = v.get("ISP").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let asn_org = v
+        .get("ISP")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     let country = v
         .get("country_code")
         .and_then(|x| x.as_str())
         .unwrap_or("XX")
         .to_string();
-    let city = v.get("city").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let region = v.get("region").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let city = v
+        .get("city")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let region = v
+        .get("region")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     Some(ReputationRecord {
         ip: ip.to_string(),
         is_proxy,
@@ -196,12 +218,21 @@ fn fetch_ipqs(ip: &str, key: &str) -> Option<ReputationRecord> {
 /// proxy status, so `is_proxy`/`fraud_score` stay neutral (fail-open).
 fn fetch_ipinfo(ip: &str) -> Option<ReputationRecord> {
     let url = format!("https://ipinfo.io/json/{ip}");
+    // Register first. Same fail-open as `fetch_ipqs`: a returned refusal
+    // becomes a neutral record.
+    gate_reputation(&url);
     // T-207: contract-bound lookup (Tor by default).
     let agent = crate::runtime::egress_http::agent_with_timeouts(
         Some(std::time::Duration::from_secs(10)),
         None,
     );
-    let body = agent.get(&url).call().ok()?.body_mut().read_to_string().ok()?;
+    let body = agent
+        .get(&url)
+        .call()
+        .ok()?
+        .body_mut()
+        .read_to_string()
+        .ok()?;
     let v: serde_json::Value = serde_json::from_str(&body).ok()?;
     // org is typically "AS7922 Comcast Cable Communications, LLC".
     let org_str = v.get("org").and_then(|x| x.as_str()).unwrap_or("");
@@ -220,8 +251,16 @@ fn fetch_ipinfo(ip: &str) -> Option<ReputationRecord> {
         .and_then(|x| x.as_str())
         .unwrap_or("XX")
         .to_string();
-    let city = v.get("city").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let region = v.get("region").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let city = v
+        .get("city")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let region = v
+        .get("region")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     Some(ReputationRecord {
         ip: ip.to_string(),
         is_proxy: false,
@@ -233,6 +272,15 @@ fn fetch_ipinfo(ip: &str) -> Option<ReputationRecord> {
         fetched_at: Instant::now(),
         ttl: DEFAULT_REPUTATION_TTL,
     })
+}
+
+/// Register gate for a reputation lookup. Fatal: both fetchers `.ok()?` the
+/// GET, and `ip_reputation` stores a fail-open neutral record on `None`.
+fn gate_reputation(url: &str) {
+    if let Err(r) = crate::scope::require(url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
 }
 
 /// Join city/region into a "City, Region" label (trims empty sides).
@@ -2017,5 +2065,94 @@ mod tests {
         let meta1 = intel.proxy_asn[1].as_ref().unwrap();
         assert_eq!(meta1.asn_type, AsnType::Tor);
         assert!(meta1.trust_score <= 20);
+    }
+
+    /// Both reputation GETs must consult the register on the URL actually
+    /// sent, with GET, before `agent_with_timeouts`.
+    #[test]
+    fn reputation_lookups_consult_the_register_before_the_agent() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/proxy_intelligence.rs"
+        ))
+        .expect("read src/browser/proxy_intelligence.rs");
+
+        let ipqs_start = src.find("fn fetch_ipqs").expect("fetch_ipqs missing");
+        let ipinfo_start = src.find("fn fetch_ipinfo").expect("fetch_ipinfo missing");
+        let gate_fn_start = src
+            .find("fn gate_reputation")
+            .expect("gate_reputation missing");
+        let ipqs_body = &src[ipqs_start..ipinfo_start];
+        let ipinfo_body = &src[ipinfo_start..gate_fn_start];
+
+        let ipqs_gate = ipqs_body
+            .find("gate_reputation(&url)")
+            .expect("fetch_ipqs must gate GET on url");
+        let ipqs_agent = ipqs_body
+            .find("egress_http::agent_with_timeouts")
+            .expect("ipqs agent missing");
+        assert!(
+            ipqs_gate < ipqs_agent,
+            "scope::require must run before the IPQS agent is built"
+        );
+
+        let info_gate = ipinfo_body
+            .find("gate_reputation(&url)")
+            .expect("fetch_ipinfo must gate GET on url");
+        let info_agent = ipinfo_body
+            .find("egress_http::agent_with_timeouts")
+            .expect("ipinfo agent missing");
+        assert!(
+            info_gate < info_agent,
+            "scope::require must run before the ipinfo agent is built"
+        );
+        assert!(
+            src.contains("std::process::exit(1)"),
+            "both fetchers .ok()? then fail-open — refusal is fatal"
+        );
+    }
+
+    /// Measurement: the IPQS key rides in the path, not as userinfo.
+    /// `AUTH_PATH_MARKERS` do not contain `/api/json/ip/`, so a planted GET
+    /// grant allows the URL — auth-surface does not fire. Unlisted is
+    /// `not-listed` and the refusal does not interpolate the key.
+    #[test]
+    fn ipqs_key_in_path_is_not_an_authentication_surface() {
+        let url = "https://ipqualityscore.com/api/json/ip/secret-test-key/203.0.113.1";
+        let granted = crate::scope::ScopeRegister::granting(&[("ipqualityscore.com", &["GET"])]);
+        let d = granted.authorize(url, "GET", "2026-11-01");
+        assert!(
+            d.is_allowed(),
+            "auth-surface did not fire on a path-embedded key; got {}",
+            d.render()
+        );
+
+        let userinfo = granted.authorize(
+            "https://secret-test-key:x@ipqualityscore.com/api/json/ip/203.0.113.1",
+            "GET",
+            "2026-11-01",
+        );
+        assert!(
+            matches!(
+                userinfo.refusal(),
+                Some(crate::scope::Refusal::AuthenticationSurface { .. })
+            ),
+            "userinfo form must still be authentication-surface, got {}",
+            userinfo.render()
+        );
+
+        let unlisted = crate::scope::ScopeRegister::granting(&[("example.com", &["GET"])]);
+        let d = unlisted.authorize(url, "GET", "2026-11-01");
+        assert!(
+            matches!(d.refusal(), Some(crate::scope::Refusal::NotListed { .. })),
+            "unlisted host is not-listed (not auth-surface); got {}",
+            d.render()
+        );
+        let explain = d.refusal().expect("refused").explain();
+        assert!(
+            !explain.contains("secret-test-key"),
+            "not-listed refusal must not interpolate the key: {explain}"
+        );
+        assert_eq!(d.refusal().expect("refused").code(), "scope:not-listed");
     }
 }

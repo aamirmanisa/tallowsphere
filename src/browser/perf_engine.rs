@@ -120,6 +120,13 @@ impl ConnectionWarmer {
         } else {
             format!("https://{domain}")
         };
+        // Register first, on the URL that will be sent. `warm` returns
+        // `reqwest::Error`; `warm_batch` collects it as a normal result.
+        // A returned refusal would look like a handshake miss.
+        if let Err(r) = crate::scope::require(&url, "HEAD") {
+            eprintln!("runtime error: {} — {}", r.code(), r.explain());
+            std::process::exit(1);
+        }
         self.client
             .head(&url)
             .timeout(Duration::from_secs(10))
@@ -397,6 +404,33 @@ mod tests {
         assert_eq!(
             balanced.clamp_browser_queue(usize::MAX),
             balanced.max_browser_queue
+        );
+    }
+
+    /// `warm` must consult the register on the URL actually sent, with HEAD,
+    /// before the reqwest HEAD is built.
+    #[test]
+    fn warm_consults_the_register_before_head() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/perf_engine.rs"
+        ))
+        .expect("read src/browser/perf_engine.rs");
+        let start = src.find("pub async fn warm(").expect("warm must exist");
+        let body = &src[start..];
+
+        let require = "crate::scope::require(&url, \"HEAD\")";
+        let require_at = body
+            .find(require)
+            .expect("warm must call crate::scope::require(&url, \"HEAD\")");
+        let head_at = body.find(".head(&url)").expect("HEAD send missing");
+        assert!(
+            require_at < head_at,
+            "scope::require must run before the warmer HEAD is built"
+        );
+        assert!(
+            body.contains("std::process::exit(1)"),
+            "warm_batch collects reqwest::Error as a normal result — refusal is fatal"
         );
     }
 }
