@@ -98,6 +98,26 @@ pub fn build_cnam_request(
     }
 
     let url = format!("{}{}", base_url, if base_url.contains('?') { "" } else { "?" });
+    // Deny-by-default egress gate, on the URL actually sent and immediately
+    // before the request is built. This module builds its own `reqwest`
+    // request instead of going through `runtime::egress_http`, so
+    // `tests/egress_gate_coverage.rs` — whose needle is `egress_http::<verb>`
+    // or `ureq::<verb>` in a `src/stdlib/*.rs` file — never read it, and until
+    // this gate it consulted no register at all
+    // (`reports/egress-surface-inventory.md`, 2026-11-01).
+    //
+    // Returned, not fatal: the one hop is `dip_cnam:242`, which propagates with
+    // `?`, and `dip_cnam` has no in-tree caller that converts the `Err` into a
+    // normal result, logs and continues, or `.ok()`s it. The returned sentence
+    // is the register's own, prefixed with the site, so a refusal reads like a
+    // refusal anywhere else in the engine.
+    if let Err(refusal) = crate::scope::require(&url, "GET") {
+        return Err(format!(
+            "build_cnam_request: {} — {}",
+            refusal.code(),
+            refusal.explain()
+        ));
+    }
     client
         .get(&url)
         .query(&[("number", tn)])
@@ -362,6 +382,14 @@ mod tests {
     ///    query param, URL is well-formed. Client construction is offline.
     #[test]
     fn build_cnam_request_sets_bearer_and_tn() {
+        // The gate consults the register on the URL actually sent, so this test
+        // plants a GET grant for its own host — the thread-local seam
+        // `src/stdlib/osint.rs` tests use. Nothing is fetched: building a
+        // request performs no I/O, and the guard drops with the test.
+        let _grant = crate::scope::override_register(crate::scope::ScopeRegister::granting(&[(
+            "api.cnam.example.org",
+            &["GET"],
+        )]));
         let client = reqwest::blocking::Client::new();
         let req = build_cnam_request(
             &client,
@@ -387,13 +415,25 @@ mod tests {
         assert_eq!(auth, "Bearer secret-key-123");
     }
 
-    /// 2. Request building rejects empty key / tn / base_url.
+    /// Request building rejects empty key / tn / base_url.
     #[test]
     fn build_cnam_request_rejects_empty_inputs() {
         let client = reqwest::blocking::Client::new();
         assert!(build_cnam_request(&client, "", "k", "123").is_err());
         assert!(build_cnam_request(&client, "http://x", "", "123").is_err());
         assert!(build_cnam_request(&client, "http://x", "k", "").is_err());
+    }
+
+    /// The gate is real, not decorative: an unlisted provider host is refused
+    /// before the request is built, with the register's own code. No grant is
+    /// planted here, so this is the shipped register deciding.
+    #[test]
+    fn build_cnam_request_refuses_an_unlisted_provider() {
+        let client = reqwest::blocking::Client::new();
+        let err = build_cnam_request(&client, "https://cnam-unlisted.example/lookup", "k", "123")
+            .expect_err("an unlisted provider must be refused");
+        assert!(err.contains("scope:not-listed"), "got: {err}");
+        assert!(err.starts_with("build_cnam_request:"), "got: {err}");
     }
 
     /// 3. Happy-path JSON (top-level and `data`-wrapped) -> parsed result with

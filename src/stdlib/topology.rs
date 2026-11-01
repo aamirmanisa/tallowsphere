@@ -182,17 +182,31 @@ impl Technique {
 /// `tallow scope check` reads; a scanner that skipped it would be a new
 /// un-gated egress path, which is the exact class of defect the capability
 /// work closed.
+///
+/// This delegates to [`crate::scope::require`] rather than open-coding
+/// `ScopeRegister::load_default()` + `authorize(..)` as it used to. The two are
+/// the same decision — same register, same verb, same date — but the duplicate
+/// implementation was invisible to `tests/egress_gate_coverage.rs`, whose
+/// gating needle is the literal `scope::require`; that is why
+/// `reports/egress-surface-inventory.md` listed this file's five connect sites
+/// as ungated while every one of them sits behind a register call. One gate
+/// implementation, one spelling, one needle.
+///
+/// What is *not* gated here, and why (stated rather than silently skipped):
+/// `udp_source_v6` (`:683`), `RawSyn::open` (`:696`) and `RawSyn::source_for`
+/// (`:725`) put **zero bytes** on the wire — a UDP `connect()` with no `send`
+/// is a routing-table lookup for the source address, and a raw `socket()` call
+/// names no destination. Gating them would be a decorative gate on traffic that
+/// never leaves the process; their callers are all entry points that gate the
+/// literal target above, before resolution.
 fn require_authorized(target: &str) -> Result<(), String> {
-    let register = crate::scope::ScopeRegister::load_default();
-    let decision = register.authorize(target, "GET", &crate::scope::utc_today());
-    match decision {
-        crate::scope::Decision::Allowed(_) => Ok(()),
-        crate::scope::Decision::Refused(refusal) => Err(format!(
+    crate::scope::require(target, "GET").map_err(|refusal| {
+        format!(
             "topology: target '{target}' is not authorized ({}): {}",
             refusal.code(),
             refusal.explain()
-        )),
-    }
+        )
+    })
 }
 
 // ══════════════════════════════════════════════════════════════════
