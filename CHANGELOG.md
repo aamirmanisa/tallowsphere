@@ -9,6 +9,59 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.7.0] — 2026-11-01 — Every egress path consults the register, and http.batch has a type
+
+### What was wrong
+
+The authorization register decided whether a request could be built, but only on the
+paths that remembered to ask. Twenty-five stdlib modules consulted it; every other way
+out of the engine did not, and the coverage test meant to catch that could only see
+`src/stdlib/*.rs` and only an `egress_http::` verb — so a module reaching the network
+through `ureq`, `reqwest` or a raw socket was invisible to it. Measured on the published
+tree before this release: 68 ungated egress sites across 35 files, including the browser
+plane and the engine's own startup path.
+
+Two further defects, measured rather than inferred:
+
+- A redirect was followed without asking the register again. A listed host answering
+  `302` to an unlisted one made the engine fetch the unlisted host and return its body,
+  while `Response.url` still reported the listed URL — `ureq`'s default of ten redirects
+  applied because the shared agent set no policy.
+- `http.batch` entries had no type on the compiled plane: reading `entry.response.status`
+  could not be lowered, and an explicit `[]BatchResponse` annotation found no such struct.
+  The same program was refused natively and ran on the interpreter.
+
+### Added
+
+- A gated follow loop: `max_redirects(0)` on every agent builder, and the only way to
+  follow a redirect re-consults the register per hop, resolves `Location` against the
+  current URL, refuses a downgrade or non-HTTP scheme, re-authorises under the method the
+  next request will carry, stops at eight hops, and reports the URL that produced the body.
+- Register gates on 48 modules across the stdlib, browser and engine planes — the verb
+  the request uses, fatal where a caller would otherwise swallow the refusal.
+- `tests/egress_gate_coverage.rs` scans all of `src/` for `egress_http::`, `ureq::`,
+  `reqwest::` and raw connects and fails on an ungated site; twelve exemptions carry a
+  one-line reason each.
+- A typed `http.batch` entry on both planes: `#[repr(C)]` records plus a dedicated
+  `tallow_http_batch_entries` entry point, `pool.map`'s ABI untouched, and a parity test
+  that runs the same program under `--interpret` and `--require-native` with nothing
+  ignored.
+- A `#[cfg(test)]`-only thread-local register fixture, so gate behaviour is testable
+  without depending on the shipped register, and `CONNECT` as a grantable verb that is
+  never a default.
+
+### Fixed
+
+- `https://host?q=1` was refused as the host `host?q=1`; the authority now ends at the
+  first `/`, `?` or `#`, and a query-carried auth path is still refused.
+- Mesh test fixtures took a cross-process lock, so concurrent worktrees no longer collide
+  on fixed loopback ports.
+- Privacy: a client street address and a live-format phone number used as demo data are
+  replaced with reserved values (555-01XX and documentation addresses), and the seed
+  record no longer borrows a real carrier's name.
+- Internal working documents (agent notes, benchmark protocols, the publication manifest)
+  are not part of this repository.
+
 ## [v1.6.0] — 2026-10-31 — Eight compiler defects closed, and the gates move into the binary
 
 ### Added
