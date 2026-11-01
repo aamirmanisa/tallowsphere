@@ -2598,6 +2598,23 @@ fn stage_network(
 // Public functions
 // =====================================================================
 
+/// Deny-by-default egress gate for this module.
+///
+/// `sitescan` opens sockets through `runtime::egress_http` (fingerprint GET
+/// and governed JSON GET) and, until this was added, consulted no authorization
+/// register at the entry point a user URL arrives at — measured 2026-10-31:
+/// `grep -c 'scope::' src/stdlib/sitescan.rs` → 0. The register answers with
+/// the same sentence the rest of the engine uses, so a refusal here reads like
+/// a refusal anywhere else. Wired only at `scan`, where the user URL arrives;
+/// `fp_get` / `gov_json_get` cannot be the gate because a check there would
+/// still let `scan` start work, and `probe_egress` has no user URL (it always
+/// hits a hardcoded tor-check endpoint).
+fn gate(url: &str, method: &str, what: &str) -> Result<(), String> {
+    crate::scope::require(url, method)
+        .map(|_| ())
+        .map_err(|r| format!("{what}: {} — {}", r.code(), r.explain()))
+}
+
 /// `sitescan.scan(target, depth?, opts?) -> String` (JSON envelope).
 fn scan(args: Vec<Value>) -> StdlibResult {
     let target_raw = match args.first() {
@@ -2605,6 +2622,7 @@ fn scan(args: Vec<Value>) -> StdlibResult {
         _ => return Err("sitescan:param: scan() requires a target URL string".to_string()),
     };
     let target = normalize_target(&target_raw)?;
+    gate(target.as_str(), "GET", "sitescan.scan")?;
     let (level, label) = depth_of(args.get(1))?;
     let opts = parse_opts(args.get(2))?;
     let stages = select_stages(level, &opts.only);

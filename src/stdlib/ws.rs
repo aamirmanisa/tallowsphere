@@ -37,6 +37,19 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 
+/// Deny-by-default egress gate for this module.
+///
+/// `ws.connect` opens the socket (a raw `TcpStream` connect followed by an
+/// HTTP upgrade). The verb authorized is the one the module puts on the wire:
+/// `GET {path} HTTP/1.1` with `Upgrade: websocket`. It is not `CONNECT` — that
+/// spelling belongs to `net.connect`'s raw tunnel and the register grants it to
+/// nothing.
+fn gate(url: &str, method: &str, what: &str) -> Result<(), String> {
+    crate::scope::require(url, method)
+        .map(|_| ())
+        .map_err(|r| format!("{what}: {} — {}", r.code(), r.explain()))
+}
+
 /// A WebSocket transport: plain TCP, or the same socket wrapped in TLS.
 enum WsStream {
     Plain(TcpStream),
@@ -389,6 +402,7 @@ where
 
 fn ws_connect(args: Vec<Value>) -> StdlibResult {
     let url = expect_first_str(&args, "url")?;
+    gate(&url, "GET", "ws.connect")?;
     let ws = WebSocket::connect(url)?;
     let id = next_ws_id();
     match WS_CONNECTIONS.lock() {

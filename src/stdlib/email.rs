@@ -18,6 +18,18 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
+/// Deny-by-default egress gate for this module.
+///
+/// Every socket this module opens — the IMAP TCP stream and the two Guerrilla
+/// Mail HTTP calls — is authorized here before it is built. The refusal is the
+/// register's own sentence, so it reads like a refusal anywhere else in the
+/// engine.
+fn gate(input: &str, method: &str, what: &str) -> Result<(), String> {
+    crate::scope::require(input, method)
+        .map(|_| ())
+        .map_err(|r| format!("{what}: {} — {}", r.code(), r.explain()))
+}
+
 /// IMAP connection state
 struct ImapConnection {
     stream: TcpStream,
@@ -130,6 +142,12 @@ fn inbox_connect(args: Vec<Value>) -> StdlibResult {
     };
     let use_tls = args.get(2).and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None }).unwrap_or(true);
 
+    // TCP connect to the IMAP server: the verb is CONNECT, exactly as
+    // `net.connect` authorizes a raw socket. Gate the address actually dialed
+    // (port 993 when TLS is requested, since that is what `connect` uses).
+    let dial_port = if use_tls { 993 } else { port };
+    gate(&format!("{server}:{dial_port}"), "CONNECT", "Inbox.connect_imap")?;
+
     let mut conn = ImapConnection::connect(server, if use_tls { 993 } else { port })?;
     let greeting = conn.read_greeting()?;
     conn.capability()?;
@@ -215,6 +233,12 @@ fn inbox_extract_otp(_object: &Value, args: Vec<Value>) -> StdlibResult {
 // ── Guerrilla Mail (HTTP-based disposable email) ──
 
 fn guerrilla_connect(_args: Vec<Value>) -> StdlibResult {
+    // Fixed third-party API host; authorized as the GET it performs.
+    gate(
+        "https://api.guerrillamail.com/ajax.php?f=get_email_address",
+        "GET",
+        "Inbox.connect_guerrilla",
+    )?;
     // Fetch a disposable email from Guerrilla Mail API
     let resp = crate::runtime::egress_http::get("https://api.guerrillamail.com/ajax.php?f=get_email_address&ip=127.0.0.1&agent=Mozilla")
         .header("User-Agent", "Tallow-Email/1.0")
@@ -263,6 +287,14 @@ fn guerrilla_wait(object: &Value, args: Vec<Value>) -> StdlibResult {
     };
     let sid = field_str(fields, "sid_token");
     let timeout = args.first().and_then(|v| if let Value::Int(i) = v { Some(*i as u64) } else { None }).unwrap_or(90);
+
+    // Polling loop hits the same fixed API host; authorize once before the first
+    // iteration so a refusal costs nothing and produces no request at all.
+    gate(
+        "https://api.guerrillamail.com/ajax.php?f=get_email_list",
+        "GET",
+        "guerrilla.wait_for_email",
+    )?;
 
     let deadline = Instant::now() + Duration::from_secs(timeout);
     let mut last_count = 0usize;

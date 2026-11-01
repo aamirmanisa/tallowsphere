@@ -60,6 +60,17 @@ fn chain_provenance(existing: &[Value], source: &str, operation: &str) -> Vec<Va
     chain
 }
 
+/// Deny-by-default egress gate for this module.
+///
+/// Every request this module builds consults the authorization register before
+/// a socket exists. The refusal is the register's own sentence, so it reads like
+/// a refusal anywhere else in the engine.
+fn gate(input: &str, method: &str, what: &str) -> Result<(), String> {
+    crate::scope::require(input, method)
+        .map(|_| ())
+        .map_err(|r| format!("{what}: {} — {}", r.code(), r.explain()))
+}
+
 /// Governed HTTP GET for keyless/free data sources: rate-limited (2 rps),
 /// backoff+retry on 429/5xx, retry of transient transport errors. Returns the
 /// body on 200; returns an error string for any other status or transport
@@ -74,6 +85,9 @@ fn governed_fetch_limiter(
     headers: &[(String, String)],
     limiter: &std::sync::Mutex<super::http::RateGovernor>,
 ) -> Result<String, String> {
+    // Single choke point for every governed GET in this module: authorize the
+    // URL before the limiter or the request touches anything.
+    gate(url, "GET", "osint")?;
     let (status, body, _retries, rate_limited) = super::http::governed_get(url, headers, limiter, 3)?;
     if rate_limited {
         return Err(format!("rate limited (429) fetching {url}"));
@@ -883,6 +897,8 @@ fn techstack_detect(args: Vec<Value>) -> StdlibResult {
 fn fetch_url_for_fingerprint(
     url: &str,
 ) -> Result<(Vec<(String, String)>, String), String> {
+    // Authorize the user-supplied URL before the agent is constructed.
+    gate(url, "GET", "TechStack.detect")?;
     // Egress: honour TALLOW_PROXY/TALLOW_TOR. This used to build a DIRECT
     // agent, so a TechStack probe egressed from the box IP.
     let agent = crate::runtime::egress_http::agent_with_timeouts(
@@ -1117,6 +1133,11 @@ fn whois_stream(server: &str) -> Result<std::net::TcpStream, String> {
 fn whois_query(server: &str, query: &str) -> Result<String, String> {
     use std::io::{Read, Write};
     use std::time::Duration;
+
+    // Raw port-43 TCP connection: the verb is CONNECT, as `net.connect` uses for
+    // a raw socket. Gate the server actually dialed, before the governor sleeps
+    // or a socket is opened.
+    gate(server, "CONNECT", "osint.whois")?;
 
     // Pace the port-43 query on the shared governor (WHOIS servers rate-limit
     // aggressively; never burst).
@@ -1521,6 +1542,15 @@ fn email_intel_breach_check(object: &Value) -> StdlibResult {
     let mut hasher = sha1::Sha1::new();
     hasher.update(email.to_lowercase().as_bytes());
     let hash_hex = format!("{:X}", hasher.finalize());
+
+    // The range endpoint is reached through `super::http::hibp_range_check`, and
+    // `http::governed_get` does not consult the register — so authorize here, at
+    // the OSINT entry point, before the prefix leaves the box.
+    gate(
+        "https://api.pwnedpasswords.com/range/",
+        "GET",
+        "EmailIntel.breach_check",
+    )?;
 
     let count: i128 = super::http::hibp_range_check(&hash_hex)
         .map_err(|e| format!("HIBP API request failed: {e}"))?
@@ -3092,6 +3122,10 @@ fn scanner_scan(args: Vec<Value>) -> StdlibResult {
             continue; // safety check
         }
         let ip_str = u32_to_ipv4(*host_ip);
+        // TCP connect scan: authorize each host as the CONNECT it performs,
+        // before the port loop opens any socket. A refused host fails the scan
+        // rather than being silently skipped.
+        gate(&ip_str, "CONNECT", "Scanner.scan")?;
         for &port in &ports {
             let addr_str = format!("{}:{}", ip_str, port);
             let open = if let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() {
@@ -4553,6 +4587,9 @@ fn web_archive_save_page_now(args: Vec<Value>) -> StdlibResult {
         "https://web.archive.org/save/{}",
         target_url.replace(' ', "%20")
     );
+    // This path calls `governed_get` directly rather than `governed_fetch`, so
+    // it carries its own gate: authorize the archive host before the request.
+    gate(&save_url, "GET", "WebArchive.save_page_now")?;
     let (status, _body, _retries, rate_limited) = super::http::governed_get(
         &save_url,
         &[("User-Agent".to_string(), "nixe-osint/0.4".to_string())],
@@ -4941,7 +4978,7 @@ fn probe_username_site(pattern: &UsernamePattern, handle: &str) -> (String, bool
 /// HTTP-probe engine: check a handle against every curated pattern.
 /// `limit` = max sites to probe (0 = all); `delay_ms` = politeness sleep
 /// between probes (rate-limit aware).
-fn check_username_http(handle: &str, limit: usize, delay_ms: u64) -> Vec<Value> {
+fn check_username_http(handle: &str, limit: usize, delay_ms: u64) -> Result<Vec<Value>, String> {
     let mut hits = Vec::new();
     let total = if limit == 0 {
         USERNAME_PATTERNS.len()
@@ -4950,6 +4987,10 @@ fn check_username_http(handle: &str, limit: usize, delay_ms: u64) -> Vec<Value> 
     };
 
     for pattern in &USERNAME_PATTERNS[..total] {
+        // `probe_username_site` returns a tuple and cannot carry an error; a gate
+        // inside it would turn a refusal into a silent "not found". Authorize the
+        // profile URL here, where the refusal propagates.
+        gate(&build_profile_url(pattern, handle), "GET", "UsernameEnum.check")?;
         let (name, found, url) = probe_username_site(pattern, handle);
         hits.push(Value::Struct {
             name: "UsernameHit".to_string(),
@@ -4967,7 +5008,7 @@ fn check_username_http(handle: &str, limit: usize, delay_ms: u64) -> Vec<Value> 
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
     }
-    hits
+    Ok(hits)
 }
 
 /// `UsernameEnum.new(handle)` — build a UsernameEnum for a handle.
@@ -4993,7 +5034,7 @@ fn username_enum_check_handle(args: Vec<Value>) -> StdlibResult {
         Some(Value::Int(n)) if *n > 0 => *n as u64,
         _ => 150,
     };
-    let hits = check_username_http(&handle, limit, delay_ms);
+    let hits = check_username_http(&handle, limit, delay_ms)?;
     Ok(make_username_enum(&handle, hits))
 }
 
@@ -5023,7 +5064,7 @@ fn username_enum_check(object: &Value, args: Vec<Value>) -> StdlibResult {
         Some(Value::Int(n)) if *n > 0 => *n as u64,
         _ => 150,
     };
-    let hits = check_username_http(&handle, limit, delay_ms);
+    let hits = check_username_http(&handle, limit, delay_ms)?;
     Ok(make_username_enum(&handle, hits))
 }
 
@@ -5165,11 +5206,15 @@ fn carrier_hint(e164: &str) -> String {
 /// Scan web mentions of a phone number via a public HTML search endpoint.
 /// Returns a Vec of (title, url) pairs. The default source is DuckDuckGo's
 /// public HTML search (no API key required); the URL is the raw result href.
-fn scan_phone_web_mentions(query: &str) -> Vec<Value> {
+fn scan_phone_web_mentions(query: &str) -> Result<Vec<Value>, String> {
     let url = format!(
         "https://html.duckduckgo.com/html/?q={}",
         urlencode_query(query)
     );
+    // The search host is the egress target; authorize the GET before the agent
+    // is built. Returning a refusal here (rather than an empty Vec) keeps a
+    // refusal from looking like "no mentions found".
+    gate(&url, "GET", "Phone.lookup")?;
     // Egress: honour TALLOW_PROXY/TALLOW_TOR (was a direct agent — this site
     // egressed from the box IP).
     let agent = crate::runtime::egress_http::agent_with_timeouts(
@@ -5184,7 +5229,7 @@ fn scan_phone_web_mentions(query: &str) -> Vec<Value> {
             .unwrap_or_default(),
         Err(e) => {
             eprintln!("[osint] phone web-mention search failed: {e}");
-            return Vec::new();
+            return Ok(Vec::new());
         }
     };
 
@@ -5218,7 +5263,7 @@ fn scan_phone_web_mentions(query: &str) -> Vec<Value> {
             break;
         }
     }
-    mentions
+    Ok(mentions)
 }
 
 /// Minimal URL-encode for a search query.
@@ -5284,7 +5329,7 @@ fn phone_lookup(args: Vec<Value>) -> StdlibResult {
             )
         });
     let carrier = carrier_hint(&e164);
-    let mentions = scan_phone_web_mentions(&format!("\"{}\"", e164));
+    let mentions = scan_phone_web_mentions(&format!("\"{}\"", e164))?;
 
     Ok(Value::Struct {
         name: "Phone".to_string(),
