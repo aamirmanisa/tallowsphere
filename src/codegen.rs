@@ -448,6 +448,10 @@ fn array_elem_kind(array_kind: Option<&str>) -> Option<String> {
         "CookieArray" => Some("CdpCookie".to_string()),
         "WaveCheckpointArray" => Some("WaveCheckpoint".to_string()),
         "AntibotStepArray" => Some("AntibotResolveStep".to_string()),
+        // `http.batch` entries are `%struct.BatchResponse` records, so
+        // `rs[0].ok` GEPs into the entry instead of treating the slot as a
+        // string or falling back to the by-name struct scan.
+        "BatchResponseArray" => Some("BatchResponse".to_string()),
         _ => None,
     }
 }
@@ -613,8 +617,12 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // binding is typed: `.grade`/`.confidence`/… resolve as fields of that
         // struct instead of falling back to the ambiguous name scan.
         ("provenance", "record") => Some("CollectionRecord".to_string()),
-        // http.batch(...) → native array of Result entries (one per URL).
-        ("http", "batch") => Some("ResultArray".to_string()),
+        // http.batch(...) → native array of `BatchResponse` entries (one per
+        // URL). Its own kind, not `ResultArray`: the entry is the declared
+        // `BatchResponse` (stdlib/http.tl:36-43), the same struct the
+        // interpreter returns, and `pool.map` — which shares the runtime entry
+        // point — keeps the documented Result-element shape.
+        ("http", "batch") => Some("BatchResponseArray".to_string()),
         // The llm struct returns. Without these, a field shared by two of the
         // structs (`provider`, `elapsed_ms`) is ambiguous and the field read
         // refuses by name — correct, but it means the lowering is unusable.
@@ -1182,6 +1190,80 @@ impl<'a> CodeGen<'a> {
         self.struct_layouts
             .entry("CopyResult".to_string())
             .or_insert(copy_result);
+
+        // `http.batch` entry model (stdlib/http.tl:25-43). These two are the
+        // types the interpreter already produces as real structs
+        // (`src/stdlib/http.rs:766-776`), and without a native layout the
+        // compiled plane could not read a single field of an entry — not `ok`,
+        // not `error.message`, not `response.status`, with or without an
+        // annotation. Declaring them here is enough to emit
+        // `%struct.HttpError` / `%struct.BatchResponse`: `emit_module` renders
+        // every registered layout into its `type` line.
+        //
+        // Shapes follow the .tl declarations, where `status: Int?`
+        // (→ i64) and `response: Response?` / `error: HttpError?` (→ i8*,
+        // null when absent) are optionals. `response` stays an OPAQUE response
+        // handle rather than a materialised `Response`: the compiled plane has
+        // no representation for `body: Bytes` or `headers: Map<..>` inside a
+        // record, so the handle is what `tallow_response_*` takes.
+        let mut http_error = StructLayout {
+            fields: Vec::new(),
+            field_map: HashMap::new(),
+            field_kinds: HashMap::new(),
+            llvm_name: "%struct.HttpError".to_string(),
+        };
+        for (idx, (name, ty)) in [
+            ("kind", LLType::I8Ptr),
+            ("url", LLType::I8Ptr),
+            ("status", LLType::I64),
+            ("retryable", LLType::I1),
+            ("message", LLType::I8Ptr),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            http_error.fields.push(name.to_string());
+            http_error.field_map.insert(name.to_string(), (idx, ty));
+        }
+        self.struct_layouts
+            .entry("HttpError".to_string())
+            .or_insert(http_error);
+
+        let mut batch_response = StructLayout {
+            fields: Vec::new(),
+            field_map: HashMap::new(),
+            field_kinds: HashMap::new(),
+            llvm_name: "%struct.BatchResponse".to_string(),
+        };
+        for (idx, (name, ty)) in [
+            ("url", LLType::I8Ptr),
+            ("ok", LLType::I1),
+            ("attempts", LLType::I64),
+            ("elapsed_ms", LLType::I64),
+            ("response", LLType::I8Ptr),
+            ("error", LLType::I8Ptr),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            batch_response.fields.push(name.to_string());
+            batch_response.field_map.insert(name.to_string(), (idx, ty));
+        }
+        // Container kinds the LL type cannot carry: `i8*` is a string, a
+        // response handle and an entry alike. The tags are what let a later
+        // field read know `entry.response` behaves like a `Response` (three
+        // fields routed to the handle FFI) and `entry.error` like an
+        // `HttpError`. Nothing consumes them yet — that routing is stage 2 —
+        // but they belong to the declaration, not to the consumer.
+        batch_response
+            .field_kinds
+            .insert("response".to_string(), "Response".to_string());
+        batch_response
+            .field_kinds
+            .insert("error".to_string(), "HttpError".to_string());
+        self.struct_layouts
+            .entry("BatchResponse".to_string())
+            .or_insert(batch_response);
     }
 
     /// Set the source directory for resolving local imports.
@@ -6050,16 +6132,24 @@ void tallow_async_runtime_shutdown(void) {
                                 self.browser_variables
                                     .insert(name.clone(), "Response".to_string());
                             }
-                            // http.batch(...) → "ResultArray": the runtime
-                            // returns a NATIVE array of `%struct.TallowResult`
-                            // entries (one per URL, Ok = response handle,
-                            // Err = message), so `.len` reads the count slot
-                            // and `r[i]` yields a Result-typed element.
+                            // http.batch(...) → "BatchResponseArray": the
+                            // runtime returns a NATIVE array with one entry per
+                            // URL, so `.len` reads the count slot and `r[i]` is
+                            // an element of the `BatchResponse` struct — three
+                            // flags, because each prevents a distinct wrong
+                            // answer: the kind keeps `.len` off `strlen`, the
+                            // elem-is-ptr flag inttoptrs the slot, and the elem
+                            // struct lets `r[i].ok` GEP into the entry. (The
+                            // runtime still returns `TallowResult` boxes until
+                            // stage 2 supplies `tallow_http_batch_entries`;
+                            // this stage types the array, it does not build it.)
                             if obj_name == "http" && method == "batch" {
                                 self.browser_variables
-                                    .insert(name.clone(), "ResultArray".to_string());
+                                    .insert(name.clone(), "BatchResponseArray".to_string());
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_is_array.insert(name.clone(), true);
+                                self.variable_array_elem_struct
+                                    .insert(name.clone(), "BatchResponse".to_string());
                             }
                             // pool.map(urls) / pool_map / map_ratelimited on an
                             // IPPool receiver (E-3-04): lowered to the same
@@ -6092,6 +6182,22 @@ void tallow_async_runtime_shutdown(void) {
                     // to the generic method path (which silently emits 0).
                     ExprKind::Index { object, .. } => {
                         if let ExprKind::Ident(src) = &object.kind {
+                            // `let e = rs[0]` — an entry read out of an
+                            // `http.batch` result keeps its record type, so
+                            // `e.ok` resolves as a field of `BatchResponse`
+                            // through the same path as `rs[0].ok` instead of
+                            // falling back to the by-name struct scan. Scoped to
+                            // the batch entry: every other record-element array
+                            // keeps exactly the tracking it had.
+                            if self
+                                .variable_array_elem_struct
+                                .get(src)
+                                .map(String::as_str)
+                                == Some("BatchResponse")
+                            {
+                                self.variable_struct_types
+                                    .insert(name.clone(), "BatchResponse".to_string());
+                            }
                             match self.browser_variables.get(src).map(String::as_str) {
                                 Some("HtmlElementArray") => {
                                     self.browser_variables
@@ -8239,6 +8345,7 @@ void tallow_async_runtime_shutdown(void) {
                                         | "StringArray"
                                         | "BytesArray"
                                         | "ResultArray"
+                                        | "BatchResponseArray"
                                 )
                         }
                         None => false,
@@ -8366,6 +8473,9 @@ void tallow_async_runtime_shutdown(void) {
                         .unwrap_or(false);
                 // `http.batch` arrays hold `%struct.TallowResult` boxes, which
                 // must come back typed as Results (tag/payload) — not strings.
+                // `BatchResponseArray` is deliberately NOT in this set: its
+                // element is a `BatchResponse` record, so it must come back as
+                // the struct (elem_is_ptr) rather than as a Result.
                 let elem_is_result =
                     matches!(self.infer_kind(object).as_deref(), Some("ResultArray"));
 
@@ -12167,9 +12277,9 @@ void tallow_async_runtime_shutdown(void) {
                     // `method_result_kind` mark it as one.
                     "env" => Some("env".to_string()),
                     // `http.batch(...)` — same shape: the kind resolves the
-                    // chained form (`http.batch(u, 1).len`) to "ResultArray".
-                    // Not a handle kind, so the dispatch site cannot mistake it
-                    // for a method on a handle.
+                    // chained form (`http.batch(u, 1).len`) to
+                    // "BatchResponseArray". Not a handle kind, so the dispatch
+                    // site cannot mistake it for a method on a handle.
                     "http" => Some("http".to_string()),
                     // Struct-static namespace (`Crawler.from_links(...)`).
                     "Crawler" => Some("Crawler".to_string()),
@@ -12439,6 +12549,7 @@ void tallow_async_runtime_shutdown(void) {
                             | Some("HtmlElementArray")
                             | Some("ElementArray")
                             | Some("ResultArray")
+                            | Some("BatchResponseArray")
                     )
             }
             ExprKind::Array(_) => true,
@@ -12503,6 +12614,7 @@ void tallow_async_runtime_shutdown(void) {
                     | Some("HtmlElementArray")
                     | Some("ElementArray")
                     | Some("ResultArray")
+                    | Some("BatchResponseArray")
                     | Some("PageEventArray")
                     | Some("CookieArray")
                     | Some("AntibotStepArray")
@@ -12625,6 +12737,7 @@ void tallow_async_runtime_shutdown(void) {
                     | Some("HtmlElementArray")
                     | Some("ElementArray")
                     | Some("ResultArray")
+                    | Some("BatchResponseArray")
             ),
         }
     }
@@ -15194,6 +15307,17 @@ void tallow_async_runtime_shutdown(void) {
                 // Handle arrays keep their own sentence: the refusal names the
                 // browser kind rather than the array layout.
                 match self.browser_variables.get(name).map(String::as_str) {
+                    // `http.batch` results are named separately: each element is
+                    // a `BatchResponse` record, so the useful refusal names the
+                    // entry type and the field-level alternative.
+                    Some("BatchResponseArray") => {
+                        return Err(format!(
+                            "print() of an `http.batch` result (`{name}`) is not supported by the \
+                             native backend — each entry is a `BatchResponse` record, not a \
+                             string; print an entry's fields (`{name}[i].ok`) or run with \
+                             --interpret"
+                        ));
+                    }
                     Some("ElementArray") | Some("HtmlElementArray") | Some("ResultArray") => {
                         return Err(format!(
                             "print() of a browser/handle array (`{name}`) is not supported by the \
@@ -15262,21 +15386,35 @@ void tallow_async_runtime_shutdown(void) {
                 })),
                 None => Ok(None),
             },
-            // `print(rows[0])` where `rows` is an array of arrays: the slot
-            // holds a pointer to an untagged inner array, so it is the same
-            // value class the literal guard refuses. Deliberately limited to the
-            // shapes that are KNOWN to be composites: an element of an
-            // unknown-shape array may be a `Result`/handle slot that already has
-            // its own tagged rendering on this plane (`print(out[0])` of a
-            // `pool.map` result set), and refusing it would be a false negative.
-            ExprKind::Index { object, .. } => match self.array_value_shape(object) {
-                Some(ArrayElemShape::NonScalar) | Some(ArrayElemShape::Mixed) => {
-                    Ok(Some(PrintCompositeRoute::Array {
-                        elem_kind: scalar_elem_kind_or_refuse(ArrayElemShape::NonScalar)?,
-                    }))
+            // `print(rs[0])` where the elements are `http.batch` RECORDS: the
+            // slot holds a `BatchResponse` pointer, and the generic path would
+            // strlen the record's bytes and print plausible garbage. Refuse
+            // with the same fix the whole-struct case names. Scoped to the
+            // batch entry on purpose: other record-element arrays
+            // (`[]PageEvent`, `[]ChunkInfo`, …) are outside this lane and their
+            // print behaviour is left exactly as it was.
+            ExprKind::Index { object, .. } => {
+                let elem_struct = match &object.kind {
+                    ExprKind::Ident(arr) => self.variable_array_elem_struct.get(arr).cloned(),
+                    _ => array_elem_kind(self.infer_kind(object).as_deref()),
+                };
+                if elem_struct.as_deref() == Some("BatchResponse") {
+                    return Err(
+                        "print() of an `http.batch` entry is not supported by the native backend \
+                         — the `BatchResponse` record would be read as a string; print its fields \
+                         (`<entry>.ok`, `<entry>.error.message`) or run with --interpret"
+                            .to_string(),
+                    );
                 }
-                _ => Ok(None),
-            },
+                match self.array_value_shape(object) {
+                    Some(ArrayElemShape::NonScalar) | Some(ArrayElemShape::Mixed) => {
+                        Ok(Some(PrintCompositeRoute::Array {
+                            elem_kind: scalar_elem_kind_or_refuse(ArrayElemShape::NonScalar)?,
+                        }))
+                    }
+                    _ => Ok(None),
+                }
+            }
             _ => Ok(None),
         }
     }
