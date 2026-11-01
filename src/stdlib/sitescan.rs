@@ -117,9 +117,9 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
 /// Retry ceiling for `governed_get`-backed JSON calls (crt.sh / RDAP / DoH).
 const MAX_RETRIES: u32 = 3;
 
-/// Redirect ceiling reference. The ceiling itself lives with the gate
-/// (`egress_http::MAX_FOLLOW_HOPS`, 8) so no module can carry a different one.
-const FOLLOW_REDIRECTS: u32 = crate::runtime::egress_http::MAX_FOLLOW_HOPS as u32;
+// The redirect ceiling lives with the gate — `egress_http::MAX_FOLLOW_HOPS` —
+// so no module can carry a different one.
+
 
 /// Build a ureq agent with the same phase timeouts as the sibling recon
 /// modules, `http_status_as_error(false)` (4xx/5xx arrive as ordinary
@@ -250,33 +250,6 @@ fn gov_rps() -> f64 {
 static GOV_SITESCAN: LazyLock<Mutex<RateGovernor>> =
     LazyLock::new(|| Mutex::new(RateGovernor::new(gov_rps())));
 
-/// Build a ureq agent with the same phase timeouts as the sibling recon
-/// modules, `http_status_as_error(false)` (4xx/5xx arrive as ordinary
-/// responses — status codes are findings here, not errors), and the
-/// fail-closed egress proxy from the single source of truth.
-fn scan_agent(max_redirects: u32) -> ureq::Agent {
-    let builder = ureq::Agent::config_builder()
-        .timeout_global(None)
-        .timeout_per_call(Some(Duration::from_secs(30)))
-        .timeout_resolve(Some(Duration::from_secs(10)))
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_send_request(Some(Duration::from_secs(10)))
-        .timeout_send_body(Some(Duration::from_secs(30)))
-        .timeout_recv_response(Some(Duration::from_secs(30)))
-        .timeout_recv_body(Some(Duration::from_secs(30)))
-        .http_status_as_error(false)
-        .max_redirects(max_redirects)
-        .https_only(false)
-        .proxy(crate::runtime::egress_http::proxy());
-    builder.build().new_agent()
-}
-
-/// Agent that follows redirects (page fetches land on the final URL).
-static AGENT_FOLLOW: LazyLock<ureq::Agent> = LazyLock::new(|| scan_agent(FOLLOW_REDIRECTS));
-
-/// Agent with redirects disabled (fingerprint GETs that must observe 3xx).
-static AGENT_NOFOLLOW: LazyLock<ureq::Agent> = LazyLock::new(|| scan_agent(0));
-
 /// One full HTTP response captured for scanning.
 #[derive(Debug, Clone)]
 struct HttpResp {
@@ -372,11 +345,18 @@ fn fp_get_capped(
         return fetch(url, headers);
     }
     GOV_SITESCAN.lock().unwrap().wait();
-    let agent = if follow {
-        AGENT_FOLLOW.clone()
-    } else {
-        AGENT_NOFOLLOW.clone()
-    };
+    if follow {
+        // A page fetch must land on the final URL. It gets there through the
+        // gated loop, which re-consults the register for every hop; the agent
+        // itself never follows (EGRESS-REDIRECTS.md requirement 1).
+        let followed =
+            crate::runtime::egress_http::follow(&AGENT_FOLLOW, url, "GET", None, headers)
+                .map_err(|r| format!("sitescan:net: {url}: {r}"))?;
+        let mut captured = capture(followed.response, cap);
+        captured.final_url = followed.final_url;
+        return Ok(captured);
+    }
+    let agent = AGENT_NOFOLLOW.clone();
     let mut req = agent.get(url);
     for (k, v) in headers {
         req = req.header(k.as_str(), v.as_str());
