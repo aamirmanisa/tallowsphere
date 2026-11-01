@@ -24,7 +24,13 @@ fn declared_functions() -> BTreeSet<String> {
     let src = std::fs::read_to_string(manifest_dir().join("stdlib/crypto.tl"))
         .expect("stdlib/crypto.tl must exist");
     src.lines()
-        .filter_map(|l| l.strip_prefix("fn "))
+        // `native fn` is the canonical manifest form for a bodyless declaration
+        // (41593f9 converted 32 crypto declarations to it); matching only `fn `
+        // made this gate compare the report against 28 of the 60 declarations.
+        .filter_map(|l| {
+            l.strip_prefix("native fn ")
+                .or_else(|| l.strip_prefix("fn "))
+        })
         .map(|rest| {
             rest.chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')

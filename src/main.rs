@@ -18762,7 +18762,16 @@ fn crypto_function_rows(
     for line in decl.lines() {
         // Column 0 only: indented `fn`s are members of a declared module block
         // (e.g. `module Kem { fn encap ... }`), not dispatchable surface.
-        let Some(rest) = line.strip_prefix("fn ") else {
+        //
+        // `native fn` is the canonical manifest form for a bodyless declaration:
+        // 41593f9 converted 32 crypto declarations to it so the bridge's parser
+        // would accept the file, and this scanner kept matching only `fn ` — so
+        // those 32 functions silently vanished from the report (hpke_seal and
+        // friends) while the code implemented them.
+        let Some(rest) = line
+            .strip_prefix("native fn ")
+            .or_else(|| line.strip_prefix("fn "))
+        else {
             continue;
         };
         let name: String = rest
