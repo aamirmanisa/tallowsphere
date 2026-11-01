@@ -68,7 +68,9 @@ const RAW_NEEDLES: &[&str] = &[
 
 /// `(path relative to crate root, one-line reason)`.
 ///
-/// Cap is the measured union at `595334a` (5 HTTP + 7 raw, no overlap).
+/// Cap is the measured union at `ee9cf9f`: 3 HTTP + 7 raw, no overlap — the
+/// 12-entry list at `595334a` minus `src/browser/typesense.rs` and
+/// `src/request_plan.rs`, both gated in wave 11.
 /// Putting a newly-ungated file here instead of gating it is how the gate
 /// rots; the cap makes that a failing assertion, not a review comment.
 /// `src/stdlib/relay_room.rs` is the other sendtallow-boundary file but has
@@ -81,10 +83,6 @@ const DEBT: &[(&str, &str)] = &[
     (
         "src/browser/socks_shim.rs",
         "loopback SOCKS upstream; destination is dialed by the proxy, never this process",
-    ),
-    (
-        "src/browser/typesense.rs",
-        "Typesense product-search client; operator-configured base_url, not a stdlib grant path",
     ),
     (
         "src/cli/daemon.rs",
@@ -101,10 +99,6 @@ const DEBT: &[(&str, &str)] = &[
     (
         "src/cli/veil_cmd.rs",
         "plane-assertion probes (tor SOCKS / mesh hub / loopback bridge); the verb's job is reachability",
-    ),
-    (
-        "src/request_plan.rs",
-        "HTTP execution core; refuses via egress_refusal() (proxy contract), not scope::require",
     ),
     (
         "src/signing.rs",
@@ -124,7 +118,7 @@ const DEBT: &[(&str, &str)] = &[
     ),
 ];
 
-const DEBT_CAP: usize = 12;
+const DEBT_CAP: usize = 10;
 
 /// Production region: everything before the first `#[cfg(test)]`.
 /// Matches `reports/egress-surface-inventory.md` / `inventory_scan.py`.
