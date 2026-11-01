@@ -34,6 +34,14 @@
 #   methods = ["GET", "HEAD"]          # default; read-only unless justified
 #   notes = "why this is in scope"
 #
+# Method vocabulary (closed; an unknown token is a malformed register):
+#   GET HEAD POST PUT PATCH DELETE OPTIONS TRACE CONNECT
+# Default for an omitted `methods` field is GET, HEAD. CONNECT is the
+# raw-socket / port-scan verb (Scanner.scan and similar). It is grantable
+# on an explicit operator line; it is never a default, and this shipped
+# register does not grant it to any host. CONNECT here is not HTTP CONNECT
+# (RFC 9110 proxy tunneling).
+#
 # Written-consent entries are refused without `evidence`. Ownership entries are
 # refused if the grant has expired. Nothing else enables a target: absence of an
 # entry, an unreadable register, or a malformed register all refuse every host.

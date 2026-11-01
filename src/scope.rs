@@ -89,7 +89,9 @@ pub struct ScopeEntry {
     /// [`Basis::WrittenConsent`].
     #[serde(default)]
     pub evidence: Option<String>,
-    /// HTTP methods permitted. Defaults to read-only methods.
+    /// Methods permitted. Defaults to read-only HTTP (`GET`, `HEAD`).
+    /// `CONNECT` is the raw-socket / port-scan verb; it is grantable and
+    /// never a default. See [`GRANTABLE_METHODS`].
     #[serde(default = "default_methods")]
     pub methods: Vec<String>,
     #[serde(default)]
@@ -98,6 +100,22 @@ pub struct ScopeEntry {
 
 fn default_methods() -> Vec<String> {
     vec!["GET".to_string(), "HEAD".to_string()]
+}
+
+/// Closed method vocabulary a register entry may grant.
+///
+/// `GET` / `HEAD` are the default. `CONNECT` is the raw-socket verb
+/// (`Scanner.scan` and similar port probes): grantable, never default.
+/// It is not HTTP CONNECT (RFC 9110 proxy tunneling). The remaining
+/// names are the other HTTP methods; they stay grantable so an existing
+/// `methods = ["POST"]` entry does not become malformed.
+pub const GRANTABLE_METHODS: &[&str] = &[
+    "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT",
+];
+
+fn is_grantable_method(method: &str) -> bool {
+    let m = method.trim().to_ascii_uppercase();
+    GRANTABLE_METHODS.iter().copied().any(|g| g == m)
 }
 
 impl ScopeEntry {
@@ -553,6 +571,26 @@ impl ScopeRegister {
                     }),
                 };
             }
+            // Closed vocabulary: an unknown verb is a malformed register, not
+            // a silent extra grant. `CONNECT` is in the set; it is still not
+            // a default.
+            for m in &e.methods {
+                if !is_grantable_method(m) {
+                    return Self {
+                        path,
+                        entries: BTreeMap::new(),
+                        load_failure: Some(Refusal::RegisterMalformed {
+                            path: display,
+                            detail: format!(
+                                "entry for '{}' grants unknown method '{m}'; \
+                                 grantable verbs are {}",
+                                e.host,
+                                GRANTABLE_METHODS.join(", ")
+                            ),
+                        }),
+                    };
+                }
+            }
             entries.insert(key, e);
         }
         Self {
@@ -845,6 +883,66 @@ mod tests {
             Some(Refusal::MethodNotAllowed { .. })
         ));
         assert!(r.authorize("https://owned.example/", "HEAD", T).is_allowed());
+    }
+
+    #[test]
+    fn connect_grant_authorizes_connect_on_that_host() {
+        let dir = std::env::temp_dir().join("tallow-scope-test-connect-grant");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let p = dir.join("register.toml");
+        std::fs::write(
+            &p,
+            r#"
+[[authorized]]
+host = "scan.example"
+basis = "ownership"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+methods = ["CONNECT"]
+"#,
+        )
+        .expect("write");
+        let r = ScopeRegister::load(&p);
+        assert_eq!(
+            r.load_failure(),
+            None,
+            "CONNECT is a grantable verb, got {:?}",
+            r.load_failure().map(Refusal::explain)
+        );
+        let d = r.authorize("scan.example", "CONNECT", T);
+        assert!(d.is_allowed(), "{}", d.render());
+        // A CONNECT-only grant does not imply HTTP reads.
+        assert!(matches!(
+            r.authorize("scan.example", "GET", T).refusal(),
+            Some(Refusal::MethodNotAllowed { .. })
+        ));
+    }
+
+    #[test]
+    fn shipped_loopback_refuses_connect() {
+        let r = ScopeRegister::load(DEFAULT_REGISTER_PATH);
+        assert_eq!(
+            r.load_failure(),
+            None,
+            "shipped register must parse, got {:?}",
+            r.load_failure().map(Refusal::explain)
+        );
+        let d = r.authorize("127.0.0.1", "CONNECT", T);
+        assert!(
+            matches!(d.refusal(), Some(Refusal::MethodNotAllowed { .. })),
+            "shipped loopback must not grant CONNECT, got {}",
+            d.render()
+        );
+        // Vocabulary change must not silently widen the default GET/HEAD grant.
+        assert!(
+            r.authorize("127.0.0.1", "GET", T).is_allowed(),
+            "shipped loopback GET must still be allowed"
+        );
+        assert!(
+            r.authorize("127.0.0.1", "HEAD", T).is_allowed(),
+            "shipped loopback HEAD must still be allowed"
+        );
     }
 
     #[test]
