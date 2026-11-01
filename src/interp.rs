@@ -5216,6 +5216,18 @@ impl Interpreter {
                 if let Some(err) = egress_error {
                     return Ok(Value::Err(Box::new(Value::String(err))));
                 }
+                // Hop one is gated here, and `follow` gates every hop after it.
+                // The compiled plane's `fetch` has always refused an unlisted
+                // host (`runtime/fetch.rs:352`); this builtin did not, so the
+                // same program was refused under --require-native and egressed
+                // under --interpret. The sentence is the register's own.
+                if let Err(r) = crate::scope::require(&url, "GET") {
+                    return Ok(Value::Err(Box::new(Value::String(format!(
+                        "fetch: {} — {}",
+                        r.code(),
+                        r.explain()
+                    )))));
+                }
                 // Baseline politeness delay, shared with the native runtime and
                 // the stdlib egress client.
                 crate::runtime::egress_http::rate_limit_wait(&url);
