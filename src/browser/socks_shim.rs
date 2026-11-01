@@ -184,6 +184,15 @@ fn handle_conn(
     req.extend_from_slice(&addr_tail);
 
     // Upstream handshake.
+    //
+    // Not register-gated, by classification: this dial is proxy transport, not
+    // a destination. The relay listens on loopback only, and it re-originates
+    // the *client's* SOCKS CONNECT to the operator-configured SOCKS endpoint
+    // (Tor on 127.0.0.1:9050 by default). The destination named inside that
+    // request is dialed by the proxy, never by this process. Gating here would
+    // gate a loopback proxy/control socket — excluded by the register's
+    // doctrine — and since the shipped register grants CONNECT to no host it
+    // would silently disable per-run circuit isolation.
     let mut up = match TcpStream::connect_timeout(&upstream, UPSTREAM_CONNECT_TIMEOUT) {
         Ok(s) => s,
         Err(_) => {

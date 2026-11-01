@@ -638,6 +638,17 @@ async fn check_proxy_health(
         return Err(format!("unsupported proxy scheme: {proxy_url}"));
     };
 
+    // Register gate: a raw TCP dial to a pool proxy endpoint, so the verb is
+    // CONNECT, the register's raw-socket verb (not RFC 9110 CONNECT). Fatal:
+    // one hop up (`:809`) pushes this `Result` into a vector the pool reads as
+    // a dead-proxy verdict and the sweep continues — a returned refusal would
+    // be logged as "unhealthy proxy", not as a refusal, and the next proxy
+    // would be dialled.
+    if let Err(r) = crate::scope::require(&addr, "CONNECT") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+
     // Connect to proxy with timeout
     let stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
         .await
@@ -1181,5 +1192,32 @@ mod tests {
         assert!(!pool.health[0].alive);
         let proxy3 = pool.get_proxy("third.net").unwrap();
         assert_eq!(proxy3.url, "socks5://10.0.0.2:1080", "dead proxy must be excluded");
+    }
+
+    /// The health probe dials the proxy endpoint over raw TCP. The register
+    /// must run with CONNECT before the socket, and the refusal must be fatal
+    /// because the pool reads an `Err` as "dead proxy" and moves on.
+    #[test]
+    fn check_proxy_health_consults_the_register_before_connecting() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/proxy.rs"
+        ))
+        .expect("read src/browser/proxy.rs");
+        let fstart = src
+            .find("async fn check_proxy_health")
+            .expect("check_proxy_health must exist");
+        let body = &src[fstart..];
+        let body = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
+        let gate = body
+            .find("crate::scope::require(&addr, \"CONNECT\")")
+            .expect("check_proxy_health must call crate::scope::require(&addr, \"CONNECT\")");
+        let connect = body
+            .find("TcpStream::connect(&addr)")
+            .expect("check_proxy_health must connect");
+        assert!(
+            gate < connect,
+            "scope::require must run before the proxy socket is opened"
+        );
     }
 }

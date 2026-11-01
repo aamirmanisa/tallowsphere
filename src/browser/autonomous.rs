@@ -269,6 +269,16 @@ pub async fn scrape_url(
                 stats.total_requests.fetch_add(1, Ordering::Relaxed);
                 let proxy = next_proxy(&config.proxies, &proxy_index);
 
+                // Register gate, on the URL actually sent, before the client
+                // is built. Fatal: the `match client.get(url).send()` arm below
+                // turns a transport `Err` into `ScraperState::Failed`, and the
+                // loop retries/rotates from there — a returned refusal would be
+                // reported as "the site is down" and the sweep would continue.
+                if let Err(r) = crate::scope::require(url, "GET") {
+                    eprintln!("runtime error: {} — {}", r.code(), r.explain());
+                    std::process::exit(1);
+                }
+
                 // Build client with optional proxy
                 let client = {
                     let mut builder = reqwest::Client::builder()
@@ -543,5 +553,32 @@ mod tests {
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.max_concurrent, 10);
         assert!(config.auto_solve_challenges);
+    }
+
+    /// `scrape_url` swallows transport errors as `ScraperState::Failed`, so the
+    /// register gate must run on the URL actually sent, with GET, before the
+    /// client is built — a returned refusal would read as "site down".
+    #[test]
+    fn scrape_url_consults_the_register_before_the_request() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/autonomous.rs"
+        ))
+        .expect("read src/browser/autonomous.rs");
+        let fstart = src
+            .find("pub async fn scrape_url")
+            .expect("scrape_url must exist");
+        let body = &src[fstart..];
+        let body = &body[..body.find("pub async fn scrape_batch").unwrap_or(body.len())];
+        let gate = body
+            .find("crate::scope::require(url, \"GET\")")
+            .expect("scrape_url must call crate::scope::require(url, \"GET\")");
+        let build = body
+            .find("client.get(url).send()")
+            .expect("scrape_url must build the GET");
+        assert!(
+            gate < build,
+            "scope::require must run before the GET is built"
+        );
     }
 }
