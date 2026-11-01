@@ -63,7 +63,7 @@ bypass; a client that follows without recording the final URL is a provenance de
 
 ## Gates
 
-- `cargo test --lib egress::redirects -- --test-threads=1` — a new in-crate suite over a loopback
+- `cargo test --lib redirects -- --test-threads=1` — a new in-crate suite (every case named `redirects_*`) over a loopback
   harness: (a) listed → unlisted 302 is refused, and the unlisted server receives nothing;
   (b) listed → listed 302 succeeds and `Response.url` is the final URL; (c) a 302 that downgrades
   https→http is refused; (d) 5 hops of listed hosts succeed, 9 refuse with `redirect-limit`;
