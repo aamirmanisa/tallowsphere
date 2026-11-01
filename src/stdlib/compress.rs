@@ -23,6 +23,15 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         // Contract: `Bytes` is base64 at runtime (this module's existing
         // convention), so both are base64 in -> base64 out, and
         // `decompress_with(compress_with(x, algo, level), algo) == x`.
+        // `compress.compress(data)` / `compress.decompress(data)` carry no
+        // algorithm, so there is no correct default to invent — the earlier
+        // surface declared them and no dispatcher ever answered them. They now
+        // refuse and name the spellings that do work, which is the rule this
+        // repository applies to declared-but-unimplemented paths.
+        "compress" => Some(Err("compress.compress: choose an algorithm — compress.gzip(data), \
+compress.zstd(data), compress.brotli(data), or compress.compress_with(data, algo, level)".into())),
+        "decompress" => Some(Err("compress.decompress: choose an algorithm — compress.gunzip(data), \
+compress.unzstd(data), compress.unbrotli(data), or compress.decompress_with(data, algo)".into())),
         "compress_with" => Some(compress_with(args)),
         "decompress_with" => Some(decompress_with(args)),
 

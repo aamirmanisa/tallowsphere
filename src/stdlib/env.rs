@@ -27,6 +27,26 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
                 Err(_) => Err(format!("env.require: {name} is not set")),
             })
         }
+        // `env.has(name) -> bool` and `env.remove(name)`: declared in
+        // stdlib/env.tl and absent from every dispatcher — a probe of all
+        // top-level declarations reported `undefined function: env.has` and
+        // `env.remove` (2026-11-01).
+        "has" => Some(match args.first() {
+            Some(Value::String(name)) => Ok(Value::Bool(std::env::var(name).is_ok())),
+            _ => Err("env.has expects a String name".into()),
+        }),
+        "remove" => Some(match args.first() {
+            Some(Value::String(name)) => {
+                // SAFETY: `remove_var` is unsafe in edition 2024 because a
+                // concurrent reader can observe a torn environment. The
+                // interpreter is single-threaded here and every other
+                // environment access in this module is `var`, which takes the
+                // same lock; the removal is therefore serialised with them.
+                unsafe { std::env::remove_var(name) };
+                Ok(Value::Nil)
+            }
+            _ => Err("env.remove expects a String name".into()),
+        }),
         "config_dir" => Some(env_config_dir(&args)),
         "data_dir" => Some(env_data_dir(&args)),
         "temp_dir" => Some(env_temp_dir(&args)),
