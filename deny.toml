@@ -23,6 +23,17 @@ yanked = "warn"
 # needs re-deciding, so the decision is re-made rather than inherited.
 # review-deadline: 2027-01-31
 ignore = [
+    # ── zstd advisory trio (RUSTSEC-2026-0391 / -0398 / -0403), added 2026-11-01 ──
+    # zstd 0.13.4 / zstd-safe 7.4.0 are the newest published releases and both are
+    # still flagged: no patched version exists yet, and wreq-util 3.0.0-rc.14 pins
+    # zstd ^0.13.3 so the crate cannot be removed by upgrading. Exposure is bounded:
+    # tallow compresses and decompresses its own archives, not untrusted network
+    # streams, so the uninitialised-memory and seek paths are reachable only when a
+    # caller decompresses a hostile file. Revisit the moment zstd ships a fixed
+    # 0.13.x — do not let this pair survive the file's review deadline.
+    "RUSTSEC-2026-0391",
+    "RUSTSEC-2026-0398",
+    "RUSTSEC-2026-0403",
     # atomic-polyfill (unmaintained, no vulnerability) — transitive via
     # heapless 0.7 <- postcard 1.1.3 (latest). Unfixable until postcard moves
     # off heapless 0.7; re-check on every postcard release. Documented
