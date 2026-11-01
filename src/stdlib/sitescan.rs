@@ -3462,6 +3462,9 @@ mod tests {
     #[test]
     fn scan_pipeline_offline() {
         let _guard = TEST_LOCK.lock().unwrap();
+        let _grant = crate::scope::override_register(
+            crate::scope::ScopeRegister::granting(&[("x.test", &["GET"])]),
+        );
         *FETCH_OVERRIDE.lock().unwrap() = Some(fixture_fetch);
         let opts = r#"{"max_pages": 10, "max_js": 5, "max_css": 5}"#;
         let out = scan(vec![

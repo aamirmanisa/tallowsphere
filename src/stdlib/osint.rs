@@ -8064,6 +8064,9 @@ OriginAS:       AS15169
 
     #[test]
     fn test_scanner_scan_result_fields() {
+        let _grant = crate::scope::override_register(crate::scope::ScopeRegister::granting(&[
+            ("127.0.0.1", &["CONNECT"]),
+        ]));
         // Create a valid scope for loopback
         let scope = dispatch("ScanScope.authorize", vec![Value::String("127.0.0.1/32".into())])
             .unwrap().unwrap();
@@ -8094,6 +8097,9 @@ OriginAS:       AS15169
 
     #[test]
     fn test_scanner_scan_ip_outside_range_returns_err() {
+        let _grant = crate::scope::override_register(crate::scope::ScopeRegister::granting(&[
+            ("10.0.0.1", &["CONNECT"]),
+        ]));
         // Authorize only 10.0.0.0/32
         let scope = dispatch("ScanScope.authorize", vec![Value::String("10.0.0.1/32".into())])
             .unwrap().unwrap();
@@ -8119,6 +8125,33 @@ OriginAS:       AS15169
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_scanner_scan_without_connect_grant_is_refused() {
+        // No fixture planted: the shipped register lists 127.0.0.1 for GET/HEAD.
+        let scope = dispatch(
+            "ScanScope.authorize",
+            vec![Value::String("127.0.0.1/32".into())],
+        )
+        .unwrap()
+        .unwrap();
+        let result = dispatch(
+            "Scanner.scan",
+            vec![
+                scope,
+                Value::Array(vec![Value::Int(1)]),
+                Value::Int(100),
+            ],
+        );
+        assert!(result.is_some());
+        let err = result
+            .unwrap()
+            .expect_err("scan without CONNECT grant must refuse");
+        assert!(
+            err.contains("scope:method-not-allowed"),
+            "expected method-not-allowed, got {err}"
+        );
     }
 
     // ── IntelReport tests ────────────────────────────────────────────
