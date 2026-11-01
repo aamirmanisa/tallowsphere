@@ -86,6 +86,22 @@ pub fn dispatch_method(_object: &Value, _method: &str, _args: Vec<Value>) -> Opt
     None
 }
 
+/// Deny-by-default egress gate for this module — FATAL, not a returned `Err`.
+///
+/// `deals` has no shared HTTP helper: every entry point calls
+/// `runtime::egress_http` itself, and two of them discard transport errors on
+/// purpose (`discover_retailers` does `Err(_) => continue`, `scrape_hc_feed`
+/// turns `Err` into a JSON result). A refusal returned as an `Err` would be
+/// swallowed by exactly those paths and the run would continue, so the refusal
+/// ends the process here, the same shape as `net.connect` and the six modules
+/// fixed in 95aa33c.
+fn gate(input: &str, method: &str) {
+    if let Err(r) = crate::scope::require(input, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 fn extract_string(args: &[Value], idx: usize, name: &str) -> Result<String, String> {
     match args.get(idx) {
         Some(Value::String(s)) => Ok(s.clone()),
@@ -119,6 +135,8 @@ fn price_check(args: Vec<Value>) -> StdlibResult {
         .map_err(|e| format!("failed to load retailer config {config_path}: {e}"))?;
     let config: serde_json::Value = serde_json::from_str(&config_bytes)
         .map_err(|e| format!("invalid retailer config: {e}"))?;
+    // User-supplied product URL: authorize it as the GET it is.
+    gate(&url, "GET");
     let response = crate::runtime::egress_http::get(&url)
         .header("User-Agent", "Mozilla/5.0 (compatible; TallowDeals/1.0)")
         .call()
@@ -166,6 +184,9 @@ fn scrape_deals_page(args: Vec<Value>) -> StdlibResult {
     if deals_url.is_empty() {
         return Err("deals_page_url not configured for this retailer".to_string());
     }
+    // The retailer config names the host actually fetched: authorize that URL,
+    // not the config name the caller passed.
+    gate(&deals_url, "GET");
     let response = crate::runtime::egress_http::get(&deals_url)
         .header("User-Agent", "Mozilla/5.0 (compatible; TallowDeals/1.0)")
         .call()
@@ -638,6 +659,8 @@ fn discord_alert(args: Vec<Value>) -> StdlibResult {
     let body = serde_json::to_string(&payload)
         .map_err(|e| format!("json serialize failed: {e}"))?;
 
+    // Caller-supplied webhook: the verb is POST, as performed below.
+    gate(&webhook_url, "POST");
     let response = crate::runtime::egress_http::post(&webhook_url)
         .header("Content-Type", "application/json")
         .send(body.as_bytes())
@@ -746,6 +769,9 @@ fn telegram_alert(args: Vec<Value>) -> StdlibResult {
         serde_json::to_string(&payload).map_err(|e| format!("json serialize failed: {e}"))?;
 
     let api_url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
+    // Bot API send is a POST to a host built here; authorize the URL dialed,
+    // never the token.
+    gate(&api_url, "POST");
     let response = crate::runtime::egress_http::post(&api_url)
         .header("Content-Type", "application/json")
         .send(body.as_bytes())
@@ -862,6 +888,8 @@ fn ip_pool_scrape(args: Vec<Value>) -> StdlibResult {
         .unwrap_or(2000);
 
     // IP rotation: simplified fetch with stealth headers (proxy handled externally)
+    // User-supplied product URL: authorize the GET before the pool is consulted.
+    gate(&url, "GET");
     let response = crate::runtime::egress_http::get(&url)
         .header("User-Agent", random_user_agent(&retailer).as_str())
         .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
@@ -1267,6 +1295,8 @@ fn stealth_scrape(args: Vec<Value>) -> StdlibResult {
     let fp = generate_stealth_fingerprint(&retailer, &stealth_level);
 
     // Build stealth headers
+    // User-supplied product URL: a stealth profile is not an authorization.
+    gate(&url, "GET");
     let response = crate::runtime::egress_http::get(&url)
         .header("User-Agent", &fp.user_agent)
         .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
@@ -1721,6 +1751,9 @@ fn discover_retailers(args: Vec<Value>) -> StdlibResult {
         };
 
         // Try to fetch homepage
+        // Gate here and not at the vendor-error arm: `Err(_) => continue` below
+        // would turn a returned refusal into a silently skipped domain.
+        gate(&base_url, "GET");
         let html = match crate::runtime::egress_http::get(&base_url)
             .header("User-Agent", "Mozilla/5.0 (compatible; TallowDiscovery/1.0)")
             .call()
@@ -1902,6 +1935,9 @@ fn scrape_hc_feed(args: Vec<Value>) -> StdlibResult {
         .unwrap_or_else(|| "online".to_string());
 
     let url = format!("https://shop-40.example/api/v1/feed?page={page}&limit={limit}&kind={kind}");
+    // Gate here and not at the vendor-error arm: the `Err` arm below reports
+    // "HC API unavailable" as a normal result, which would hide a refusal.
+    gate(&url, "GET");
     match crate::runtime::egress_http::get(&url)
         .header("User-Agent", "TallowDeals/1.0")
         .call()

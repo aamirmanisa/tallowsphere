@@ -126,6 +126,25 @@ fn build_result_map(fields: Vec<(&str, String)>) -> Value {
     Value::Map(map)
 }
 
+/// Deny-by-default egress gate for this module.
+///
+/// The three `fetch` call sites all DISCARD the `Err` — `cxense_get_article`
+/// does `Err(_) => continue` in its referrer loop and the other two turn it
+/// into a normal result map carrying an `error` field — so a refusal returned
+/// from `fetch` would be swallowed and the program would report a normal
+/// outcome. The gate therefore sits at each entry point, where the user URL
+/// arrives, and is FATAL: `eprintln!` the register's own sentence, then
+/// `std::process::exit(1)`. Same doctrine as `net.connect` on the compiled
+/// plane (see 95aa33c, where a returned `Err` was measured being discarded).
+///
+/// The verb is `GET`: every request in this module is `AGENT.get(url)`.
+fn gate(url: &str) {
+    if let Err(r) = crate::scope::require(url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 fn fetch(url: &str, referer: &str, ua: &str, cookie_header: &str) -> Result<String, String> {
     let mut req = AGENT.get(url).header("User-Agent", ua).header("Referer", referer);
     if !cookie_header.is_empty() {

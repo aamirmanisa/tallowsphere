@@ -2559,35 +2559,31 @@ fn derive_cors(acao: Option<&str>, acac: Option<&str>, options_status: Option<u1
 
 /// The one place a socket is opened in this module.
 ///
-/// Gate first: the scope register is consulted on the *host* before a request is built, so a
-/// host that is not listed is refused without a packet. The register's read-only grant is what
-/// is asked for (`GET`, as `topology` asks for a read-only probe); an OPTIONS/HEAD matrix sends
-/// no body, mutates nothing, and the granting entry is recorded on every matrix so the authority
+/// Gate first: `crate::scope::require` is consulted on the user URL before a
+/// request is built, so a host that is not listed is refused without a packet.
+/// The register's read-only grant is what is asked for (`GET`, as `topology`
+/// asks for a read-only probe); an OPTIONS/HEAD matrix sends no body, mutates
+/// nothing, and the granting entry is recorded on every matrix so the authority
 /// behind the observation travels with it.
+///
+/// Dispatch propagates this `Err` with `?` on both `method_matrix` and
+/// `method_matrix_json`, so a returned refusal is a runtime error rather than a
+/// silent empty matrix.
 pub fn method_matrix(
     base_url: &str,
     endpoints: &[Endpoint],
     timeout_ms: u64,
 ) -> Result<MethodMatrix, String> {
     let base = parse_base(base_url)?;
-    let register = crate::scope::ScopeRegister::load_default();
-    let grant = match register.authorize(&base.host, "GET", &crate::scope::utc_today()) {
-        crate::scope::Decision::Allowed(entry) => format!(
-            "{host} ({basis}, granted_by {by}, expires {expires})",
-            host = entry.host,
-            basis = entry.basis.as_str(),
-            by = entry.granted_by,
-            expires = entry.expires_at.as_deref().unwrap_or("unbounded")
-        ),
-        crate::scope::Decision::Refused(refusal) => {
-            return Err(format!(
-                "{CODE_MATRIX_SCOPE}: target '{}' is not authorized ({}): {}",
-                base.host,
-                refusal.code(),
-                refusal.explain()
-            ))
-        }
-    };
+    let entry = crate::scope::require(base_url, "GET")
+        .map_err(|r| format!("{CODE_MATRIX_SCOPE}: {} — {}", r.code(), r.explain()))?;
+    let grant = format!(
+        "{host} ({basis}, granted_by {by}, expires {expires})",
+        host = entry.host,
+        basis = entry.basis.as_str(),
+        by = entry.granted_by,
+        expires = entry.expires_at.as_deref().unwrap_or("unbounded")
+    );
 
     // One probe per PATH, not per declared method: `GET /users` and `POST /users` are one
     // resource to ask "what does OPTIONS say about /users".
