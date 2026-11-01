@@ -138,6 +138,29 @@ pub fn is_known_function(function: &str) -> bool {
     matches!(function, "fetch" | "scrape")
 }
 
+/// Deny-by-default egress gate for this module — FATAL, not a returned `Err`.
+///
+/// The module has one choke point. All four `runtime::egress_http` request
+/// sites live in `try_level`, and `try_level`'s `Err` is *not* propagated:
+/// `escalation_fetch` folds it into `last_error`, advances to the next rung,
+/// and finally reports "All levels exhausted. Last error: …". A refusal
+/// returned as an `Err` from inside the ladder would therefore be rewritten
+/// into an exhaustion message and the run would continue. The refusal ends the
+/// process here instead, at the point where the caller's URL arrives.
+///
+/// The gate sits in `escalation_fetch` rather than in each rung so a refused
+/// target is refused once, before the ladder is entered, rather than up to six
+/// times while being misreported as a transport failure.
+///
+/// Every rung issues `egress_http::get`, so `"GET"` is the method actually
+/// sent; `escalation_scrape` reaches the same gate through `escalation_fetch`.
+fn gate(input: &str, method: &str) {
+    if let Err(r) = crate::scope::require(input, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 // ── Escalation.fetch(url, options) ──
 
 fn escalation_fetch(args: Vec<Value>) -> StdlibResult {
@@ -148,6 +171,10 @@ fn escalation_fetch(args: Vec<Value>) -> StdlibResult {
     let max_level = parse_level_arg(&args, 1, Level::HttpUaPremium, "max_level")?;
     let start_level = parse_level_arg(&args, 2, Level::RawHttp, "start_level")?;
     let timeout_ms = args.get(3).and_then(|v| if let Value::Int(i) = v { Some(*i as u64) } else { None }).unwrap_or(30000);
+
+    // Authorize the caller's target before the ladder is entered. Every rung
+    // sends a GET, so "GET" is the method actually sent.
+    gate(url, "GET");
 
     let start = Instant::now();
     let mut level = start_level;
