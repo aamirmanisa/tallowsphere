@@ -20,6 +20,12 @@ const USER_AGENT: &str = "Tallow/1.0 (operator@example.com)";
 
 fn edgar_get(path: &str) -> Result<String, String> {
     let url = format!("{}{}", EDGAR_BASE, path);
+    // Deny-by-default egress, FATAL: a refusal must not be an Err the caller can
+    // discard (measured on the wordpress gate, 2026-11-01).
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/json")
@@ -88,6 +94,12 @@ fn company_concept(cik: &str, taxonomy: &str, concept: &str) -> StdlibResult {
 fn cik_lookup(ticker: &str) -> StdlibResult {
     // Send request headers that SEC API expects
     let url = "https://www.sec.gov/files/company_tickers.json";
+    // Deny-by-default egress, FATAL: a refusal must not be an Err the caller can
+    // discard (measured on the wordpress gate, 2026-11-01).
+    if let Err(r) = crate::scope::require(url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(url)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/json")

@@ -24,6 +24,12 @@ fn fred_get(endpoint: &str, api_key: &str, params: &[(&str, &str)]) -> Result<St
         param_str.push_str(&format!("&{}={}", k, v));
     }
     let full_url = format!("{}{}", url, param_str);
+    // Deny-by-default egress, FATAL: a refusal must not be an Err the caller can
+    // discard (measured on the wordpress gate, 2026-11-01).
+    if let Err(r) = crate::scope::require(&full_url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&full_url)
         .header("User-Agent", USER_AGENT)
         .call()

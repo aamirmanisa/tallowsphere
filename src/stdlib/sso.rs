@@ -89,6 +89,12 @@ fn replay_token(token: &str, target_url: &str, header_name: Option<&str>) -> Std
     };
 
     let (header_key, header_val) = headers.split_once(": ").unwrap_or((hname, token));
+    // Deny-by-default egress, FATAL: a refusal must not be an Err the caller can
+    // discard (measured on the wordpress gate, 2026-11-01).
+    if let Err(r) = crate::scope::require(target_url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(target_url)
         .header(header_key, header_val)
         .call()
