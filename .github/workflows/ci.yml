@@ -312,6 +312,7 @@ jobs:
           --test directorate_desks
           --test egress_census
           --test egress_scope_gate
+          --test egress_gate_coverage
           --test process_contract
           --test request_plan_cli
           --test perf_binary_startup
