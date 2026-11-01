@@ -232,6 +232,11 @@ fn build_agent(global: Option<Duration>, per_call: Option<Duration>) -> ureq::Ag
     let mut b = ureq::Agent::config_builder()
         .timeout_global(global)
         .timeout_per_call(per_call)
+        // EGRESS-REDIRECTS.md requirement 1: no implicit follow. A 3xx is a
+        // status to report, never a request this client makes on its own.
+        // ureq's default is 10 (`ureq-3.5.0/src/config.rs:1075`); the only
+        // way to follow is [`follow`], which re-consults the register per hop.
+        .max_redirects(0)
         .https_only(false);
     if let Some(url) = proxy_url() {
         // Hard refusal, not a warning: a malformed TALLOW_PROXY must not
@@ -340,6 +345,343 @@ pub fn agent() -> ureq::Agent {
 /// several modules carried (they never set a proxy).
 pub fn agent_with_timeouts(global: Option<Duration>, per_call: Option<Duration>) -> ureq::Agent {
     build_agent(global, per_call)
+}
+
+// ── Gated redirect follow (docs/spec/EGRESS-REDIRECTS.md) ───────────────────
+//
+// Requirement 1 makes `max_redirects(0)` the rule for every builder, so the
+// client itself never follows anything. [`follow`] is the one way to follow:
+// each hop is resolved (RFC 3986 §5.2), re-authorised by the register under the
+// method the next request will actually carry, and refused as a chain — never
+// as a single hop — when the register says no. The sentence a refusal produces
+// names the URL that was refused, not the one the caller typed.
+
+/// Hard ceiling on followed hops (requirement 2). A chain that needs a ninth
+/// redirect is refused with [`FollowRefusal::Limit`] (`redirect-limit`).
+pub const MAX_FOLLOW_HOPS: usize = 8;
+
+/// One gated chain that reached a final, non-redirect response.
+#[derive(Debug)]
+pub struct Followed {
+    /// The final response.
+    pub response: ureq::http::Response<ureq::Body>,
+    /// The URL that produced `response` — the final URL after every hop.
+    /// Requirement 5: a `Response` reports this, never the requested URL.
+    pub final_url: String,
+    /// The method the final request carried (303/301/302 rewrite included).
+    pub method: String,
+    /// Redirects followed to reach `response`.
+    pub hops: usize,
+}
+
+/// Why a gated chain stopped without a final response.
+///
+/// `Display` always leads with `<code>: refusing <url> — <detail>`, so the
+/// refusing URL is in the sentence whatever the reason (requirement 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FollowRefusal {
+    /// The hop's target is not authorised by the register.
+    Scope { url: String, detail: String },
+    /// The hop would move to a weaker or non-HTTP scheme (requirement 4).
+    Scheme { from: String, to: String },
+    /// More than [`MAX_FOLLOW_HOPS`] hops (requirement 2).
+    Limit { url: String, hops: usize },
+    /// A 3xx with no usable `Location` header.
+    NoLocation { url: String, status: u16 },
+    /// The transport failed while issuing a hop.
+    Transport { url: String, detail: String },
+    /// The method has no request builder here (e.g. `TRACE`, `CONNECT`).
+    UnsupportedMethod { url: String, method: String },
+}
+
+impl FollowRefusal {
+    /// Stable code for the refusal class (used in tests and in operator text).
+    pub fn code(&self) -> &'static str {
+        match self {
+            FollowRefusal::Scope { .. } => "redirect-scope",
+            FollowRefusal::Scheme { .. } => "redirect-scheme",
+            FollowRefusal::Limit { .. } => "redirect-limit",
+            FollowRefusal::NoLocation { .. } => "redirect-no-location",
+            FollowRefusal::Transport { .. } => "redirect-transport",
+            FollowRefusal::UnsupportedMethod { .. } => "redirect-method",
+        }
+    }
+
+    /// The URL this refusal names — the URL that was refused or failed.
+    pub fn url(&self) -> &str {
+        match self {
+            FollowRefusal::Scope { url, .. }
+            | FollowRefusal::Limit { url, .. }
+            | FollowRefusal::NoLocation { url, .. }
+            | FollowRefusal::Transport { url, .. }
+            | FollowRefusal::UnsupportedMethod { url, .. } => url,
+            FollowRefusal::Scheme { to, .. } => to,
+        }
+    }
+}
+
+impl std::fmt::Display for FollowRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FollowRefusal::Scope { url, detail } => {
+                write!(f, "{}: refusing {url} — {detail}", self.code())
+            }
+            FollowRefusal::Scheme { from, to } => write!(
+                f,
+                "{}: refusing {to} — a redirect from {from} changes scheme; \
+                 only an http→https upgrade may cross schemes",
+                self.code()
+            ),
+            FollowRefusal::Limit { url, hops } => write!(
+                f,
+                "{}: refusing {url} — {hops} hops reached the ceiling of {MAX_FOLLOW_HOPS}",
+                self.code()
+            ),
+            FollowRefusal::NoLocation { url, status } => write!(
+                f,
+                "{}: refusing {url} — {status} carried no usable Location header",
+                self.code()
+            ),
+            FollowRefusal::Transport { url, detail } => {
+                write!(f, "{}: refusing {url} — {detail}", self.code())
+            }
+            FollowRefusal::UnsupportedMethod { url, method } => write!(
+                f,
+                "{}: refusing {url} — '{method}' has no request builder here",
+                self.code()
+            ),
+        }
+    }
+}
+
+/// Agent for a gated chain: `max_redirects(0)` **and**
+/// `http_status_as_error(false)`.
+///
+/// The second half is what makes the gate possible: with ureq's default
+/// (statuses as errors) a 3xx arrives as `Err(StatusCode)` with its headers
+/// gone, so `Location` — and with it the next hop's identity — could not be
+/// read. Callers that only want a status should use [`agent`] instead.
+///
+/// `loopback_direct` keeps the long-standing rule that a literal loopback
+/// address is not an anonymity plane: it is not sent through the proxy
+/// (the SOCKS allowlist refuses 127.0.0.0/8 outright).
+pub fn agent_for_follow(loopback_direct: bool, timeout: Option<Duration>) -> ureq::Agent {
+    let per_call = timeout.unwrap_or(Duration::from_secs(30));
+    let mut b = ureq::Agent::config_builder()
+        .timeout_global(None)
+        .timeout_per_call(Some(per_call))
+        .timeout_resolve(Some(Duration::from_secs(10)))
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_send_request(Some(Duration::from_secs(10)))
+        .timeout_send_body(Some(per_call))
+        .timeout_recv_response(Some(per_call))
+        .timeout_recv_body(Some(per_call))
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .https_only(false);
+    if !loopback_direct {
+        if let Some(url) = proxy_url() {
+            b = b.proxy(Some(parse_proxy(&url)));
+        }
+    }
+    if let Some(rc) = ca_bundle_root_certs() {
+        b = b.tls_config(ureq::tls::TlsConfig::builder().root_certs(rc).build());
+    }
+    b.build().new_agent()
+}
+
+/// The method the **next** request carries after `status` (requirement 3).
+///
+/// `303` always redirects to `GET` (a `HEAD` stays `HEAD`); `301`/`302`
+/// rewrite anything that is not `GET`/`HEAD` to `GET`, which is the
+/// user-facing behaviour every browser implements; `307`/`308` preserve the
+/// method and the body. Anything else preserves the method — the caller only
+/// reaches this on a redirect status.
+pub fn method_after_redirect(status: u16, method: &str) -> String {
+    let upper = method.to_ascii_uppercase();
+    match status {
+        303 => {
+            if upper == "HEAD" {
+                "HEAD".to_string()
+            } else {
+                "GET".to_string()
+            }
+        }
+        301 | 302 => {
+            if upper == "GET" || upper == "HEAD" {
+                upper
+            } else {
+                "GET".to_string()
+            }
+        }
+        _ => upper,
+    }
+}
+
+/// Resolve a `Location` value against the URL that carried it.
+///
+/// RFC 3986 §5.2 relative resolution is the `url` crate's `join` — the same
+/// resolver this tree already uses for crawl discovery. Hand-rolled prefix
+/// surgery on the host is how the original bypass got in; it is not repeated
+/// here.
+pub fn resolve_location(current: &str, location: &str) -> Result<url::Url, String> {
+    let base = url::Url::parse(current)
+        .map_err(|e| format!("cannot resolve Location {location:?}: base {current:?}: {e}"))?;
+    base.join(location)
+        .map_err(|e| format!("cannot resolve Location {location:?} against {current:?}: {e}"))
+}
+
+/// Whether a hop from `next` to `current` crosses a scheme boundary that must
+/// be refused.
+///
+/// Requirement 4 refuses a downgrade (`https:` → `http:`) and any move to a
+/// non-HTTP scheme (`file:`, `ftp:`, …) — the shapes that turn a granted read
+/// into a leaked or local body. An `http:` → `https:` upgrade is *not* refused:
+/// the spec's fail condition names "every legitimate http → https redirect" as
+/// traffic that must keep working.
+fn is_forbidden_scheme_change(from: &url::Url, to: &url::Url) -> bool {
+    fn web(u: &url::Url) -> bool {
+        matches!(u.scheme(), "http" | "https")
+    }
+    if !web(to) {
+        return true;
+    }
+    if !web(from) {
+        return true;
+    }
+    from.scheme() == "https" && to.scheme() == "http"
+}
+
+/// Attach `headers` to a request builder of either typestate.
+fn with_headers<S>(
+    mut req: ureq::RequestBuilder<S>,
+    headers: &[(String, String)],
+) -> ureq::RequestBuilder<S> {
+    for (k, v) in headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    req
+}
+
+/// Issue `url` and follow redirects **only** through the register.
+///
+/// Every hop: pace ([`rate_limit_wait`]), read the 3xx status, resolve
+/// `Location` against the current URL, refuse a forbidden scheme change,
+/// re-authorise the target with `scope::require(next, next_method)`, and issue
+/// again. The first request is the caller's to authorise (it already did, by
+/// the time it has a URL); this function authorises hops 2..=n.
+///
+/// The returned [`Followed::final_url`] is the URL that produced the body, so
+/// callers can report provenance honestly (requirement 5).
+pub fn follow(
+    agent: &ureq::Agent,
+    url: &str,
+    method: &str,
+    body: Option<&[u8]>,
+    headers: &[(String, String)],
+) -> Result<Followed, FollowRefusal> {
+    let mut current_url = url.to_string();
+    let mut current_method = method.to_ascii_uppercase();
+    let mut current_body: Option<Vec<u8>> = body.map(|b| b.to_vec());
+    let mut hops = 0usize;
+
+    loop {
+        rate_limit_wait(&current_url);
+        note_missing_ech_on_direct_egress(&current_url);
+
+        let response = match current_method.as_str() {
+            "GET" => with_headers(agent.get(&current_url), headers).call(),
+            "HEAD" => with_headers(agent.head(&current_url), headers).call(),
+            "DELETE" => with_headers(agent.delete(&current_url), headers).call(),
+            "OPTIONS" => with_headers(agent.options(&current_url), headers).call(),
+            "POST" => with_headers(agent.post(&current_url), headers)
+                .send(current_body.as_deref().unwrap_or(&[])),
+            "PUT" => with_headers(agent.put(&current_url), headers)
+                .send(current_body.as_deref().unwrap_or(&[])),
+            "PATCH" => with_headers(agent.patch(&current_url), headers)
+                .send(current_body.as_deref().unwrap_or(&[])),
+            other => {
+                return Err(FollowRefusal::UnsupportedMethod {
+                    url: current_url,
+                    method: other.to_string(),
+                });
+            }
+        }
+        .map_err(|e| FollowRefusal::Transport {
+            url: current_url.clone(),
+            detail: e.to_string(),
+        })?;
+
+        let status = response.status().as_u16();
+        if !matches!(status, 301 | 302 | 303 | 307 | 308) {
+            return Ok(Followed {
+                response,
+                final_url: current_url,
+                method: current_method,
+                hops,
+            });
+        }
+
+        // The ceiling is checked before the next request is built, so the
+        // sentence names the URL the chain *wanted* next, not the last one it
+        // was allowed to talk to.
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .filter(|l| !l.trim().is_empty());
+        let Some(location) = location else {
+            return Err(FollowRefusal::NoLocation {
+                url: current_url,
+                status,
+            });
+        };
+        let next = resolve_location(&current_url, &location).map_err(|detail| {
+            FollowRefusal::Transport {
+                url: current_url.clone(),
+                detail,
+            }
+        })?;
+        let next_url = next.to_string();
+
+        let from = url::Url::parse(&current_url).map_err(|e| FollowRefusal::Transport {
+            url: current_url.clone(),
+            detail: format!("current URL unparseable: {e}"),
+        })?;
+        if is_forbidden_scheme_change(&from, &next) {
+            return Err(FollowRefusal::Scheme {
+                from: current_url,
+                to: next_url,
+            });
+        }
+
+        if hops >= MAX_FOLLOW_HOPS {
+            return Err(FollowRefusal::Limit {
+                url: next_url,
+                hops,
+            });
+        }
+
+        // Requirement 3: authorise under the method the next request will
+        // actually carry, so a POST grant cannot be walked into a GET (or the
+        // reverse) on a host whose grant names one method.
+        let next_method = method_after_redirect(status, &current_method);
+        if let Err(r) = crate::scope::require(&next_url, &next_method) {
+            return Err(FollowRefusal::Scope {
+                url: next_url,
+                detail: format!("{} — {}", r.code(), r.explain()),
+            });
+        }
+
+        if next_method != current_method {
+            // A rewritten method carries no body (303/301/302 → GET).
+            current_body = None;
+        }
+        current_url = next_url;
+        current_method = next_method;
+        hops += 1;
+    }
 }
 
 // ── Request shims ───────────────────────────────────────────────────────────
