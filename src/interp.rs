@@ -51103,11 +51103,46 @@ fn main() {
     // ── MeshNode integration tests ──────────────────────────────────────
     // These tests share global mesh state and MUST use the same lock as mesh.rs tests.
 
+    /// Cross-process guard for the mesh fixtures.
+    ///
+    /// These four tests bind fixed loopback ports (9001-9005, later 15400-15405);
+    /// picking different numbers only moved the collision, because several
+    /// worktrees run this suite at the same time on one box. `MESH_TEST_LOCK`
+    /// serialises the tests inside a process, not between processes, so this adds
+    /// an atomic directory lock with the same lifetime as the guard.
+    struct MeshCrossProcess(std::path::PathBuf);
+
+    impl MeshCrossProcess {
+        fn acquire() -> Self {
+            let path = std::env::temp_dir().join("tallow-mesh-fixtures.lock");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            loop {
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return MeshCrossProcess(path),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        if std::time::Instant::now() > deadline {
+                            panic!("mesh fixture lock at {} not acquired in 120s", path.display());
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    Err(e) => panic!("mesh fixture lock at {}: {e}", path.display()),
+                }
+            }
+        }
+    }
+
+    impl Drop for MeshCrossProcess {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir(&self.0);
+        }
+    }
+
     #[test]
     fn test_mesh_node_creation_from_tallow() {
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let _proc = MeshCrossProcess::acquire();
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
@@ -51139,6 +51174,7 @@ fn main() {
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let _proc = MeshCrossProcess::acquire();
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
@@ -51179,6 +51215,7 @@ fn main() {
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let _proc = MeshCrossProcess::acquire();
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
@@ -51210,6 +51247,7 @@ fn main() {
         let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let _proc = MeshCrossProcess::acquire();
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
