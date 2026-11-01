@@ -85,10 +85,6 @@ const DEBT: &[(&str, &str)] = &[
         "loopback SOCKS upstream; destination is dialed by the proxy, never this process",
     ),
     (
-        "src/cli/daemon.rs",
-        "loopback-only daemon health check (http://127.0.0.1:{port}/health)",
-    ),
-    (
         "src/cli/fingerprint_audit_cmd.rs",
         "TCP liveness probe of local Tor SOCKS; no payload sent",
     ),
@@ -107,10 +103,6 @@ const DEBT: &[(&str, &str)] = &[
     (
         "src/stdlib/mesh.rs",
         "mesh bootstrap handshake to operator-supplied overlay addrs (named plane: mesh)",
-    ),
-    (
-        "src/stdlib/sync.rs",
-        "loopback-only tallow-daemon HTTP (http://127.0.0.1:{port})",
     ),
     (
         "src/stdlib/transfer_net.rs",
