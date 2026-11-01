@@ -1194,18 +1194,11 @@ methods = ["FROBNICATE"]
         // Ignore the tests module so string literals here cannot be mistaken
         // for uses of the cell.
         let prod = src.split("#[cfg(test)]\nmod tests").next().unwrap();
-        for (i, line) in prod.lines().enumerate() {
+        let lines: Vec<&str> = prod.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
             if line.contains("TEST_REGISTER") && !line.contains("TEST_REGISTER_OVERRIDE_ABSENT") {
-                let window: String = prod
-                    .lines()
-                    .take(i + 1)
-                    .rev()
-                    .take(12)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let start = i.saturating_sub(11);
+                let window = lines[start..=i].join("\n");
                 assert!(
                     window.contains("#[cfg(test)]"),
                     "override cell on line {} is not under cfg(test):\n{window}",
