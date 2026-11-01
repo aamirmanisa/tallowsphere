@@ -448,6 +448,10 @@ fn array_elem_kind(array_kind: Option<&str>) -> Option<String> {
         "CookieArray" => Some("CdpCookie".to_string()),
         "WaveCheckpointArray" => Some("WaveCheckpoint".to_string()),
         "AntibotStepArray" => Some("AntibotResolveStep".to_string()),
+        // `http.batch` entries are `%struct.BatchResponse` records, so
+        // `rs[0].ok` GEPs into the entry instead of treating the slot as a
+        // string or falling back to the by-name struct scan.
+        "BatchResponseArray" => Some("BatchResponse".to_string()),
         _ => None,
     }
 }
@@ -613,8 +617,12 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // binding is typed: `.grade`/`.confidence`/… resolve as fields of that
         // struct instead of falling back to the ambiguous name scan.
         ("provenance", "record") => Some("CollectionRecord".to_string()),
-        // http.batch(...) → native array of Result entries (one per URL).
-        ("http", "batch") => Some("ResultArray".to_string()),
+        // http.batch(...) → native array of `BatchResponse` entries (one per
+        // URL). Its own kind, not `ResultArray`: the entry is the declared
+        // `BatchResponse` (stdlib/http.tl:36-43), the same struct the
+        // interpreter returns, and `pool.map` — which shares the runtime entry
+        // point — keeps the documented Result-element shape.
+        ("http", "batch") => Some("BatchResponseArray".to_string()),
         // The llm struct returns. Without these, a field shared by two of the
         // structs (`provider`, `elapsed_ms`) is ambiguous and the field read
         // refuses by name — correct, but it means the lowering is unusable.
@@ -1182,6 +1190,80 @@ impl<'a> CodeGen<'a> {
         self.struct_layouts
             .entry("CopyResult".to_string())
             .or_insert(copy_result);
+
+        // `http.batch` entry model (stdlib/http.tl:25-43). These two are the
+        // types the interpreter already produces as real structs
+        // (`src/stdlib/http.rs:766-776`), and without a native layout the
+        // compiled plane could not read a single field of an entry — not `ok`,
+        // not `error.message`, not `response.status`, with or without an
+        // annotation. Declaring them here is enough to emit
+        // `%struct.HttpError` / `%struct.BatchResponse`: `emit_module` renders
+        // every registered layout into its `type` line.
+        //
+        // Shapes follow the .tl declarations, where `status: Int?`
+        // (→ i64) and `response: Response?` / `error: HttpError?` (→ i8*,
+        // null when absent) are optionals. `response` stays an OPAQUE response
+        // handle rather than a materialised `Response`: the compiled plane has
+        // no representation for `body: Bytes` or `headers: Map<..>` inside a
+        // record, so the handle is what `tallow_response_*` takes.
+        let mut http_error = StructLayout {
+            fields: Vec::new(),
+            field_map: HashMap::new(),
+            field_kinds: HashMap::new(),
+            llvm_name: "%struct.HttpError".to_string(),
+        };
+        for (idx, (name, ty)) in [
+            ("kind", LLType::I8Ptr),
+            ("url", LLType::I8Ptr),
+            ("status", LLType::I64),
+            ("retryable", LLType::I1),
+            ("message", LLType::I8Ptr),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            http_error.fields.push(name.to_string());
+            http_error.field_map.insert(name.to_string(), (idx, ty));
+        }
+        self.struct_layouts
+            .entry("HttpError".to_string())
+            .or_insert(http_error);
+
+        let mut batch_response = StructLayout {
+            fields: Vec::new(),
+            field_map: HashMap::new(),
+            field_kinds: HashMap::new(),
+            llvm_name: "%struct.BatchResponse".to_string(),
+        };
+        for (idx, (name, ty)) in [
+            ("url", LLType::I8Ptr),
+            ("ok", LLType::I1),
+            ("attempts", LLType::I64),
+            ("elapsed_ms", LLType::I64),
+            ("response", LLType::I8Ptr),
+            ("error", LLType::I8Ptr),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            batch_response.fields.push(name.to_string());
+            batch_response.field_map.insert(name.to_string(), (idx, ty));
+        }
+        // Container kinds the LL type cannot carry: `i8*` is a string, a
+        // response handle and an entry alike. The tags are what let a later
+        // field read know `entry.response` behaves like a `Response` (three
+        // fields routed to the handle FFI) and `entry.error` like an
+        // `HttpError`. Nothing consumes them yet — that routing is stage 2 —
+        // but they belong to the declaration, not to the consumer.
+        batch_response
+            .field_kinds
+            .insert("response".to_string(), "Response".to_string());
+        batch_response
+            .field_kinds
+            .insert("error".to_string(), "HttpError".to_string());
+        self.struct_layouts
+            .entry("BatchResponse".to_string())
+            .or_insert(batch_response);
     }
 
     /// Set the source directory for resolving local imports.
@@ -2093,6 +2175,11 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_fetch(ptr)\n");
         ir.push_str("declare ptr @tallow_fetch_method(ptr, ptr, ptr, i64)\n");
         ir.push_str("declare ptr @tallow_http_batch(ptr, i64)\n");
+        // The `http.batch` verb's TYPED entry ABI (BatchResponse records).
+        // `tallow_http_batch` stays for `pool.map`, whose Result element shape
+        // is documented; the two entry points share the gates but not the
+        // element layout (`src/runtime/fetch.rs`).
+        ir.push_str("declare ptr @tallow_http_batch_entries(ptr, i64)\n");
         ir.push_str("declare i32 @tallow_response_status(ptr)\n");
         ir.push_str("declare ptr @tallow_response_body(ptr)\n");
         ir.push_str("declare ptr @tallow_env_args()\n");
@@ -6050,16 +6137,24 @@ void tallow_async_runtime_shutdown(void) {
                                 self.browser_variables
                                     .insert(name.clone(), "Response".to_string());
                             }
-                            // http.batch(...) → "ResultArray": the runtime
-                            // returns a NATIVE array of `%struct.TallowResult`
-                            // entries (one per URL, Ok = response handle,
-                            // Err = message), so `.len` reads the count slot
-                            // and `r[i]` yields a Result-typed element.
+                            // http.batch(...) → "BatchResponseArray": the
+                            // runtime returns a NATIVE array with one entry per
+                            // URL, so `.len` reads the count slot and `r[i]` is
+                            // an element of the `BatchResponse` struct — three
+                            // flags, because each prevents a distinct wrong
+                            // answer: the kind keeps `.len` off `strlen`, the
+                            // elem-is-ptr flag inttoptrs the slot, and the elem
+                            // struct lets `r[i].ok` GEP into the entry. (The
+                            // runtime still returns `TallowResult` boxes until
+                            // stage 2 supplies `tallow_http_batch_entries`;
+                            // this stage types the array, it does not build it.)
                             if obj_name == "http" && method == "batch" {
                                 self.browser_variables
-                                    .insert(name.clone(), "ResultArray".to_string());
+                                    .insert(name.clone(), "BatchResponseArray".to_string());
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_is_array.insert(name.clone(), true);
+                                self.variable_array_elem_struct
+                                    .insert(name.clone(), "BatchResponse".to_string());
                             }
                             // pool.map(urls) / pool_map / map_ratelimited on an
                             // IPPool receiver (E-3-04): lowered to the same
@@ -6092,6 +6187,22 @@ void tallow_async_runtime_shutdown(void) {
                     // to the generic method path (which silently emits 0).
                     ExprKind::Index { object, .. } => {
                         if let ExprKind::Ident(src) = &object.kind {
+                            // `let e = rs[0]` — an entry read out of an
+                            // `http.batch` result keeps its record type, so
+                            // `e.ok` resolves as a field of `BatchResponse`
+                            // through the same path as `rs[0].ok` instead of
+                            // falling back to the by-name struct scan. Scoped to
+                            // the batch entry: every other record-element array
+                            // keeps exactly the tracking it had.
+                            if self
+                                .variable_array_elem_struct
+                                .get(src)
+                                .map(String::as_str)
+                                == Some("BatchResponse")
+                            {
+                                self.variable_struct_types
+                                    .insert(name.clone(), "BatchResponse".to_string());
+                            }
                             match self.browser_variables.get(src).map(String::as_str) {
                                 Some("HtmlElementArray") => {
                                     self.browser_variables
@@ -6783,6 +6894,54 @@ void tallow_async_runtime_shutdown(void) {
 
     // ── Expression Emission ─────────────────────────────────────────────────
 
+    /// The declared struct name an expression evaluates to, when that name is
+    /// tracked: an `Ident` bound to a struct, or an element of an array whose
+    /// element struct is known (`rs[1]` of a `[]BatchResponse`).
+    fn expr_struct_name(&self, e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(name) => self.variable_struct_types.get(name).cloned(),
+            ExprKind::Index { object, .. } => match &object.kind {
+                ExprKind::Ident(arr) => self.variable_array_elem_struct.get(arr).cloned(),
+                _ => array_elem_kind(self.infer_kind(object).as_deref()),
+            },
+            _ => None,
+        }
+    }
+
+    /// The struct-shaped KIND an expression carries, for a receiver that is a
+    /// field of a record whose `field_kinds` tag says so: `"Response"` for a
+    /// fetch handle or a `BatchResponse.response`, `"HttpError"` for a
+    /// `BatchResponse.error`.
+    ///
+    /// `i8*` cannot tell a string, a response handle and a record apart, so the
+    /// tag is what keeps `entry.response.status` on the handle FFI
+    /// (`tallow_response_status`) instead of the by-name struct scan — which
+    /// would land on an unrelated layout and load an unrelated offset, a silent
+    /// wrong value. This is the widening `reports/ledger-batch-entry-type.md`
+    /// §5b item 5 asks for: the routing accepts a kind-tagged expression, not
+    /// only a named `Response` variable or an inline `fetch(...)`.
+    fn expr_container_kind(&self, e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                let kind = self.browser_variables.get(name)?;
+                matches!(kind.as_str(), "Response").then(|| kind.clone())
+            }
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(f) if f == "fetch" => Some("Response".to_string()),
+                _ => None,
+            },
+            ExprKind::FieldAccess { object, field } => {
+                let struct_name = self.expr_struct_name(object)?;
+                self.struct_layouts
+                    .get(&struct_name)?
+                    .field_kinds
+                    .get(field)
+                    .cloned()
+            }
+            _ => None,
+        }
+    }
+
     fn emit_expr(&mut self, expr: &Expr) -> Result<LLValue, String> {
         match &expr.kind {
             // ── Literals ────────────────────────────────────────────────
@@ -7022,18 +7181,8 @@ void tallow_async_runtime_shutdown(void) {
                 // here so `.body`/`.status`/`.url`/`.text` behave like their method
                 // forms and match the interpreter (which returns a Response struct).
                 // The object may be a named Response var OR an inline fetch/http call.
-                let object_is_response = match &object.kind {
-                    ExprKind::Ident(var_name) => self
-                        .browser_variables
-                        .get(var_name)
-                        .map(|k| k == "Response")
-                        .unwrap_or(false),
-                    ExprKind::Call { callee, .. } => matches!(
-                        &callee.kind,
-                        ExprKind::Ident(f) if f == "fetch"
-                    ),
-                    _ => false,
-                };
+                let object_kind = self.expr_container_kind(object);
+                let object_is_response = object_kind.as_deref() == Some("Response");
                 if object_is_response {
                     let obj = self.emit_expr(object)?;
 
@@ -7060,6 +7209,56 @@ void tallow_async_runtime_shutdown(void) {
                         }
                         _ => {}
                     }
+                }
+
+                // 0b. `entry.error.<field>` — the `HttpError` RECORD pointer.
+                // It is NULL on a successful entry (the interpreter's `error`
+                // is `Nil` there), so the read is guarded by a branch, not a
+                // `select`: a load through a null base traps regardless of
+                // whether its result is used. The null arm yields the empty
+                // string / 0 / false — the closest representable value to the
+                // `Nil` the interpreter reads — and no dereference happens.
+                if object_kind.as_deref() == Some("HttpError") {
+                    let layout = self.struct_layouts.get("HttpError").cloned().ok_or_else(|| {
+                        "the native plane has no `HttpError` layout; cannot read \
+                         `error` fields"
+                            .to_string()
+                    })?;
+                    let (idx, field_ty) = layout.field_map.get(field).cloned().ok_or_else(|| {
+                        format!("`HttpError` has no field `{field}` on the native plane")
+                    })?;
+                    let obj = self.emit_expr(object)?;
+                    let is_null = self.fresh_reg();
+                    self.emit_line(&format!("{is_null} = icmp eq ptr {}, null", obj.reg));
+                    let null_l = self.fresh_label("http.error.null");
+                    let some_l = self.fresh_label("http.error.some");
+                    let join_l = self.fresh_label("http.error.join");
+                    self.emit_line(&format!(
+                        "br i1 {is_null}, label %{null_l}, label %{some_l}"
+                    ));
+                    self.body.push_str(&format!("{null_l}:\n"));
+                    self.emit_line(&format!("br label %{join_l}"));
+                    self.body.push_str(&format!("{some_l}:\n"));
+                    let gep = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{gep} = getelementptr %struct.HttpError, ptr {}, i32 0, i32 {idx}",
+                        obj.reg
+                    ));
+                    let loaded = self.fresh_reg();
+                    self.emit_line(&format!("{loaded} = load {}, ptr {gep}", field_ty.to_ir()));
+                    self.emit_line(&format!("br label %{join_l}"));
+                    self.body.push_str(&format!("{join_l}:\n"));
+                    let absent = match &field_ty {
+                        LLType::I8Ptr => self.intern_string(""),
+                        LLType::I1 => "false".to_string(),
+                        _ => "0".to_string(),
+                    };
+                    let out = self.fresh_reg();
+                    self.emit_line(&format!(
+                        "{out} = phi {} [ {absent}, %{null_l} ], [ {loaded}, %{some_l} ]",
+                        field_ty.to_ir()
+                    ));
+                    return Ok(LLValue::new(out, field_ty));
                 }
 
                 // 0a. Stdlib module constants (math.pi, math.e, math.tau)
@@ -8239,6 +8438,7 @@ void tallow_async_runtime_shutdown(void) {
                                         | "StringArray"
                                         | "BytesArray"
                                         | "ResultArray"
+                                        | "BatchResponseArray"
                                 )
                         }
                         None => false,
@@ -8366,6 +8566,9 @@ void tallow_async_runtime_shutdown(void) {
                         .unwrap_or(false);
                 // `http.batch` arrays hold `%struct.TallowResult` boxes, which
                 // must come back typed as Results (tag/payload) — not strings.
+                // `BatchResponseArray` is deliberately NOT in this set: its
+                // element is a `BatchResponse` record, so it must come back as
+                // the struct (elem_is_ptr) rather than as a Result.
                 let elem_is_result =
                     matches!(self.infer_kind(object).as_deref(), Some("ResultArray"));
 
@@ -12167,9 +12370,9 @@ void tallow_async_runtime_shutdown(void) {
                     // `method_result_kind` mark it as one.
                     "env" => Some("env".to_string()),
                     // `http.batch(...)` — same shape: the kind resolves the
-                    // chained form (`http.batch(u, 1).len`) to "ResultArray".
-                    // Not a handle kind, so the dispatch site cannot mistake it
-                    // for a method on a handle.
+                    // chained form (`http.batch(u, 1).len`) to
+                    // "BatchResponseArray". Not a handle kind, so the dispatch
+                    // site cannot mistake it for a method on a handle.
                     "http" => Some("http".to_string()),
                     // Struct-static namespace (`Crawler.from_links(...)`).
                     "Crawler" => Some("Crawler".to_string()),
@@ -12439,6 +12642,7 @@ void tallow_async_runtime_shutdown(void) {
                             | Some("HtmlElementArray")
                             | Some("ElementArray")
                             | Some("ResultArray")
+                            | Some("BatchResponseArray")
                     )
             }
             ExprKind::Array(_) => true,
@@ -12503,6 +12707,7 @@ void tallow_async_runtime_shutdown(void) {
                     | Some("HtmlElementArray")
                     | Some("ElementArray")
                     | Some("ResultArray")
+                    | Some("BatchResponseArray")
                     | Some("PageEventArray")
                     | Some("CookieArray")
                     | Some("AntibotStepArray")
@@ -12625,6 +12830,7 @@ void tallow_async_runtime_shutdown(void) {
                     | Some("HtmlElementArray")
                     | Some("ElementArray")
                     | Some("ResultArray")
+                    | Some("BatchResponseArray")
             ),
         }
     }
@@ -15194,6 +15400,17 @@ void tallow_async_runtime_shutdown(void) {
                 // Handle arrays keep their own sentence: the refusal names the
                 // browser kind rather than the array layout.
                 match self.browser_variables.get(name).map(String::as_str) {
+                    // `http.batch` results are named separately: each element is
+                    // a `BatchResponse` record, so the useful refusal names the
+                    // entry type and the field-level alternative.
+                    Some("BatchResponseArray") => {
+                        return Err(format!(
+                            "print() of an `http.batch` result (`{name}`) is not supported by the \
+                             native backend — each entry is a `BatchResponse` record, not a \
+                             string; print an entry's fields (`{name}[i].ok`) or run with \
+                             --interpret"
+                        ));
+                    }
                     Some("ElementArray") | Some("HtmlElementArray") | Some("ResultArray") => {
                         return Err(format!(
                             "print() of a browser/handle array (`{name}`) is not supported by the \
@@ -15262,21 +15479,35 @@ void tallow_async_runtime_shutdown(void) {
                 })),
                 None => Ok(None),
             },
-            // `print(rows[0])` where `rows` is an array of arrays: the slot
-            // holds a pointer to an untagged inner array, so it is the same
-            // value class the literal guard refuses. Deliberately limited to the
-            // shapes that are KNOWN to be composites: an element of an
-            // unknown-shape array may be a `Result`/handle slot that already has
-            // its own tagged rendering on this plane (`print(out[0])` of a
-            // `pool.map` result set), and refusing it would be a false negative.
-            ExprKind::Index { object, .. } => match self.array_value_shape(object) {
-                Some(ArrayElemShape::NonScalar) | Some(ArrayElemShape::Mixed) => {
-                    Ok(Some(PrintCompositeRoute::Array {
-                        elem_kind: scalar_elem_kind_or_refuse(ArrayElemShape::NonScalar)?,
-                    }))
+            // `print(rs[0])` where the elements are `http.batch` RECORDS: the
+            // slot holds a `BatchResponse` pointer, and the generic path would
+            // strlen the record's bytes and print plausible garbage. Refuse
+            // with the same fix the whole-struct case names. Scoped to the
+            // batch entry on purpose: other record-element arrays
+            // (`[]PageEvent`, `[]ChunkInfo`, …) are outside this lane and their
+            // print behaviour is left exactly as it was.
+            ExprKind::Index { object, .. } => {
+                let elem_struct = match &object.kind {
+                    ExprKind::Ident(arr) => self.variable_array_elem_struct.get(arr).cloned(),
+                    _ => array_elem_kind(self.infer_kind(object).as_deref()),
+                };
+                if elem_struct.as_deref() == Some("BatchResponse") {
+                    return Err(
+                        "print() of an `http.batch` entry is not supported by the native backend \
+                         — the `BatchResponse` record would be read as a string; print its fields \
+                         (`<entry>.ok`, `<entry>.error.message`) or run with --interpret"
+                            .to_string(),
+                    );
                 }
-                _ => Ok(None),
-            },
+                match self.array_value_shape(object) {
+                    Some(ArrayElemShape::NonScalar) | Some(ArrayElemShape::Mixed) => {
+                        Ok(Some(PrintCompositeRoute::Array {
+                            elem_kind: scalar_elem_kind_or_refuse(ArrayElemShape::NonScalar)?,
+                        }))
+                    }
+                    _ => Ok(None),
+                }
+            }
             _ => Ok(None),
         }
     }
@@ -30166,11 +30397,15 @@ impl<'a> CodeGen<'a> {
                 }
             }
             "batch" => {
-                // http.batch(urls, concurrency?, headers?) → tallow_http_batch
-                // FFI (src/runtime/fetch.rs): one Result-typed entry per URL
-                // (Ok = response handle, Err = message), in input order, never
-                // aborting the batch on a per-URL failure. Mirrors the
-                // interpreter's `http_batch` (src/stdlib/http.rs:555-590),
+                // http.batch(urls, concurrency?, headers?) →
+                // tallow_http_batch_entries (src/runtime/fetch.rs): one TYPED
+                // `BatchResponse` record per URL (ok / error / response), in
+                // input order, never aborting the batch on a per-URL failure.
+                // Not the shared `tallow_http_batch`: that one renders
+                // `Result` boxes and is what `pool.map` (and its documented
+                // element shape) keeps using — see
+                // reports/ledger-batch-entry-type.md §5b item 3.
+                // Mirrors the interpreter's `http_batch` (src/stdlib/http.rs),
                 // including the 1..=64 concurrency clamp (absent ⇒ 8) and the
                 // sequential-cap note printed by the runtime.
                 // Args are evaluated eagerly, like the interpreter's call.
@@ -30203,7 +30438,7 @@ impl<'a> CodeGen<'a> {
                 self.body.push_str(&format!("{ok_l}:\n"));
                 let out = self.fresh_reg();
                 self.emit_line(&format!(
-                    "{out} = call ptr @tallow_http_batch(ptr {}, i64 {conc})",
+                    "{out} = call ptr @tallow_http_batch_entries(ptr {}, i64 {conc})",
                     urls.reg
                 ));
                 Ok(Some(LLValue::new(out, LLType::I8Ptr)))
@@ -44730,12 +44965,16 @@ fn main() {
         "#,
         );
         assert!(
-            ir.contains("declare ptr @tallow_http_batch(ptr, i64)"),
-            "the batch FFI must be declared in the prelude"
+            ir.contains("declare ptr @tallow_http_batch_entries(ptr, i64)"),
+            "the typed batch-entry FFI must be declared in the prelude"
         );
         assert!(
-            ir.contains("call ptr @tallow_http_batch(ptr"),
-            "http.batch must lower to the runtime FFI"
+            ir.contains("call ptr @tallow_http_batch_entries(ptr"),
+            "http.batch must lower to the typed batch-entry FFI"
+        );
+        assert!(
+            !ir.contains("call ptr @tallow_http_batch(ptr"),
+            "http.batch must NOT use the shared Result-box FFI `pool.map` keeps"
         );
         assert!(
             !ir.contains("stub called in compiled mode"),
@@ -44763,7 +45002,7 @@ fn main() {
         "#,
         );
         assert!(
-            ir.contains("call ptr @tallow_http_batch(ptr"),
+            ir.contains("call ptr @tallow_http_batch_entries(ptr"),
             "the empty batch still lowers to the FFI (no special-casing)"
         );
 
