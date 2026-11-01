@@ -7,6 +7,20 @@ use std::time::Duration;
 
 use crate::ipc_auth::{self, Hello, Role, Session};
 
+/// Ask the register before a daemon request goes out.
+///
+/// The daemon is loopback, and loopback is a *grant* in
+/// `configs/tallow/scope/authorized-hosts.toml` (`127.0.0.1`, `localhost`,
+/// `::1` with `GET`/`HEAD`/`POST`), not an exemption. A DEBT row for a
+/// loopback request is a hole with a comment on it, so every request site in
+/// this module consults the same gate public egress does, and a refusal
+/// surfaces through the caller's `anyhow` error in the register's own words.
+fn scope_gate(url: &str, method: &str) -> anyhow::Result<()> {
+    crate::scope::require(url, method)
+        .map(|_| ())
+        .map_err(|r| anyhow::anyhow!("{} — {}", r.code(), r.explain()))
+}
+
 /// Discover daemon connection details from config files on disk.
 /// Reads `~/.tallow/daemon/port` and `~/.tallow/daemon/token`.
 fn discover_daemon() -> Option<(u16, String)> {
@@ -164,8 +178,16 @@ async fn establish_audit_session(client: &Client, base_url: &str, token: &str) -
 
     // The bearer token rides along too, so the route also passes the daemon's
     // existing bearer middleware when it sits behind it.
+    let handshake_url = format!("{base_url}{HANDSHAKE_PATH}");
+    // A refusal is never a handshake attempt: it returns before the POST, as
+    // the rest of this function's failure modes do. The commands that call
+    // this gate their own request URLs too, so the refusal still surfaces to
+    // the user there in the register's words rather than being swallowed here.
+    if scope_gate(&handshake_url, "POST").is_err() {
+        return None;
+    }
     let resp = client
-        .post(format!("{base_url}{HANDSHAKE_PATH}"))
+        .post(handshake_url)
         .header("Authorization", format!("Bearer {}", token))
         .header(HELLO_HEADER, hello_hex)
         .header(INITIATOR_HEADER, initiator.as_str())
@@ -212,6 +234,7 @@ pub async fn daemon_status() -> anyhow::Result<()> {
     match discover_daemon() {
         Some((port, _token)) => {
             let url = format!("http://127.0.0.1:{}/health", port);
+            scope_gate(&url, "GET")?;
             let resp = reqwest::get(&url).await.context("failed to connect to daemon")?;
             if resp.status().is_success() {
                 let body: Value = resp.json().await.unwrap_or_default();
@@ -251,8 +274,10 @@ pub async fn daemon_stop() -> anyhow::Result<()> {
         .await
         .context("Daemon is not running (no port/token found)")?;
 
+    let url = format!("{}/shutdown", base_url);
+    scope_gate(&url, "POST")?;
     let resp = client
-        .post(format!("{}/shutdown", base_url))
+        .post(url)
         .header("Authorization", format!("Bearer {}", token))
         .header(SESSION_HEADER, session.as_deref().unwrap_or("none"))
         .send()
@@ -281,6 +306,7 @@ pub async fn job_list(status_filter: Option<String>) -> anyhow::Result<()> {
     if let Some(ref status) = status_filter {
         url = format!("{}?status={}", url, status);
     }
+    scope_gate(&url, "GET")?;
 
     let resp = client
         .get(&url)
@@ -341,8 +367,10 @@ pub async fn job_submit(script_path: &str) -> anyhow::Result<()> {
         }
     });
 
+    let url = format!("{}/jobs", base_url);
+    scope_gate(&url, "POST")?;
     let resp = client
-        .post(format!("{}/jobs", base_url))
+        .post(url)
         .header("Authorization", format!("Bearer {}", token))
         .header(SESSION_HEADER, session.as_deref().unwrap_or("none"))
         .header("Content-Type", "application/json")
@@ -377,8 +405,10 @@ pub async fn job_show(id: &str) -> anyhow::Result<()> {
     let (client, base_url, token, session) =
         daemon_client().await.context("Daemon is not running (no port/token found)")?;
 
+    let url = format!("{}/jobs/{}", base_url, id);
+    scope_gate(&url, "GET")?;
     let resp = client
-        .get(format!("{}/jobs/{}", base_url, id))
+        .get(url)
         .header("Authorization", format!("Bearer {}", token))
         .header(SESSION_HEADER, session.as_deref().unwrap_or("none"))
         .send()
@@ -417,8 +447,10 @@ pub async fn job_history(id: &str) -> anyhow::Result<()> {
     let (client, base_url, token, session) =
         daemon_client().await.context("Daemon is not running (no port/token found)")?;
 
+    let url = format!("{}/jobs/{}/history", base_url, id);
+    scope_gate(&url, "GET")?;
     let resp = client
-        .get(format!("{}/jobs/{}/history", base_url, id))
+        .get(url)
         .header("Authorization", format!("Bearer {}", token))
         .header(SESSION_HEADER, session.as_deref().unwrap_or("none"))
         .send()
