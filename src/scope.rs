@@ -89,7 +89,9 @@ pub struct ScopeEntry {
     /// [`Basis::WrittenConsent`].
     #[serde(default)]
     pub evidence: Option<String>,
-    /// HTTP methods permitted. Defaults to read-only methods.
+    /// Methods permitted on this host. Defaults to read-only HTTP methods.
+    /// The vocabulary is [`GRANTABLE_METHODS`]; `CONNECT` is the TCP-connect
+    /// verb (Scanner.scan, net sockets), not an HTTP request.
     #[serde(default = "default_methods")]
     pub methods: Vec<String>,
     #[serde(default)]
@@ -98,6 +100,21 @@ pub struct ScopeEntry {
 
 fn default_methods() -> Vec<String> {
     vec!["GET".to_string(), "HEAD".to_string()]
+}
+
+/// Methods an entry may carry. Unknown verbs make the register malformed
+/// rather than being stored as a grant nobody reviewed.
+///
+/// `CONNECT` is included so a TCP connect-scan can be authorized without
+/// also granting GET/HEAD. It is not an HTTP method; it is the verb the
+/// engine uses for a raw socket.
+pub const GRANTABLE_METHODS: &[&str] = &[
+    "GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "CONNECT",
+];
+
+fn is_grantable_method(method: &str) -> bool {
+    let m = method.trim().to_ascii_uppercase();
+    GRANTABLE_METHODS.iter().any(|g| *g == m)
 }
 
 impl ScopeEntry {
@@ -542,6 +559,23 @@ impl ScopeRegister {
                     }),
                 };
             }
+            for m in &e.methods {
+                if !is_grantable_method(m) {
+                    return Self {
+                        path,
+                        entries: BTreeMap::new(),
+                        load_failure: Some(Refusal::RegisterMalformed {
+                            path: display,
+                            detail: format!(
+                                "entry for '{}' carries method '{}' which is outside the grantable set [{}]",
+                                e.host,
+                                m.trim(),
+                                GRANTABLE_METHODS.join(", ")
+                            ),
+                        }),
+                    };
+                }
+            }
             // Duplicate hosts are a register defect, not a merge.
             if entries.contains_key(&key) {
                 return Self {
@@ -575,6 +609,56 @@ impl ScopeRegister {
             entries: BTreeMap::new(),
             load_failure: None,
         }
+    }
+
+    /// In-memory register from already-built entries. `authorize` is unchanged:
+    /// an unlisted host is still refused, an expired grant still refuses.
+    #[cfg(test)]
+    pub fn from_entries(entries: Vec<ScopeEntry>) -> Self {
+        let mut map = BTreeMap::new();
+        for e in entries {
+            let key = normalize_key(&e.host);
+            map.insert(key, e);
+        }
+        Self {
+            path: PathBuf::from("<test>"),
+            entries: map,
+            load_failure: None,
+        }
+    }
+
+    /// In-memory register: each `(host, methods)` is a self-hosted grant with
+    /// no expiry. Methods must be in [`GRANTABLE_METHODS`]. Does not weaken
+    /// [`Self::authorize`].
+    #[cfg(test)]
+    pub fn granting(hosts: &[(&str, &[&str])]) -> Self {
+        let entries = hosts
+            .iter()
+            .map(|(host, methods)| {
+                let methods: Vec<String> = methods
+                    .iter()
+                    .map(|m| {
+                        let u = m.trim().to_ascii_uppercase();
+                        assert!(
+                            is_grantable_method(&u),
+                            "test grant for {host} carries non-grantable method {u}"
+                        );
+                        u
+                    })
+                    .collect();
+                ScopeEntry {
+                    host: (*host).to_string(),
+                    basis: Basis::SelfHosted,
+                    granted_by: "test".to_string(),
+                    granted_at: "2026-01-01".to_string(),
+                    expires_at: None,
+                    evidence: None,
+                    methods,
+                    notes: None,
+                }
+            })
+            .collect();
+        Self::from_entries(entries)
     }
 
     pub fn path(&self) -> &Path {
@@ -683,11 +767,64 @@ pub fn utc_today() -> String {
 /// Call sites in a loop should hold a [`ScopeRegister`] and call
 /// [`ScopeRegister::authorize`] directly rather than re-reading the file per
 /// request.
+///
+/// In a test build, a thread-local override (`override_register`) is
+/// consulted first so a unit test can plant a grant without touching
+/// `configs/` and without leaking that grant to other test threads. A
+/// non-test build has no such cell: `require` always loads the default file.
 pub fn require(input: &str, method: &str) -> Result<ScopeEntry, Refusal> {
-    let register = ScopeRegister::load_default();
+    let register = {
+        #[cfg(test)]
+        {
+            if let Some(r) = TEST_REGISTER.with(|c| c.borrow().clone()) {
+                r
+            } else {
+                ScopeRegister::load_default()
+            }
+        }
+        #[cfg(not(test))]
+        {
+            // Proof of absence: this arm is the only `require` path in a
+            // release build. The override cell is not in scope here.
+            let _ = TEST_REGISTER_OVERRIDE_ABSENT;
+            ScopeRegister::load_default()
+        }
+    };
     match register.authorize(input, method, &utc_today()) {
         Decision::Allowed(entry) => Ok(*entry),
         Decision::Refused(refusal) => Err(refusal),
+    }
+}
+
+/// Named so a non-test build fails to compile if the override cell is lifted
+/// out of `#[cfg(test)]` and this constant is deleted to hide it.
+#[cfg(not(test))]
+const TEST_REGISTER_OVERRIDE_ABSENT: () = ();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_REGISTER: std::cell::RefCell<Option<ScopeRegister>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Plant `register` as the one [`require`] consults on **this thread**.
+/// Dropping the guard restores the previous cell (usually `None`).
+#[cfg(test)]
+pub fn override_register(register: ScopeRegister) -> ScopeOverrideGuard {
+    let previous = TEST_REGISTER.with(|c| c.borrow_mut().replace(register));
+    ScopeOverrideGuard { previous }
+}
+
+/// Restores the thread-local register override when dropped.
+#[cfg(test)]
+pub struct ScopeOverrideGuard {
+    previous: Option<ScopeRegister>,
+}
+
+#[cfg(test)]
+impl Drop for ScopeOverrideGuard {
+    fn drop(&mut self) {
+        TEST_REGISTER.with(|c| *c.borrow_mut() = self.previous.take());
     }
 }
 
@@ -711,15 +848,7 @@ mod tests {
     }
 
     fn register_with(entries: Vec<ScopeEntry>) -> ScopeRegister {
-        let mut map = BTreeMap::new();
-        for e in entries {
-            map.insert(e.host.clone(), e);
-        }
-        ScopeRegister {
-            path: PathBuf::from("<test>"),
-            entries: map,
-            load_failure: None,
-        }
+        ScopeRegister::from_entries(entries)
     }
 
     #[test]
@@ -886,5 +1015,142 @@ mod tests {
             .code(),
             "scope:authentication-surface"
         );
+    }
+
+    fn load_toml(name: &str, body: &str) -> ScopeRegister {
+        let dir = std::env::temp_dir().join(format!("tallow-scope-test-{name}"));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let p = dir.join("register.toml");
+        std::fs::write(&p, body).expect("write");
+        ScopeRegister::load(&p)
+    }
+
+    #[test]
+    fn connect_is_a_grantable_method() {
+        let r = load_toml(
+            "connect",
+            r#"
+[[authorized]]
+host = "127.0.0.1"
+basis = "self-hosted"
+granted_by = "test"
+granted_at = "2026-01-01"
+methods = ["CONNECT"]
+"#,
+        );
+        assert!(
+            r.load_failure().is_none(),
+            "CONNECT must load: {:?}",
+            r.load_failure()
+        );
+        assert!(r.authorize("127.0.0.1", "CONNECT", T).is_allowed());
+        // A CONNECT grant does not smuggle GET.
+        assert!(matches!(
+            r.authorize("127.0.0.1", "GET", T).refusal(),
+            Some(Refusal::MethodNotAllowed { .. })
+        ));
+    }
+
+    #[test]
+    fn unknown_method_makes_the_register_malformed() {
+        let r = load_toml(
+            "unknown-method",
+            r#"
+[[authorized]]
+host = "owned.example"
+basis = "ownership"
+granted_by = "test"
+granted_at = "2026-01-01"
+methods = ["FROBNICATE"]
+"#,
+        );
+        assert!(matches!(
+            r.load_failure(),
+            Some(Refusal::RegisterMalformed { .. })
+        ));
+        assert!(!r.authorize("https://owned.example/", "GET", T).is_allowed());
+    }
+
+    #[test]
+    fn in_memory_register_does_not_weaken_authorize() {
+        let r = ScopeRegister::granting(&[("listed.test", &["GET"])]);
+        assert!(r.authorize("listed.test", "GET", T).is_allowed());
+        assert!(matches!(
+            r.authorize("other.test", "GET", T).refusal(),
+            Some(Refusal::NotListed { .. })
+        ));
+
+        let mut e = entry("expired.test", Basis::SelfHosted, Some("2020-06-01"));
+        e.methods = vec!["GET".to_string()];
+        let r = ScopeRegister::from_entries(vec![e]);
+        assert!(matches!(
+            r.authorize("expired.test", "GET", T).refusal(),
+            Some(Refusal::Expired { .. })
+        ));
+    }
+
+    #[test]
+    fn require_consults_thread_local_before_default() {
+        // Shipped register lists 127.0.0.1 for GET/HEAD, not CONNECT.
+        let denied = require("127.0.0.1", "CONNECT");
+        assert!(
+            matches!(denied, Err(Refusal::MethodNotAllowed { .. })),
+            "default register must still refuse CONNECT: {denied:?}"
+        );
+
+        let _g = override_register(ScopeRegister::granting(&[("127.0.0.1", &["CONNECT"])]));
+        assert!(require("127.0.0.1", "CONNECT").is_ok());
+        assert!(matches!(
+            require("not-in-the-grant.test", "GET"),
+            Err(Refusal::NotListed { .. })
+        ));
+    }
+
+    #[test]
+    fn override_does_not_leak_to_other_threads() {
+        let _g = override_register(ScopeRegister::granting(&[("only-here.test", &["GET"])]));
+        assert!(require("only-here.test", "GET").is_ok());
+        let other = std::thread::spawn(|| require("only-here.test", "GET"))
+            .join()
+            .expect("join");
+        assert!(
+            matches!(other, Err(Refusal::NotListed { .. })),
+            "other thread must not see this thread's grant: {other:?}"
+        );
+    }
+
+    #[test]
+    fn test_seam_source_is_cfg_test_gated() {
+        let src = include_str!("scope.rs");
+        assert!(
+            src.contains("#[cfg(not(test))]\nconst TEST_REGISTER_OVERRIDE_ABSENT"),
+            "non-test build must name the absence of the override cell"
+        );
+        assert!(
+            src.contains("#[cfg(test)]\nthread_local!"),
+            "override cell must sit under cfg(test)"
+        );
+        // Ignore the tests module so string literals here cannot be mistaken
+        // for uses of the cell.
+        let prod = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+        for (i, line) in prod.lines().enumerate() {
+            if line.contains("TEST_REGISTER") && !line.contains("TEST_REGISTER_OVERRIDE_ABSENT") {
+                let window: String = prod
+                    .lines()
+                    .take(i + 1)
+                    .rev()
+                    .take(12)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    window.contains("#[cfg(test)]"),
+                    "override cell on line {} is not under cfg(test):\n{window}",
+                    i + 1
+                );
+            }
+        }
     }
 }
