@@ -1262,4 +1262,446 @@ mod tests {
     fn the_build_path_refuses_instead_of_degrading_to_direct() {
         let _ = parse_proxy("::::nope");
     }
+
+    // ── Gated follow suite (docs/spec/EGRESS-REDIRECTS.md) ────────────────
+    // Loopback only. Each listener records what it actually served so
+    // "the unlisted host received nothing" is an assertion, not an inference.
+
+    #[derive(Debug, Clone)]
+    struct Hit {
+        method: String,
+        path: String,
+        body: Vec<u8>,
+    }
+
+    struct Loopback {
+        addr: std::net::SocketAddr,
+        hits: std::sync::Arc<std::sync::Mutex<Vec<Hit>>>,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Loopback {
+        fn url(&self, path: &str) -> String {
+            format!("http://{}{path}", self.addr)
+        }
+
+        fn stop(mut self) -> Vec<Hit> {
+            self.stop
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(h) = self.handle.take() {
+                let _ = h.join();
+            }
+            self.hits.lock().expect("hits mutex").clone()
+        }
+    }
+
+    impl Drop for Loopback {
+        fn drop(&mut self) {
+            self.stop
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(h) = self.handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+
+    /// Disable the 250 ms per-host limiter for the duration of a follow
+    /// chain; restore the previous env on drop. Holds [`ENV_LOCK`].
+    struct DelayOff {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prev: Option<String>,
+    }
+
+    impl DelayOff {
+        fn new() -> Self {
+            let lock = env_lock();
+            let prev = std::env::var("TALLOW_FETCH_DELAY_MS").ok();
+            unsafe { std::env::set_var("TALLOW_FETCH_DELAY_MS", "0") };
+            Self { _lock: lock, prev }
+        }
+    }
+
+    impl Drop for DelayOff {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.prev {
+                    Some(v) => std::env::set_var("TALLOW_FETCH_DELAY_MS", v),
+                    None => std::env::remove_var("TALLOW_FETCH_DELAY_MS"),
+                }
+            }
+        }
+    }
+
+    fn grant_loopback() -> crate::scope::ScopeOverrideGuard {
+        crate::scope::override_register(crate::scope::ScopeRegister::granting(&[(
+            "127.0.0.1",
+            &["GET", "POST"],
+        )]))
+    }
+
+    fn follow_agent() -> ureq::Agent {
+        agent_for_follow(true, Some(Duration::from_secs(5)))
+    }
+
+    fn read_http(stream: &mut std::net::TcpStream) -> std::io::Result<Hit> {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 512];
+        let header_end = loop {
+            let n = stream.read(&mut tmp)?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "eof before headers",
+                ));
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+            if buf.len() > 32 * 1024 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "headers too large",
+                ));
+            }
+        };
+        let header_text = String::from_utf8_lossy(&buf[..header_end]);
+        let mut lines = header_text.split("\r\n");
+        let request_line = lines.next().unwrap_or("");
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or("").to_string();
+        let path = parts.next().unwrap_or("").to_string();
+        let mut content_length = 0usize;
+        for line in lines {
+            let lower = line.to_ascii_lowercase();
+            if let Some(rest) = lower.strip_prefix("content-length:") {
+                content_length = rest.trim().parse().unwrap_or(0);
+            }
+        }
+        while buf.len() < header_end + content_length {
+            let n = stream.read(&mut tmp)?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+        }
+        let body = buf
+            .get(header_end..header_end + content_length)
+            .unwrap_or(&[])
+            .to_vec();
+        Ok(Hit {
+            method,
+            path,
+            body,
+        })
+    }
+
+    fn write_http(
+        stream: &mut std::net::TcpStream,
+        status: u16,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> std::io::Result<()> {
+        use std::io::Write;
+        let reason = match status {
+            200 => "OK",
+            302 => "Found",
+            303 => "See Other",
+            _ => "OK",
+        };
+        let mut out = format!("HTTP/1.1 {status} {reason}\r\n");
+        for (k, v) in headers {
+            out.push_str(&format!("{k}: {v}\r\n"));
+        }
+        out.push_str(&format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        ));
+        stream.write_all(out.as_bytes())?;
+        stream.write_all(body)?;
+        stream.flush()?;
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        Ok(())
+    }
+
+    fn serve<F>(bind: &str, handler: F) -> Loopback
+    where
+        F: Fn(&Hit) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + 'static,
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let listener = std::net::TcpListener::bind(bind)
+            .unwrap_or_else(|e| panic!("bind {bind}: {e}"));
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking accept");
+        let addr = listener.local_addr().expect("local addr");
+        let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let hits_t = hits.clone();
+        let stop_t = stop.clone();
+        let handle = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                if stop_t.load(Ordering::Relaxed) || Instant::now() > deadline {
+                    break;
+                }
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                        if let Ok(hit) = read_http(&mut stream) {
+                            let (status, headers, body) = handler(&hit);
+                            hits_t.lock().expect("hits mutex").push(hit);
+                            let _ = write_http(&mut stream, status, &headers, &body);
+                        }
+                    }
+                    Err(ref e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::Interrupted =>
+                    {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Loopback {
+            addr,
+            hits,
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn chain_response(hit: &Hit, land_at: usize) -> (u16, Vec<(String, String)>, Vec<u8>) {
+        let n = hit
+            .path
+            .strip_prefix("/h/")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0);
+        if n >= land_at {
+            (200, vec![], b"landed".to_vec())
+        } else {
+            (
+                302,
+                vec![("Location".into(), format!("/h/{}", n + 1))],
+                vec![],
+            )
+        }
+    }
+
+    #[test]
+    fn redirects_unlisted_target_is_refused() {
+        let _delay = DelayOff::new();
+        let _grant = grant_loopback();
+        let unlisted = serve("127.0.0.2:0", |_| (200, vec![], b"LEAKED".to_vec()));
+        let leak = format!("http://127.0.0.2:{}/leak", unlisted.addr.port());
+        let listed = serve("127.0.0.1:0", {
+            let leak = leak.clone();
+            move |_| (302, vec![("Location".into(), leak.clone())], vec![])
+        });
+        let start = listed.url("/start");
+        let agent = follow_agent();
+        let err = follow(&agent, &start, "GET", None, &[])
+            .expect_err("unlisted hop must refuse");
+        let unlisted_hits = unlisted.stop();
+        drop(listed);
+
+        assert_eq!(err.code(), "redirect-scope");
+        match &err {
+            FollowRefusal::Scope { url, .. } => {
+                assert!(
+                    url.contains("127.0.0.2") && url.contains("/leak"),
+                    "refused url: {url}"
+                );
+            }
+            other => panic!("expected FollowRefusal::Scope, got {other:?}"),
+        }
+        assert!(
+            unlisted_hits.is_empty(),
+            "unlisted host received {unlisted_hits:?}"
+        );
+        let sentence = err.to_string();
+        assert!(
+            sentence.contains("127.0.0.2") && sentence.starts_with("redirect-scope: refusing "),
+            "sentence: {sentence}"
+        );
+    }
+
+    #[test]
+    fn redirects_listed_target_is_followed() {
+        let _delay = DelayOff::new();
+        let _grant = grant_loopback();
+        let dest = serve("127.0.0.1:0", |_| (200, vec![], b"ok".to_vec()));
+        let dest_url = dest.url("/final");
+        let src = serve("127.0.0.1:0", {
+            let dest_url = dest_url.clone();
+            move |_| (302, vec![("Location".into(), dest_url.clone())], vec![])
+        });
+        let start = src.url("/start");
+        let agent = follow_agent();
+        let followed = follow(&agent, &start, "GET", None, &[])
+            .expect("listed hop must follow");
+        assert_eq!(
+            followed.final_url, dest_url,
+            "final_url must be the landing URL, not the requested one ({start})"
+        );
+        assert_ne!(followed.final_url, start);
+        drop(followed);
+        let dest_hits = dest.stop();
+        drop(src);
+        assert_eq!(dest_hits.len(), 1, "dest hits: {dest_hits:?}");
+        assert_eq!(dest_hits[0].method, "GET");
+        assert_eq!(dest_hits[0].path, "/final");
+    }
+
+    /// https→http needs a TLS first hop. Standing up a rustls listener from
+    /// this test tail would add a cert and a dependency, which is production
+    /// adjacent and outside the owned file. The helper is the live check for
+    /// that shape; `file:` is exercised through `follow` on plaintext
+    /// loopback, which does not need TLS.
+    #[test]
+    fn redirects_downgrade_and_non_http_are_refused() {
+        let https = url::Url::parse("https://127.0.0.1/x").unwrap();
+        let http = url::Url::parse("http://127.0.0.1/x").unwrap();
+        let file = url::Url::parse("file:///etc/passwd").unwrap();
+        assert!(
+            is_forbidden_scheme_change(&https, &http),
+            "https→http downgrade must be forbidden"
+        );
+        assert!(
+            is_forbidden_scheme_change(&http, &file),
+            "http→file must be forbidden"
+        );
+        assert!(
+            is_forbidden_scheme_change(&https, &file),
+            "https→file must be forbidden"
+        );
+        assert!(
+            !is_forbidden_scheme_change(&http, &https),
+            "http→https upgrade must be permitted"
+        );
+
+        let _delay = DelayOff::new();
+        let _grant = grant_loopback();
+        let listed = serve("127.0.0.1:0", |_| {
+            (
+                302,
+                vec![("Location".into(), "file:///etc/passwd".into())],
+                vec![],
+            )
+        });
+        let start = listed.url("/start");
+        let agent = follow_agent();
+        let err = follow(&agent, &start, "GET", None, &[])
+            .expect_err("file: hop must refuse");
+        drop(listed);
+        assert_eq!(err.code(), "redirect-scheme");
+        match &err {
+            FollowRefusal::Scheme { to, .. } => {
+                assert!(
+                    to.starts_with("file:") && to.contains("/etc/passwd"),
+                    "to={to}"
+                );
+            }
+            other => panic!("expected FollowRefusal::Scheme, got {other:?}"),
+        }
+        let sentence = err.to_string();
+        assert!(
+            sentence.starts_with("redirect-scheme: refusing ") && sentence.contains("file:"),
+            "sentence: {sentence}"
+        );
+    }
+
+    #[test]
+    fn redirects_ceiling_is_eight() {
+        let _delay = DelayOff::new();
+        let _grant = grant_loopback();
+        let agent = follow_agent();
+
+        let s8 = serve("127.0.0.1:0", |hit| chain_response(hit, 8));
+        let start8 = s8.url("/h/0");
+        let ok = follow(&agent, &start8, "GET", None, &[])
+            .expect("a chain of 8 hops must succeed");
+        assert_eq!(ok.hops, 8);
+        assert!(
+            ok.final_url.ends_with("/h/8"),
+            "final_url must be the landing URL: {}",
+            ok.final_url
+        );
+        drop(ok);
+        let hits8 = s8.stop();
+        assert!(
+            hits8.iter().any(|h| h.path == "/h/8"),
+            "landing path never served: {hits8:?}"
+        );
+        assert!(
+            !hits8.iter().any(|h| h.path == "/h/9"),
+            "an 8-hop chain must not request /h/9: {hits8:?}"
+        );
+
+        let s9 = serve("127.0.0.1:0", |hit| chain_response(hit, usize::MAX));
+        let start9 = s9.url("/h/0");
+        let err = follow(&agent, &start9, "GET", None, &[])
+            .expect_err("a ninth hop must refuse");
+        assert_eq!(err.code(), "redirect-limit");
+        match &err {
+            FollowRefusal::Limit { url, hops } => {
+                assert!(url.contains("/h/9"), "refused url: {url}");
+                assert_eq!(*hops, 8);
+            }
+            other => panic!("expected FollowRefusal::Limit, got {other:?}"),
+        }
+        let sentence = err.to_string();
+        assert!(
+            sentence.contains(err.url())
+                && sentence.contains("redirect-limit")
+                && sentence.contains("/h/9"),
+            "sentence must name the URL it refused: {sentence}"
+        );
+        let hits9 = s9.stop();
+        assert!(
+            !hits9.iter().any(|h| h.path == "/h/9"),
+            "the ninth hop was issued: {hits9:?}"
+        );
+    }
+
+    #[test]
+    fn redirects_303_rewrites_method_to_get() {
+        let _delay = DelayOff::new();
+        let _grant = grant_loopback();
+        let srv = serve("127.0.0.1:0", |hit| {
+            if hit.path == "/start" {
+                (303, vec![("Location".into(), "/landed".into())], vec![])
+            } else {
+                (200, vec![], b"landed".to_vec())
+            }
+        });
+        let start = srv.url("/start");
+        let agent = follow_agent();
+        let followed = follow(&agent, &start, "POST", Some(b"secret-body"), &[])
+            .expect("303 must follow as GET");
+        assert_eq!(followed.method, "GET");
+        assert!(
+            followed.final_url.ends_with("/landed"),
+            "final_url: {}",
+            followed.final_url
+        );
+        drop(followed);
+        let hits = srv.stop();
+        assert_eq!(hits.len(), 2, "hits: {hits:?}");
+        assert_eq!(hits[0].method, "POST");
+        assert_eq!(hits[0].path, "/start");
+        assert_eq!(hits[0].body, b"secret-body");
+        assert_eq!(hits[1].method, "GET", "second request must be GET, got {hits:?}");
+        assert_eq!(hits[1].path, "/landed");
+        assert!(
+            hits[1].body.is_empty(),
+            "303 rewrite must drop the body: {:?}",
+            hits[1].body
+        );
+    }
 }
