@@ -51,6 +51,8 @@ impl AdaptiveCrawler {
     /// Create a new adaptive crawler with default settings.
     pub fn new() -> Self {
         // T-207 browser-zone lockdown: contract-bound client (Tor by default).
+        // Inventory site `:54` is this constructor. It builds an agent; no URL
+        // is sent. The hop is `try_http`, gated there.
         let http_client = crate::runtime::egress_http::agent_with_timeouts(
             Some(std::time::Duration::from_secs(15)),
             None,
@@ -66,6 +68,7 @@ impl AdaptiveCrawler {
     /// Create a crawler with custom settings.
     pub fn with_config(min_content_length: usize, user_agent: &str, http_timeout_secs: u64) -> Self {
         // T-207 browser-zone lockdown: contract-bound client (Tor by default).
+        // Inventory site `:69` is this constructor. Same as `new`: no hop.
         let http_client = crate::runtime::egress_http::agent_with_timeouts(
             Some(std::time::Duration::from_secs(http_timeout_secs)),
             None,
@@ -118,6 +121,13 @@ impl AdaptiveCrawler {
 
     /// Perform a blocking HTTP GET and return the result.
     fn try_http(&self, url: &str) -> Result<CrawlResult, BrowserError> {
+        // `fetch` turns `try_http` Err into a browser fallback (`Err(_) =>
+        // fetch_with_browser`). A returned refusal would still navigate.
+        // Fatal, on the URL actually sent, before the GET is built.
+        if let Err(r) = crate::scope::require(url, "GET") {
+            eprintln!("runtime error: {} — {}", r.code(), r.explain());
+            std::process::exit(1);
+        }
         let resp = self
             .http_client
             .get(url)
@@ -422,5 +432,40 @@ mod tests {
         let html = "<p>Hello</p><script>var x = 1;</script><p>World</p>";
         let len = extract_visible_text_length(html);
         assert_eq!(len, 10); // "Hello" + "World"
+    }
+
+    /// Inventory `:54`/`:69` only build an agent. The hop is `try_http`.
+    /// `fetch` swallows `try_http` Err into a browser fallback, so refusal
+    /// is fatal, on the URL actually sent, before the GET is built.
+    #[test]
+    fn try_http_consults_the_register_before_the_get() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/adaptive_crawler.rs"
+        ))
+        .expect("read src/browser/adaptive_crawler.rs");
+        let start = src.find("fn try_http").expect("try_http must exist");
+        let end = start
+            + src[start..]
+                .find("async fn fetch_with_browser")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(url, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("try_http must call crate::scope::require(url, \"GET\")");
+        let get_at = body
+            .find("http_client")
+            .and_then(|i| body[i..].find(".get(url)").map(|j| i + j))
+            .expect("try_http GET missing");
+        assert!(
+            require_at < get_at,
+            "scope::require must run before the HTTP GET is built"
+        );
+        assert!(
+            body.contains("std::process::exit(1)"),
+            "fetch swallows try_http Err into a browser fallback — refusal is fatal"
+        );
     }
 }

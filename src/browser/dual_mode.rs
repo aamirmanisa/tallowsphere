@@ -416,6 +416,15 @@ impl DualModeEngine {
 
     /// Fetch a URL using the HTTP client.
     async fn fetch_http(&self, url: &str) -> Result<DualModeResponse, BrowserError> {
+        // Inventory site `:432` is the Client::builder in the fallback arm;
+        // the hop is `client.get(url).send()` below. `fetch_auto` matches `_`
+        // on Err and switches to the browser, so a returned refusal would
+        // become a navigation. Fatal, on the URL actually sent, before the
+        // request (and the on-demand builder) is built.
+        if let Err(r) = crate::scope::require(url, "GET") {
+            eprintln!("runtime error: {} — {}", r.code(), r.explain());
+            std::process::exit(1);
+        }
         let client = self.http_client.as_ref().cloned().unwrap_or_else(|| {
             // Build a basic client if none exists yet
             let mut headers = HeaderMap::new();
@@ -548,6 +557,8 @@ impl DualModeEngine {
             }
         }
 
+        // Inventory site `:551`. This builds a stored client; no URL is sent.
+        // The hop is `fetch_http` (gated there). Construction is not a hop.
         let mut builder = reqwest::Client::builder()
             .default_headers(headers)
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -1512,5 +1523,42 @@ mod tests {
         let detector = ImageTextDetector::new();
         let result = detector.detect_image_prices(html);
         assert!(result.has_image_prices);
+    }
+
+    /// Inventory `:432` is Client::builder; the hop is `client.get(url).send()`.
+    /// `fetch_auto` swallows Err into a browser switch, so refusal is fatal.
+    /// `:551` (`build_http_client`) has no URL — construction is not a hop.
+    #[test]
+    fn fetch_http_consults_the_register_before_the_get() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/dual_mode.rs"
+        ))
+        .expect("read src/browser/dual_mode.rs");
+        let start = src
+            .find("async fn fetch_http")
+            .expect("fetch_http must exist");
+        let end = start
+            + src[start..]
+                .find("async fn fetch_browser")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(url, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("fetch_http must call crate::scope::require(url, \"GET\")");
+        let builder_at = body
+            .find("reqwest::Client::builder()")
+            .expect("on-demand Client::builder missing");
+        let get_at = body.find(".get(url)").expect("HTTP get missing");
+        assert!(
+            require_at < builder_at && require_at < get_at,
+            "scope::require must run before the request (and on-demand builder) is built"
+        );
+        assert!(
+            body.contains("std::process::exit(1)"),
+            "fetch_auto swallows Err into a browser switch — refusal is fatal"
+        );
     }
 }
