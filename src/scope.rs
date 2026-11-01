@@ -437,7 +437,11 @@ fn split_host_path(input: &str) -> Result<(String, String), Refusal> {
         }
         None => after_scheme,
     };
-    let (authority, path) = match authority_and_rest.find('/') {
+    // The authority ends at the first `/`, `?` or `#`: `https://host?q=1` has no
+    // path but is a well-formed URL, and before this it was refused with the host
+    // key `host?q=1` — a false refusal that named a host that does not exist.
+    let cut = authority_and_rest.find(['/', '?', '#']);
+    let (authority, path) = match cut {
         Some(i) => (
             &authority_and_rest[..i],
             authority_and_rest[i..].to_string(),
@@ -1056,6 +1060,30 @@ methods = ["CONNECT"]
         let r = register_with(vec![entry("127.0.0.1", Basis::SelfHosted, None)]);
         assert!(r.authorize("127.0.0.1:8080", "GET", T).is_allowed());
         assert!(r.authorize("http://127.0.0.1:8080/health", "GET", T).is_allowed());
+    }
+
+    #[test]
+    fn query_without_a_path_is_not_part_of_the_host() {
+        // `https://host?q=1` is a valid URL with an empty path. The authority
+        // must end at `?` (and `#`), or the host key becomes `host?q=1` and a
+        // legitimate target is refused with a host that does not exist.
+        let r = register_with(vec![entry("owned.example", Basis::Ownership, None)]);
+        for url in [
+            "https://owned.example?q=1",
+            "https://owned.example#frag",
+            "https://owned.example?q=1#frag",
+        ] {
+            let d = r.authorize(url, "GET", T);
+            assert!(d.is_allowed(), "{url} refused: {}", d.render());
+        }
+        // The query is still part of the path for the auth-surface check: a
+        // `next=/login` parameter is refused exactly as `/login` is.
+        let d = r.authorize("https://owned.example?next=/login", "GET", T);
+        assert!(
+            matches!(d.refusal(), Some(Refusal::AuthenticationSurface { .. })),
+            "query-carried auth path was not refused: {}",
+            d.render()
+        );
     }
 
     #[test]

@@ -306,6 +306,8 @@ jobs:
           --test mesh_run_tl
           --test mesh_llm_tl
           --test egress_ledger
+          --test egress_gate_coverage
+          --test http_batch_scope_parity
           --test mesh_remote
           --test mesh_workers
           --test browser_sentinels_tl
