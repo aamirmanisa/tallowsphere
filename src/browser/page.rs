@@ -480,6 +480,15 @@ impl Page {
         // the HTTPS upgrade (#108).
         let normalized = crate::browser::plugins::normalize_navigation_url(url);
         let url = normalized.as_str();
+        // Register first: the document URL is egress. One caller
+        // (`stdlib/turnstile.rs:160`) discards `navigate`'s Result, so a
+        // returned Err would not stop the hop. Sentence is the register's.
+        // Internal CDP (lifecycle enable, the control socket) is not gated —
+        // only this caller-supplied URL.
+        if let Err(r) = crate::scope::require(url, "GET") {
+            eprintln!("runtime error: {} — {}", r.code(), r.explain());
+            std::process::exit(1);
+        }
         // Subscribe to events BEFORE enabling any domain or navigating. The
         // broadcast channel drops events broadcast while zero subscribers are
         // attached (`send()` → `Err(SendError)`). Enabling lifecycle events on
@@ -3805,6 +3814,19 @@ WebGLRenderingContext.prototype.getParameter = function(parameter) {
         method: &str,
         body: &str,
     ) -> Result<(u16, String), BrowserError> {
+        // Cookie-bearing HTTP to the caller's host — reachable from `.tl` on
+        // both planes. The zone proxy is not a grant; consult the register
+        // with the real method before any request is built. Callers (interp,
+        // `tallow_page_authenticated_request`) propagate, so a returned Err
+        // is enough. `cookie_string` below is CDP against the control socket,
+        // not this hop.
+        let method_upper = method.to_ascii_uppercase();
+        if let Err(r) = crate::scope::require(url, &method_upper) {
+            return Err(BrowserError::CdpError {
+                code: -1,
+                message: format!("{} — {}", r.code(), r.explain()),
+            });
+        }
         let cookie_header = self.cookie_string(url).await?;
 
         // T-207: the single browser-zone predicate gates this fetch first —
@@ -4611,6 +4633,87 @@ mod tests {
         assert!(
             rate < get && rate < post,
             "the limiter must run before the GET/POST dispatch branches"
+        );
+    }
+
+    /// The document URL in `navigate_internal` must hit the register before
+    /// the CDP `Page.navigate` command is built. A missing call, or one that
+    /// sits after the send, is the defect this lane closed. Slice-only so
+    /// this test's own source cannot satisfy it.
+    #[test]
+    fn navigate_consults_the_register_before_cdp() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/page.rs"
+        ))
+        .expect("read src/browser/page.rs");
+        let start = src
+            .find("async fn navigate_internal")
+            .expect("navigate_internal must exist");
+        let end = start
+            + src[start..]
+                .find("pub async fn navigate_rate_limited")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(url, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("navigate_internal must call crate::scope::require(url, \"GET\")");
+        assert!(
+            body.contains("std::process::exit(1)"),
+            "a discarded navigate Result (turnstile.rs) makes a returned Err a hole — refusal is fatal"
+        );
+        let send_at = body
+            .find("json!({\"url\": url})")
+            .expect("Page.navigate params missing");
+        assert!(
+            require_at < send_at,
+            "scope::require must run before the CDP Page.navigate command is built"
+        );
+        let lifecycle = body
+            .find("Page.setLifecycleEventsEnabled")
+            .expect("lifecycle enable missing");
+        assert!(
+            require_at < lifecycle,
+            "do not talk to the page at all before the register has spoken"
+        );
+    }
+
+    /// Cookie-bridge HTTP must consult the register with the real method
+    /// before `agent.get` / `agent.post`. Zone proxy is not a grant.
+    #[test]
+    fn authenticated_request_consults_the_register_before_agent() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/page.rs"
+        ))
+        .expect("read src/browser/page.rs");
+        let start = src
+            .find("pub async fn authenticated_request")
+            .expect("authenticated_request must exist");
+        let end = start
+            + src[start..]
+                .find("fn extract_string_result")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(url, &method_upper)";
+        let require_at = body
+            .find(require)
+            .expect("authenticated_request must call crate::scope::require(url, &method_upper)");
+        let get = body.find(".get(url)").expect("GET branch missing");
+        let post = body.find(".post(url)").expect("POST branch missing");
+        assert!(
+            require_at < get && require_at < post,
+            "register must run before either cookie-bearing HTTP branch"
+        );
+        let cookie = body
+            .find("self.cookie_string(url)")
+            .expect("cookie_string missing");
+        assert!(
+            require_at < cookie,
+            "refuse before CDP cookie collection: an unlisted host is not a reason to read cookies"
         );
     }
 }
