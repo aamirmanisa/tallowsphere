@@ -446,6 +446,17 @@ fn llm_agent() -> Result<ureq::Agent, String> {
 }
 
 fn send(method: &str, url: &str, headers: &[(&str, String)], body: Option<&J>) -> Result<J, String> {
+    // Deny-by-default egress, and FATAL: a refusal here must not be an Err the
+    // caller can discard. `do_verify` matches `list_models` as
+    // `Err(e) => (false, e, 0)` and returns a VerifyReport, so a returned
+    // refusal would print as a failed reachability check and the process
+    // would keep running. The process ends here, like net.connect.
+    // Verb is the one this helper puts on the wire: GET for models/verify,
+    // POST for complete.
+    if let Err(r) = crate::scope::require(url, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let agent = llm_agent()?;
     let sent = if method == "GET" {
         let mut req = agent.get(url);

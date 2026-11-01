@@ -3151,12 +3151,25 @@ fn sigv4_sign(
 
 // ─── ureq helpers ─────────────────────────────────────────────────────────────
 
+/// Deny-by-default egress, and FATAL: a refusal here must not be an Err the
+/// caller can discard. Multipart abort does `let _ = s3_req_no_body("DELETE", …)`,
+/// so a returned refusal was a silent continue. `s3_agent` itself cannot be
+/// the gate — it has no URL. Gate the URL the request will actually hit,
+/// with the verb it puts on the wire (GET/PUT/POST/DELETE/HEAD).
+fn s3_gate(url: &str, method: &str) {
+    if let Err(r) = crate::scope::require(url, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 fn s3_req_no_body(
     method: &str,
     url:    &str,
     creds:  &S3Creds,
     extra:  &[(String, String)],
 ) -> Result<(u16, String), String> {
+    s3_gate(url, method);
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign(method, url, extra, &[], creds, &now);
     let agent = s3_agent();
@@ -3204,6 +3217,7 @@ fn s3_req_with_body(
     ct:     &str,
     extra:  &[(String, String)],
 ) -> Result<(u16, String), String> {
+    s3_gate(url, method);
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign(method, url, extra, &body, creds, &now);
     let agent = s3_agent();
@@ -3237,6 +3251,7 @@ fn s3_req_with_body(
 
 /// GET and return raw binary response body (binary-safe).
 fn s3_get_bytes(url: &str, creds: &S3Creds) -> Result<Vec<u8>, String> {
+    s3_gate(url, "GET");
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign("GET", url, &[], &[], creds, &now);
     let agent = s3_agent();
@@ -3575,6 +3590,7 @@ fn cloud_s3_head(args: &[Value]) -> StdlibResult {
     let base    = creds.bucket_url(&bucket);
     let key_enc = s3_uri_path(&key);
     let obj_url = format!("{base}/{key_enc}");
+    s3_gate(&obj_url, "HEAD");
 
     let now = s3_now();
     let (auth, amz_date, csha) = sigv4_sign("HEAD", &obj_url, &[], &[], &creds, &now);
