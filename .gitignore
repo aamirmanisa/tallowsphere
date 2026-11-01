@@ -136,10 +136,11 @@ docs/api/
 # what makes that safe rather than a silent data loss.
 reports/
 
-# Harvested or client-derived fixtures: must be regenerated from a synthetic
-# source, never committed. harvested-fixture/ was removed from history in the 2026-11-01
-# pass; this keeps it from coming back.
-tests/fixtures/harvested-fixture/
+# Harvested or client-derived fixtures are regenerated from a synthetic source,
+# never committed. The 2026-11-01 pass removed one such directory from history;
+# the convention below keeps the next one out without naming it here — a guard
+# that spells the client's name is the same disclosure in a smaller place.
+tests/fixtures/*/harvested/
 *.pem
 *.key
 .env
