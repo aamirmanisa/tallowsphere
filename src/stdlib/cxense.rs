@@ -146,6 +146,10 @@ fn gate(url: &str) {
 }
 
 fn fetch(url: &str, referer: &str, ua: &str, cookie_header: &str) -> Result<String, String> {
+    // Single choke point for the module: every request is built here, and the
+    // callers discard or normalise an `Err` (see the gate's own comment), so the
+    // refusal has to happen before the builder is touched.
+    gate(url);
     let mut req = AGENT.get(url).header("User-Agent", ua).header("Referer", referer);
     if !cookie_header.is_empty() {
         req = req.header("Cookie", cookie_header);
