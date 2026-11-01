@@ -61,6 +61,10 @@ Two further defects, measured rather than inferred:
   record no longer borrows a real carrier's name.
 - Internal working documents (agent notes, benchmark protocols, the publication manifest)
   are not part of this repository.
+- `tallow doctor --capabilities` no longer under-reports crypto. Since 2026-10-27 the
+  report read only `fn` declarations and skipped the 32 written in the canonical
+  `native fn` form, so `hpke_seal`, `hpke_open` and the FROST/BBS+/age/opaque surface
+  were missing from a report that claimed to enumerate them.
 
 ## [v1.6.0] — 2026-10-31 — Eight compiler defects closed, and the gates move into the binary
 
