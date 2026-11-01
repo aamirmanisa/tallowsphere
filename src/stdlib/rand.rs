@@ -8,6 +8,13 @@ use rand::Rng;
 /// Dispatch a `tallow.rand.*` function call.
 pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
     match function {
+        // `rand.i64()` / `rand.f64()`: declared in stdlib/rand.tl as
+        // `native fn i64() -> i64` and `native fn f64() -> f64` (uniform in
+        // [0.0, 1.0)), and absent from this dispatcher until now — a probe of
+        // every top-level declaration found them returning
+        // `runtime error: undefined function: rand.i64`.
+        "i64" => Some(Ok(Value::Int(rand::rng().random::<i64>() as i128))),
+        "f64" => Some(Ok(Value::Float(rand::rng().random::<f64>()))),
         "bytes" => Some(rand_bytes(&args)),
         "u64" => Some(rand_u64()),
         "range" => Some(rand_range(&args)),
