@@ -50,8 +50,7 @@ bypass; a client that follows without recording the final URL is a provenance de
    GET case) becomes `GET`; `307`/`308` preserve the method. A hop that changes the method is
    authorised under the method the next request will actually carry, so a `POST` grant cannot be
    walked into a `GET` on an unlisted host or the reverse.
-4. **Scheme is part of the decision.** A hop that changes scheme (`https:` → `http:`, `file:`,
-   `ftp:`) is refused. Downgrade is the shape that turns a granted read into a leaked body.
+4. **Scheme is part of the decision.** An **upgrade** `http:` → `https:` on the same host is permitted (it is the redirect that makes a plain-URL grant usable). A **downgrade** `https:` → `http:`, or a hop to any non-HTTP scheme (`file:`, `ftp:`, `data:`), is refused: downgrade is the shape that turns a granted read into a body someone else can rewrite, and a non-HTTP scheme is a different transport that the register says nothing about.
 5. **Provenance.** The URL a `Response` reports is the URL that produced its body. `Response.url`
    is the final URL after any gated hops — never the requested one when they differ.
 6. **Follow is opt-in per module, and named.** A module that must land on the final URL
@@ -69,9 +68,10 @@ bypass; a client that follows without recording the final URL is a provenance de
   (b) listed → listed 302 succeeds and `Response.url` is the final URL; (c) a 302 that downgrades
   https→http is refused; (d) 5 hops of listed hosts succeed, 9 refuse with `redirect-limit`;
   (e) a 303 from a POST is re-authorised as GET.
-- `cargo test --lib -- --test-threads=1` — 9,527 passing before this change; the count may move
-  only upward, and the three standing reds (`osint` ×2, `sitescan` ×1) stay red until their own
-  fix lands.
+- `cargo test --lib -- --test-threads=1` — the suite is green on main as of `2ac6d23`
+  (9,539 passed / 0 failed / 33 ignored). The three tests that were red while this spec was written
+  (`osint` ×2 for the `CONNECT` verb, `sitescan` ×1 for `x.test`) were fixed by the test-only register
+  seam (`bb77d21`) and the `CONNECT` vocabulary (`faa54fb`), and must stay green. The count may move only upward.
 - The measurement above, re-run against the built binary: the unlisted server must receive
   **nothing** and the refusal must name `127.0.0.2`.
 
