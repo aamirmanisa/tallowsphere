@@ -1,11 +1,14 @@
-//! Coverage gate: every `src/stdlib/*.rs` that names `egress_http::` must also
-//! name `scope::require`.
+//! Coverage gate: every `src/stdlib/*.rs` that builds a request on the shared
+//! egress client outside `#[cfg(test)]` must also name `scope::require`.
 //!
 //! A safety property that lives in a document is a wish. This test is the
 //! durable replacement for a prose census of which stdlib modules consult the
-//! authorization register before they talk to the network. A module that
-//! mentions `egress_http::` without `scope::require` cannot land: the test
-//! fails and prints the file name.
+//! authorization register before they talk to the network. A module that calls
+//! `egress_http::get`/`post`/`agent`/… without `scope::require` cannot land:
+//! the test fails and prints the file name.
+//!
+//! A mere mention is not a site: `egress_http::env_lock()` is a `MutexGuard`,
+//! and four modules touch it only from their test harness. See `REQUEST_VERBS`.
 //!
 //! Negative control (the exact one-line edit that must turn this test red):
 //!
@@ -28,7 +31,81 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const EGRESS_NEEDLE: &str = "egress_http::";
+
+/// Raw-client needle. A module that builds its own `ureq` request is on the
+/// network just as much as one that uses the shared shims — `intel_api`'s
+/// method matrix does exactly that — so the same rule applies to both.
+const UREQ_NEEDLE: &str = "ureq::";
 const REQUIRE_NEEDLE: &str = "scope::require";
+
+/// Request-shaped constructors on the shared client.
+///
+/// The predicate is deliberately narrower than "mentions `egress_http::`": four
+/// modules (advisory, jobs, legal, rmdb_store) name the module only through
+/// `egress_http::env_lock()`, a `MutexGuard` used to serialise tests that mutate
+/// environment variables. Treating that as an egress site demands a gate in a
+/// module that cannot send bytes — the decorative-gate defect this file exists
+/// to prevent, arrived at from the other side.
+const REQUEST_VERBS: &[&str] = &[
+    "get(",
+    "post(",
+    "put(",
+    "delete(",
+    "head(",
+    "patch(",
+    "request(",
+    "agent(",
+    "agent_with_timeouts(",
+    "Agent::config_builder(",
+];
+
+/// Line numbers (1-based) of request-shaped `egress_http::` calls outside any
+/// `#[cfg(test)]` module. A test harness may name the client freely; production
+/// code may not reach it without the register.
+fn request_sites(text: &str) -> Vec<usize> {
+    let mut sites = Vec::new();
+    let mut in_test_mod = false;
+    let mut depth: i32 = 0;
+    let mut pending_cfg_test = false;
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if !in_test_mod {
+            if line.starts_with("#[cfg(test)]") {
+                pending_cfg_test = true;
+                continue;
+            }
+            if pending_cfg_test {
+                if line.starts_with("mod ") || line.starts_with("pub mod ") {
+                    in_test_mod = true;
+                    depth = 0;
+                    pending_cfg_test = false;
+                } else if !line.is_empty() && !line.starts_with("//") {
+                    pending_cfg_test = false;
+                }
+            }
+        }
+        if in_test_mod {
+            depth += line.matches('{').count() as i32;
+            depth -= line.matches('}').count() as i32;
+            if depth <= 0 && line.contains('}') {
+                in_test_mod = false;
+            }
+            continue;
+        }
+        for needle in [EGRESS_NEEDLE, UREQ_NEEDLE] {
+            let Some(pos) = raw.find(needle) else { continue };
+            let rest = &raw[pos + needle.len()..];
+            if rest.starts_with("env_lock") {
+                continue;
+            }
+            if REQUEST_VERBS.iter().any(|verb| rest.starts_with(verb)) {
+                sites.push(i + 1);
+                break;
+            }
+        }
+    }
+    sites
+}
 
 /// `(file name in src/stdlib/, reason)`.
 ///
@@ -84,7 +161,8 @@ fn every_egress_http_site_consults_scope_require() {
             .into_owned();
         let text =
             fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        if !text.contains(EGRESS_NEEDLE) {
+        let sites = request_sites(&text);
+        if sites.is_empty() {
             continue;
         }
         if exempt.contains(name.as_str()) {
