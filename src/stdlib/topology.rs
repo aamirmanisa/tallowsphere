@@ -200,13 +200,17 @@ impl Technique {
 /// never leaves the process; their callers are all entry points that gate the
 /// literal target above, before resolution.
 fn require_authorized(target: &str) -> Result<(), String> {
-    crate::scope::require(target, "GET").map_err(|refusal| {
-        format!(
-            "topology: target '{target}' is not authorized ({}): {}",
-            refusal.code(),
-            refusal.explain()
-        )
-    })
+    // `scope::require` hands back the granting entry; this helper only needs to
+    // know that a grant exists.
+    crate::scope::require(target, "GET")
+        .map(|_| ())
+        .map_err(|refusal| {
+            format!(
+                "topology: target '{target}' is not authorized ({}): {}",
+                refusal.code(),
+                refusal.explain()
+            )
+        })
 }
 
 // ══════════════════════════════════════════════════════════════════
