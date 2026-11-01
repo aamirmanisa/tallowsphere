@@ -573,8 +573,10 @@ mod tests {
         let gate = body
             .find("crate::scope::require(url, \"GET\")")
             .expect("scrape_url must call crate::scope::require(url, \"GET\")");
+        // `rfind`: the gate's own comment quotes the marker, so the first hit is
+        // prose and the last is the request.
         let build = body
-            .find("client.get(url).send()")
+            .rfind("client.get(url).send()")
             .expect("scrape_url must build the GET");
         assert!(
             gate < build,

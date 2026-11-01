@@ -1548,10 +1548,12 @@ mod tests {
         let require_at = body
             .find(require)
             .expect("fetch_http must call crate::scope::require(url, \"GET\")");
+        // `rfind`: the doc comment above the gate names both markers, so the
+        // first occurrence is prose and the last is the code.
         let builder_at = body
-            .find("reqwest::Client::builder()")
+            .rfind("reqwest::Client::builder()")
             .expect("on-demand Client::builder missing");
-        let get_at = body.find(".get(url)").expect("HTTP get missing");
+        let get_at = body.rfind(".get(url)").expect("HTTP get missing");
         assert!(
             require_at < builder_at && require_at < get_at,
             "scope::require must run before the request (and on-demand builder) is built"
