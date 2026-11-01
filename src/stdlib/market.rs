@@ -15,6 +15,11 @@ use crate::interp::{type_name, Value};
 fn market_summary(ticker: &str) -> StdlibResult {
     // Get quote from Yahoo
     let url = format!("https://query2.finance.yahoo.com/v7/finance/quote?symbols={}", ticker);
+    // Deny-by-default egress: refuse before the socket opens.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", "Mozilla/5.0")
         .call()
@@ -48,6 +53,11 @@ fn sector_performance() -> StdlibResult {
     let tickers = ["^GSPC", "XLF", "XLK", "XLE", "XLV", "XLI", "XLP", "XLY", "XLU", "XLB", "XLRE"];
     let symbols = tickers.join(",");
     let url = format!("https://query2.finance.yahoo.com/v7/finance/quote?symbols={}", symbols);
+    // Deny-by-default egress: refuse before the socket opens.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", "Mozilla/5.0")
         .call()

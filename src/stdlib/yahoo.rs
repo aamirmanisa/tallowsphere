@@ -21,6 +21,11 @@ const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 #[allow(dead_code)] // kept for future direct API use
 fn yahoo_get(path: &str, _params: &[(&str, &str)]) -> Result<String, String> {
     let url = format!("{}{}", YAHOO_BASE, path);
+    // Deny-by-default egress: refuse before the socket opens.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/json")
@@ -58,6 +63,11 @@ fn parse_json(body: &str) -> StdlibResult {
 // ── Yahoo.quote(ticker) ──
 fn fetch_quote(ticker: &str) -> StdlibResult {
     let url = format!("https://query2.finance.yahoo.com/v7/finance/quote?symbols={}", ticker);
+    // Deny-by-default egress: refuse before the socket opens.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", USER_AGENT)
         .call()
@@ -92,6 +102,11 @@ fn fetch_quote(ticker: &str) -> StdlibResult {
 fn fetch_history(ticker: &str, period: &str, interval: &str) -> StdlibResult {
     let url = format!("{}/{ticker}?period1=0&period2=9999999999&interval={interval}&range={period}&events=div%7Csplit",
         "https://query1.finance.yahoo.com/v8/finance/chart");
+    // Deny-by-default egress: refuse before the socket opens.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", USER_AGENT)
         .call()
@@ -132,6 +147,11 @@ fn fetch_options(ticker: &str, expiration: Option<&str>) -> StdlibResult {
     } else {
         format!("https://query2.finance.yahoo.com/v7/finance/options/{ticker}")
     };
+    // Deny-by-default egress: refuse before the socket opens.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", USER_AGENT)
         .call()
@@ -143,6 +163,11 @@ fn fetch_options(ticker: &str, expiration: Option<&str>) -> StdlibResult {
 // ── Yahoo.search(query) ──
 fn fetch_search(query: &str) -> StdlibResult {
     let url = format!("https://query2.finance.yahoo.com/v1/finance/search?q={}&quotesCount=10", urlencoding::encode(query));
+    // Deny-by-default egress: refuse before the socket opens.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&url)
         .header("User-Agent", USER_AGENT)
         .call()

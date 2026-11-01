@@ -56,6 +56,15 @@ fn arg_str(args: &[Value], idx: usize, name: &str) -> Result<String, String> {
 }
 
 fn http_get(url: &str) -> Result<String, String> {
+    // Deny-by-default egress, and FATAL: a refusal here must not be an Err the
+    // caller can discard. `wp_discover` and friends are written `if let Ok(json) =
+    // http_get_json(..)`, so a returned Err was swallowed and the probe ran on
+    // (measured 2026-11-01: wordpress.discover to 192.0.2.1 returned a normal
+    // result instead of refusing). The process ends here, like net.connect.
+    if let Err(r) = crate::scope::require(url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = AGENT
         .get(url)
         .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
@@ -68,6 +77,15 @@ fn http_get(url: &str) -> Result<String, String> {
 }
 
 fn http_post_json(url: &str, body: &str) -> Result<String, String> {
+    // Deny-by-default egress, and FATAL: a refusal here must not be an Err the
+    // caller can discard. `wp_discover` and friends are written `if let Ok(json) =
+    // http_get_json(..)`, so a returned Err was swallowed and the probe ran on
+    // (measured 2026-11-01: wordpress.discover to 192.0.2.1 returned a normal
+    // result instead of refusing). The process ends here, like net.connect.
+    if let Err(r) = crate::scope::require(url, "POST") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = AGENT
         .post(url)
         .header("Content-Type", "application/json")
