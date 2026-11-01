@@ -51105,11 +51105,13 @@ fn main() {
 
     #[test]
     fn test_mesh_node_creation_from_tallow() {
-        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
+        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
-    let node = MeshNode.new(9000, [])
+    let node = MeshNode.new(15400, [])
     print(node.node_id)
 }
 "#;
@@ -51123,21 +51125,25 @@ fn main() {
             !interp.output.is_empty(),
             "expected output from mesh node creation"
         );
+        // The node id is derived from the port; the fixture moved off 9000 with
+        // the rest of the mesh tests (9001-9005 were in use on this box).
         assert!(
-            interp.output[0].contains("node-9000"),
-            "expected node_id containing 'node-9000', got: {:?}",
+            interp.output[0].contains("node-15400"),
+            "expected node_id containing 'node-15400', got: {:?}",
             interp.output[0]
         );
     }
 
     #[test]
     fn test_mesh_two_nodes_gossip() {
-        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
+        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
-    let n1 = MeshNode.new(9001, [])
-    let n2 = MeshNode.new(9002, ["localhost:9001"])
+    let n1 = MeshNode.new(15401, [])
+    let n2 = MeshNode.new(15402, ["localhost:15401"])
     n1.join()
     n2.join()
     n1.subscribe("topic/test")
@@ -51170,11 +51176,13 @@ fn main() {
 
     #[test]
     fn test_mesh_dht_from_tallow() {
-        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
+        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
-    let node = MeshNode.new(9003, [])
+    let node = MeshNode.new(15403, [])
     node.join()
     node.dht_put("my-key", "my-value")
     let result = node.dht_get("my-key")
@@ -51199,12 +51207,14 @@ fn main() {
 
     #[test]
     fn test_mesh_peers_list() {
-        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK.lock().unwrap();
+        let _lock = crate::stdlib::mesh::MESH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::stdlib::mesh::reset_all();
         let source = r#"
 fn main() {
-    let n1 = MeshNode.new(9004, [])
-    let n2 = MeshNode.new(9005, ["localhost:9004"])
+    let n1 = MeshNode.new(15404, [])
+    let n2 = MeshNode.new(15405, ["localhost:15404"])
     n1.join()
     n2.join()
     let peers = n2.peers()
