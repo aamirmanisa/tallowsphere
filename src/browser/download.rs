@@ -194,6 +194,17 @@ pub fn browser_install_dir() -> Result<PathBuf, BrowserError> {
 
 /// Fetches the latest stable Chrome for Testing version info from the CfT API.
 pub fn fetch_latest_stable_version() -> Result<CfTVersionInfo, BrowserError> {
+    // Constant target, still an unregistered host: the register grants hosts,
+    // not "this literal is fine because the compiler wrote it". Callers of
+    // this Result (`install_browser` via `?`, CLI Install via print+exit)
+    // stop, so a returned sentence is enough.
+    if let Err(r) = crate::scope::require(CFT_LAST_KNOWN_GOOD_URL, "GET") {
+        return Err(BrowserError::DownloadFailed(format!(
+            "{} — {}",
+            r.code(),
+            r.explain()
+        )));
+    }
     let body: String = crate::runtime::egress_http::get(CFT_LAST_KNOWN_GOOD_URL)
         .call()
         .map_err(|e| BrowserError::DownloadFailed(format!("HTTP request failed: {e}")))?
@@ -302,6 +313,13 @@ pub fn sha256_hex(data: &[u8]) -> String {
 /// Returns `None` if the checksum file is not available.
 fn fetch_sha256_checksum(url: &str) -> Option<String> {
     let checksum_url = format!("{url}.sha256");
+    // This helper `.ok()?`s the GET into Option::None, and `download_browser`
+    // treats None as "no sidecar" then continues. A returned refusal would be
+    // a missing checksum, not a refusal. Fatal, on the URL actually sent.
+    if let Err(r) = crate::scope::require(&checksum_url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let resp = crate::runtime::egress_http::get(&checksum_url).call().ok()?;
     let body = resp.into_body().read_to_string().ok()?;
     // Checksum files may contain just the hash or "hash  filename"
@@ -736,6 +754,15 @@ pub fn download_browser(
 
     // Download
     eprintln!("Downloading from {url}...");
+    // Zip URL is caller-supplied (pin table or CfT JSON). `install_browser`
+    // propagates; the CLI Install arm exits. Returned sentence.
+    if let Err(r) = crate::scope::require(url, "GET") {
+        return Err(BrowserError::DownloadFailed(format!(
+            "{} — {}",
+            r.code(),
+            r.explain()
+        )));
+    }
     let mut reader = crate::runtime::egress_http::get(url)
         .call()
         .map_err(|e| BrowserError::DownloadFailed(format!("download failed: {e}")))?
@@ -1922,5 +1949,105 @@ mod tests {
             None => unsafe { std::env::remove_var("TALLOW_DATA_HOME") },
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn production_src() -> String {
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/download.rs"
+        ))
+        .expect("read src/browser/download.rs")
+    }
+
+    /// CfT last-known-good GET must consult the register on the constant URL
+    /// before `egress_http::get`. Returned (callers stop), not fatal.
+    #[test]
+    fn fetch_latest_stable_version_consults_the_register_before_the_get() {
+        let src = production_src();
+        let start = src
+            .find("pub fn fetch_latest_stable_version")
+            .expect("fetch_latest_stable_version must exist");
+        let end = start
+            + src[start..]
+                .find("pub fn parse_cft_response")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(CFT_LAST_KNOWN_GOOD_URL, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("must call crate::scope::require(CFT_LAST_KNOWN_GOOD_URL, \"GET\")");
+        let get_at = body
+            .find("egress_http::get(CFT_LAST_KNOWN_GOOD_URL)")
+            .expect("CfT get missing");
+        assert!(
+            require_at < get_at,
+            "scope::require must run before the CfT GET is built"
+        );
+        assert!(
+            !body.contains("std::process::exit(1)"),
+            "install_browser and CLI Install stop on Err — returned, not fatal"
+        );
+    }
+
+    /// Sidecar GET `.ok()?`s into Option. Refusal must be fatal so it is not
+    /// "checksum unavailable".
+    #[test]
+    fn fetch_sha256_checksum_consults_the_register_before_the_get() {
+        let src = production_src();
+        let start = src
+            .find("fn fetch_sha256_checksum")
+            .expect("fetch_sha256_checksum must exist");
+        let end = start
+            + src[start..]
+                .find("fn find_installed_binary")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(&checksum_url, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("must call crate::scope::require(&checksum_url, \"GET\")");
+        let get_at = body
+            .find("egress_http::get(&checksum_url)")
+            .expect("checksum get missing");
+        assert!(
+            require_at < get_at,
+            "scope::require must run before the checksum GET is built"
+        );
+        assert!(
+            body.contains("std::process::exit(1)"),
+            "a returned Err would become None via .ok()? — refusal is fatal"
+        );
+    }
+
+    /// Zip download GET. Callers propagate; returned sentence.
+    #[test]
+    fn download_browser_consults_the_register_before_the_get() {
+        let src = production_src();
+        let start = src
+            .find("pub fn download_browser(")
+            .expect("download_browser must exist");
+        let end = start
+            + src[start..]
+                .find("// SHA-256 verification")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(url, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("must call crate::scope::require(url, \"GET\")");
+        let get_at = body
+            .find("egress_http::get(url)")
+            .expect("zip get missing");
+        assert!(
+            require_at < get_at,
+            "scope::require must run before the zip GET is built"
+        );
+        assert!(
+            !body.contains("std::process::exit(1)"),
+            "install_browser and CLI Install stop on Err — returned, not fatal"
+        );
     }
 }
