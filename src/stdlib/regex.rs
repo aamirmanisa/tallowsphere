@@ -22,6 +22,22 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         // now resolve the alias to exactly `is_match`, and stdlib/regex.tl
         // declares it.
         "matches" => Some(regex_is_match(args)),
+        // `regex.compile(pattern) -> Result<Regex>`: declared in stdlib/regex.tl and
+        // absent from this dispatcher, so the documented entry point to a Regex
+        // value did not exist — only the module-level `find`/`replace` helpers did.
+        // The value is the same shape `dispatch_method` reads back (name "Regex",
+        // a `pattern` field), and an invalid pattern fails here rather than at
+        // first use.
+        "compile" => Some(match args.first() {
+            Some(Value::String(pattern)) => match regex::Regex::new(pattern) {
+                Ok(_) => Ok(Value::Struct {
+                    name: "Regex".to_string(),
+                    fields: vec![("pattern".to_string(), Value::String(pattern.clone()))],
+                }),
+                Err(e) => Err(format!("regex.compile: {e}")),
+            },
+            _ => Err("regex.compile expects a String pattern".into()),
+        }),
         "find" => Some(regex_find(args)),
         "replace" => Some(regex_replace(args)),
         _ => None,

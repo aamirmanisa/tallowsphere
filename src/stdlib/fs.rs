@@ -57,6 +57,14 @@ pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
         // of truth as `do_stat`.
         "file_size" => Some(do_file_size(args)),
         "temp_file" => Some(do_temp_file(args)),
+        // Declared in stdlib/fs.tl (`create_file`, `remove_dir`, `temp_dir`) with
+        // no arm in any dispatcher — every call died as "undefined function"
+        // (declaration census, 2026-11-01).
+        "create_file" => Some(do_create_file(args)),
+        "remove_dir" => Some(do_remove_dir(args)),
+        "temp_dir" => Some(Ok(Value::String(
+            std::env::temp_dir().to_string_lossy().into_owned(),
+        ))),
 
         // Filesystem watching
         "watch" => Some(do_watch(args)),
@@ -291,6 +299,34 @@ fn do_rename(args: Vec<Value>) -> StdlibResult {
         _ => return Err("fs.rename: expected string destination path as second argument".into()),
     };
     std::fs::rename(&src, &dst).map(|_| Value::Nil).map_err(|e| format!("fs.rename: {e}"))
+}
+
+/// `fs.create_file(path)` — create the file if absent, truncate if present.
+///
+/// The declaration returns `Result<()>`: the operation is "the path exists and
+/// is an empty file afterwards", which is what `create` + `truncate` gives.
+fn do_create_file(args: Vec<Value>) -> StdlibResult {
+    let path = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("fs.create_file: expected string path argument".into()),
+    };
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .map(|_| Value::Nil)
+        .map_err(|e| format!("fs.create_file: {e}"))
+}
+
+/// `fs.remove_dir(path)` — remove an EMPTY directory; the recursive variant is
+/// a separate declared name (`remove_dir_all`) and stays separate.
+fn do_remove_dir(args: Vec<Value>) -> StdlibResult {
+    let path = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("fs.remove_dir: expected string path argument".into()),
+    };
+    std::fs::remove_dir(&path).map(|_| Value::Nil).map_err(|e| format!("fs.remove_dir: {e}"))
 }
 
 fn do_delete_file(args: Vec<Value>) -> StdlibResult {

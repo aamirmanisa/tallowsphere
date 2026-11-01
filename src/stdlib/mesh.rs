@@ -133,6 +133,16 @@ impl DhtValue {
 /// Dispatch a `MeshNode.*` constructor/static function call.
 pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
     match function {
+        // Declared in stdlib/mesh.tl (`plan`, `run`, `replay`) and answered by no
+        // dispatcher: every call died as "undefined function", which is loud but
+        // undiscoverable from the API. They now refuse by name and say why —
+        // executing a plan requires a worker pool that runs Tallow functions, and
+        // no such executor exists in this build.
+        "plan" | "run" | "replay" => Some(Err(format!(
+            "mesh.{function}: declared in stdlib/mesh.tl and NOT implemented in this build — \
+             executing a plan needs a worker pool that runs Tallow functions, which the \
+             interpreter does not provide yet; use the declaration for type checking only"
+        ))),
         "new" => Some(mesh_node_new(args)),
         _ => None,
     }
