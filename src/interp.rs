@@ -596,6 +596,102 @@ fn pool_map_body_is_worker_safe(
     true
 }
 
+/// The interpreter's `http.batch` gate — the same decision the compiled plane
+/// makes in `runtime/fetch.rs::fetch_entry`, so one program gets one refusal.
+///
+/// The compiled plane consults the register per URL *before* the request is
+/// built and boxes a refusal as that URL's own entry
+/// (`http.batch[<url>]: <code> — <explain>`, `runtime/fetch.rs:617-626`); the
+/// batch is never failed wholesale. The interpreter reaches `http.batch`
+/// through the stdlib facade (`stdlib/http.rs::http_batch`), which gates too but
+/// reports the register's bare sentence. Gating here, in front of that facade,
+/// gives the interpreter plane the compiled plane's verb, code, sentence and
+/// returned-not-fatal decision: a refused URL never reaches the facade, so
+/// nothing can be sent for it, and the facade still performs every permitted
+/// fetch through the one batch implementation.
+fn http_batch_scoped(args: Vec<Value>) -> crate::stdlib::StdlibResult {
+    let urls: Vec<String> = match args.first() {
+        Some(Value::Array(items)) => items.iter().map(|v| v.as_string()).collect(),
+        // Not a URL array: leave the argument error to the one implementation
+        // that already words it, rather than inventing a second wording.
+        _ => {
+            return crate::stdlib::dispatch("http", "batch", args)
+                .unwrap_or_else(|| Ok(Value::Array(Vec::new())));
+        }
+    };
+
+    let mut entries: Vec<Option<Value>> = vec![None; urls.len()];
+    let mut allowed: Vec<Value> = Vec::new();
+    let mut allowed_at: Vec<usize> = Vec::new();
+    for (i, url) in urls.iter().enumerate() {
+        match crate::scope::require(url, "GET") {
+            Ok(_) => {
+                allowed_at.push(i);
+                allowed.push(Value::String(url.clone()));
+            }
+            Err(r) => {
+                let sentence = format!("http.batch[{url}]: {} — {}", r.code(), r.explain());
+                // The refusal is a spend event too: record it where the ledger
+                // can see it, exactly as the facade does for its own refusals.
+                if let Some(ledger) = crate::net::egress::ledger() {
+                    ledger.record_refusal(&crate::net::egress::host_of(url), url, "GET", &sentence);
+                }
+                entries[i] = Some(batch_refusal_entry(url, sentence));
+            }
+        }
+    }
+
+    if !allowed_at.is_empty() {
+        let mut call_args = args.clone();
+        call_args[0] = Value::Array(allowed);
+        let fetched = match crate::stdlib::dispatch("http", "batch", call_args) {
+            Some(Ok(Value::Array(items))) => items,
+            Some(other) => return other,
+            None => {
+                return Err("http.batch: the stdlib batch facade is not registered — \
+                            refusing to report a batch that never ran"
+                    .to_string());
+            }
+        };
+        for (slot, entry) in allowed_at.into_iter().zip(fetched) {
+            entries[slot] = Some(entry);
+        }
+    }
+
+    Ok(Value::Array(
+        entries.into_iter().map(|e| e.unwrap_or(Value::Nil)).collect(),
+    ))
+}
+
+/// One refused URL, in the fetched result's own declared shape
+/// (`stdlib/http.tl:36`, `BatchResponse`): the message is the compiled plane's
+/// sentence verbatim, so the two planes name the same ground in the same words.
+fn batch_refusal_entry(url: &str, sentence: String) -> Value {
+    Value::Struct {
+        name: "BatchResponse".to_string(),
+        fields: vec![
+            ("url".to_string(), Value::String(url.to_string())),
+            ("ok".to_string(), Value::Bool(false)),
+            ("attempts".to_string(), Value::Int(1)),
+            ("elapsed_ms".to_string(), Value::Int(0)),
+            ("response".to_string(), Value::Nil),
+            (
+                "error".to_string(),
+                Value::Struct {
+                    name: "HttpError".to_string(),
+                    fields: vec![
+                        ("kind".to_string(), Value::String("egress_refused".to_string())),
+                        ("url".to_string(), Value::String(url.to_string())),
+                        ("status".to_string(), Value::Nil),
+                        ("retryable".to_string(), Value::Bool(false)),
+                        ("message".to_string(), Value::String(sentence)),
+                    ],
+                },
+            ),
+        ],
+    }
+}
+
 impl Value {
     /// Unwrap provenance wrapper to get the inner value.
     /// Returns self if not a Provenance value.
@@ -4928,6 +5024,12 @@ impl Interpreter {
             // functions, so it cannot go through the stateless stdlib dispatcher.
             if module == "Mesh" && function == "run" {
                 return self.mesh_run(positional);
+            }
+            // `http.batch` gates in `http_batch_scoped` before the facade sees
+            // the URLs, so the interpreter refuses with the compiled plane's
+            // verb, code and sentence (`runtime/fetch.rs::fetch_entry`).
+            if module == "http" && function == "batch" {
+                return http_batch_scoped(positional.clone()).map_err(RuntimeError::Error);
             }
             if let Some(result) = crate::stdlib::dispatch(module, function, positional.clone()) {
                 return result.map_err(|e| RuntimeError::Error(e));
@@ -18228,6 +18330,23 @@ impl Interpreter {
                             // refuses into the error arm instead of egressing from
                             // the box IP (this path was a bare unproxied GET).
                             let url_str = url.as_string();
+                            // Register gate: `pool.map` over URLs is a batch of
+                            // fetches, and this branch used to reach
+                            // `egress_http::get` without ever consulting the
+                            // register — so a program was refused on the compiled
+                            // plane's batch path and egressed here. Same verb, the
+                            // register's own sentence, and the batch's per-URL
+                            // error contract (that entry is an `Err`, the batch is
+                            // not failed); authorization is checked before the
+                            // proxy configuration because it precedes transport.
+                            if let Err(r) = crate::scope::require(&url_str, "GET") {
+                                results.push(Value::Err(Box::new(Value::String(format!(
+                                    "pool.map[{url_str}]: {} — {}",
+                                    r.code(),
+                                    r.explain()
+                                )))));
+                                continue;
+                            }
                             match crate::runtime::egress_http::egress_refusal() {
                                 Some(reason) => Value::Err(Box::new(Value::String(reason))),
                                 None => match crate::runtime::egress_http::get(&url_str).call() {
