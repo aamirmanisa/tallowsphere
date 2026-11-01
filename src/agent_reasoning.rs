@@ -557,6 +557,21 @@ pub fn reason_with_backend(
 
 // ── Cloud LLM backend ────────────────────────────────────────────────────────
 
+/// Register gate for a reasoning POST. Fatal: `reason_with_backend` converts
+/// `Err` into `ReasoningResult { success: false }`, and `with_retry` would
+/// retry a returned refusal. Loopback (Ollama / local OpenAI-compat) never
+/// leaves the box — shipped register has no POST grant, so gating would kill
+/// local inference.
+fn gate_reasoning_post(url: &str) {
+    if crate::stdlib::llm::is_loopback_url(url) {
+        return;
+    }
+    if let Err(r) = crate::scope::require(url, "POST") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 /// Send a prompt to an OpenAI-compatible or Anthropic API endpoint.
 fn reason_cloud(
     backend: &ReasoningBackend,
@@ -584,6 +599,7 @@ fn reason_cloud(
     match provider {
         CloudProvider::Anthropic => {
             let url = resolve_anthropic_url(api_url);
+            gate_reasoning_post(&url);
             let body = serde_json::json!({
                 "model": model,
                 "max_tokens": 4096,
@@ -610,6 +626,7 @@ fn reason_cloud(
         }
         CloudProvider::OpenAI => {
             let url = resolve_cloud_url(api_url);
+            gate_reasoning_post(&url);
             let body = serde_json::json!({
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -736,6 +753,7 @@ fn reason_local(
     };
 
     let api_url = format!("{}/api/generate", url.trim_end_matches('/'));
+    gate_reasoning_post(&api_url);
 
     let body = serde_json::json!({
         "model": model,
@@ -1744,5 +1762,68 @@ mod tests {
     fn majority_pick_single_item() {
         let items = vec![42u32];
         assert_eq!(majority_pick(&items), Some(42));
+    }
+
+    /// `reason_cloud` / `reason_local` must consult the register on the URL
+    /// actually POSTed, before `agent.post`. Refusal is fatal because
+    /// `reason_with_backend` maps `Err` into a normal `ReasoningResult`.
+    #[test]
+    fn reasoning_posts_consult_the_register_before_post() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/agent_reasoning.rs"
+        ))
+        .expect("read src/agent_reasoning.rs");
+
+        let cloud_start = src
+            .find("fn reason_cloud(")
+            .expect("reason_cloud missing");
+        let local_start = src
+            .find("fn reason_local(")
+            .expect("reason_local missing");
+        let cloud_body = &src[cloud_start..local_start];
+        let local_body = &src[local_start..];
+
+        let anthropic_gate = cloud_body
+            .find("gate_reasoning_post(&url)")
+            .expect("Anthropic path must gate the resolved URL");
+        let anthropic_post = cloud_body
+            .find(".post(&url)")
+            .expect("Anthropic post missing");
+        assert!(
+            anthropic_gate < anthropic_post,
+            "Anthropic: register before post"
+        );
+
+        let openai_gate = cloud_body
+            .rfind("gate_reasoning_post(&url)")
+            .expect("OpenAI path must gate the resolved URL");
+        let openai_post = cloud_body
+            .rfind(".post(&url)")
+            .expect("OpenAI post missing");
+        assert!(
+            openai_gate < openai_post,
+            "OpenAI: register before post"
+        );
+
+        let local_gate = local_body
+            .find("gate_reasoning_post(&api_url)")
+            .expect("reason_local must gate the generate URL");
+        let local_post = local_body
+            .find(".post(&api_url)")
+            .expect("reason_local post missing");
+        assert!(
+            local_gate < local_post,
+            "reason_local: register before post"
+        );
+
+        assert!(
+            src.contains("std::process::exit(1)"),
+            "reason_with_backend converts Err into success:false — refusal is fatal"
+        );
+        assert!(
+            src.contains("is_loopback_url(url)"),
+            "loopback inference must skip the register"
+        );
     }
 }
