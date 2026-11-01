@@ -411,6 +411,17 @@ pub fn solve_captcha(
     }
 }
 
+/// Register gate for a solver hop. Fatal: `antibot.rs` turns `Err` into
+/// `None` via `.ok()`, and `stdlib/turnstile.rs` logs a solver failure and
+/// falls through to the next tier. A returned `CaptchaError` would not stop
+/// the client-key POST.
+fn gate_solver(url: &str, method: &str) {
+    if let Err(r) = crate::scope::require(url, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 /// Solve via the JSON `/createTask`+`/getTaskResult` task API.
 fn solve_captcha_task_json(
     config: &CaptchaSolverConfig,
@@ -424,6 +435,7 @@ fn solve_captcha_task_json(
     let payload = build_create_task_payload(config, captcha, page_url);
 
     // Step 1: Submit task
+    gate_solver(&create_url, "POST");
     let body: String = crate::runtime::egress_http::post(&create_url)
         .send_json(&payload)
         // The payload carries `clientKey` (the solver account key). Interpolating
@@ -475,6 +487,7 @@ fn solve_captcha_task_json(
             "taskId": task_id,
         });
 
+        gate_solver(&result_url, "POST");
         let poll_body: String = crate::runtime::egress_http::post(&result_url)
             .send_json(&poll_payload)
             .map_err(|e| {
@@ -577,6 +590,7 @@ fn solve_captcha_legacy_form(
 
     // Step 1: Submit task to /in.php.
     let submit_url = format!("{}{}", base, submit_path);
+    gate_solver(&submit_url, "POST");
     let body: String = crate::runtime::egress_http::post(&submit_url)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .send(form_body.as_bytes())
@@ -618,6 +632,7 @@ fn solve_captcha_legacy_form(
             enc(task_id)
         );
 
+        gate_solver(&result_url, "GET");
         let poll_body: String = crate::runtime::egress_http::get(&result_url)
             .call()
             .map_err(|e| {
@@ -1263,5 +1278,71 @@ mod tests {
         let js = build_inject_js(&captcha, "validate-token");
         assert!(js.contains("geetest_challenge"));
         assert!(js.contains("geetest_response"));
+    }
+
+    /// Each of the four solver hops must consult the register on the URL
+    /// actually sent, with the verb that hop uses, before `egress_http`.
+    #[test]
+    fn solver_hops_consult_the_register_before_egress() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/captcha.rs"
+        ))
+        .expect("read src/browser/captcha.rs");
+
+        let json_start = src
+            .find("fn solve_captcha_task_json")
+            .expect("solve_captcha_task_json missing");
+        let legacy_start = src
+            .find("fn solve_captcha_legacy_form")
+            .expect("solve_captcha_legacy_form missing");
+        let json_body = &src[json_start..legacy_start];
+        let legacy_body = &src[legacy_start..];
+
+        let create_gate = json_body
+            .find("gate_solver(&create_url, \"POST\")")
+            .expect("JSON createTask must gate POST on create_url");
+        let create_post = json_body
+            .find("egress_http::post(&create_url)")
+            .expect("JSON createTask post missing");
+        assert!(
+            create_gate < create_post,
+            "JSON createTask: register before post"
+        );
+
+        let poll_gate = json_body
+            .find("gate_solver(&result_url, \"POST\")")
+            .expect("JSON getTaskResult must gate POST on result_url");
+        let poll_post = json_body
+            .find("egress_http::post(&result_url)")
+            .expect("JSON getTaskResult post missing");
+        assert!(
+            poll_gate < poll_post,
+            "JSON getTaskResult: register before post"
+        );
+
+        let submit_gate = legacy_body
+            .find("gate_solver(&submit_url, \"POST\")")
+            .expect("legacy /in.php must gate POST on submit_url");
+        let submit_post = legacy_body
+            .find("egress_http::post(&submit_url)")
+            .expect("legacy /in.php post missing");
+        assert!(
+            submit_gate < submit_post,
+            "legacy /in.php: register before post"
+        );
+
+        let get_gate = legacy_body
+            .find("gate_solver(&result_url, \"GET\")")
+            .expect("legacy /res.php must gate GET on result_url");
+        let get_call = legacy_body
+            .find("egress_http::get(&result_url)")
+            .expect("legacy /res.php get missing");
+        assert!(get_gate < get_call, "legacy /res.php: register before get");
+
+        assert!(
+            src.contains("std::process::exit(1)"),
+            "solver refusal is fatal: antibot .ok() and turnstile fallthrough swallow Err"
+        );
     }
 }

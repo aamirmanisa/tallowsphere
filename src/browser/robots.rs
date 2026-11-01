@@ -74,8 +74,14 @@ impl RobotsCache {
             }
         }
 
-        // Fetch robots.txt
+        // Fetch robots.txt. The `Err(_)` arm below is fail-open allow-all, so a
+        // returned register refusal would become a crawl permit. Fatal, on the
+        // URL actually sent, before the builder.
         let robots_url = format!("{origin}/robots.txt");
+        if let Err(r) = crate::scope::require(&robots_url, "GET") {
+            eprintln!("runtime error: {} — {}", r.code(), r.explain());
+            std::process::exit(1);
+        }
         let robot = match crate::runtime::egress_http::get(&robots_url).call() {
             Ok(resp) => {
                 let status = resp.status();
@@ -501,5 +507,40 @@ mod tests {
         let _ = limiter.try_acquire("example.com"); // consume the token
         let err = limiter.try_acquire("example.com").unwrap_err();
         assert!(matches!(err, BrowserError::RateLimitExceeded(ref d) if d == "example.com"));
+    }
+
+    /// robots.txt fetch fail-opens on transport `Err`. The register must run
+    /// on the URL actually sent, with GET, before `egress_http::get`.
+    #[test]
+    fn is_allowed_consults_the_register_before_robots_fetch() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/robots.rs"
+        ))
+        .expect("read src/browser/robots.rs");
+        let start = src
+            .find("pub fn is_allowed")
+            .expect("is_allowed must exist");
+        let end = start
+            + src[start..]
+                .find("pub fn clear")
+                .expect("slice end marker missing");
+        let body = &src[start..end];
+
+        let require = "crate::scope::require(&robots_url, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("is_allowed must call crate::scope::require(&robots_url, \"GET\")");
+        let get_at = body
+            .find("egress_http::get(&robots_url)")
+            .expect("robots.txt get missing");
+        assert!(
+            require_at < get_at,
+            "scope::require must run before the robots.txt GET is built"
+        );
+        assert!(
+            body.contains("std::process::exit(1)"),
+            "a returned Err would be fail-open allow-all — refusal is fatal"
+        );
     }
 }

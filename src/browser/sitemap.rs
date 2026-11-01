@@ -179,6 +179,14 @@ impl SitemapParser {
 
     /// Fetch XML content from a URL, handling gzipped responses.
     fn fetch_xml(url: &str) -> Result<String, String> {
+        // Register first, on the URL that will be sent. `discover_sitemap`
+        // swallows `Err`; `fetch_sitemap` logs a sub-sitemap failure and
+        // continues; the interpreter turns `Err` into `Value::Err`. A returned
+        // refusal would not stop the hop. Gate before the agent is built.
+        if let Err(r) = crate::scope::require(url, "GET") {
+            eprintln!("runtime error: {} — {}", r.code(), r.explain());
+            std::process::exit(1);
+        }
         // T-207 browser-zone lockdown: ride the contract (Tor by default)
         // instead of a hand-built unproxied agent.
         let agent = crate::runtime::egress_http::agent_with_timeouts(
@@ -339,9 +347,45 @@ mod tests {
 
     #[test]
     fn test_discover_sitemap_returns_defaults() {
-        // Can't actually fetch, but verify the function returns default candidates
+        // Can't actually fetch, but verify the function returns default candidates.
+        // `fetch_xml` is now fatal on an unlisted host; plant GET so the real
+        // path still runs and the transport failure still yields defaults.
+        // Do not relax the assertion.
+        let _grant = crate::scope::override_register(crate::scope::ScopeRegister::granting(&[(
+            "unreachable.invalid",
+            &["GET"],
+        )]));
         let candidates = SitemapParser::discover_sitemap("https://unreachable.invalid");
         assert!(!candidates.is_empty());
         assert!(candidates[0].contains("sitemap.xml"));
+    }
+
+    /// `fetch_xml` must consult the register on the URL actually sent, with
+    /// GET, before `agent_with_timeouts` is constructed.
+    #[test]
+    fn fetch_xml_consults_the_register_before_the_agent() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/sitemap.rs"
+        ))
+        .expect("read src/browser/sitemap.rs");
+        let start = src.find("fn fetch_xml").expect("fetch_xml must exist");
+        let body = &src[start..];
+
+        let require = "crate::scope::require(url, \"GET\")";
+        let require_at = body
+            .find(require)
+            .expect("fetch_xml must call crate::scope::require(url, \"GET\")");
+        let agent_at = body
+            .find("egress_http::agent_with_timeouts")
+            .expect("agent_with_timeouts missing");
+        assert!(
+            require_at < agent_at,
+            "scope::require must run before the sitemap agent is built"
+        );
+        assert!(
+            body.contains("std::process::exit(1)"),
+            "discover_sitemap swallows Err and fetch_sitemap logs-and-continues — refusal is fatal"
+        );
     }
 }
