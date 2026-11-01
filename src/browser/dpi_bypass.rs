@@ -394,6 +394,14 @@ async fn fetch_ech_via_dns(domain: &str) -> Result<EchConfig, String> {
 async fn fetch_ech_via_doh(domain: &str) -> Result<EchConfig, String> {
     let url = format!("https://cloudflare-dns.com/dns-query?name={domain}&type=HTTPS");
 
+    // Register gate: the DoH fallback is WAN egress to a third-party resolver,
+    // on the URL actually sent. One hop up, `fetch_ech_config` propagates this
+    // `Err` unchanged and no caller in-tree discards it, so the refusal is
+    // returned as the register's own sentence rather than made fatal.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        return Err(format!("{} — {}", r.code(), r.explain()));
+    }
+
     // T-207: the DoH lookup is WAN egress — ride the zone contract.
     let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
     if let Some(zp) = crate::browser::zone::browser_zone_reqwest_proxy()
@@ -895,5 +903,31 @@ mod tests {
     #[test]
     fn test_base64_encode() {
         assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
+    }
+
+    /// The DoH fallback is WAN egress to a third-party resolver. The register
+    /// must run on the URL actually sent, with GET, before the client is built.
+    #[test]
+    fn doh_fallback_consults_the_register_before_the_request() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/dpi_bypass.rs"
+        ))
+        .expect("read src/browser/dpi_bypass.rs");
+        let fstart = src
+            .find("async fn fetch_ech_via_doh")
+            .expect("fetch_ech_via_doh must exist");
+        let body = &src[fstart..];
+        let body = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
+        let gate = body
+            .find("crate::scope::require(&url, \"GET\")")
+            .expect("fetch_ech_via_doh must call crate::scope::require(&url, \"GET\")");
+        let build = body
+            .find("reqwest::Client::builder()")
+            .expect("fetch_ech_via_doh must build a reqwest client");
+        assert!(
+            gate < build,
+            "scope::require must run before the DoH client is built"
+        );
     }
 }

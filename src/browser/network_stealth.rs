@@ -219,6 +219,25 @@ async fn happy_eyeballs_connect_family(
 ) -> Result<tokio::net::TcpStream, std::io::Error> {
     use tokio::net::TcpStream;
 
+    // Register gate: this function exists only to open a raw TCP socket to
+    // `host:port`, so the verb is CONNECT, the register's raw-socket verb (not
+    // RFC 9110 CONNECT). Gate before resolution, so an unauthorized host never
+    // reaches the resolver either. The four `TcpStream::connect` arms below are
+    // all reached through this one decision. Returned, not fatal: the public
+    // wrappers return `io::Error`, and no caller of theirs exists in-tree to
+    // convert it into a normal result.
+    let target = if host.contains(':') && host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    if let Err(r) = crate::scope::require(&target, "CONNECT") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("{} — {}", r.code(), r.explain()),
+        ));
+    }
+
     // Resolve both A and AAAA records — fail-closed (T-122b): this rides the
     // OS resolver (plain DNS, udp/tcp :53). Refuse unless the operator opted
     // in (TALLOW_ALLOW_DIRECT).
@@ -452,5 +471,31 @@ mod tests {
         // On non-Linux, this is a no-op
         let tuner = NetworkTuner::apply_max_performance();
         assert!(tuner.original_values.is_empty() || !tuner.original_values.is_empty());
+    }
+
+    /// Happy Eyeballs opens raw TCP sockets to a caller-supplied host. The
+    /// register must run with CONNECT, before resolution and before any of the
+    /// four connect arms.
+    #[test]
+    fn happy_eyeballs_consults_the_register_before_connecting() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/network_stealth.rs"
+        ))
+        .expect("read src/browser/network_stealth.rs");
+        let fstart = src
+            .find("async fn happy_eyeballs_connect_family")
+            .expect("happy_eyeballs_connect_family must exist");
+        let body = &src[fstart..];
+        let body = &body[..body.find("/// DNS prefetch cache").unwrap_or(body.len())];
+        let gate = body
+            .find("crate::scope::require(&target, \"CONNECT\")")
+            .expect("happy_eyeballs_connect_family must call crate::scope::require(.., \"CONNECT\")");
+        let resolve = body.find("lookup_host(").expect("resolution must exist");
+        let connect = body.find("TcpStream::connect(").expect("connect must exist");
+        assert!(
+            gate < resolve && gate < connect,
+            "scope::require must run before resolution and before any connect"
+        );
     }
 }

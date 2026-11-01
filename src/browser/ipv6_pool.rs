@@ -639,6 +639,14 @@ async fn rotate_via_http(url: &str, method: &str) -> Result<(), MobileProxyError
         format!("{host_port}:80")
     };
 
+    // Register gate: a raw TCP dial to the carrier's rotation endpoint. The
+    // verb is CONNECT, the register's raw-socket verb. Returned, not fatal:
+    // `rotate` propagates this error with `?` and `rotate_all` collects the
+    // `Result`s unchanged, so no one-hop caller turns it into a normal result.
+    if let Err(r) = crate::scope::require(&addr, "CONNECT") {
+        return Err(MobileProxyError(format!("{} — {}", r.code(), r.explain())));
+    }
+
     let mut stream = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(&addr))
         .await
         .map_err(|_| MobileProxyError("rotation HTTP connect timeout".into()))?
@@ -1160,5 +1168,31 @@ mod tests {
 
         // After cleanup, the used_addresses map should be empty.
         assert_eq!(pool.used_addresses.len(), 0);
+    }
+
+    /// The rotation trigger dials the carrier's HTTP endpoint over raw TCP. The
+    /// register must run with CONNECT before the socket.
+    #[test]
+    fn rotate_via_http_consults_the_register_before_connecting() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/browser/ipv6_pool.rs"
+        ))
+        .expect("read src/browser/ipv6_pool.rs");
+        let fstart = src
+            .find("async fn rotate_via_http")
+            .expect("rotate_via_http must exist");
+        let body = &src[fstart..];
+        let body = &body[..body.find("async fn rotate_via_at_command").unwrap_or(body.len())];
+        let gate = body
+            .find("crate::scope::require(&addr, \"CONNECT\")")
+            .expect("rotate_via_http must call crate::scope::require(&addr, \"CONNECT\")");
+        let connect = body
+            .find("TcpStream::connect(&addr)")
+            .expect("rotate_via_http must connect");
+        assert!(
+            gate < connect,
+            "scope::require must run before the rotation socket is opened"
+        );
     }
 }
