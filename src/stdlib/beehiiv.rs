@@ -52,6 +52,25 @@ fn set_cookie(domain: &str, cookie_str: &str) {
     }
 }
 
+// ─── Deny-by-default egress gate ────────────────────────────────
+
+/// Authorize an outbound request, or end the process.
+///
+/// Every socket this module opens goes through this, at the helper that builds
+/// the request: `discover_build_id` (GET), `http_get_json` (GET) and
+/// `http_post_json` (POST). It is FATAL on purpose — `beehiiv.discover`,
+/// `get_payload` and `get_post` call `discover_build_id(..).unwrap_or_default()`,
+/// so a returned `Err` would be discarded and the program would run on with a
+/// normal-looking result (the same swallowing shape measured in `wordpress` on
+/// 2026-11-01). A refusal a caller can ignore is not a gate; the process ends
+/// here, as `net.connect` does on the compiled plane.
+fn gate_or_die(input: &str, method: &str) {
+    if let Err(r) = crate::scope::require(input, method) {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+}
+
 // ─── URL parsing helpers ─────────────────────────────────────────
 
 struct BeehiivUrl {
@@ -81,6 +100,9 @@ fn parse_beehiiv_url(url: &str) -> Result<BeehiivUrl, String> {
 
 /// Discover the Nuxt build ID from a page's HTML.
 fn discover_build_id(base_url: &str) -> Result<String, String> {
+    // The user's publication URL arrives here; authorize the GET before the
+    // agent touches the network.
+    gate_or_die(base_url, "GET");
     let resp = AGENT
         .get(base_url)
         .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
@@ -179,6 +201,8 @@ fn json_to_tallow(val: &serde_json::Value) -> Value {
 // ─── Helper: HTTP GET returning tallow Value ─────────────────────
 
 fn http_get_json(url: &str, domain: &str) -> Result<serde_json::Value, String> {
+    // Every GET in this module funnels through here.
+    gate_or_die(url, "GET");
     let mut req = AGENT
         .get(url)
         .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36");
@@ -209,6 +233,8 @@ fn http_get_json(url: &str, domain: &str) -> Result<serde_json::Value, String> {
 }
 
 fn http_post_json(url: &str, domain: &str, body: &str) -> Result<serde_json::Value, String> {
+    // `beehiiv.set_jwt` is the only POST; the verb is the one performed below.
+    gate_or_die(url, "POST");
     let mut req = AGENT
         .post(url)
         .header("Content-Type", "application/json")

@@ -63,6 +63,14 @@ fn guerrilla_check(sid_token: &str, _code_pattern: Option<&str>) -> StdlibResult
         sid_token
     );
 
+    // Deny-by-default. The host is built here, not supplied by the caller, so
+    // this is the first URL the module would actually reach. FATAL: the follow-up
+    // fetch is `if let Ok(resp2) = …`, which cannot carry a returned refusal.
+    if let Err(r) = crate::scope::require(&url, "GET") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
+
     let resp = crate::runtime::egress_http::get(&url)
         .call()
         .map_err(|e| format!("Guerrilla Mail request: {e}"))?;
@@ -86,6 +94,10 @@ fn guerrilla_check(sid_token: &str, _code_pattern: Option<&str>) -> StdlibResult
                 "https://api.guerrillamail.com/ajax.php?f=fetch_email&email_id={}&sid_token={}",
                 mail_id, sid_token
             );
+            if let Err(r) = crate::scope::require(&fetch_url, "GET") {
+                eprintln!("runtime error: {} — {}", r.code(), r.explain());
+                std::process::exit(1);
+            }
             if let Ok(resp2) = crate::runtime::egress_http::get(&fetch_url).call() {
                 if let Ok(body2) = resp2.into_body().read_to_string() {
                     if let Ok(json2) = serde_json::from_str::<serde_json::Value>(&body2) {
@@ -134,6 +146,13 @@ fn strip_html(html: &str) -> String {
 }
 
 fn auto_submit(otp: &str, form_url: &str, field_name: &str) -> StdlibResult {
+    // User URL arrives here. Verb is POST (form submit). FATAL: callers of this
+    // helper are thin today, but a returned Err was measured being swallowed in
+    // sibling stdlib helpers (`if let Ok`); when in doubt, exit.
+    if let Err(r) = crate::scope::require(form_url, "POST") {
+        eprintln!("runtime error: {} — {}", r.code(), r.explain());
+        std::process::exit(1);
+    }
     let body = format!("{}={}", urlencoding::encode(field_name), urlencoding::encode(otp));
 
     let resp = crate::runtime::egress_http::post(form_url)

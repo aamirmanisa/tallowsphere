@@ -17,6 +17,20 @@ use crate::interp::{type_name, Value};
 use base64::Engine;
 use sha2::{Sha256, Digest};
 
+/// Deny-by-default egress gate for this module.
+///
+/// Every request this module builds — the three token-endpoint POSTs and the
+/// OIDC discovery GET — consults the authorization register before a socket
+/// exists. This is the propagating shape: the `Err` travels through
+/// `StdlibResult` out of `dispatch`, so a refusal becomes a runtime error
+/// rather than a value a caller can discard. The sentence is the register's
+/// own, so a refusal here reads like a refusal anywhere else in the engine.
+fn gate(input: &str, method: &str) -> Result<(), String> {
+    crate::scope::require(input, method)
+        .map(|_| ())
+        .map_err(|r| format!("{} — {}", r.code(), r.explain()))
+}
+
 /// Generate a PKCE code verifier (cryptographically random)
 fn generate_code_verifier() -> String {
     let mut bytes = [0u8; 32];
@@ -221,6 +235,10 @@ fn oauth_exchange_code(args: Vec<Value>) -> StdlibResult {
         body.push_str(&format!("&client_secret={}", client_secret));
     }
 
+    // User-supplied token endpoint: refuse before the socket opens. Verb is the
+    // one performed below (POST, form-encoded token request).
+    gate(endpoint, "POST")?;
+
     let resp = crate::runtime::egress_http::post(endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", "application/json")
@@ -253,6 +271,9 @@ fn oauth_client_credentials(args: Vec<Value>) -> StdlibResult {
         body.push_str(&format!("&scope={}", sc));
     }
 
+    // User-supplied token endpoint: refuse before the socket opens (POST).
+    gate(endpoint, "POST")?;
+
     let resp = crate::runtime::egress_http::post(endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", "application/json")
@@ -281,6 +302,9 @@ fn oauth_refresh(args: Vec<Value>) -> StdlibResult {
         refresh, client_id
     );
 
+    // User-supplied token endpoint: refuse before the socket opens (POST).
+    gate(endpoint, "POST")?;
+
     let resp = crate::runtime::egress_http::post(endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", "application/json")
@@ -299,6 +323,10 @@ fn oauth_refresh(args: Vec<Value>) -> StdlibResult {
 fn oauth_discover(args: Vec<Value>) -> StdlibResult {
     let issuer = expect_first_str(&args, "issuer_url")?;
     let url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+
+    // User-supplied issuer: authorize the URL actually fetched (GET), not the
+    // bare issuer, so the gate sees the host the request would reach.
+    gate(&url, "GET")?;
 
     let resp = crate::runtime::egress_http::get(&url)
         .header("Accept", "application/json")
