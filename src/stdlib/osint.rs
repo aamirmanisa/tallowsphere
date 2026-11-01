@@ -5381,7 +5381,10 @@ fn build_seed_records() -> Vec<crate::stdlib::phone_osint::NpaNxxRecord> {
     let mut records = vec![
         NpaNxxRecord {
             npa: "512".into(),
-            nxx: "850".into(),
+            // 555-01XX is the block reserved for fiction; this row exists so the
+            // demo number below resolves, and names its carrier as unassigned
+            // rather than borrowing a real operator's name.
+            nxx: "555".into(),
             state: "TX".into(),
             lata: "560".into(),
             rate_center: "AUSTIN".into(),
@@ -5390,10 +5393,10 @@ fn build_seed_records() -> Vec<crate::stdlib::phone_osint::NpaNxxRecord> {
             latitude: 30.27,
             longitude: -97.74,
             timezone_iana: "America/Chicago".into(),
-            ocn: "6529".into(),
-            carrier_name: "T-MOBILE USA, INC.".into(),
-            line_type: "wireless".into(),
-            pooled: true,
+            ocn: "0000".into(),
+            carrier_name: "unassigned (555-01XX reserved for fiction)".into(),
+            line_type: "reserved-fictional".into(),
+            pooled: false,
         },
         NpaNxxRecord {
             npa: "212".into(),
@@ -8577,7 +8580,7 @@ OriginAS:       AS15169
             assert_eq!(name, "PhoneNumber");
             assert!(fields.iter().any(|(k, v)| k == "e164" && matches!(v, Value::String(s) if s == "+15125550185")));
             assert!(fields.iter().any(|(k, v)| k == "rate_center" && matches!(v, Value::String(s) if s == "AUSTIN")));
-            assert!(fields.iter().any(|(k, v)| k == "line_type_as_allocated" && matches!(v, Value::String(s) if s == "wireless")));
+            assert!(fields.iter().any(|(k, v)| k == "line_type_as_allocated" && matches!(v, Value::String(s) if s == "reserved-fictional")));
             assert!(fields.iter().any(|(k, _)| k == "current_carrier"));
             assert!(fields.iter().any(|(k, v)| k == "provenance" && matches!(v, Value::Array(_))));
         } else {

@@ -1386,7 +1386,7 @@ mod tests {
         // Defaults: strong name agreement → merged via `combined`.
         // (Address only on side A, so the pair is not an exact address and
         // must clear `combined_min`.)
-        let a = rec("t-1", "Quick Food Store", "742 Evergreen Ter Austin TX 78704", "", "", "");
+        let a = rec("t-1", "Example Food Store", "742 Evergreen Ter Austin TX 78704", "", "", "");
         let b = rec("t-2", "Example Foods", "", "", "", "");
         // Defaults: strong name + very close address → merged via combined.
         let default = run(&[a.clone(), b.clone()], &Value::Nil);

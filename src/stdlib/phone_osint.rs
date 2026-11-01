@@ -1251,7 +1251,7 @@ mod tests {
             vec![
                 NpaNxxRecord {
                     npa: "512".into(),
-                    nxx: "850".into(),
+                    nxx: "555".into(),
                     state: "TX".into(),
                     lata: "560".into(),
                     rate_center: "AUSTIN".into(),
@@ -1740,8 +1740,8 @@ mod tests {
     fn test_parse_nanp_variants() {
         let a = parse_nanp("512-555-0185", "1").unwrap();
         assert_eq!(a.npa, "512");
-        assert_eq!(a.nxx, "850");
-        assert_eq!(a.subscriber, "1815");
+        assert_eq!(a.nxx, "555");
+        assert_eq!(a.subscriber, "0185");
         assert_eq!(a.e164, "+15125550185");
 
         let b = parse_nanp("+1 (212) 555-1234", "1").unwrap();
@@ -1771,9 +1771,9 @@ mod tests {
     #[test]
     fn test_derive_allocation_fallback_hint() {
         let ds = sample_dataset();
-        // 512-850 is in the dataset; use a plain 512-xxx not present to force the
-        // coarse NPA hint path.
-        let p = parse_nanp("512-555-0100", "1").unwrap();
+        // 512-555 is in the dataset now; use an NXX that is deliberately absent so
+        // this exercises the coarse NPA hint path rather than a dataset hit.
+        let p = parse_nanp("512-999-0100", "1").unwrap();
         let alloc = derive_allocation(&p, &ds);
         assert_eq!(alloc.state, "TX");
         assert!(alloc.carrier_name.starts_with("unknown"));
