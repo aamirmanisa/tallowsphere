@@ -61,6 +61,57 @@ bypass; a client that follows without recording the final URL is a provenance de
    it is configured with the same policy, or its redirect behaviour is measured and recorded as a
    known deviation in this spec. An unmeasured client is not a compliant one.
 
+## Status at `6bb094b` — what is implemented and measured, what is not
+
+Written 2026-11-01, wave 3. Re-read against source and the suite on 2026-11-01 at
+`6bb094b`, after a docs lane found the spec did not say which of its own requirements
+had been delivered. **All seven requirements are implemented in the ureq plane and six
+of the seven are measured by the `redirects_*` suite (five cases, all passing);
+requirement 7 is the only one whose compliance rests on reading source rather than on
+a test this repository runs.**
+
+| # | Requirement | State | Where it lives / what measures it |
+|---|---|---|---|
+| 1 | No implicit follow — every builder sets `max_redirects(0)` | **implemented, measured** (ureq plane) | `egress_http.rs:239` (shared), `:480` (`agent_for_follow`), `fetch.rs:248`, `http.rs:192`, `sitescan.rs:144`, `intel_api.rs:2455`, `interp.rs:5293`. The five `redirects_*` cases exercise the gated path, which is only reachable because no builder follows. |
+| 2 | One gated follow API; `Location` resolved RFC 3986 §5.2; `scope::require(next, method)`; ceiling 8 → `redirect-limit` | **implemented, measured** | `egress_http::follow` (`:576`), register call at `:671`, ceiling at `:659`, `MAX_FOLLOW_HOPS = 8` (`:361`). Cases `redirects_unlisted_target_is_refused` (unlisted host receives nothing, sentence names it) and `redirects_ceiling_is_eight` (5 hops pass, 9th refuses with `redirect-limit`). |
+| 3 | Method re-authorised when it changes (303 → GET; 307/308 preserve) | **implemented, measured** | `method_after_redirect` (`:500`) applied before the register call (`:671`). Case `redirects_303_rewrites_method_to_get`. |
+| 4 | Scheme is part of the decision: `http→https` permitted, downgrade and non-HTTP refused | **implemented, measured** | `is_forbidden_scheme_change` (`:542`), called at `:653`. Case `redirects_downgrade_and_non_http_are_refused`. |
+| 5 | Provenance — `Response.url` is the URL that produced the body | **implemented, measured** | `Followed.final_url` returned at `:619`; consumed by `http.rs:693/716/1027/1086` and `fetch.rs:360/433`. Case `redirects_listed_target_is_followed` asserts the final URL. |
+| 6 | Follow opt-in per module and named | **implemented, measured** | `sitescan` follows via `egress_http::follow` (`sitescan.rs:353`); `intel_api` keeps `0` with its reason recorded inline (`intel_api.rs:2453`); `http.get`/`post`/`request` follow through the gated loop. Covered indirectly — no test asserts that `intel_api` *does not* follow. |
+| 7 | The stealth plane answers the same question (`wreq`) | **source-read only — NOT measured** | See below. |
+
+### Requirement 7 — the honest statement
+
+`src/stdlib/stealth_http.rs:43` builds the `wreq` client with
+`.emulation(...)`, `.timeout(...)`, optional `.proxy(...)` and optional
+`.tls_cert_store(...)`. It **never calls `.redirect(...)`**, and the module contains no
+`scope::require` at all; its only entry gate is `stdlib/http.rs:639`, one call up, before
+the client is built.
+
+What that means, stated as measured and unmeasured separately:
+
+- **Measured (library source).** `wreq` 6.0.0-rc.31 initialises
+  `redirect_policy: redirect::Policy::none()` in the builder's config literal
+  (`~/.cargo/registry/…/wreq-6.0.0-rc.31/src/client.rs:286`), so a `stealth_http` client
+  **does not follow redirects**. It returns the 3xx to the caller with the status intact.
+- **Not measured.** No test in this tree exercises the stealth client against a
+  redirecting server, so nothing in CI would notice if that default changed on a `wreq`
+  upgrade, or if a future edit added a `.redirect(Policy::limited(..))`. The compliance is
+  a *coincidence of an upstream default*, not a rule this tree asserts.
+- **Consequence, which is a deviation and not a pass.** `wreq`'s own
+  `.redirect()` doc comment still reads "Default will follow redirects up to a maximum of
+  10" (`client.rs:960`) while the code sets `Policy::none()`. A maintainer reading the doc
+  would assume the opposite of the behaviour, which is precisely how the `ureq` bypass
+  documented at the top of this file survived for four waves.
+- **Not a bypass today**, because `Policy::none()` cannot make an unauthorised request.
+  **Not compliant either**, because "an unmeasured client is not a compliant one" (req. 7).
+  Closing it means one of: an explicit `.redirect(wreq::redirect::Policy::none())` in
+  `stealth_http.rs` with a test asserting the policy, or routing the stealth plane through
+  `egress_http::follow`. Neither is in this lane — it is a `src/` change.
+
+The `stealth-http` feature is **on by default** (`Cargo.toml:254`), so this is the plane a
+stock build uses for non-loopback `http.get`; it is not an optional corner.
+
 ## Gates
 
 - `cargo test --lib redirects -- --test-threads=1` — a new in-crate suite (every case named `redirects_*`) over a loopback
