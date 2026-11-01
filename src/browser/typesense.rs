@@ -12,6 +12,10 @@ pub enum Error {
     Http(String),
     Api { status: u16, body: String },
     Serde(String),
+    /// The scope register refused the (url, verb) pair. Distinct from
+    /// [`Error::Http`] on purpose: a refusal means nothing was dialed, and a
+    /// caller that retries transport failures must not retry this.
+    Refused(String),
 }
 
 impl fmt::Display for Error {
@@ -20,6 +24,7 @@ impl fmt::Display for Error {
             Error::Http(e) => write!(f, "http error: {e}"),
             Error::Api { status, body } => write!(f, "typesense api error {status}: {body}"),
             Error::Serde(e) => write!(f, "serde error: {e}"),
+            Error::Refused(why) => write!(f, "egress refused: {why}"),
         }
     }
 }
@@ -167,10 +172,28 @@ impl TypesenseClient {
         }
     }
 
-    fn req(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        self.http
-            .request(method, format!("{}{}", self.base_url, path))
-            .header("X-TYPESENSE-API-KEY", &self.api_key)
+    /// Build a request for `path`, refusing first.
+    ///
+    /// Deny-by-default egress: the scope register is consulted with the exact
+    /// URL this method is about to send and the exact verb it will send
+    /// (`method.as_str()`), before a `RequestBuilder` exists. A refusal
+    /// returns [`Error::Refused`] and no socket is opened; callers propagate
+    /// it like any other `Error`, so a refused request is never mistaken for
+    /// a completed one.
+    ///
+    /// There is deliberately no loopback exemption. Loopback on this box is
+    /// also where proxies and relays listen, so "loopback" is not "no
+    /// egress"; the register's loopback entry is what authorises a local
+    /// Typesense, and it grants only the methods it lists.
+    fn req(&self, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder, Error> {
+        let url = format!("{}{}", self.base_url, path);
+        if let Err(r) = crate::scope::require(&url, method.as_str()) {
+            return Err(Error::Refused(format!("{} — {}", r.code(), r.explain())));
+        }
+        Ok(self
+            .http
+            .request(method, url)
+            .header("X-TYPESENSE-API-KEY", &self.api_key))
     }
 
     async fn check(resp: reqwest::Response) -> Result<reqwest::Response, Error> {
@@ -185,7 +208,7 @@ impl TypesenseClient {
 
     pub async fn create_collection(&self, collection: &Collection) -> Result<(), Error> {
         let resp = self
-            .req(reqwest::Method::POST, "/collections")
+            .req(reqwest::Method::POST, "/collections")?
             .json(collection)
             .send()
             .await?;
@@ -195,7 +218,7 @@ impl TypesenseClient {
 
     pub async fn delete_collection(&self, name: &str) -> Result<(), Error> {
         let resp = self
-            .req(reqwest::Method::DELETE, &format!("/collections/{name}"))
+            .req(reqwest::Method::DELETE, &format!("/collections/{name}"))?
             .send()
             .await?;
         Self::check(resp).await?;
@@ -211,7 +234,7 @@ impl TypesenseClient {
             .req(
                 reqwest::Method::POST,
                 &format!("/collections/{collection}/documents?action=upsert"),
-            )
+            )?
             .json(doc)
             .send()
             .await?;
@@ -233,7 +256,7 @@ impl TypesenseClient {
             .req(
                 reqwest::Method::POST,
                 &format!("/collections/{collection}/documents/import?action=upsert"),
-            )
+            )?
             .header("Content-Type", "text/plain")
             .body(body)
             .send()
@@ -269,7 +292,7 @@ impl TypesenseClient {
             .req(
                 reqwest::Method::DELETE,
                 &format!("/collections/{collection}/documents/{id}"),
-            )
+            )?
             .send()
             .await?;
         Self::check(resp).await?;
@@ -315,7 +338,7 @@ impl TypesenseClient {
             .req(
                 reqwest::Method::GET,
                 &format!("/collections/{collection}/documents/search"),
-            )
+            )?
             .query(&query)
             .send()
             .await?;
@@ -350,7 +373,7 @@ impl TypesenseClient {
 
         let body = serde_json::json!({ "searches": searches });
         let resp = self
-            .req(reqwest::Method::POST, "/multi_search")
+            .req(reqwest::Method::POST, "/multi_search")?
             .json(&body)
             .send()
             .await?;
@@ -392,6 +415,60 @@ impl TypesenseClient {
             ],
             default_sorting_field: Some("popularity_score".into()),
             enable_nested_fields: Some(false),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scope::{override_register, ScopeRegister};
+
+    fn client(base_url: &str) -> TypesenseClient {
+        TypesenseClient::new(base_url, "test-key")
+    }
+
+    /// The gate is on the (url, verb) pair actually put on the wire: a grant
+    /// for GET does not authorise POST, and the refusal is `Error::Refused`
+    /// (nothing dialed) rather than a transport error (dialed, failed).
+    #[test]
+    fn gate_applies_the_sent_verb_not_a_generic_get() {
+        let _guard = override_register(ScopeRegister::granting(&[(
+            "typesense.example",
+            &["GET"],
+        )]));
+
+        let get = client("https://typesense.example").req(
+            reqwest::Method::GET,
+            "/collections/products/documents/search",
+        );
+        assert!(get.is_ok(), "GET is granted; no builder means the gate drifted");
+
+        let post = client("https://typesense.example").req(reqwest::Method::POST, "/collections");
+        match post {
+            Ok(_) => panic!("POST is not granted; the gate built a request anyway"),
+            Err(Error::Refused(why)) => assert!(
+                why.contains("scope:method-not-allowed"),
+                "refusal should name the method, got: {why}"
+            ),
+            Err(other) => panic!("expected Error::Refused, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn unlisted_host_is_refused_before_a_request_is_built() {
+        let _guard = override_register(ScopeRegister::granting(&[("other.example", &["GET"])]));
+
+        let err = match client("https://typesense.internal").req(reqwest::Method::GET, "/health") {
+            Ok(_) => panic!("an unlisted host must not produce a request builder"),
+            Err(e) => e,
+        };
+        match err {
+            Error::Refused(why) => assert!(
+                why.contains("scope:not-listed"),
+                "refusal should name the reason, got: {why}"
+            ),
+            other => panic!("expected Error::Refused, got: {other}"),
         }
     }
 }

@@ -54,6 +54,27 @@ pub fn classify_error_kind(http_status: Option<u16>, transport_error: bool, body
 
 pub fn execute_get(url: &str, options: ExecutionOptions) -> HttpExecutionOutcome {
     let start = std::time::Instant::now();
+    // Scope gate first: the register is the authorization decision, and it is
+    // taken before `egress_refusal()` (a proxy contract, not a permission) and
+    // before any request is built. The URL is the plan file's target as it
+    // reached the executor; the verb is the one this function sends — GET.
+    //
+    // Returned, not fatal: the caller (`cli::request_plan_cmd` ->
+    // `execute_and_record`) turns a non-success outcome into a failed row and
+    // `canonical_error`, then continues the plan. Exiting here would abort a
+    // multi-request run over one out-of-scope target and lose the report for
+    // the requests that were in scope.
+    if let Err(r) = crate::scope::require(url, "GET") {
+        return HttpExecutionOutcome {
+            http_status: None, body: vec![], url: url.to_string(),
+            headers: vec![], duration_ms: start.elapsed().as_millis() as u64, truncated: false,
+            // Same slot `egress_refusal()` uses; not retryable — a refusal is
+            // a decision, not a flake.
+            error_kind: classify_error_kind(None, true, false),
+            error_message: format!("{} — {}", r.code(), r.explain()),
+            retryable: false, success: false,
+        };
+    }
     // Egress contract (T-104b): a configured-but-unusable proxy is a hard
     // refusal — surface it in the outcome instead of egressing from the box
     // IP (this was the last allowlisted bare unproxied GET in the runtime
@@ -120,5 +141,49 @@ pub fn execute_get(url: &str, options: ExecutionOptions) -> HttpExecutionOutcome
             error_kind: classify_error_kind(None, true, false),
             error_message: format!("{e}"), retryable: true, success: false,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scope::{override_register, ScopeRegister};
+
+    /// A plan target the register does not list is refused, and the refusal
+    /// comes back in the outcome (not as a process exit) because the only
+    /// caller records a failed row and continues the plan.
+    #[test]
+    fn execute_get_refuses_an_unlisted_plan_target() {
+        let _guard = override_register(ScopeRegister::granting(&[("listed.example", &["GET"])]));
+
+        let out = execute_get("https://unlisted.example/page", ExecutionOptions::default());
+
+        assert!(!out.success, "an unlisted target must not report success");
+        assert_eq!(out.http_status, None);
+        assert!(out.body.is_empty(), "a refusal has no body");
+        assert!(!out.retryable, "a refusal is a decision, not a flake");
+        assert!(
+            out.error_message.contains("scope:not-listed"),
+            "refusal must name the ground, got: {}",
+            out.error_message
+        );
+        assert_eq!(out.url, "https://unlisted.example/page");
+    }
+
+    /// The gate is reached before `egress_refusal()` and before any socket:
+    /// with an empty register the URL is refused even though a proxy is or is
+    /// not configured — and the stored URL is the plan's, unmodified.
+    #[test]
+    fn an_empty_register_refuses_every_plan_target() {
+        let _guard = override_register(ScopeRegister::empty());
+
+        let out = execute_get("http://127.0.0.1:9/health", ExecutionOptions::default());
+
+        assert!(!out.success);
+        assert!(
+            out.error_message.contains("scope:not-listed"),
+            "empty register must refuse loopback too, got: {}",
+            out.error_message
+        );
     }
 }
