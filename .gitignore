@@ -134,7 +134,14 @@ docs/api/
 # /workspace/tallow-reports/<feature>/ and read from there. Ignoring the path
 # here means a lane that forgets cannot add them by accident; the move above is
 # what makes that safe rather than a silent data loss.
-reports/
+#
+# Exception: a lane report a release cites must be citable from the repository,
+# and `tests/egress_gate_coverage.rs` already points at
+# `reports/egress-surface-inventory.md`, a file the ignore rule had kept out of
+# the tree. Top-level .md files under reports/ are therefore tracked; everything
+# else there (probes, scans, generated data) stays ignored.
+reports/*
+!reports/*.md
 
 # Harvested or client-derived fixtures are regenerated from a synthetic source,
 # never committed. The 2026-11-01 pass removed one such directory from history;
