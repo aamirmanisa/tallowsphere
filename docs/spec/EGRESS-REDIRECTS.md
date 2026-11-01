@@ -60,6 +60,12 @@ bypass; a client that follows without recording the final URL is a provenance de
 7. **The stealth plane answers the same question.** The `wreq`-based client is not exempt: either
    it is configured with the same policy, or its redirect behaviour is measured and recorded as a
    known deviation in this spec. An unmeasured client is not a compliant one.
+   **Measured 2026-11-01** (`stdlib::stealth_http::redirect_measurement`, base `ee9cf9f`): a listed
+   127.0.0.1 returning `302` to an unlisted 127.0.0.2 yields `status=302`, an empty body, and
+   **zero hits on the unlisted host** — the plane does not follow. `wreq` 6.0.0-rc.31's builder
+   sets `redirect_policy: Policy::none()` (`src/client.rs:286`); `Policy::default()` is
+   `limited(10)` (`src/redirect.rs:230`) and is never called. The two tests fail if a dependency
+   bump changes that.
 
 ## Status at `6bb094b` — what is implemented and measured, what is not
 
