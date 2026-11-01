@@ -157,3 +157,25 @@ with respect to this predicate** — there is no ungated file outside it, and no
 file on it that the scan cannot see. What the predicate still cannot see is the
 class `quarry` is census-ing (QUIC, DNS resolution, child processes, browser
 CDP), so this table is a claim about HTTP and raw TCP, not about every socket.
+
+### Correction, same day: file-level completeness is not site-level coverage
+
+`reports/quarry-w12.md` (§2) measures what this document's predicate cannot, and
+it changes how the paragraph above should be read. Over 176 network-capable
+sites in production regions:
+
+- a `scope::require` earlier in the **same function**: **12**
+- genuinely ungated: **164**
+- invisible to the predicate: **135**, of which **61 sit in files the coverage
+  gate reports as gated**
+- of 87 sites inside files called gated, **75 have no `require` in their
+  enclosing function**
+
+`tests/egress_gate_coverage.rs` decides gating with `is_gated(text)` — one
+`scope::require` anywhere in the production region marks the whole file
+(verified: the test computes `egress_sites(text)` and then gates on the file).
+So "0 ungated" is a file-granularity claim, and the debt list is complete only
+in that sense. The durable fix is site-level gating: for each site, require a
+`require` in its enclosing function, with a per-site debt list that shrinks.
+Until that lands, any statement of the form "N gated / 0 ungated" carries this
+caveat with it.
