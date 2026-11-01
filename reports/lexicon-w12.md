@@ -11,7 +11,7 @@ State this report is anchored to:
 | branch | `rel/w12-lexicon` (cut from `758e5bc`) |
 | HEAD | `758e5bc0d0a88015e0357f233b67af64ab635f50` — `scope(register): grant POST to loopback so self-hosted request paths are reachable`, 2026-11-01 23:00:27 +0000 |
 | `git describe --tags` (HEAD) | `v1.7.0-4-g758e5bc` |
-| last release tag | `v1.7.0` → `bebe5e0` is **not** it; tag `v1.7.0` is an annotated tag on `71eafe3` |
+| last release tag | `v1.7.0` — an annotated tag (`git cat-file -t` → `tag`) on `71eafe3`; `bebe5e0` is a later, untagged commit |
 | toolchain | rustc 1.98.1 (48a229cea 2026-09-01), aarch64 |
 | cargo invocations this turn | **0** — reason in §A.4 |
 | measured | 2026-11-01 23:0x–23:2x UTC |
@@ -32,7 +32,7 @@ surface (`tallow gate`, **nine** verbs, plus `test-summary` which the refusal me
 names and the dispatcher runs — see `src/gate/mod.rs:62`).
 
 The number **six** is real, but it belongs to one step: `Static gates`
-(`.github/workflows/release.yml:60-67`) runs exactly six Python checks. That step is
+(`.github/workflows/release.yml:60-69`) runs exactly six Python checks. That step is
 tabled in §A.1. The remaining gate-job steps are tabled in §A.2, because a release that
 only ran the six would still be able to publish a tree whose SBOM drifted, whose
 advisories fail, or whose conformance corpus is broken.
@@ -55,7 +55,7 @@ because the table takes the verdict line.
 
 Gate 3's `3 Page entries` is not a typo: the capability registry it checks is the Page
 method registry, and `0 mismatches` over 3 entries is the whole assertion. It is one of
-the gates `CHANGELOG.md:214` records as unable to fail — see §C.
+the gates `CHANGELOG.md:208-210` records as unable to fail — see §C.
 
 ### A.2 The rest of the release gate
 
@@ -78,15 +78,15 @@ Rows 7–10b are the release-gate steps that are checkable without a compiler.
 
 **Not run, and why** (these are not rows: a row requires a command I ran):
 
-- `.github/workflows/release.yml:78-88` — dependency advisories,
+- `.github/workflows/release.yml:71-91` — dependency advisories,
   `cargo deny --all-features check advisories`: needs the advisory DB over the network and
   a dependency-graph resolve. Not run. See §C.3 — it would pass on this tree *by waiver*,
   so a green here would not mean clean.
-- `.github/workflows/release.yml:126-131` — full lib suite, `cargo test --lib --locked`:
+- `.github/workflows/release.yml:106-110` — full lib suite, `cargo test --lib --locked`:
   **forbidden by the brief** (merge owner's suite).
-- `.github/workflows/release.yml:136-142` — conformance corpus, needs
+- `.github/workflows/release.yml:117-123` — conformance corpus, needs
   `cargo build --locked --bin tallow` first.
-- `.github/workflows/release.yml:150-190` — the 31 integration suites, which include all
+- `.github/workflows/release.yml:133-174` — the 31 integration suites, which include all
   nine `gate_*_parity` targets: needs a build.
 
 ### A.3 The docs_examples open item — mechanism, quoted, classified
@@ -154,7 +154,7 @@ refusal is not the defect.
 
 One structural note on the gate itself, which is *not* the open item but is adjacent to
 it: `.github/workflows/release.yml` never runs `python3 scripts/docs_examples.py`
-directly. It relies on the binary being built by the conformance step (line 138) and on
+directly. It relies on the binary being built by the conformance step (line 121) and on
 `--test gate_docs_examples_parity` inside the integration step (line 169) to exercise the
 examples. CI (`ci.yml:281`, `ci.yml:286`) runs the build and the script explicitly, in that
 order. So the release gate covers docs examples **by step ordering**, not by a step that
@@ -285,7 +285,7 @@ cargo build --locked --bin tallow
 python3 scripts/docs_examples.py                       # the gate this report could not run
 cargo test --lib --locked -- --test-threads=2
 TALLOW_BIN="$PWD/target/debug/tallow" cargo test --locked --test conformance_runner -- --nocapture
-#    …then the 31 integration suites from release.yml:150-190
+#    …then the 31 integration suites from release.yml:133-174
 
 # 4. OPERATOR-ONLY — irreversible egress begins here
 git tag -a "$V" -F .git/TAG_MSG
@@ -306,7 +306,7 @@ tag **is** the release's identity and the push is the moment it becomes someone 
 fact:
 
 - `git tag -a` writes a ref that CI treats as an instruction. Pushing it *is* the trigger
-  for `on: push: tags: ['v*']` in `release.yml:23-25`; there is no separate "start the
+  for `on: push: tags: ['v*']` in `release.yml:19-21`; there is no separate "start the
   release" command. A tag pushed by mistake begins five target builds and a draft release
   under a version number that a later, correct tag cannot reuse without a force-push on a
   public ref.
@@ -358,7 +358,7 @@ Every item here is a thing a green table above could be mistaken for proving.
    `zstd 0.13.4` / `zstd-safe 7.4.0` are the newest published releases and `wreq-util
    3.0.0-rc.14` pins `zstd ^0.13.3` so the crate cannot be upgraded out. `Cargo.lock`
    confirms the tree still carries both lines (`zstd 0.13.4` at 9648 and `zstd 0.14.3` at
-   9620; `zstd-safe 7.4.0` and `8.2.0` at 9653/9662). `release.yml:78-88` says in as many
+   9620; `zstd-safe 7.4.0` and `8.2.0` at 9653/9662). `release.yml:71-91` says in as many
    words that this step exists to make a tag red until zstd moves. **The advisories step
    was not run in this turn; it would pass by waiver, and 2027-01-31 is the date the
    waiver stops passing.**
@@ -368,7 +368,7 @@ Every item here is a thing a green table above could be mistaken for proving.
    puts the last one at line 317, inside `[v1.5.7]` (2026-10-25). Rows 10 and 10b prove
    the release *body* builds (`3332 chars` for `v1.7.0`); they prove nothing was measured
    into it.
-5. **Nothing about the six gates' power to fail.** `CHANGELOG.md:213-216` records that
+5. **Nothing about the six gates' power to fail.** `CHANGELOG.md:208-213` records that
    six of the nine `tallow gate` verbs cannot be made red on today's tree by mutating a
    scratch copy. Green rows 1–6 above are therefore consistent with both "the tree is
    sound" and "the check cannot see this class of defect". The parity suites
@@ -377,8 +377,8 @@ Every item here is a thing a green table above could be mistaken for proving.
    `python3 scripts/check_backlog_evidence.py` → `rc 1`,
    `backlog evidence: 38 DONE rows, 66 path refs, 1 problem(s)` /
    `FAIL G07: src/interp.rs:23748 does not mention 'bind_binding_pattern'`. It is a CI-only
-   check (`ci.yml:275`), so the release gate is green while CI is not. Pre-existing —
-   `CHANGELOG.md:224-227` records the same G07 failure at an earlier line number
+   check (`ci.yml:277`), so the release gate is green while CI is not. Pre-existing —
+   `CHANGELOG.md:224-226` records the same G07 failure at an earlier line number
    (`23659`, now `23748`: the row is stale, the target moved).
 7. **`census-surface` / `census-page-methods` were checked, and are not release gates.**
    For completeness, both were run and are green: `python3 scripts/census_surface.py` →
@@ -395,7 +395,7 @@ Every item here is a thing a green table above could be mistaken for proving.
    document, because there isn't one here to read.
 9. **A green §B.2 step 2 does not make step 3 optional.** The four compiler-dependent
    gates (lib suite, conformance, integration, docs examples) are where the last three
-   releases' real defects were caught — `release.yml:155-160` says so for 1.5.1.
+   releases' real defects were caught — `release.yml:133-139` says so for 1.5.1.
 
 ---
 
