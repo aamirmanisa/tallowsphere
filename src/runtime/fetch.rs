@@ -241,7 +241,11 @@ fn build_agent(loopback_direct: bool) -> Result<ureq::Agent, String> {
         // entry points return a null handle: compiled `http.get` consumers
         // lose status+body, and the R-01 leg cannot classify 429/5xx/403
         // [measured 2026-09-13: loopback probe returned status=-1 on all].
-        .http_status_as_error(false);
+        .http_status_as_error(false)
+        // EGRESS-REDIRECTS.md requirement 1: no implicit follow on either
+        // plane. `egress_http::follow` is the only way a 3xx becomes another
+        // request, and it consults the register per hop.
+        .max_redirects(0);
     // A LITERAL loopback address cannot resolve anywhere but this machine, so
     // it is not an anonymity plane and must not be sent through the proxy: the
     // SOCKS allowlist denies 127.0.0.0/8 by design, which turned a registered
@@ -350,15 +354,12 @@ pub extern "C" fn tallow_fetch(url: *const c_char) -> *mut c_void {
         return std::ptr::null_mut();
     }
     // Baseline politeness delay (`TALLOW_FETCH_DELAY_MS`, default 250 ms per
-    // host) shared with the stdlib egress client.
-    crate::runtime::egress_http::rate_limit_wait(url_str);
-    // Direct-mode ECH metadata-leak warning (rows #60/#156/#157): the HTTP
-    // client's ClientHello leaks the SNI when this request is not proxied.
-    crate::runtime::egress_http::note_missing_ech_on_direct_egress(url_str);
-    match agent.get(url_str).call() {
-        Ok(response) => response_to_handle(response, url_str),
-        Err(e) => {
-            set_last_error(format!("fetch: {e}"));
+    // host) shared with the stdlib egress client — applied per hop inside
+    // `follow`.
+    match crate::runtime::egress_http::follow(&agent, url_str, "GET", None, &[]) {
+        Ok(followed) => response_to_handle(followed.response, &followed.final_url),
+        Err(refusal) => {
+            set_last_error(format!("fetch: {refusal}"));
             std::ptr::null_mut()
         }
     }
@@ -415,29 +416,23 @@ pub extern "C" fn tallow_fetch_method(
         return std::ptr::null_mut();
     }
     // Baseline politeness delay, same limiter as `fetch(url)` and the stdlib
-    // egress client.
-    crate::runtime::egress_http::rate_limit_wait(url_str);
-    crate::runtime::egress_http::note_missing_ech_on_direct_egress(url_str);
-    let result = match method_str.as_str() {
-        "GET" => agent.get(url_str).call(),
-        "POST" => agent.post(url_str).send(body_bytes),
-        "PUT" => agent.put(url_str).send(body_bytes),
-        "PATCH" => agent.patch(url_str).send(body_bytes),
-        "DELETE" => agent.delete(url_str).call(),
-        "HEAD" => agent.head(url_str).call(),
-        "OPTIONS" => agent.options(url_str).call(),
-        other => {
-            set_last_error(format!(
-                "fetch_method: unsupported HTTP method '{other}' (supported: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)"
-            ));
-            return std::ptr::null_mut();
-        }
-    };
+    // egress client — applied per hop inside `follow`.
+    let result = crate::runtime::egress_http::follow(
+        &agent,
+        url_str,
+        &method_str,
+        if body_bytes.is_empty() {
+            None
+        } else {
+            Some(body_bytes.as_slice())
+        },
+        &[],
+    );
 
     match result {
-        Ok(response) => response_to_handle(response, url_str),
-        Err(e) => {
-            set_last_error(format!("fetch_method({method_str}): {e}"));
+        Ok(followed) => response_to_handle(followed.response, &followed.final_url),
+        Err(refusal) => {
+            set_last_error(format!("fetch_method({method_str}): {refusal}"));
             std::ptr::null_mut()
         }
     }
@@ -650,15 +645,14 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
             );
         }
     }
-    // Baseline politeness delay, same limiter as `tallow_fetch` (per host).
-    crate::runtime::egress_http::rate_limit_wait(&url);
-    crate::runtime::egress_http::note_missing_ech_on_direct_egress(&url);
-    match agent.get(&url).call() {
-        Ok(response) => {
+    // Baseline politeness delay, same limiter as `tallow_fetch` (per host) —
+    // applied per hop inside `follow`, which also re-gates every hop.
+    match crate::runtime::egress_http::follow(agent, &url, "GET", None, &[]) {
+        Ok(followed) => {
             // Read the status before the response is consumed into a handle:
             // a 403 must reach the ledger as a 403, not as "allowed".
-            let status = response.status().as_u16();
-            match response_to_handle_result(response, &url) {
+            let status = followed.response.status().as_u16();
+            match response_to_handle_result(followed.response, &followed.final_url) {
                 Ok(handle) => {
                     if let Some(ledger) = crate::net::egress::ledger() {
                         ledger.record(&host, &url, "GET", status);
@@ -672,17 +666,13 @@ fn fetch_entry(agent: &ureq::Agent, slot: i64) -> i64 {
                 ),
             }
         }
-        Err(e) => {
-            let status = match &e {
-                ureq::Error::StatusCode(code) => *code,
-                _ => 0,
-            };
+        Err(refusal) => {
             if let Some(ledger) = crate::net::egress::ledger() {
-                ledger.record(&host, &url, "GET", status);
+                ledger.record(&host, &url, "GET", 0);
             }
             result_box(
                 1,
-                string_to_cstr(&format!("http.batch[{url}]: fetch: {e}")) as *mut c_void,
+                string_to_cstr(&format!("http.batch[{url}]: fetch: {refusal}")) as *mut c_void,
                 VTYPE_STRING,
             )
         }

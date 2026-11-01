@@ -117,8 +117,43 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
 /// Retry ceiling for `governed_get`-backed JSON calls (crt.sh / RDAP / DoH).
 const MAX_RETRIES: u32 = 3;
 
-/// Redirect ceiling for fingerprint GETs that must land on the final URL.
-const FOLLOW_REDIRECTS: u32 = 8;
+/// Redirect ceiling reference. The ceiling itself lives with the gate
+/// (`egress_http::MAX_FOLLOW_HOPS`, 8) so no module can carry a different one.
+const FOLLOW_REDIRECTS: u32 = crate::runtime::egress_http::MAX_FOLLOW_HOPS as u32;
+
+/// Build a ureq agent with the same phase timeouts as the sibling recon
+/// modules, `http_status_as_error(false)` (4xx/5xx arrive as ordinary
+/// responses — status codes are findings here, not errors), the fail-closed
+/// egress proxy from the single source of truth, and **`max_redirects(0)`**.
+///
+/// EGRESS-REDIRECTS.md requirement 1: no builder in this tree follows on its
+/// own. `AGENT_FOLLOW` is not an agent that follows — it is the agent handed to
+/// the gated loop (`egress_http::follow`), which re-consults the register for
+/// every hop. The gate lives in one place so a hop cannot skip it.
+fn scan_agent() -> ureq::Agent {
+    let builder = ureq::Agent::config_builder()
+        .timeout_global(None)
+        .timeout_per_call(Some(Duration::from_secs(30)))
+        .timeout_resolve(Some(Duration::from_secs(10)))
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_send_request(Some(Duration::from_secs(10)))
+        .timeout_send_body(Some(Duration::from_secs(30)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(Some(Duration::from_secs(30)))
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .https_only(false)
+        .proxy(crate::runtime::egress_http::proxy());
+    builder.build().new_agent()
+}
+
+/// Agent for page fetches that must land on the final URL. It does not
+/// follow by itself: `fp_get_capped(follow = true)` runs it through
+/// `egress_http::follow`, which is the gated loop.
+static AGENT_FOLLOW: LazyLock<ureq::Agent> = LazyLock::new(scan_agent);
+
+/// Agent with redirects disabled (fingerprint GETs that must observe 3xx).
+static AGENT_NOFOLLOW: LazyLock<ureq::Agent> = LazyLock::new(scan_agent);
 
 // ── Caps (hard ceilings; opts are clamped into these, never above) ────
 const DEFAULT_MAX_PAGES: usize = 25;

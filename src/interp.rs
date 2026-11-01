@@ -5184,7 +5184,11 @@ impl Interpreter {
                     // flow can branch on `status == 404` identically in both engines. Without
                     // this, ureq maps non-2xx to Err(StatusCode) and the interpreter returns
                     // Value::Err while native returns a status-carrying handle.
-                    .http_status_as_error(false);
+                    .http_status_as_error(false)
+                    // EGRESS-REDIRECTS.md requirement 1: the interpreter plane
+                    // never follows on its own; `egress_http::follow` re-gates
+                    // every hop and reports the URL that produced the body.
+                    .max_redirects(0);
                 let mut egress_error: Option<String> = None;
                 if let Some(proxy_url) = crate::runtime::fetch::egress_proxy_url_ureq() {
                     match ureq::Proxy::new(&proxy_url) {
@@ -5218,8 +5222,14 @@ impl Interpreter {
                 crate::runtime::egress_http::note_missing_ech_on_direct_egress(&url);
                 let agent = agent_builder.build().new_agent();
                 let fetch_start = std::time::Instant::now();
-                return match agent.get(&url).call() {
-                    Ok(resp) => {
+                // Gated follow (EGRESS-REDIRECTS.md): the agent never follows;
+                // `follow` re-consults the register per hop and reports the URL
+                // that produced the body, so `Response.url` and the provenance
+                // origin name the final URL rather than the requested one.
+                return match crate::runtime::egress_http::follow(&agent, &url, "GET", None, &[]) {
+                    Ok(followed) => {
+                        let final_url = followed.final_url;
+                        let resp = followed.response;
                         let status = resp.status().as_u16();
                         let body_bytes = resp.into_body().read_to_vec().unwrap_or_default();
                         let body_for_cache = String::from_utf8_lossy(&body_bytes).to_string();
@@ -5246,11 +5256,11 @@ impl Interpreter {
                             fields: vec![
                                 ("status".to_string(), Value::Int(status as i128)),
                                 ("body".to_string(), Value::Bytes(body_bytes)),
-                                ("url".to_string(), Value::String(url.clone())),
+                                ("url".to_string(), Value::String(final_url.clone())),
                             ],
                         };
                         let chain = ProvenanceChain::new(ProvenanceOrigin::NetworkFetch {
-                            url,
+                            url: final_url,
                             timestamp: provenance_timestamp(),
                         });
                         Ok(Value::Provenance(Box::new(response), Box::new(chain)))

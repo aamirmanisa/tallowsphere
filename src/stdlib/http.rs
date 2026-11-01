@@ -186,6 +186,10 @@ fn build_agent_with(timeout: Option<Duration>, with_proxy: bool) -> ureq::Agent 
         .timeout_send_body(Some(t))
         .timeout_recv_response(Some(t))
         .timeout_recv_body(Some(t))
+        // EGRESS-REDIRECTS.md requirement 1: this builder never follows. The
+        // gated chain is `crate::runtime::egress_http::follow`, which is the
+        // only place a 3xx may turn into another request.
+        .max_redirects(0)
         .https_only(false);
 
     if with_proxy {
@@ -670,39 +674,62 @@ fn http_get(args: Vec<Value>) -> StdlibResult {
         }
     }
 
-    let agent = get_agent_for(&url, timeout);
-
-    let mut req = agent.get(&url);
-    for (k, v) in &headers {
-        req = req.header(k.as_str(), v.as_str());
-    }
+    // Gated follow (docs/spec/EGRESS-REDIRECTS.md): `agent_for_follow` sets
+    // `max_redirects(0)` (so ureq never follows on its own) and
+    // `http_status_as_error(false)` (so a 3xx arrives with its `Location`
+    // readable). `egress_http::follow` re-consults the register for every hop
+    // and returns the URL that actually produced the body.
+    let agent = crate::runtime::egress_http::agent_for_follow(is_loopback_literal(&url), timeout);
+    let hdrs: Vec<(String, String)> = headers
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
     let started = Instant::now();
-    match req.call() {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let resp_headers = collect_response_headers(&resp);
-            let body = resp.into_body().read_to_vec().unwrap_or_default();
-            egress_record(&host, &url, "GET", status);
+    match crate::runtime::egress_http::follow(&agent, &url, "GET", None, &hdrs) {
+        Ok(followed) => {
+            let crate::runtime::egress_http::Followed {
+                response,
+                final_url,
+                hops,
+                ..
+            } = followed;
+            let status = response.status().as_u16();
+            let resp_headers = collect_response_headers(&response);
+            let body = response.into_body().read_to_vec().unwrap_or_default();
+            // The ledger records the URL whose bytes these are (requirement 5;
+            // `hops` is carried in the trace for operators).
+            egress_record(&host, &final_url, "GET", status);
+            if std::env::var("TALLOW_TRACE_HTTP").is_ok() {
+                eprintln!("[trace] stdlib http_get {url} → {final_url} ({hops} hop(s))");
+            }
+            // Preserve the pre-gate surface: a 4xx/5xx is an `Err` value whose
+            // text matches ureq's `StatusCode` Display exactly.
+            if status >= 400 {
+                return Ok(Value::Err(Box::new(Value::String(format!(
+                    "http.get: http status: {status}"
+                )))));
+            }
             Ok(build_response_value(
                 status,
                 body,
-                &url,
+                &final_url,
                 resp_headers,
                 elapsed_ms_since(started),
             ))
         }
-        Err(e) => {
-            // A status error is still an answer from the target: record it, so a
-            // 403 stops the host even though the caller sees an Err value.
-            let status = match &e {
-                ureq::Error::StatusCode(code) => *code,
-                _ => 0,
-            };
-            egress_record(&host, &url, "GET", status);
-            Ok(Value::Err(Box::new(Value::String(format!(
-                "http.get: {e}"
-            )))))
+        Err(refusal) => {
+            // An authorization-class refusal mid-chain refuses the WHOLE
+            // request — the same shape as a failed `egress_guard` on hop 1.
+            // Transport failures keep the `Err`-value shape they always had.
+            match &refusal {
+                crate::runtime::egress_http::FollowRefusal::Transport { .. } => {
+                    Ok(Value::Err(Box::new(Value::String(format!(
+                        "http.get: {refusal}"
+                    )))))
+                }
+                _ => Err(format!("http.get: {refusal}")),
+            }
         }
     }
 }
@@ -970,37 +997,46 @@ fn http_post(args: Vec<Value>) -> StdlibResult {
         }
     }
 
-    let agent = get_agent_for(&url, timeout);
+    // Same gated follow as `http.get` (docs/spec/EGRESS-REDIRECTS.md): a
+    // `POST` that answers 303 lands on the `GET` the browser would have made,
+    // and every hop is re-authorised under the method it will actually carry.
+    let agent = crate::runtime::egress_http::agent_for_follow(is_loopback_literal(&url), timeout);
 
-    let mut req = agent.post(&url);
-    let mut has_ct = false;
-    for (k, v) in &headers {
-        req = req.header(k.as_str(), v.as_str());
-        if k.eq_ignore_ascii_case("content-type") {
-            has_ct = true;
-        }
-    }
-    if !has_ct {
-        req = req.header("Content-Type", "text/plain");
+    let mut hdrs: Vec<(String, String)> = headers
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if !hdrs.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type")) {
+        hdrs.push(("Content-Type".to_string(), "text/plain".to_string()));
     }
 
     let started = Instant::now();
-    match req.send(body.as_bytes()) {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let resp_headers = collect_response_headers(&resp);
-            let resp_body = resp.into_body().read_to_vec().unwrap_or_default();
+    match crate::runtime::egress_http::follow(&agent, &url, "POST", Some(body.as_bytes()), &hdrs) {
+        Ok(followed) => {
+            let crate::runtime::egress_http::Followed {
+                response,
+                final_url,
+                ..
+            } = followed;
+            let status = response.status().as_u16();
+            let resp_headers = collect_response_headers(&response);
+            let resp_body = response.into_body().read_to_vec().unwrap_or_default();
             Ok(build_response_value(
                 status,
                 resp_body,
-                &url,
+                &final_url,
                 resp_headers,
                 elapsed_ms_since(started),
             ))
         }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(format!(
-            "http.post: {e}"
-        ))))),
+        Err(refusal) => {
+            match &refusal {
+                crate::runtime::egress_http::FollowRefusal::Transport { .. } => Ok(Value::Err(
+                    Box::new(Value::String(format!("http.post: {refusal}"))),
+                )),
+                _ => Err(format!("http.post: {refusal}")),
+            }
+        }
     }
 }
 
@@ -1018,51 +1054,46 @@ fn http_request(method: &str, args: Vec<Value>) -> StdlibResult {
     if let Err(reason) = egress_guard(&url, method) {
         return Err(format!("http.{}: {reason}", method.to_lowercase()));
     }
-    let agent = get_agent_for(&url, timeout);
+    let agent = crate::runtime::egress_http::agent_for_follow(is_loopback_literal(&url), timeout);
 
     let method_lower = method.to_lowercase();
     let started = Instant::now();
-
-    // ureq 3.x has typed builders: WithBody vs WithoutBody.
-    // PUT has body, DELETE doesn't. Handle separately.
-    let result: Result<ureq::http::Response<ureq::Body>, ureq::Error> = match method {
-        "PUT" => {
-            let mut req = agent.put(&url);
-            for (k, v) in &headers {
-                req = req.header(k.as_str(), v.as_str());
-            }
-            if body.is_empty() {
-                req.send(&[] as &[u8])
-            } else {
-                req.send(body.as_bytes())
-            }
-        }
-        _ => {
-            // DELETE and others are WithoutBody
-            let mut req = agent.delete(&url);
-            for (k, v) in &headers {
-                req = req.header(k.as_str(), v.as_str());
-            }
-            req.call()
-        }
+    let hdrs: Vec<(String, String)> = headers
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    // PUT/PATCH carry a body; DELETE/OPTIONS do not. Either way the chain is
+    // the gated one, so a 307 keeps its method and a 303 rewrites to GET.
+    let body_bytes = if body.is_empty() {
+        None
+    } else {
+        Some(body.as_bytes())
     };
 
-    match result {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let resp_headers = collect_response_headers(&resp);
-            let resp_body = resp.into_body().read_to_vec().unwrap_or_default();
+    match crate::runtime::egress_http::follow(&agent, &url, method, body_bytes, &hdrs) {
+        Ok(followed) => {
+            let crate::runtime::egress_http::Followed {
+                response,
+                final_url,
+                ..
+            } = followed;
+            let status = response.status().as_u16();
+            let resp_headers = collect_response_headers(&response);
+            let resp_body = response.into_body().read_to_vec().unwrap_or_default();
             Ok(build_response_value(
                 status,
                 resp_body,
-                &url,
+                &final_url,
                 resp_headers,
                 elapsed_ms_since(started),
             ))
         }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(format!(
-            "http.{method_lower}: {e}"
-        ))))),
+        Err(refusal) => match &refusal {
+            crate::runtime::egress_http::FollowRefusal::Transport { .. } => Ok(Value::Err(
+                Box::new(Value::String(format!("http.{method_lower}: {refusal}"))),
+            )),
+            _ => Err(format!("http.{method_lower}: {refusal}")),
+        },
     }
 }
 
