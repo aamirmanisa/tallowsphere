@@ -13,14 +13,15 @@
 //! - 500 GET with body — DISAGREE (interp `Err("http.get: http status: 500")`;
 //!   native `500` + `server-error-body`)
 //! - 302 to a second local path — AGREE (both follow to `200` / `ok-body`)
-//! - connection refused — DISAGREE (interp `Err("http.get: io: Connection refused
-//!   (os error 111)")`; native field read `status=-1` body=`(null)`, rc 0)
+//! - connection refused — DISAGREE (interp `Err("http.get: redirect-transport:
+//!   refusing <url> — io: Connection refused (os error 111)")`; native aborts
+//!   with `runtime error:` + Connection refused, rc != 0)
 //! - timeout via extra Int milliseconds — DISAGREE (interp honours `http.get(url, 200)`
-//!   as `Err("http.get: timeout: per call")`; native ignores the extra arg and
-//!   returns `200` / `slow-body`)
-//! - POST returning 404 — DISAGREE (interp `Err("http.post: http status: 404")`;
-//!   native field read `status=-1` body=`(null)` — and native POST /ok is also
-//!   `-1`/`(null)`, so this is a dead POST FFI, not status-as-error)
+//!   as `Err("http.get: redirect-transport: refusing <url> — timeout: per call")`;
+//!   native ignores the extra arg and returns `200` / `slow-body`)
+//! - POST returning 404 — AGREE on status-as-data now that loopback grants POST
+//!   (`authorized-hosts.toml` methods include POST) and `http.post` returns a
+//!   `Response` for a 4xx instead of wrapping it as `Err`
 //!
 //! `tallow check` accepts both `let r: Response = http.get(u)` and
 //! `let r: Result<Response> = http.get(u)` (rc 0, only W0130). A checker that
@@ -437,10 +438,15 @@ fn connection_refused_measured_values() {
     let _ = std::fs::remove_file(&printed);
 
     assert_eq!(interp_print.code, 0);
+    // Re-pinned after gated redirect follow (egress_http::follow): a refused
+    // connection is FollowRefusal::Transport, whose Display is
+    // `redirect-transport: refusing <url> — <detail>`. The os-error text is
+    // unchanged; the wrapper is the change.
     assert!(
-        interp_print
-            .stdout
-            .contains("Err(\"http.get: io: Connection refused (os error 111)\")"),
+        interp_print.stdout.contains("redirect-transport: refusing")
+            && interp_print
+                .stdout
+                .contains("io: Connection refused (os error 111)"),
         "interp refused print moved: {:?}",
         interp_print.stdout
     );
@@ -467,17 +473,13 @@ fn connection_refused_measured_values() {
 
 #[test]
 fn post_404_measured_values() {
-    // REWRITTEN 2026-10-31. This case used to measure "a 404 POST is data on the
-    // native plane and an error in the interpreter". It cannot measure that any
-    // more, and the reason is a fix, not a regression: the loopback entry in
-    // configs/tallow/scope/authorized-hosts.toml grants methods = ["GET","HEAD"],
-    // so http.post to it is refused as scope:method-not-allowed on BOTH planes
-    // before a socket opens. What is measured here is that refusal.
-    //
-    // The status-as-data question for POST is now unmeasurable until either the
-    // register grants POST to a fixture host or the POST FFI stops returning a
-    // null handle for a 200. Both are recorded in CHANGELOG.md "Known at tag
-    // time"; this test pins the behaviour that exists instead of pretending.
+    // Re-pinned after two genuine changes, not a test softening:
+    // 1. configs/tallow/scope/authorized-hosts.toml grants POST on loopback
+    //    (local model servers). The 2026-10-31 pin assumed GET/HEAD only, so
+    //    it expected method-not-allowed on both planes; that refusal is gone.
+    // 2. http.post now returns build_response_value for any final status
+    //    (gated follow). A 404 is a Response, not Err("http.post: http status:
+    //    404"). GET still wraps 4xx as Err — that split is the measured surface.
     let base = spawn_loopback();
     let fields = write_prog("fields", &fields_program());
     let printed = write_prog("print", &print_program());
@@ -491,26 +493,39 @@ fn post_404_measured_values() {
     let _ = std::fs::remove_file(&printed);
 
     let interp_all = format!("{}{}", interp_print.stdout, interp_print.stderr);
-    assert_ne!(
+    assert_eq!(
         interp_print.code, 0,
-        "interp POST to loopback exited 0; the register grants GET/HEAD only: {interp_all}"
+        "interp POST 404 should be data now that loopback grants POST: {interp_all}"
     );
     assert!(
-        interp_all.contains("register") || interp_all.contains("method-not-allowed"),
-        "interp POST refusal message moved: {interp_all}"
+        interp_print.stdout.contains("status: 404")
+            && interp_print.stdout.contains("cG9zdC1taXNzaW5nLWJvZHk="),
+        "interp POST 404 print moved (want Response status 404, body b64 of post-missing-body): {interp_all}"
     );
 
-    for (label, out) in [("404", &native_fields), ("200", &native_ok)] {
-        let native_all = format!("{}{}", out.stdout, out.stderr);
-        assert_ne!(
-            out.code, 0,
-            "native POST to loopback ({label}) exited 0; the register grants GET/HEAD only: {native_all}"
-        );
-        assert!(
-            native_all.contains("register") || native_all.contains("method-not-allowed"),
-            "native POST refusal message moved ({label}): {native_all}"
-        );
-    }
+    assert_eq!(
+        native_fields.code, 0,
+        "native POST 404:\n{}{}",
+        native_fields.stdout, native_fields.stderr
+    );
+    assert_native_ran(&native_fields);
+    assert_eq!(
+        native_fields.stdout, "404\npost-missing-body\n",
+        "native POST 404 field-access moved: {:?}",
+        native_fields.stdout
+    );
+
+    assert_eq!(
+        native_ok.code, 0,
+        "native POST 200:\n{}{}",
+        native_ok.stdout, native_ok.stderr
+    );
+    assert_native_ran(&native_ok);
+    assert_eq!(
+        native_ok.stdout, "200\npost-ok\n",
+        "native POST 200 field-access moved: {:?}",
+        native_ok.stdout
+    );
 }
 
 #[test]
@@ -526,10 +541,12 @@ fn timeout_extra_int_measured_values() {
     let _ = std::fs::remove_file(&printed);
 
     assert_eq!(interp_print.code, 0);
+    // Re-pinned after gated redirect follow: the timeout is the same
+    // FollowRefusal::Transport wrapper as connection-refused, with detail
+    // `timeout: per call`.
     assert!(
-        interp_print
-            .stdout
-            .contains("Err(\"http.get: timeout: per call\")"),
+        interp_print.stdout.contains("redirect-transport: refusing")
+            && interp_print.stdout.contains("timeout: per call"),
         "interp timeout print moved: {:?}",
         interp_print.stdout
     );
