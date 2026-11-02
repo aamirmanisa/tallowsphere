@@ -477,6 +477,15 @@ fn live_browser_tests_enabled() -> bool {
     }
 }
 
+/// Live-browser smoke test. Skip-by-default, and currently **cannot pass when
+/// enabled**: `Page::navigate` gates egress through the scope register and a
+/// `data:` URL has no host, so the gate answers `scope:host-malformed` and exits
+/// the process (measured 2026-11-02 on this tree: `TALLOW_RUN_BROWSER_LIVE_TESTS=1
+/// <bin> --exact live_browser_launch_new_page_goto_title_data_url` ->
+/// "runtime error: scope:host-malformed ...", exit 1). Whether a hostless scheme
+/// (`data:`, `about:`, `blob:`) should be refused as egress is a product
+/// question, not a test one, so the body is left as written; see the finding in
+/// the tag=assay report rather than treating this skip as coverage.
 #[tokio::test]
 async fn live_browser_launch_new_page_goto_title_data_url() {
     if !live_browser_tests_enabled() {
