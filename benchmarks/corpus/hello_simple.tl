@@ -1,0 +1,15 @@
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn main() {
+    let x = 10
+    let y = 20
+    let sum = add(x, y)
+    print(sum)
+    if sum > 25 {
+        print("big")
+    } else {
+        print("small")
+    }
+}

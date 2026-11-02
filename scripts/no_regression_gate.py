@@ -4,12 +4,16 @@
 Two comparison modes plus a self-test:
 
   --baseline B --current C   compare a fresh measurement against the committed baseline.
+                             B may be a directory of baselines: the one matching this
+                             measurement's (arch, build profile, corpus) is selected, so a
+                             per-architecture capture never time-gates another machine.
                              FAILS on a regression past the budget below.
   --targets  T --current C   check the measurement is inside the committed target ranges.
+  --corpus-manifest M        fail unless --current was measured over the pinned corpus.
   --self-test                prove the gate FAILS on a seeded regression (of every class)
                              and PASSES on a clean copy -- the gate's own gate.
 
-Exit: 0 = pass · 1 = regression / out of range · 2 = usage or IO error.
+Exit: 0 = pass · 1 = regression / out of range / not comparable · 2 = usage or IO error.
 
 House conventions: stdlib only; repo root self-detected; no absolute paths; the
 only file written is the optional --report JSON.
@@ -41,9 +45,9 @@ METRICS = ("files_total", "files_ok", "success_rate", "unresolved",
            "check_ms_median", "check_ms_p95", "throughput_files_per_s", "peak_rss_mb")
 
 # Metrics whose value depends on the MACHINE rather than the code. Gating these across two
-# platforms is not a regression test — it is two unrelated measurements subtracted, and the
-# difference is reported as a regression. They are gated only when the environment identity
-# matches.
+# platforms (or two build profiles, or two corpora) is not a regression test — it is two
+# unrelated measurements subtracted, and the difference is reported as a regression. They
+# are gated only when the environment identity matches: arch AND build profile AND corpus.
 ENV_DEPENDENT = ("check_ms_median", "throughput_files_per_s", "peak_rss_mb")
 
 
@@ -51,12 +55,20 @@ def env_arch(doc: dict) -> str:
     return str(doc.get("environment", {}).get("arch", "") or "").strip().lower()
 
 
-def same_platform(baseline: dict, current: dict) -> tuple[bool, str]:
+def env_profile(doc: dict) -> str:
+    return str(doc.get("binary", {}).get("profile", "") or "").strip().lower()
+
+
+def timing_comparable(baseline: dict, current: dict) -> tuple[bool, str]:
     """Are these two measurements comparable on timing at all?
 
-    An ABSENT arch is not a match. Treating unknown as equal is how a CI runner ends up
-    being compared against a laptop and the difference filed as a regression, so unknown
-    fails closed here: no arch, no timing comparison.
+    Two identities have to match: the architecture AND the build profile. A debug build
+    is ~20x slower than a release build on this tree, so pairing them is two unrelated
+    measurements subtracted, not a regression.
+
+    An ABSENT identity is not a match. Treating unknown as equal is how a CI runner ends
+    up being compared against a laptop and the difference filed as a regression, so
+    unknown fails closed here: no arch/profile, no timing comparison.
     """
     a, b = env_arch(baseline), env_arch(current)
     if not a or not b:
@@ -64,7 +76,73 @@ def same_platform(baseline: dict, current: dict) -> tuple[bool, str]:
                        f"current={b or 'absent'})")
     if a != b:
         return False, f"different architectures (baseline={a}, current={b})"
+    pa, pb = env_profile(baseline), env_profile(current)
+    if not pa or not pb:
+        return False, (f"build profile missing (baseline={pa or 'absent'}, "
+                       f"current={pb or 'absent'})")
+    if pa != pb:
+        return False, f"different build profiles (baseline={pa}, current={pb})"
     return True, ""
+
+
+def select_baseline(docs: list[tuple[str, dict]], current: dict) -> tuple[dict | None, str, str | None]:
+    """Pick the baseline that describes the machine/profile the measurement was taken on.
+
+    A baseline is a measurement of a machine AND a corpus, never a universal constant.
+    Two filters apply, in order:
+
+      1. The corpus must match. Comparing success_rate or timing against a baseline taken
+         over different inputs is not a regression check; it is two unrelated measurements
+         subtracted. A baseline on another corpus is not a candidate at all.
+      2. Among those, prefer (arch, build profile) equal to the current measurement,
+         newest first. With no exact match, use the newest usable baseline for the
+         machine-independent metrics (success_rate, unresolved) and return a note
+         explaining that timing was skipped.
+
+    Returns (document-or-None, label, note-or-None). `None` means no committed baseline
+    was measured over this corpus — the caller must fail rather than guess. Raises
+    ValueError only if `docs` is empty.
+    """
+    if not docs:
+        raise ValueError("no baselines to choose from")
+    cur_arch, cur_prof = env_arch(current), env_profile(current)
+    cur_sha = str(current.get("corpus", {}).get("sha256") or "")
+
+    def newest(rows: list[tuple[str, dict]]) -> tuple[str, dict]:
+        return max(rows, key=lambda t: str(t[1].get("generated_at", "")))
+
+    usable = [(n, d) for n, d in docs
+              if cur_sha and str(d.get("corpus", {}).get("sha256") or "") == cur_sha]
+    if not usable:
+        return None, "", (f"no baseline in the directory was measured over corpus "
+                          f"{cur_sha[:12] or 'absent'}.. — cannot compare")
+
+    exact = [(n, d) for n, d in usable
+             if cur_arch and cur_prof
+             and env_arch(d) == cur_arch and env_profile(d) == cur_prof]
+    if exact:
+        name, doc = newest(exact)
+        return doc, name, None
+
+    name, doc = newest(usable)
+    note = (f"no baseline for arch={cur_arch or 'absent'} profile={cur_prof or 'absent'}; "
+            f"using {name} for machine-independent metrics only")
+    return doc, name, note
+
+
+def corpus_pin_finding(current: dict, manifest: dict) -> str | None:
+    """None if `current` was measured over the pinned corpus, else the finding."""
+    want = manifest.get("sha256")
+    got = current.get("corpus", {}).get("sha256")
+    if not want:
+        return "corpus manifest has no aggregate sha256"
+    if not got:
+        return "current measurement records no corpus sha256"
+    if got != want:
+        return (f"current measurement is not over the pinned corpus "
+                f"({str(got)[:12]}.. != pinned {str(want)[:12]}..) — "
+                f"re-run the harness with --corpus-manifest")
+    return None
 
 
 def load(path: str) -> dict:
@@ -86,7 +164,7 @@ def compare(baseline: dict, current: dict, notes: list[str] | None = None) -> li
     """
     b, c = _m(baseline), _m(current)
     fails: list[str] = []
-    timed_ok, why_not = same_platform(baseline, current)
+    timed_ok, why_not = timing_comparable(baseline, current)
     if not timed_ok and notes is not None:
         notes.append(f"environment-dependent metrics NOT compared: {why_not}")
 
@@ -148,10 +226,13 @@ BASE = {"files_total": 58, "files_ok": 51, "success_rate": 0.8793, "unresolved":
         "peak_rss_mb": 23.3}
 
 
-def _doc(metrics: dict, corpus_sha: str = "deadbeef" * 8, arch: str = "aarch64") -> dict:
+def _doc(metrics: dict, corpus_sha: str = "deadbeef" * 8, arch: str = "aarch64",
+         profile: str = "release", generated_at: str = "2026-10-16T00:00:00Z") -> dict:
     env = {"arch": arch} if arch else {}
+    binary = {"profile": profile} if profile else {}
     return {"schema": "tallow-bench/1", "corpus": {"sha256": corpus_sha},
-            "environment": env, "metrics": metrics}
+            "environment": env, "binary": binary, "generated_at": generated_at,
+            "metrics": metrics}
 
 
 def self_test() -> int:
@@ -201,6 +282,17 @@ def self_test() -> int:
         print("SELF-TEST FAIL: an absent arch was treated as a comparable platform"); rc = 1
     else:
         print("  absent arch: timing NOT compared (expected)")
+    # A profile mismatch is the same class: debug vs release timing is not a regression.
+    if compare(base, _doc(slow, profile="debug")):
+        print("SELF-TEST FAIL: a cross-profile timing difference was filed as a regression")
+        rc = 1
+    else:
+        print("  cross-profile timing (debug vs release): NOT compared (expected)")
+    if compare(base, _doc(slow, profile="")):
+        print("SELF-TEST FAIL: an absent build profile was treated as comparable"); rc = 1
+    else:
+        print("  absent build profile: timing NOT compared (expected)")
+
     # ...and the skip must be REPORTED, not silent
     notes: list[str] = []
     compare(base, _doc(dict(BASE), arch="x86_64"), notes)
@@ -208,6 +300,46 @@ def self_test() -> int:
         print("SELF-TEST FAIL: the skipped timing comparison was not reported"); rc = 1
     else:
         print(f"  skip is reported: {notes[0][:70]}")
+
+    # Baseline selection: per-arch/per-profile captures must be picked by identity, and a
+    # missing identity must fall back with a note rather than compare across machines.
+    arm = _doc(dict(BASE), generated_at="2026-10-21T00:00:00Z")
+    amd = _doc(dict(BASE), arch="x86_64", generated_at="2026-10-22T00:00:00Z")
+    got, label, note = select_baseline([("arm.json", arm), ("amd.json", amd)], arm)
+    if got is not arm or note:
+        print("SELF-TEST FAIL: an exact aarch64/release baseline was not selected"); rc = 1
+    else:
+        print(f"  baseline selection (aarch64/release): {label} (expected)")
+    got, label, note = select_baseline([("arm.json", arm), ("amd.json", amd)], amd)
+    if got is not amd or note:
+        print("SELF-TEST FAIL: an exact x86_64/release baseline was not selected"); rc = 1
+    else:
+        print(f"  baseline selection (x86_64/release): {label} (expected)")
+    got, label, note = select_baseline([("arm.json", arm)], amd)
+    if got is not arm or not note:
+        print("SELF-TEST FAIL: a missing x86_64 baseline did not fall back with a note"); rc = 1
+    else:
+        print(f"  baseline selection (no x86_64): fell back with a note (expected)")
+    # A baseline measured on a different corpus is not a candidate at all: comparing
+    # against it would re-introduce the "not the same measurement" failure.
+    other = _doc(dict(BASE), corpus_sha="cafebabe" * 8)
+    got, label, note = select_baseline([("old.json", other)], arm)
+    if got is not None or not note:
+        print("SELF-TEST FAIL: a baseline on a different corpus was selected"); rc = 1
+    else:
+        print("  baseline selection (other corpus): refused with a reason (expected)")
+
+    # The pinned corpus is an identity: a measurement over different inputs is not
+    # comparable, and the gate says so instead of subtracting two corpora.
+    man = {"sha256": "deadbeef" * 8}
+    if corpus_pin_finding(base, man) is not None:
+        print("SELF-TEST FAIL: a measurement on the pinned corpus was rejected"); rc = 1
+    else:
+        print("  pinned corpus (same sha): accepted (expected)")
+    if corpus_pin_finding(_doc(dict(BASE), corpus_sha="cafebabe" * 8), man) is None:
+        print("SELF-TEST FAIL: a measurement off the pinned corpus was accepted"); rc = 1
+    else:
+        print("  pinned corpus (different sha): rejected (expected)")
 
     # a permitted sub-threshold drift must PASS (no false positive)
     sub = dict(BASE); sub["success_rate"] = BASE["success_rate"] - 0.005  # 0.5 pp
@@ -229,9 +361,14 @@ def self_test() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Tallow compiler/parser regression gate")
-    ap.add_argument("--baseline")
+    ap.add_argument("--baseline",
+                    help="a baseline JSON, or a directory of baselines to select from by "
+                         "arch + build profile (preferred: benchmarks/baseline)")
     ap.add_argument("--targets")
     ap.add_argument("--current")
+    ap.add_argument("--corpus-manifest",
+                    help="the pinned corpus manifest; fails if --current was measured over "
+                         "a different corpus (benchmarks/corpus/manifest.json)")
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--report", help="optional path to write a JSON verdict")
     args = ap.parse_args()
@@ -248,14 +385,48 @@ def main() -> int:
 
     fails: list[str] = []
     notes: list[str] = []
+    base_label = ""
     if args.baseline:
-        fails += compare(load(args.baseline), current, notes)
+        bp = Path(args.baseline)
+        if bp.is_dir():
+            try:
+                docs = [(p.name, load(str(p))) for p in sorted(bp.glob("*.json"))]
+                baseline, base_label, note = select_baseline(docs, current)
+            except Exception as e:
+                print(f"no_regression_gate: cannot select a baseline from {bp}: {e}",
+                      file=sys.stderr); return 2
+            if baseline is None:
+                fails.append(note or "no comparable baseline")
+            else:
+                if note:
+                    notes.append(note)
+                fails += compare(baseline, current, notes)
+        else:
+            try:
+                baseline = load(args.baseline)
+            except Exception as e:
+                print(f"no_regression_gate: cannot read --baseline: {e}", file=sys.stderr); return 2
+            base_label = bp.name
+            fails += compare(baseline, current, notes)
+    if args.corpus_manifest:
+        try:
+            man = load(args.corpus_manifest)
+        except Exception as e:
+            print(f"no_regression_gate: cannot read --corpus-manifest: {e}", file=sys.stderr)
+            return 2
+        finding = corpus_pin_finding(current, man)
+        if finding:
+            fails.append(finding)
+        else:
+            notes.append(f"corpus: pinned {str(man.get('sha256'))[:12]}.. "
+                         f"({man.get('files', '?')} files)")
     if args.targets:
         fails += check_targets(load(args.targets), current)
     if not (args.baseline or args.targets):
         print("no_regression_gate: give --baseline and/or --targets", file=sys.stderr); return 2
 
     verdict = {"pass": not fails, "findings": fails,
+               "baseline": base_label or None,
                "not_compared": notes,
                "current_metrics": current.get("metrics", {})}
     if args.report:
