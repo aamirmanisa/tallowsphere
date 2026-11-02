@@ -524,18 +524,30 @@ jobs:
       - name: Build the engine
         run: cargo build --locked --bin tallow
       - name: Install Chrome for Testing (pinned SHA-256 per platform)
-        # The installer checks the digest recorded in src/browser/cft_pins.rs, so
-        # the browser under test is the same build locally and in CI. This is why
-        # the browser suites can leave the exclusion registry: the blocker was a
-        # missing binary, not a missing capability.
+        # The installer prefers the in-repo pin (src/browser/cft_pins.rs) over
+        # "latest stable", so the browser under test is the same build locally and
+        # in CI: on this runner that is chrome-headless-shell 156.0.8078.47
+        # linux64. The download URL is built from the pin table, which means the
+        # only egress this step needs is
+        # https://storage.googleapis.com/chrome-for-testing-public/... — a host
+        # that must be in configs/tallow/scope/authorized-hosts.toml or the install
+        # is refused as `scope:not-listed` BEFORE the GET and the CLI exits 5
+        # (exit_codes::IO_ERROR). That refusal, not a network error, is what took
+        # this job and the WordPress job red on 2026-11-02.
         #
-        # TALLOW_ALLOW_DIRECT is required: tallow's egress policy denies direct
-        # connections unless the caller opts in, and this runner has no Tor
-        # plane. Without it the installer fails with "io: Connection refused"
-        # after printing "Fetching latest stable Chrome for Testing version..."
+        # TALLOW_ALLOW_DIRECT is still required: the browser zone routes through
+        # Tor by contract and this runner has no Tor plane, so the direct plane
+        # has to be opted into explicitly.
         env:
           TALLOW_ALLOW_DIRECT: "1"
         run: ./target/debug/tallow browser install
+      - name: Assert the installed browser is the pinned build
+        # Settles the pin in the workflow: if the pin table ever stops resolving,
+        # install_browser silently falls back to "latest stable" (an unpinned
+        # install, gated only by the executable-existing check). This step makes
+        # that fallback fail the job instead of quietly testing a different
+        # browser, so the suites below have a fixed subject.
+        run: ./target/debug/tallow browser path | grep -q 'chrome-headless-shell-156\.0\.8078\.47'
       - name: Run the browser suites that pass on the pinned build
         # Every previously-excluded browser suite now runs here. They were in the
         # registry because no browser existed on the runner, not because they
@@ -603,9 +615,15 @@ jobs:
       - name: Build the engine
         run: cargo build --locked --bin tallow
       - name: Install Chrome for Testing (the wp_* helpers drive a real browser)
+        # Same pinned install and the same register requirement as the `browser`
+        # job: without the storage.googleapis.com grant in
+        # configs/tallow/scope/authorized-hosts.toml the installer is refused as
+        # `scope:not-listed` before the GET and exits 5.
         env:
           TALLOW_ALLOW_DIRECT: "1"
         run: ./target/debug/tallow browser install
+      - name: Assert the installed browser is the pinned build
+        run: ./target/debug/tallow browser path | grep -q 'chrome-headless-shell-156\.0\.8078\.47'
       - name: Start the WordPress fixture
         # docker is present on the runner; the fixture script owns the whole
         # lifecycle (network, mariadb, wordpress, core install) and waits for
