@@ -938,14 +938,15 @@ jobs:
 
   # ── Performance regression gate (blocking) ─────────────────────────────────
   # The jobs above gate composition; none measured speed (upgrade sheet §1). This is that missing
-  # gate: it runs the compiler/parser harness (benchmarks/) over examples/*.tl and blocks on the
-  # machine-independent metrics — success_rate and unresolved — plus wide target ranges on
-  # timing/memory. Two things it deliberately does NOT do on a shared runner:
-  #   * it does not compare against benchmarks/baseline/v1-baseline-aarch64.json — that baseline is
-  #     machine-specific and a GitHub runner is not comparable to it. The same-machine regression
-  #     comparison is a local/nightly step (command in benchmarks/README.md).
-  #   * it re-runs the gate's own --self-test, so a broken gate fails HERE rather than passing
-  #     silently everywhere else.
+  # gate: it runs the compiler/parser harness (benchmarks/) over the PINNED corpus
+  # (benchmarks/corpus/, manifest + sha256) and blocks on the machine-independent metrics —
+  # success_rate and unresolved — plus wide target ranges on timing/memory. Timing is compared
+  # against a baseline only when (arch, build profile, corpus) all match; the selection is by
+  # directory so a per-architecture capture slots in without code change. Two other things:
+  #   * it re-verifies the pin (scripts/pin_perf_corpus.py --check) and the gate's own
+  #     --self-test, so a broken gate or a hand-edited corpus fails HERE.
+  #   * the live examples/*.tl tree is measured separately, so pinning the perf corpus does not
+  #     stop CI noticing that a current example stopped type-checking.
   perf-regression:
     name: Perf regression gate (compiler/parser)
     runs-on: ubuntu-latest
@@ -963,29 +964,50 @@ jobs:
           shared-key: tallow-ci
       - name: Gate self-test (proves the gate fails on a seeded regression)
         run: python3 scripts/no_regression_gate.py --self-test
+      - name: Verify the pinned benchmark corpus
+        run: python3 scripts/pin_perf_corpus.py --check
       - name: Build debug tallow
         run: cargo build --locked --bin tallow
-      - name: Measure examples (compiler/parser)
+      - name: Measure the pinned corpus (compiler/parser)
         run: >-
           python3 benchmarks/run_compiler_parser.py --tallow target/debug/tallow
-          --corpus-glob 'examples/*.tl' --iters 3 --warmup 1 --out benchmarks/out/current.json
+          --corpus-manifest benchmarks/corpus/manifest.json
+          --iters 3 --warmup 1 --out benchmarks/out/current.json
+      # Live-tree coverage is kept separate from the perf measurement: the pinned
+      # corpus is a frozen fixture (so the perf identity cannot drift when an example
+      # is edited), which would otherwise stop this job noticing that a CURRENT
+      # examples/*.tl stopped type-checking. Same harness, no baseline, ranges only.
+      - name: Measure the live examples tree (correctness coverage)
+        run: >-
+          python3 benchmarks/run_compiler_parser.py --tallow target/debug/tallow
+          --corpus-glob 'examples/*.tl' --iters 1 --warmup 1
+          --out benchmarks/out/examples.json
+      - name: Examples still type-check (inside the committed ranges)
+        run: >-
+          python3 scripts/no_regression_gate.py --targets benchmarks/targets/v1-targets.json
+          --current benchmarks/out/examples.json
       # BLOCKING, and it gates on BOTH surfaces:
       #
       #   --targets   absolute ranges. Platform-independent, so they hold on any runner.
-      #   --baseline  the committed aarch64 measurement. Its success_rate and unresolved
-      #               counts are platform-independent -- they count how many examples
-      #               type-check, not how long it took -- so they gate here too, and that
-      #               catches a drop INSIDE the target range, which a range check cannot.
+      #   --baseline  a DIRECTORY of per-arch/per-profile captures. The gate selects the
+      #               one matching this runner's (arch, profile); with no exact match it
+      #               falls back to the newest for the machine-independent metrics
+      #               (success_rate, unresolved) and prints why timing was skipped.
+      #   --corpus-manifest  the measurement must be over the pinned corpus; a run over
+      #               anything else is a different measurement, not a regression.
       #
-      # TIMING is deliberately not gated across platforms: this runner is x86_64 and the
-      # baseline is aarch64, so the ms/throughput/RSS budgets are skipped and the skip is
-      # printed. Unknown arch fails closed. Same-arch runs (local, nightly, a future arm
-      # runner) therefore get the timing gate for free, and cross-arch runs get an honest
-      # note rather than a comparison between two unrelated measurements.
+      # TIMING is deliberately not gated across machines: this runner is x86_64/debug
+      # and the committed timing baselines are aarch64/release, so the ms/throughput/RSS
+      # budgets are skipped and the skip is printed. Unknown arch or profile fails closed.
+      # Same-(arch,profile) runs (local, nightly, a future matching runner) therefore get
+      # the timing gate for free. To add an x86_64 baseline, measure it on an x86_64 box
+      # with the pinned corpus and commit benchmarks/baseline/v1.7.0-x86_64.json; the
+      # gate picks it up with no code change.
       - name: Block on regression (target ranges + environment-independent baseline)
         run: >-
           python3 scripts/no_regression_gate.py --targets benchmarks/targets/v1-targets.json
-          --baseline benchmarks/baseline/v1-baseline-aarch64.json
+          --baseline benchmarks/baseline
+          --corpus-manifest benchmarks/corpus/manifest.json
           --current benchmarks/out/current.json --report perf-verdict.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
