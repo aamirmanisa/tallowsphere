@@ -64,7 +64,11 @@ ed25519-dalek = { version = "2.2", features = ["rand_core"] }
 curve25519-dalek = { version = "4.1", features = ["rand_core"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 flate2 = "1.1"
-zstd = "0.13"
+# zstd 0.13.x is flagged by RUSTSEC-2026-0391 (context reuse leaks one stream's
+# data into the next) and its zstd-safe 7.x by RUSTSEC-2026-0398/-0403; both are
+# patched in 0.14.3 / 8.2.0. This is the crate tallow's own compress/unzstd
+# stdlib callsites use, so the direct dependency must be on the patched line.
+zstd = "0.14"
 brotli = "7.0"
 semver = "1.0"
 pubgrub = "0.3"
