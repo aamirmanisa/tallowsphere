@@ -8,6 +8,25 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use tallow::browser::{BrowserConfig, BrowserError, BrowserProcess, CdpClient, WaitUntil};
 
+/// Origin the mock scenarios navigate to.
+///
+/// `Page::navigate` is egress and consults the authorization register *before*
+/// the CDP command (`src/browser/page.rs`, the `crate::scope::require` gate).
+/// A refusal there is fatal by design: the gate prints
+/// `runtime error: scope:not-listed — ...` and exits the process, because one
+/// production caller discards `navigate`'s `Result`. Under libtest that is an
+/// *abnormal exit* — the harness dies mid-run and reports no failing test name.
+///
+/// The earlier `https://example.test/...` targets were unlisted in
+/// `configs/tallow/scope/authorized-hosts.toml`, so every navigation test in
+/// this file was refused (RFC 2606 reserves `example.test`, but a reservation
+/// is not a grant). The mock never dials the URL — it answers `location.href`
+/// from `last_nav_url` — so the target only has to be a host the register
+/// actually grants: loopback carries a self-hosted GET grant. This keeps the
+/// gate honest instead of adding a test-only bypass or an entry for a host
+/// nobody is authorized to reach.
+const MOCK_NAV_ORIGIN: &str = "http://127.0.0.1:18080";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MockScenario {
     HappyFlow,
@@ -289,9 +308,9 @@ async fn cdp_new_page_navigate_title_flow_tracks_goto_path() {
         .await
         .expect("create page");
 
-    let target_url = "https://example.test/path/to/resource?x=1&y=2#frag";
+    let target_url = format!("{MOCK_NAV_ORIGIN}/path/to/resource?x=1&y=2#frag");
     let nav = page
-        .navigate(target_url, WaitUntil::DomContentLoaded)
+        .navigate(&target_url, WaitUntil::DomContentLoaded)
         .await
         .expect("navigate via goto path");
 
@@ -381,9 +400,9 @@ async fn cdp_wrapped_target_message_flow_handles_nested_responses() {
         .await
         .expect("create page");
 
-    let target_url = "https://example.test/wrapped/flow";
+    let target_url = format!("{MOCK_NAV_ORIGIN}/wrapped/flow");
     let nav = page
-        .navigate(target_url, WaitUntil::DomContentLoaded)
+        .navigate(&target_url, WaitUntil::DomContentLoaded)
         .await
         .expect("navigate using wrapped target transport flow");
     assert_eq!(nav.url, target_url);
@@ -418,9 +437,9 @@ async fn cdp_navigate_without_response_uses_event_fallback() {
         .await
         .expect("create page");
 
-    let target_url = "https://example.test/fallback/no-navigate-response";
+    let target_url = format!("{MOCK_NAV_ORIGIN}/fallback/no-navigate-response");
     let nav = page
-        .navigate(target_url, WaitUntil::DomContentLoaded)
+        .navigate(&target_url, WaitUntil::DomContentLoaded)
         .await
         .expect("navigate should succeed even without Page.navigate response");
 
