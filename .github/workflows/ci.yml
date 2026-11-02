@@ -542,11 +542,15 @@ jobs:
           TALLOW_ALLOW_DIRECT: "1"
         run: ./target/debug/tallow browser install
       - name: Assert the installed browser is the pinned build
-        # Settles the pin in the workflow: if the pin table ever stops resolving,
-        # install_browser silently falls back to "latest stable" (an unpinned
-        # install, gated only by the executable-existing check). This step makes
-        # that fallback fail the job instead of quietly testing a different
-        # browser, so the suites below have a fixed subject.
+        # Pins the subject of every suite below. A pin-table miss no longer falls
+        # back quietly: install_browser then calls fetch_latest_stable_version,
+        # whose host (googlechromelabs.github.io) is not in
+        # configs/tallow/scope/authorized-hosts.toml, so the install exits on
+        # `scope:not-listed` — and even a fetched artifact would be refused by
+        # the SHA-256 pin check. This assertion is the independent second look:
+        # it fails the job if the binary on disk is not the pinned build, so the
+        # suites never measure a different browser than the one the previous
+        # step claims to install.
         run: ./target/debug/tallow browser path | grep -q 'chrome-headless-shell-156\.0\.8078\.47'
       - name: Run the browser suites that pass on the pinned build
         # Every previously-excluded browser suite now runs here. They were in the
