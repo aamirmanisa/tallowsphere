@@ -1211,19 +1211,47 @@ mod tests {
         let target = dir.join("out/config.toml");
 
         let opts = opts_in(&dir);
-        let outcome = import_bundle(
+        let result = import_bundle(
             bytes.as_bytes(),
             &target,
             None,
             &TrustAnchors::none(),
             false,
             &opts,
-        )
-        .unwrap();
-        assert_eq!(outcome.revision, Some(1));
-        assert!(!outcome.dry_run);
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), VALID);
-        assert!(dir.join("history/000001/meta.toml").exists());
+        );
+
+        #[cfg(unix)]
+        {
+            let outcome = result.unwrap_or_else(|e| panic!("unix: import must succeed: {e}"));
+            assert_eq!(outcome.revision, Some(1));
+            assert!(!outcome.dry_run);
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), VALID);
+            assert!(dir.join("history/000001/meta.toml").exists());
+        }
+
+        // Non-unix: the history root cannot be created owner-only (0700 is a
+        // POSIX mode; this build has no ACL implementation), so the import
+        // refuses rather than record a revision whose directory modes were
+        // never established. Nothing may be written on the way to the refusal.
+        #[cfg(not(unix))]
+        {
+            let err = result.expect_err(
+                "non-unix: import cannot record history without owner-only modes; must refuse",
+            );
+            let msg = err.to_string();
+            assert!(
+                msg.contains("POSIX mode") || msg.contains("ACL implementation"),
+                "non-unix refusal must name the absent mechanism, got: {msg}"
+            );
+            assert!(
+                !target.exists(),
+                "a refused import must not write the target"
+            );
+            assert!(
+                !dir.join("history").exists(),
+                "a refused import must not leave a history root"
+            );
+        }
     }
 
     #[test]
