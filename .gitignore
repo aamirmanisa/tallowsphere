@@ -48,6 +48,7 @@ __pycache__/
 .venv-tests/
 .tallow-test-profile/
 .tallow-headless-shell-profile/
+.tallow-traces/
 .tallow-bin/
 tmp/
 .fix3_tmp/
