@@ -65,6 +65,24 @@ Two further defects, measured rather than inferred:
   report read only `fn` declarations and skipped the 32 written in the canonical
   `native fn` form, so `hpke_seal`, `hpke_open` and the FROST/BBS+/age/opaque surface
   were missing from a report that claimed to enumerate them.
+- **`.len` on a chained native-array call read the count slot as a C string.** A native
+  array is `[count: i64][slot: i64]…`, and a chained call (`page.get_cookies()`,
+  `env.args()`, `doc.select(…)`, `el.classes()`, `http.batch(…)`) has no bound variable
+  for the let-tracker to record, so `expr_is_native_array`'s `MethodCall` arm consulted
+  only the array-method registry and answered false even where `infer_kind` on the same
+  expression already answered `CookieArray`. `.len` then took the string branch and ran
+  `strlen` over the buffer, which reads the count's low byte and stops at the NUL of its
+  second byte — 0 → 0, every count in 1..=255 → 1. Measured in
+  `tests/browser_array_parity_cookies.rs`, both planes on the same program:
+  `native=["0","1","1"]` against `interp=["0","1","3"]` for `page.get_cookies().len`
+  before any cookie, after `set_cookies_from_header("a=1", …)`, and after
+  `set_cookies_from_header("a=1; b=2; c=3", …)` — a three-element cookie array reported
+  1. The array contents were always right; only the length collapsed, which is why the
+  two-cookie case passed and three did not. The compiled plane now reads the count, the
+  same value the interpreter reports, through a single `kind_is_native_array` predicate
+  in `src/codegen.rs` shared by both call sites; no FFI or marshalling change.
+  `tests/chained_native_array_len.rs` pins chained and bound forms at N = 0, 1 and 3 on
+  both planes without a browser, and runs in CI.
 
 ### Known at tag time
 
@@ -97,16 +115,17 @@ Measured, not hedged — each line names what is still true when this tag ships:
   behaviour is correct and slow rather than wrong. The lowering used to SEGFAULT with no
   error text, which the fallback swallowed; a named refusal is the improvement, and the
   E1 parity table now records it as such instead of expecting a byte match.
-- **A cookie array's length stops at 1 on the compiled plane.** Measured by
-  `tests/browser_array_parity_cookies.rs`, both planes on the same program:
-  `native=["0","1","1"]` against `interp=["0","1","3"]` for `page.get_cookies().len`
-  before any cookie, after `set_cookies_from_header("a=1", …)`, and after
-  `set_cookies_from_header("a=1; b=2; c=3", …)`. The interpreter counts the cookies the
-  header carries; the native plane reports 1 for a three-cookie header. This is the
-  silent early-exit the test was written to catch — a loop over `get_cookies()` returns
-  after the first entry rather than crashing. `Element.classes` is the same family and
-  has no lowering at all; it stays pinned as a refusal in
-  `tests/browser_unlowered_gaps.rs`. Not fixed at this tag.
+- **A cookie array's length stopped at 1 on the compiled plane; that is fixed above, and
+  the rest of the family is not.** Measured by `tests/browser_array_parity_cookies.rs`,
+  both planes on the same program: `native=["0","1","1"]` against
+  `interp=["0","1","3"]` for `page.get_cookies().len` before any cookie, after
+  `set_cookies_from_header("a=1", …)`, and after
+  `set_cookies_from_header("a=1; b=2; c=3", …)`. The chained-`.len` lowering named in
+  `### Fixed` carries that case and is pinned at N = 0, 1 and 3 by
+  `tests/chained_native_array_len.rs`; the browser-backed parity suite is still written
+  in terms of the old gap at tag time and only its own run after the fix answers it.
+  `Element.classes` is the same family and has no lowering at all; it stays pinned as a
+  refusal in `tests/browser_unlowered_gaps.rs`.
 - **The three browser suites had never run before this tag.** `browser_sentinels_live`,
   `browser_array_parity_cookies` and `browser_flow_runtime_integration` were not
   exercised on any earlier tag: the Chrome-for-Testing install step failed before them
