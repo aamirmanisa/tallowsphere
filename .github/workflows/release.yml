@@ -389,6 +389,14 @@ jobs:
             tail -20 sccache-error.log
           fi
 
+      - name: GNU tar for reproducible archives (macOS)
+        # bsdtar has no --sort/--owner/--group, so packaging fell back to
+        # non-reproducible flags. Homebrew's gnu-tar installs as `gtar`, which
+        # scripts/package_release.sh prefers over a plain `tar` that cannot sort.
+        if: runner.os == 'macOS'
+        shell: bash
+        run: brew install gnu-tar
+
       - name: Package archive
         shell: bash
         run: |
