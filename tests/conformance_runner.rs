@@ -312,6 +312,13 @@ fn conformance_cases_agree_on_both_planes() {
         return;
     }
     let failures = run_suite();
+    // The release gate's summary step reads this line to cite a conformance
+    // figure that came from the run that built the release. It must therefore be
+    // emitted on a GREEN run too: previously it existed only inside the panic
+    // below, so `scripts/test_summary.py` could only ever find a failure count
+    // when conformance had failed, and a passing run made the summary step
+    // refuse to publish. `cargo test -- --nocapture` is what puts this in the log.
+    eprintln!("conformance: {} failure(s)", failures.len());
     if !failures.is_empty() {
         let mut report = String::new();
         for f in &failures {
