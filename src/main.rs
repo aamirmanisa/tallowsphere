@@ -19943,6 +19943,11 @@ fn c() -> bool {
 enum ProbeStatus {
     Pass,
     Fail,
+    /// The probe exists but the property cannot be measured on this platform.
+    /// A probe that cannot measure must not answer `Pass`: `Skip` is the honest
+    /// answer, and the detail must name the missing mechanism. It is not a
+    /// failure (there is no exposure to report), so it never fails a run.
+    Skip,
 }
 
 impl ProbeStatus {
@@ -19950,6 +19955,7 @@ impl ProbeStatus {
         match self {
             ProbeStatus::Pass => "PASS",
             ProbeStatus::Fail => "FAIL",
+            ProbeStatus::Skip => "SKIP",
         }
     }
 }
@@ -20130,6 +20136,13 @@ fn probe_vault_export() -> ConformanceProbe {
 /// only ever warns (see `DaemonStateClass`). Pre-existing loose files are
 /// remediated by the daemon itself on next start (tighten-on-open in
 /// tallow-daemon; T-112), which this probe then reports as owner-only.
+///
+/// The only predicate available is POSIX mode bits, so this probe is unix-only
+/// by construction. A non-unix build answers [`ProbeStatus::Skip`] with the
+/// reason instead of falling through to the "no daemon state (daemon not
+/// provisioned)" PASS — which was a false PASS on a host whose daemon state was
+/// fully present and world-readable (`main.rs` non-unix arm, pre-fix).
+#[cfg(unix)]
 fn probe_daemon_state_files() -> ConformanceProbe {
     const LABEL: &str = "daemon state files (secret-bearing owner-only; port advisory)";
     const STATE_FILES: [&str; 6] = [
@@ -20167,10 +20180,6 @@ fn probe_daemon_state_files() -> ConformanceProbe {
                 )),
             }
         }
-        #[cfg(not(unix))]
-        {
-            let _ = md;
-        }
     }
     if !offenders.is_empty() {
         return probe_result(
@@ -20201,6 +20210,22 @@ fn probe_daemon_state_files() -> ConformanceProbe {
         detail.push_str(&format!("; advisory: {}", advisories.join("; ")));
     }
     probe_result(LABEL, ProbeStatus::Pass, detail)
+}
+
+/// Non-unix build of [`probe_daemon_state_files`]: the property is defined on
+/// POSIX mode bits, which do not exist here, and this build carries no ACL
+/// probe. Answering `Pass` would certify "secret-bearing daemon state is
+/// owner-only" from zero measurements, so the probe refuses to answer and names
+/// what is missing.
+#[cfg(not(unix))]
+fn probe_daemon_state_files() -> ConformanceProbe {
+    const LABEL: &str = "daemon state files (secret-bearing owner-only; port advisory)";
+    probe_result(
+        LABEL,
+        ProbeStatus::Skip,
+        "unmeasurable on this platform: owner-only is a POSIX mode-bit property and this \
+         build has no ACL probe — daemon token/device_id/DB permissions are NOT verified",
+    )
 }
 
 /// Redaction choke point: the journal path must resolve (advisory when

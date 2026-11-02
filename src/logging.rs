@@ -293,9 +293,20 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
     builder.create(dir)
 }
 
+/// Non-unix: `0700` is a POSIX mode. This build has no ACL implementation, so
+/// the sink directory cannot be made owner-only; refusing here keeps the
+/// security-event journal from being written into a directory whose
+/// readability was never established. `init_logging` surfaces the refusal.
 #[cfg(not(unix))]
 fn create_private_dir(dir: &Path) -> io::Result<()> {
-    fs::create_dir_all(dir)
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "log sink directory '{}' cannot be created owner-only (0700) on this platform: no \
+             POSIX mode bits and no ACL implementation in this build",
+            dir.display()
+        ),
+    ))
 }
 
 /// Open the sink for append, `0600`, creating it if needed. The mode is also
@@ -314,9 +325,19 @@ fn open_private_append(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+/// Non-unix: cannot open `0600`, and cannot re-tighten a pre-existing loose
+/// file (the unix arm does both). The sink carries security events, so an
+/// unverified-mode file is not opened at all.
 #[cfg(not(unix))]
 fn open_private_append(path: &Path) -> io::Result<File> {
-    OpenOptions::new().create(true).append(true).open(path)
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "log sink '{}' cannot be opened owner-only (0600) on this platform: no POSIX mode \
+             bits and no ACL implementation in this build",
+            path.display()
+        ),
+    ))
 }
 
 /// Size/permission/rotation mechanics of the JSONL file, kept separate from

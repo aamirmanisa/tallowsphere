@@ -214,6 +214,21 @@ fn load(path: &Path) -> Result<BTreeMap<String, Entry>, String> {
 /// Write atomically with mode 0600 set *at creation*, so the secret is never
 /// briefly world-readable between write and chmod.
 fn save(path: &Path, entries: &BTreeMap<String, Entry>) -> Result<(), String> {
+    // Fail before touching the filesystem: the store has no protection to fall
+    // back on if the mode cannot be applied, so refusing after the rename (the
+    // shape of the old `restrict_to_owner`) would leave a written, loose store
+    // behind and still return an error. Refuse up front instead.
+    #[cfg(not(unix))]
+    let platform: Result<(), String> = Err(format!(
+        "{}: cannot write a credential store on this platform — 0600 cannot be applied \
+         (no POSIX mode bits, no ACL implementation in this build), so the file would be \
+         readable by any account the directory ACL admits",
+        path.display()
+    ));
+    #[cfg(unix)]
+    let platform: Result<(), String> = Ok(());
+    platform?;
+
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     }
@@ -273,19 +288,27 @@ fn save(path: &Path, entries: &BTreeMap<String, Entry>) -> Result<(), String> {
 
 /// Owner-only permissions where the platform has them.
 ///
-/// On Windows there is no portable 0600 bit; the file inherits the directory
-/// ACL, and the parent directory is what protects the store. Saying so here is
-/// better than a `set_permissions` that would fail the whole `set` on Windows.
+/// Post-write assertion of the invariant the write path already establishes.
+/// On a platform without POSIX mode bits there is no ACL implementation in this
+/// build, so the assertion cannot be made and the call refuses: an `Ok(())` here
+/// would let the caller believe a `0600` it never obtained. (`save` refuses
+/// earlier, before writing; this is the belt-and-braces arm.)
 fn restrict_to_owner(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("chmod {}: {e}", path.display()))?;
+        Ok(())
     }
     #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
+    {
+        Err(format!(
+            "{}: owner-only (0600) cannot be asserted on this platform — no POSIX mode bits \
+             and no ACL implementation in this build",
+            path.display()
+        ))
+    }
 }
 
 fn now_iso() -> String {

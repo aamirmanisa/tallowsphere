@@ -757,15 +757,24 @@ fn open_sealed_file(path: &Path, write: bool) -> std::io::Result<std::fs::File> 
     opts.open(path)
 }
 
+/// Non-unix build: the sealed identity key is opened `0600` and `O_NOFOLLOW`
+/// on unix, and neither can be expressed here (no POSIX mode bits, no
+/// `O_NOFOLLOW`, no ACL implementation in this build). Opening anyway would
+/// hand back a key file whose containment was never established — writable by
+/// whatever the directory ACL admits and reachable through a symlink planted
+/// between the `symlink_metadata` pre-check and the open. Refuse.
 #[cfg(not(unix))]
 fn open_sealed_file(path: &Path, write: bool) -> std::io::Result<std::fs::File> {
-    let mut opts = std::fs::OpenOptions::new();
-    if write {
-        opts.write(true).create(true).truncate(true);
-    } else {
-        opts.read(true);
-    }
-    opts.open(path)
+    let _ = write;
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!(
+            "sealed identity key '{}' cannot be opened safely on this platform: 0600 + \
+             O_NOFOLLOW are required and neither is available (no POSIX mode bits, no ACL \
+             implementation in this build)",
+            path.display()
+        ),
+    ))
 }
 
 #[cfg(unix)]
