@@ -508,6 +508,54 @@ mod tests {
         dir
     }
 
+    /// Create the sink under this platform's stated permission contract.
+    ///
+    /// unix: `0700` is a real mode, so `prepare` must succeed — the test then
+    /// asserts the modes it applied. Returns `true`.
+    ///
+    /// non-unix: this build has no POSIX mode bits and no ACL implementation,
+    /// so the sink directory cannot be made owner-only; `prepare` refuses
+    /// before any file exists, and the refusal must name that mechanism.
+    /// Returns `false` — the unix post-conditions (file, `0600`, rotation)
+    /// cannot exist on this platform, and asserting them would be a lie.
+    fn prepare_per_platform(layer: &RedactionLayer) -> bool {
+        let result = layer.prepare();
+        #[cfg(unix)]
+        {
+            result.unwrap_or_else(|e| panic!("unix: sink prepare must succeed: {e}"));
+            true
+        }
+        #[cfg(not(unix))]
+        {
+            match result {
+                Ok(()) => panic!(
+                    "non-unix build has no POSIX mode bits and no ACL implementation; \
+                     prepare must refuse, not create an unverified-mode sink"
+                ),
+                Err(err) => {
+                    assert_refusal_names_mechanism(&err);
+                    false
+                }
+            }
+        }
+    }
+
+    /// The non-unix refusal must say *why* the mode could not be established,
+    /// otherwise "refused" is indistinguishable from an unrelated I/O error.
+    #[cfg(not(unix))]
+    fn assert_refusal_names_mechanism(err: &io::Error) {
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::Unsupported,
+            "refusal must be Unsupported, got: {err}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("POSIX mode") || msg.contains("ACL implementation"),
+            "non-unix refusal must name the absent mechanism, got: {msg}"
+        );
+    }
+
     /// Secret-looking field names scrub to `[REDACTED]`; benign values pass
     /// through; the rendered JSONL line never contains the raw secret
     /// (neither in a field value nor as a message `key=value` pair).
@@ -559,22 +607,40 @@ mod tests {
         assert_eq!(path, dir.join(LOG_FILE_NAME));
 
         let layer = RedactionLayer::new(path.clone());
-        layer.prepare().expect("prepare sink");
-        assert!(path.exists(), "sink file must exist after prepare");
+        let sink_ready = prepare_per_platform(&layer);
+        assert_eq!(
+            sink_ready,
+            cfg!(unix),
+            "sink readiness is the platform contract"
+        );
 
         #[cfg(unix)]
         {
+            assert!(path.exists(), "sink file must exist after prepare");
+
             use std::os::unix::fs::PermissionsExt;
             let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "sink must be 0600");
+
+            layer
+                .sink
+                .write_line("{\"message\":\"hello\"}\n")
+                .expect("append line");
+            let body = fs::read_to_string(&path).unwrap();
+            assert!(body.contains("hello"), "appended line missing: {body}");
         }
 
-        layer
-            .sink
-            .write_line("{\"message\":\"hello\"}\n")
-            .expect("append line");
-        let body = fs::read_to_string(&path).unwrap();
-        assert!(body.contains("hello"), "appended line missing: {body}");
+        // Non-unix: no owner-only directory can be created, so the write path
+        // refuses by name and leaves nothing behind to be read.
+        #[cfg(not(unix))]
+        {
+            let err = layer
+                .sink
+                .write_line("{\"message\":\"hello\"}\n")
+                .expect_err("non-unix: sink writes must refuse, not write");
+            assert_refusal_names_mechanism(&err);
+            assert!(!path.exists(), "a refused sink must not leave a log file");
+        }
 
         unsafe { env::remove_var(LOG_DIR_ENV) };
         let _ = fs::remove_dir_all(&dir);
@@ -588,22 +654,53 @@ mod tests {
         let path = dir.join(LOG_FILE_NAME);
         let layer = RedactionLayer::with_max_bytes(path.clone(), 16);
 
-        layer.sink.write_line("0123456789\n").unwrap(); // 11 bytes
-        layer.sink.write_line("0123456789\n").unwrap(); // 22 bytes → over budget
-        layer.sink.write_line("abcdefghij\n").unwrap(); // rotates, then writes
+        let sink_ready = prepare_per_platform(&layer);
+        assert_eq!(
+            sink_ready,
+            cfg!(unix),
+            "sink readiness is the platform contract"
+        );
 
         let rotated = rotated_path(&path);
-        assert!(rotated.exists(), "rotation target missing");
-        assert!(
-            fs::read_to_string(&rotated).unwrap().contains("0123456789"),
-            "backup must keep the pre-rotation lines"
-        );
-        let fresh = fs::read_to_string(&path).unwrap();
-        assert!(fresh.contains("abcdefghij"), "fresh file must carry the new line");
-        assert!(
-            !fresh.contains("0123456789"),
-            "fresh file must not carry rotated lines: {fresh}"
-        );
+
+        #[cfg(unix)]
+        {
+            layer.sink.write_line("0123456789\n").unwrap(); // 11 bytes
+            layer.sink.write_line("0123456789\n").unwrap(); // 22 bytes → over budget
+            layer.sink.write_line("abcdefghij\n").unwrap(); // rotates, then writes
+
+            assert!(rotated.exists(), "rotation target missing");
+            assert!(
+                fs::read_to_string(&rotated).unwrap().contains("0123456789"),
+                "backup must keep the pre-rotation lines"
+            );
+            let fresh = fs::read_to_string(&path).unwrap();
+            assert!(
+                fresh.contains("abcdefghij"),
+                "fresh file must carry the new line"
+            );
+            assert!(
+                !fresh.contains("0123456789"),
+                "fresh file must not carry rotated lines: {fresh}"
+            );
+        }
+
+        // Non-unix: the sink was never created, so there is nothing to rotate.
+        // The write must refuse by name rather than silently downgrade the
+        // directory to default platform permissions.
+        #[cfg(not(unix))]
+        {
+            let err = layer
+                .sink
+                .write_line("0123456789\n")
+                .expect_err("non-unix: sink writes must refuse, not write");
+            assert_refusal_names_mechanism(&err);
+            assert!(!path.exists(), "a refused sink must not leave a log file");
+            assert!(
+                !rotated.exists(),
+                "a refused sink must not leave a rotation target"
+            );
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }
