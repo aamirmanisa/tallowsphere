@@ -106,7 +106,13 @@ const PLAN: &str = r#"
 
 /// `open_page` returns `Page`, so it cannot `bail` (E0126). Unwrap launch /
 /// new_page / goto the same way the sibling live suites do.
+///
+/// It carries its own `@legal` because the plan annotations above attach to
+/// `main`, and E0100 requires the annotation on *every* function that touches
+/// the network — a helper is not exempt just because `main` is annotated.
 const OPEN_PAGE: &str = r#"
+@legal(basis: .public_data, purpose: "module-level page helper parity", personal_data: false)
+@stealth(profile: .chrome_windows, evasions: .all)
 fn open_page(url: String) -> Page {
     let b = Browser.launch(true)
     let p = b.new_page()
@@ -277,6 +283,8 @@ fn struct_returning_helpers_return_the_declared_fields() {
 fn main() {
     run() match { Ok(_) -> (), Err(e) -> { print(e) } }
 }
+@legal(basis: .public_data, purpose: "declared-struct parity for module-level page helpers", personal_data: false)
+@stealth(profile: .chrome_windows, evasions: .all)
 fn run() -> Result<i64> {
     let b = Browser.launch(true)
     let p = b.new_page()
