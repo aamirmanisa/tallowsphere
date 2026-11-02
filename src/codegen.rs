@@ -12823,8 +12823,23 @@ void tallow_async_runtime_shutdown(void) {
         match &e.kind {
             ExprKind::StringLit(_) | ExprKind::Interpolation(_) => true,
             // An element read out of an array: pointers either way (string
-            // arrays yield strings, element arrays yield handles).
-            ExprKind::Index { object, .. } => self.array_expr_elem_is_ptr(object),
+            // arrays yield strings, element arrays yield handles). One shape is
+            // NOT a string however pointer-shaped its slot is: the element of an
+            // array-of-arrays is an untagged inner array. Asking only the
+            // pointer question sent `[10, 20].zip([30, 40])[0][1]` (and the same
+            // shape from `chunk`/`enumerate`) down the STRING index path: it read
+            // the inner count word as text (printed `\x02` for a 2-element pair)
+            // and then failed with `runtime error: index 1 out of bounds` —
+            // measured at 88d358e, native plane, no archive message in play.
+            ExprKind::Index { object, .. } => {
+                if matches!(
+                    self.array_value_shape(object),
+                    Some(ArrayElemShape::NonScalar)
+                ) {
+                    return false;
+                }
+                self.array_expr_elem_is_ptr(object)
+            }
             ExprKind::Ident(name) => {
                 self.string_variables.contains(name)
                     || self
