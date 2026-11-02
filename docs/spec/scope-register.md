@@ -52,6 +52,32 @@ This shipped register grants CONNECT to **no** host, including
 loopback. A local scan requires the operator to add CONNECT to the
 loopback entries. That is a recommendation, not a default.
 
+## Expiry
+
+Every entry is refused once `expires_at` is behind `today`, whatever its
+basis: `ScopeRegister::authorize` compares the dates before it consults the
+basis, so `public-read-only` and `self-hosted` lapse exactly like
+`written-consent`. An entry expiring *today* is still valid for today; it lapses
+the day after. `expires_at` is optional in the type, but `tallow scope verify`
+counts an entry without one as a defect and exits non-zero, and `scope list`
+prints it as `unbounded` — so in practice a shipped grant without an expiry is a
+finding, not a default.
+
+## Matching is on the host alone
+
+`ScopeEntry` has no path field. A grant authorises the granted methods on every
+path of that host. On an owned or single-purpose host that is the same thing; on
+a shared-hosting name (`storage.googleapis.com`, a CDN apex, a multi-tenant
+API host) it is not — the grant reaches object prefixes, buckets and tenants
+nobody justified. There is no way to express "only
+`/chrome-for-testing-public/**`" today. Two rules follow:
+
+- A shared host may be granted only for a read-only plane whose justification
+  does not depend on the path, and the entry's `notes` must name the call sites
+  the host-wide reach covers.
+- `example.com` is granted as two exact hosts, not `*.example.com`, for the same
+  reason: the wildcard is opt-in and the apex is not covered by it.
+
 ## Fail-closed
 
 A missing, unreadable, or malformed register refuses every host. An

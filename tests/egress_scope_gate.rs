@@ -14,10 +14,11 @@
 // test: every assertion is that the operation is refused. A positive control is
 // included so a blanket refusal (a broken gate) fails too.
 //
-// 1.1.1.1 is used as the unregistered host because it is a stable public
-// resolver that is NOT in the shipped register (which contains only loopback,
-// example.com, www.example.com and check.torproject.org). Nothing is sent: the
-// refusal happens before a socket is opened, so this test performs no egress.
+# 1.1.1.1 is used as the unregistered host because it is a stable public
+# resolver that is NOT in the shipped register (which contains only loopback,
+# example.com, www.example.com, check.torproject.org and the read-only
+# Chrome-for-Testing artifact host storage.googleapis.com). Nothing is sent: the
+# refusal happens before a socket is opened, so this test performs no egress.
 
 use std::process::Command;
 
