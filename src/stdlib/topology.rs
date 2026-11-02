@@ -446,19 +446,35 @@ fn parse_v6_literal(target: &str) -> Option<(Ipv6Addr, Option<String>)> {
 }
 
 /// Resolve a zone name (`eth0`) or numeric scope id to an interface index.
+///
+/// The numeric form needs nothing but the string. The name form needs
+/// `if_nametoindex(3)`, which `libc` exposes on Unix only; on any other target
+/// the index cannot be resolved, so a name is refused by name rather than
+/// silently becoming scope 0 (which would retarget a link-local probe).
 fn scope_id_for(zone: &str) -> Result<u32, String> {
     if let Ok(n) = zone.parse::<u32>() {
         return Ok(n);
     }
-    let name = std::ffi::CString::new(zone.to_string())
-        .map_err(|_| format!("topology: invalid IPv6 scope id '{zone}'"))?;
-    let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
-    if index == 0 {
-        return Err(format!(
-            "topology: IPv6 scope id '{zone}' names no interface on this host"
-        ));
+    #[cfg(unix)]
+    {
+        let name = std::ffi::CString::new(zone.to_string())
+            .map_err(|_| format!("topology: invalid IPv6 scope id '{zone}'"))?;
+        let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+        if index == 0 {
+            return Err(format!(
+                "topology: IPv6 scope id '{zone}' names no interface on this host"
+            ));
+        }
+        Ok(index)
     }
-    Ok(index)
+    #[cfg(not(unix))]
+    {
+        Err(format!(
+            "topology: IPv6 scope id '{zone}' names an interface, and interface-name lookup \
+             needs if_nametoindex(3), which this build does not implement on this platform; \
+             pass the numeric scope id instead"
+        ))
+    }
 }
 
 fn resolve_v6(target: &str) -> Result<V6Target, String> {
@@ -2387,10 +2403,15 @@ fn udp_scan_fn(args: Vec<Value>) -> StdlibResult {
 /// No lookup is invented when the file is absent: a hop with no database says
 /// `asn = 0` and the result carries a note saying why, because "ASN 0" and
 /// "ASN unknown" must not look the same to a reader.
+///
+/// Only `traceroute_fn` reads this table, and that function is Unix-only (it
+/// needs a raw ICMP socket), so the table is compiled with it.
+#[cfg(unix)]
 struct AsnTable {
     rows: Vec<(u32, u32, u32, String)>,
 }
 
+#[cfg(unix)]
 impl AsnTable {
     fn load() -> Option<Self> {
         let path = std::env::var("TALLOW_IP2ASN")
@@ -2442,6 +2463,10 @@ impl AsnTable {
 
 /// Read one ICMP error and, when it quotes a probe we sent to `port`, return
 /// (responder, is_destination_unreachable).
+///
+/// Unix-only: `recv(2)` on a raw `IPPROTO_ICMP` descriptor takes a `c_int` fd
+/// and `c_void` buffer that the Windows `libc` crate does not declare.
+#[cfg(unix)]
 fn icmp_for_port(fd: libc::c_int, port: u16, deadline: Instant) -> Option<(Ipv4Addr, bool)> {
     let mut buf = [0u8; 1500];
     loop {
@@ -2490,6 +2515,17 @@ fn icmp_for_port(fd: libc::c_int, port: u16, deadline: Instant) -> Option<(Ipv4A
     }
 }
 
+/// IPv4 traceroute: emit a UDP probe per hop, read the ICMP error the router
+/// returns, and set IP_TTL per probe so the hop is observable.
+///
+/// Unix-only by mechanism, not by choice: the socket is `AF_INET`/`SOCK_RAW`/
+/// `IPPROTO_ICMP`, the receive timeout is `SO_RCVTIMEO` with a `suseconds_t`
+/// `timeval`, and the TTL knob is `setsockopt(IPPROTO_IP, IP_TTL)` on the UDP
+/// socket's raw descriptor. The Windows `libc` crate declares none of those
+/// (`recv`, `AF_INET`, `SOCK_RAW`, `IPPROTO_ICMP`, `suseconds_t`, `SOL_SOCKET`,
+/// `SO_RCVTIMEO`, `socklen_t`, `IPPROTO_IP`, `IP_TTL`), so the function is
+/// compiled for Unix and the non-Unix build gets the refusing stub below.
+#[cfg(unix)]
 fn traceroute_fn(args: Vec<Value>) -> StdlibResult {
     use std::net::UdpSocket;
 
@@ -2653,6 +2689,24 @@ fn traceroute_fn(args: Vec<Value>) -> StdlibResult {
             ),
         ],
     })
+}
+
+/// Refusing stub for targets where the raw ICMP probe cannot exist.
+///
+/// The register is still consulted *first*: an unauthorized target must be
+/// refused for authorization on every platform, or a Windows build would answer
+/// "unsupported" where the register says "not listed", which tells the caller
+/// the wrong reason and skips the gate. Only after the target is authorized
+/// does the platform refusal stand.
+#[cfg(not(unix))]
+fn traceroute_fn(args: Vec<Value>) -> StdlibResult {
+    let target = arg_str(&args, 0, "target")?;
+    require_authorized(&target)?;
+    Err(format!(
+        "topology.traceroute: '{target}' is authorized, but ICMP error reception needs a raw \
+         AF_INET/SOCK_RAW/IPPROTO_ICMP socket with SO_RCVTIMEO and IP_TTL, which this build \
+         implements on Unix only; no probe was sent"
+    ))
 }
 
 // ══════════════════════════════════════════════════════════════════
