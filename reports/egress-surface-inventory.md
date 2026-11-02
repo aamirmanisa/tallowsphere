@@ -179,3 +179,139 @@ in that sense. The durable fix is site-level gating: for each site, require a
 `require` in its enclosing function, with a per-site debt list that shrinks.
 Until that lands, any statement of the form "N gated / 0 ungated" carries this
 caveat with it.
+
+## CFG-gated egress census (2026-11-02, wave 13, `7f744ac`)
+
+The egress gate reads every `.rs` file as flat text. Rust does not: a
+`#[cfg(unix)]` item is not compiled on Windows, and a `#[cfg(not(unix))]` item
+is not compiled on Linux. This section measures every egress-capable call site
+that a Windows build cannot compile, so the other-platform path is named rather
+than assumed.
+
+Measured read-only, no `cargo`, by
+`reports/probes/cfg_unix_egress_census.py` (writes
+`reports/probes/cfg_unix_egress_census.json`). It resolves the attribute that
+owns each line by brace/`;` span matching, evaluates the expression against
+synthetic `linux` / `macos` / `windows` targets, and propagates
+`#[cfg(...)] mod X;` guards transitively into the module file it resolves to.
+`Command::new(` is counted as egress-capable here for the same reason section
+4.11 of `reports/quarry-w12.md` counted it: a launched browser is
+network-capable by construction.
+
+### Counts
+
+| measure | value |
+|---|---|
+| `src/**/*.rs` files | 595 |
+| egress-capable call sites in production regions | 271 |
+| …behind a guard that is **absent on Windows** | **14** |
+| …behind a guard that is **only on Windows** | **10** |
+| …under a guard that compiles on both (e.g. `feature`) | 0 |
+| …with no cfg guard at all | 247 |
+
+Two module-level `cfg(unix)` guards carry no egress site on this revision and
+are therefore not rows below: `src/lib.rs:170` (`pub mod sandbox_runtime;` →
+`src/sandbox_runtime.rs`, whose only `Command::new` calls are inside its
+`#[cfg(test)]` region at `:232–313`) and `src/stdlib/platform/mod.rs:12`
+(`pub mod unix;` → `src/stdlib/platform/unix/{mod,xattr}.rs`). Both have a
+`#[cfg(not(unix))]` counterpart (`sandbox_runtime_nonunix.rs`,
+`platform/windows/`). They are named here because a future egress site landing
+in either file inherits the guard and must be enumerated by the coverage test
+below — which is exactly why the test implements module-guard inheritance.
+
+### Sites absent from a Windows build — 14
+
+Verdict vocabulary: **unreachable** = the Windows branch refuses or does not
+exist; **equivalent** = a Windows path at the named site does the same work.
+`open:` marks a site with no `scope::require` in its enclosing function.
+
+| file:line | guard | class | Windows can reach | verdict |
+|---|---|---|---|---|
+| `src/browser/juggler.rs:91` | `unix` | proc `Command::new(chrome_path)` | no — `juggler.rs:223` `#[cfg(not(unix))] launch` returns `ConnectionFailed`, spawns nothing | unreachable; **open:** `juggler.rs` has no `scope::require`; the Unix Firefox/Camoufox launch is ungated child-process egress |
+| `src/browser/trace.rs:455` | `target_os = "macos"` | proc `open` | yes — `trace.rs:449` `#[cfg(target_os = "windows")] Command::new("cmd")` | equivalent; local viewer open, not network |
+| `src/browser/trace.rs:461` | `target_os = "linux"` | proc `xdg-open` | yes — `trace.rs:449` `cmd` | equivalent; local viewer open, not network |
+| `src/main.rs:2203` | `target_os = "macos"` | proc `brew` | yes — `main.rs:2167` `winget`, `:2183` `choco` | equivalent; ffmpeg install, local OS maintenance |
+| `src/main.rs:2220` | `not(any(target_os = "windows", target_os = "macos"))` | proc `sudo apt` | yes — `main.rs:2167`/`:2183` | equivalent; ffmpeg install |
+| `src/main.rs:2230` | same | proc `sudo dnf` | yes — `main.rs:2167`/`:2183` | equivalent; ffmpeg install |
+| `src/main.rs:2240` | same | proc `sudo pacman` | yes — `main.rs:2167`/`:2183` | equivalent; ffmpeg install |
+| `src/main.rs:4813` | `unix` | proc `chown` | yes — `main.rs:4973`/`:4984`/`:4992` `#[cfg(windows)] icacls` save/restore | equivalent; local file metadata, not network |
+| `src/runtime/io_uring_runtime.rs:123` | `all(target_os = "linux", feature = "io-uring-backend")` | proc `uname -r` | no — fn is cfg'd out; `is_available()` returns `false` off Linux | unreachable; local kernel probe, not network |
+| `src/stdlib/topology.rs:593` | `target_os = "linux"` | raw `libc::socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)` | no — `topology.rs:1001` `#[cfg(not(target_os = "linux"))] mod raw` returns `Unsupported` | unreachable; **open:** `icmpv6_echo` has no `scope::require` |
+| `src/stdlib/topology.rs:701` | `target_os = "linux"` | udp `UdpSocket::bind("[::]:0")` | no — `:1001` stub returns `Unsupported` | unreachable; `udp_source_v6` routes a `connect()` for source selection and sends no packet |
+| `src/stdlib/topology.rs:714` | `target_os = "linux"` | raw `libc::socket(AF_INET, SOCK_RAW, IPPROTO_TCP)` | no — `:1001` stub | unreachable; **open:** `RawSyn::open` has no `scope::require` |
+| `src/stdlib/topology.rs:743` | `target_os = "linux"` | udp `UdpSocket::bind("0.0.0.0:0")` | no — `:1001` stub | unreachable; `RawSyn::source_for` routes a `connect()` for source selection and sends no packet |
+| `src/stdlib/topology.rs:832` | `target_os = "linux"` | raw `libc::socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)` | no — `:1001` stub | unreachable; **open:** `icmp_echo` has no `scope::require` |
+
+### Sites only on Windows — 10 (the other half of each pair)
+
+All are `proc` (`Command::new`), none is network egress, and none is visible to
+the gate's needles either. They are enumerated so the pairing is auditable:
+`src/browser/process.rs:1397` (`tasklist` liveness), `src/browser/trace.rs:449`
+(`cmd` viewer), `src/main.rs:2167`/`:2183` (`winget`/`choco`),
+`src/main.rs:4973`/`:4984`/`:4992` (`icacls`), `src/pkg/cache.rs:575`/`:618`
+(`cmd` junction/link), `src/stdlib/transfer.rs:718` (`powershell` VSS copy).
+
+### The coverage hole this creates in `tests/egress_gate_coverage.rs`
+
+1. **No cfg parsing at all.** `egress_sites()` maps `production_region(text)`
+   line-by-line through `has_http_site` / `has_raw_site`; nothing in the file
+   reads an attribute. It therefore checks each platform branch as if it were
+   compiled everywhere, and can never assert that the *other* branch of a
+   `cfg` pair exists, is gated, or refuses. A Windows-only path cannot be
+   inferred from a Unix-only one, and vice versa.
+2. **0 of the 14 absent-on-Windows sites match its needles.** The classes are
+   `proc` (9), `raw` (3) and `udp` (2); `Command::new(`, `libc::socket(` and
+   `UdpSocket::bind(` are not in `REQUEST_VERBS` or `RAW_NEEDLES`. So cfg is
+   not what hides these from the gate — the primitive list is. But cfg makes
+   the blind spot durable: the branch that would expose the class is compiled
+   out, so no Windows build, lint or type-check ever reaches the missing grant.
+   The same is true of all 10 Windows-only sites.
+3. **`is_gated` is file-granular.** `src/main.rs` holds both `cfg(unix) chown`
+   and `cfg(windows) icacls`; one `scope::require` anywhere in the production
+   region marks the whole file gated, so a grant present in one platform branch
+   credits the other. This is the same file-vs-site defect as §"Correction,
+   same day" above, with cfg as the split.
+4. **The test-region cut was itself cfg-blind.** `production_region` looked for
+   the literal `#[cfg(test)]` only. `src/browser/cdp.rs:187` and
+   `src/runtime/hardening.rs:110` declare their unit-test modules
+   `#[cfg(all(test, unix))]`; those test bodies were being read as production
+   code. No egress site or `scope::require` sits there today, so no number in
+   this document moves — but a test-only socket would have been counted as
+   egress, and a `scope::require` in such a test module would have marked the
+   file gated. Closed in this wave.
+
+### Fix landed (no build required)
+
+`tests/egress_gate_coverage.rs` now carries the census as a pin:
+
+- `CFG_EGRESS` — 24 rows (`file`, `line`, `guard`, `class`, view, other-platform
+  verdict, note), cap 24. Bidirectional: an unlisted cfg-gated egress site
+  fails, a stale row fails, and a row whose guard expression or class drifted
+  fails. Verdicts are machine-checked to start with `unreachable:`,
+  `equivalent:` or `only-on-windows:`.
+- `cfg_egress_sites()` — resolves inline `#[cfg(...)]` item spans and inherits
+  `#[cfg(...)] mod` guards transitively, so a site landing in
+  `src/stdlib/platform/unix/*` or `src/sandbox_runtime.rs` is enumerated
+  without a per-file special case.
+- `production_region()` — cuts at any cfg expression naming the bare `test`
+  token, not just the literal `#[cfg(test)]`.
+- Negative control, run 2026-11-02: adding
+  `#[cfg(unix)] fn _probe() { let _ = std::process::Command::new("browser"); }`
+  as `src/_cfg_probe.rs` turns `cfg_gated_egress_sites_are_enumerated` red,
+  naming `src/_cfg_probe.rs:2 … has no CFG_EGRESS row`. Deleting it restores
+  green (5 passed, 0 failed, without cargo).
+
+### Open defects this census records but does not fix
+
+- **O1 — `src/browser/juggler.rs:91`.** The Unix Firefox/Camoufox launch has no
+  `scope::require`; the file name `juggler` does not appear in the gate's
+  gated/debt lists because its only egress primitive is a child process.
+  Fixing it needs a decision about what target/verb a browser launch is granted
+  under and a test that exercises the launch path — both require a build, which
+  this lane does not own.
+- **O2 — `src/stdlib/topology.rs:593,714,832`.** Raw ICMP/ICMPv6/TCP sockets run
+  under a file-level `scope::require` that belongs to the connect-probe helpers
+  (`:190`), not to `icmpv6_echo`, `RawSyn::open` or `icmp_echo`. Per-function
+  gating is the durable fix; it changes authorization semantics on the scan
+  path, so it belongs to a lane that can run the topology tests.
+
