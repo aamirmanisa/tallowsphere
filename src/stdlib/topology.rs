@@ -450,15 +450,28 @@ fn scope_id_for(zone: &str) -> Result<u32, String> {
     if let Ok(n) = zone.parse::<u32>() {
         return Ok(n);
     }
-    let name = std::ffi::CString::new(zone.to_string())
-        .map_err(|_| format!("topology: invalid IPv6 scope id '{zone}'"))?;
-    let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
-    if index == 0 {
-        return Err(format!(
-            "topology: IPv6 scope id '{zone}' names no interface on this host"
-        ));
+    #[cfg(unix)]
+    {
+        let name = std::ffi::CString::new(zone.to_string())
+            .map_err(|_| format!("topology: invalid IPv6 scope id '{zone}'"))?;
+        let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+        if index == 0 {
+            return Err(format!(
+                "topology: IPv6 scope id '{zone}' names no interface on this host"
+            ));
+        }
+        Ok(index)
     }
-    Ok(index)
+    // `if_nametoindex` is a libc entry point that Windows does not export. A
+    // numeric scope id above still works; a *named* zone cannot be resolved
+    // here, and pretending otherwise (returning 0) would silently address the
+    // wrong interface.
+    #[cfg(not(unix))]
+    {
+        Err(format!(
+            "topology: IPv6 scope id '{zone}' is an interface name, and resolving a name to a scope id needs if_nametoindex, which this build does not implement on this platform (unix only); pass the numeric interface index instead"
+        ))
+    }
 }
 
 fn resolve_v6(target: &str) -> Result<V6Target, String> {
@@ -1037,7 +1050,10 @@ mod raw {
         }
 
         pub fn source_for(_dst: Ipv4Addr) -> io::Result<Ipv4Addr> {
-            Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "topology.syn_scan: choosing a source address needs a routing lookup through a raw socket, which this build does not implement on this platform (Linux only)",
+            ))
         }
 
         pub fn send_probe(
@@ -1049,7 +1065,10 @@ mod raw {
             _seq: u32,
             _flags: u8,
         ) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "topology.syn_scan: sending a hand-built TCP segment needs a raw socket (IP_HDRINCL), which this build does not implement on this platform (Linux only)",
+            ))
         }
 
         pub fn collect(
@@ -1059,7 +1078,14 @@ mod raw {
             _probes: &[u16],
             _timeout: Duration,
         ) -> io::Result<Vec<(u16, PortState)>> {
-            Ok(Vec::new())
+            // A raw SYN probe never opened (see `open()`), so there is nothing
+            // to collect. Returning an empty vector would be indistinguishable
+            // from "every port was probed and none answered", so it is an
+            // error naming the missing capability instead.
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "topology: reading raw SYN replies needs raw sockets, which this build does not implement on this platform (Linux only)",
+            ))
         }
     }
 }
@@ -2382,6 +2408,11 @@ fn udp_scan_fn(args: Vec<Value>) -> StdlibResult {
 // TTL walk (N08)
 // ══════════════════════════════════════════════════════════════════
 
+/// Windows has no libc `socket`/`recv`/`setsockopt`, so the TTL walk is a
+/// unix-only path: the ASN table it uses exists only to annotate hops, and the
+/// non-unix build refuses `traceroute` by name below rather than returning an
+/// empty hop list.
+#[cfg(unix)]
 /// Optional offline ASN database (ip2asn-v4.tsv: start, end, asn, cc, org).
 ///
 /// No lookup is invented when the file is absent: a hop with no database says
@@ -2391,6 +2422,7 @@ struct AsnTable {
     rows: Vec<(u32, u32, u32, String)>,
 }
 
+#[cfg(unix)]
 impl AsnTable {
     fn load() -> Option<Self> {
         let path = std::env::var("TALLOW_IP2ASN")
@@ -2442,6 +2474,7 @@ impl AsnTable {
 
 /// Read one ICMP error and, when it quotes a probe we sent to `port`, return
 /// (responder, is_destination_unreachable).
+#[cfg(unix)]
 fn icmp_for_port(fd: libc::c_int, port: u16, deadline: Instant) -> Option<(Ipv4Addr, bool)> {
     let mut buf = [0u8; 1500];
     loop {
@@ -2490,6 +2523,7 @@ fn icmp_for_port(fd: libc::c_int, port: u16, deadline: Instant) -> Option<(Ipv4A
     }
 }
 
+#[cfg(unix)]
 fn traceroute_fn(args: Vec<Value>) -> StdlibResult {
     use std::net::UdpSocket;
 
@@ -2658,6 +2692,17 @@ fn traceroute_fn(args: Vec<Value>) -> StdlibResult {
 // ══════════════════════════════════════════════════════════════════
 // Dispatch
 // ══════════════════════════════════════════════════════════════════
+
+/// The TTL walk needs a raw ICMP socket, `setsockopt(IP_TTL)` and `recv` —
+/// all libc entries Windows does not export. A non-unix build refuses by name
+/// rather than returning a result with no hops, which would read as "the
+/// target is one hop away and nothing answered".
+#[cfg(not(unix))]
+fn traceroute_fn(_args: Vec<Value>) -> StdlibResult {
+    Err(
+        "topology.traceroute: a TTL walk needs a raw ICMP socket plus setsockopt(IP_TTL)/recv, which this build does not implement on this platform (unix only)".to_string(),
+    )
+}
 
 pub fn dispatch(function: &str, args: Vec<Value>) -> Option<StdlibResult> {
     match function {
