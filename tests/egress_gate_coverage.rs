@@ -496,7 +496,7 @@ const CFG_EGRESS: &[CfgSite] = &[
     },
     CfgSite {
         file: "src/stdlib/topology.rs",
-        line: 593,
+        line: 611,
         guard: "target_os = \"linux\"",
         class: "raw",
         view: PlatformView::AbsentOnWindows,
@@ -505,7 +505,7 @@ const CFG_EGRESS: &[CfgSite] = &[
     },
     CfgSite {
         file: "src/stdlib/topology.rs",
-        line: 701,
+        line: 719,
         guard: "target_os = \"linux\"",
         class: "udp",
         view: PlatformView::AbsentOnWindows,
@@ -514,7 +514,7 @@ const CFG_EGRESS: &[CfgSite] = &[
     },
     CfgSite {
         file: "src/stdlib/topology.rs",
-        line: 714,
+        line: 732,
         guard: "target_os = \"linux\"",
         class: "raw",
         view: PlatformView::AbsentOnWindows,
@@ -523,7 +523,7 @@ const CFG_EGRESS: &[CfgSite] = &[
     },
     CfgSite {
         file: "src/stdlib/topology.rs",
-        line: 743,
+        line: 761,
         guard: "target_os = \"linux\"",
         class: "udp",
         view: PlatformView::AbsentOnWindows,
@@ -532,12 +532,48 @@ const CFG_EGRESS: &[CfgSite] = &[
     },
     CfgSite {
         file: "src/stdlib/topology.rs",
-        line: 832,
+        line: 850,
         guard: "target_os = \"linux\"",
         class: "raw",
         view: PlatformView::AbsentOnWindows,
         other_platform: "unreachable: topology.rs:1001 #[cfg(not(target_os = \"linux\"))] mod raw returns Unsupported",
         note: "open: raw ICMP socket; icmp_echo has no scope::require",
+    },
+    CfgSite {
+        file: "src/loopback_alias.rs",
+        line: 56,
+        guard: "unix",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: add_lo0_alias is cfg(unix); the non-unix bind_loopback returns the bind error without spawning anything",
+        note: "test support: adds the 127.0.0.2 lo0 alias so the redirect fixture can bind an unlisted host on macOS",
+    },
+    CfgSite {
+        file: "src/loopback_alias.rs",
+        line: 66,
+        guard: "unix",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: the sudo fallback sits in the same cfg(unix) fn and is never spawned off unix",
+        note: "test support: non-interactive sudo fallback so a password prompt cannot hang the suite",
+    },
+    CfgSite {
+        file: "src/stdlib/topology.rs",
+        line: 2570,
+        guard: "unix",
+        class: "raw",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: the non-unix traceroute_fn consults the register, then refuses by name; no raw ICMP socket exists there",
+        note: "raw AF_INET/SOCK_RAW/IPPROTO_ICMP socket for the TTL walk",
+    },
+    CfgSite {
+        file: "src/stdlib/topology.rs",
+        line: 2603,
+        guard: "unix",
+        class: "udp",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: same non-unix traceroute_fn refusal; no UDP probe is sent on that platform",
+        note: "UDP probe whose TTL is set per hop; the ICMP error is read on the raw socket above",
     },
     // ── only on Windows (the counterparts, so the pair is auditable) ───────
     CfgSite {
@@ -632,7 +668,7 @@ const CFG_EGRESS: &[CfgSite] = &[
     },
 ];
 
-const CFG_EGRESS_CAP: usize = 24;
+const CFG_EGRESS_CAP: usize = 28;
 
 #[derive(Clone, Debug)]
 struct FoundCfgSite {
