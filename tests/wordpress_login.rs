@@ -56,7 +56,7 @@ fn program(url: &str) -> String {
     robots_txt:    .respect,
     rate_limit:    1.per_second
 )
-fn main() {{
+fn flow() -> Result<i64> {{
     let b = Browser.launch(true) match {{ Ok(b) -> b, Err(e) -> {{ bail "launch: {{e}}" }} }}
     let p = b.new_page() match {{ Ok(p) -> p, Err(e) -> {{ bail "page: {{e}}" }} }}
     p.goto("{url}/wp-login.php") match {{ Ok(_) -> (), Err(e) -> {{ bail "goto: {{e}}" }} }}
@@ -70,6 +70,13 @@ fn main() {{
     p.goto("{url}/wp-admin/") match {{ Ok(_) -> (), Err(e) -> {{ bail "admin: {{e}}" }} }}
     let nonces = p.wp_extract_all_nonces() match {{ Ok(n) -> n, Err(e) -> {{ bail "nonces: {{e}}" }} }}
     print(nonces.len() > 0)
+    Ok(0)
+}}
+fn main() {{
+    // `bail` desugars to `return Err(..)`, so it is only legal inside a Result
+    // function (conformance case 48). The body lives in `flow`; main reports a
+    // refusal instead of swallowing it.
+    flow() match {{ Ok(_) -> (), Err(e) -> {{ print("error: {{e}}") }} }}
 }}
 "#
     )
