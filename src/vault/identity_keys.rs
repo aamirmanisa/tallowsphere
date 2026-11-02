@@ -843,10 +843,42 @@ mod tests {
         std::fs::write(path, serde_json::to_string_pretty(&sealed).unwrap()).unwrap();
     }
 
+    /// A sealed-key access under this platform's custody contract.
+    ///
+    /// unix: must succeed — the test then asserts the payload/permissions.
+    /// non-unix: this build has no POSIX mode bits and no `O_NOFOLLOW`, so the
+    /// key file is never opened. The refusal must name that mechanism, and
+    /// `None` tells the caller its unix post-conditions cannot exist here.
+    fn sealed_key_access<T>(result: Result<T, IdentityKeyError>) -> Option<T> {
+        #[cfg(unix)]
+        {
+            Some(result.unwrap_or_else(|e| panic!("unix: sealed-key access must succeed: {e}")))
+        }
+        #[cfg(not(unix))]
+        {
+            match result {
+                Ok(_) => panic!(
+                    "non-unix build has no 0600 mode bits and no O_NOFOLLOW; \
+                     the key file must not be opened"
+                ),
+                Err(err) => {
+                    let msg = err.to_string();
+                    assert!(
+                        msg.contains("POSIX mode") || msg.contains("O_NOFOLLOW"),
+                        "refusal must name the absent mechanism, got: {msg}"
+                    );
+                    None
+                }
+            }
+        }
+    }
+
     #[test]
     fn round_trip_preserves_key_material() {
         let dir = temp_state();
-        let key = ensure_node_key(dir.path(), PW).unwrap();
+        let Some(key) = sealed_key_access(ensure_node_key(dir.path(), PW)) else {
+            return;
+        };
         assert_eq!(key.algorithm(), KEY_ALGORITHM_ED25519);
 
         // The secret half must be a real Ed25519 secret for the stored
@@ -873,7 +905,9 @@ mod tests {
     #[test]
     fn ensure_is_stable_once_provisioned() {
         let dir = temp_state();
-        let first = ensure_issuer_key(dir.path(), PW).unwrap();
+        let Some(first) = sealed_key_access(ensure_issuer_key(dir.path(), PW)) else {
+            return;
+        };
         assert!(key_path(dir.path(), IdentityKeyRole::Issuer).is_file());
 
         let second = ensure_issuer_key(dir.path(), PW).unwrap();
@@ -884,7 +918,9 @@ mod tests {
     #[test]
     fn wrong_passphrase_is_refused_and_never_clobbers() {
         let dir = temp_state();
-        let key = ensure_node_key(dir.path(), "right-passphrase").unwrap();
+        let Some(key) = sealed_key_access(ensure_node_key(dir.path(), "right-passphrase")) else {
+            return;
+        };
 
         let err = load_node_key(dir.path(), "wrong-passphrase").unwrap_err();
         assert!(
@@ -927,7 +963,9 @@ mod tests {
         let dir = temp_state();
         assert!(!remove_node_key(dir.path()).unwrap(), "absent key → Ok(false)");
 
-        let first = ensure_node_key(dir.path(), PW).unwrap();
+        let Some(first) = sealed_key_access(ensure_node_key(dir.path(), PW)) else {
+            return;
+        };
         let path = key_path(dir.path(), IdentityKeyRole::Node);
         assert!(path.is_file());
 
@@ -1017,7 +1055,9 @@ mod tests {
     #[test]
     fn tampered_or_version_bumped_sealed_file_is_refused() {
         let dir = temp_state();
-        let key = ensure_issuer_key(dir.path(), PW).unwrap();
+        let Some(key) = sealed_key_access(ensure_issuer_key(dir.path(), PW)) else {
+            return;
+        };
         let path = key_path(dir.path(), IdentityKeyRole::Issuer);
 
         // Flip one hex digit of the ciphertext → AEAD refusal.
@@ -1050,7 +1090,9 @@ mod tests {
     #[test]
     fn node_and_issuer_roles_are_independent_and_cross_use_is_refused() {
         let dir = temp_state();
-        let node = ensure_node_key(dir.path(), PW).unwrap();
+        let Some(node) = sealed_key_access(ensure_node_key(dir.path(), PW)) else {
+            return;
+        };
         let issuer = ensure_issuer_key(dir.path(), PW).unwrap();
         assert_ne!(node.public_key_hex(), issuer.public_key_hex());
 
@@ -1091,7 +1133,9 @@ mod tests {
     #[test]
     fn sealed_file_contains_no_plaintext_key_material() {
         let dir = temp_state();
-        let key = ensure_node_key(dir.path(), PW).unwrap();
+        let Some(key) = sealed_key_access(ensure_node_key(dir.path(), PW)) else {
+            return;
+        };
         let path = key_path(dir.path(), IdentityKeyRole::Node);
         let text = std::fs::read_to_string(&path).unwrap();
 
@@ -1118,7 +1162,9 @@ mod tests {
     #[test]
     fn debug_and_error_paths_never_leak_secret_material() {
         let dir = temp_state();
-        let key = ensure_node_key(dir.path(), PW).unwrap();
+        let Some(key) = sealed_key_access(ensure_node_key(dir.path(), PW)) else {
+            return;
+        };
 
         let dbg = format!("{key:?}");
         assert!(dbg.contains("<redacted>"), "{dbg}");
@@ -1171,10 +1217,10 @@ mod tests {
             key.secret_key_hex()
         );
         write_crafted(&path, IdentityKeyRole::Node, &good, PW);
-        assert_eq!(
-            load_node_key(dir.path(), PW).unwrap().public_key_hex(),
-            key.public_key_hex()
-        );
+        let Some(loaded) = sealed_key_access(load_node_key(dir.path(), PW)) else {
+            return;
+        };
+        assert_eq!(loaded.public_key_hex(), key.public_key_hex());
 
         // Unsupported algorithm tag.
         let other = IdentityKeyPair::generate();

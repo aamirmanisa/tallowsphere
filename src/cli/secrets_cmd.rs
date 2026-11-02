@@ -575,6 +575,37 @@ mod tests {
         d
     }
 
+    /// Save under this platform's credential-store contract.
+    ///
+    /// unix: the write must succeed (the caller then inspects the store).
+    /// non-unix: `0600` cannot be applied, so `save` must refuse before writing
+    /// and name that mechanism. `false` tells the caller the store it would
+    /// inspect cannot exist here.
+    fn save_per_platform(path: &Path, entries: &BTreeMap<String, Entry>) -> bool {
+        let result = save(path, entries);
+        #[cfg(unix)]
+        {
+            result.unwrap_or_else(|e| panic!("unix: credential store must save: {e}"));
+            true
+        }
+        #[cfg(not(unix))]
+        {
+            match result {
+                Ok(()) => panic!(
+                    "non-unix build has no POSIX mode bits and no ACL implementation; \
+                     save must refuse, not write a loose credential store"
+                ),
+                Err(e) => {
+                    assert!(
+                        e.contains("no POSIX mode bits") || e.contains("ACL implementation"),
+                        "refusal must name the absent mechanism, got: {e}"
+                    );
+                    false
+                }
+            }
+        }
+    }
+
     #[test]
     fn origin_normalizes_scheme_host_port() {
         assert_eq!(
@@ -714,7 +745,10 @@ mod tests {
                 created_at: now_iso(),
             },
         );
-        save(&path, &m).expect("save");
+        if !save_per_platform(&path, &m) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
         let p = path.to_string_lossy().to_string();
 
         let ok = run_secrets_args(&[
@@ -754,7 +788,10 @@ mod tests {
                 created_at: now_iso(),
             },
         );
-        save(&path, &m).expect("save");
+        if !save_per_platform(&path, &m) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
         // `describe`-style projection: the only view a caller may render.
         let rows: Vec<String> = load(&path)
             .unwrap()

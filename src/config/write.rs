@@ -689,6 +689,49 @@ mod tests {
         WriteOptions::with_history_dir(dir.to_path_buf()).without_ledger()
     }
 
+    /// Commit under this platform's stated permission contract.
+    ///
+    /// unix: the write must succeed — the test then asserts the mode it applied.
+    /// non-unix: this build has no POSIX mode bits and no ACL implementation, so
+    /// `commit` refuses before it touches the target. The refusal must name that
+    /// mechanism, and `None` tells the caller the unix post-conditions (the
+    /// artifact, its history, its 0600/0700 modes) cannot exist here.
+    fn commit_per_platform(
+        target: &Path,
+        content: &str,
+        opts: &WriteOptions<'_>,
+    ) -> Option<CommitOutcome> {
+        let result = commit(target, content, opts);
+        #[cfg(unix)]
+        {
+            Some(result.unwrap_or_else(|e| panic!("unix: config commit must succeed: {e}")))
+        }
+        #[cfg(not(unix))]
+        {
+            match result {
+                Ok(_) => panic!(
+                    "non-unix build has no POSIX mode bits and no ACL implementation; \
+                     commit must refuse, not write"
+                ),
+                Err(err) => {
+                    assert_refusal_names_mechanism(&err);
+                    None
+                }
+            }
+        }
+    }
+
+    /// The non-unix refusal must say *why* the mode could not be established,
+    /// otherwise "refused" is indistinguishable from an unrelated I/O error.
+    #[cfg(not(unix))]
+    fn assert_refusal_names_mechanism(err: &ConfigError) {
+        let msg = err.to_string();
+        assert!(
+            msg.contains("POSIX mode") || msg.contains("ACL implementation"),
+            "non-unix refusal must name the absent mechanism, got: {msg}"
+        );
+    }
+
     #[cfg(unix)]
     fn mode_of(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
@@ -701,7 +744,9 @@ mod tests {
         let hist = tmp.join("hist");
         let target = tmp.join("config.toml");
 
-        let outcome = commit(&target, VALID, &opts_at(&hist)).expect("commit");
+        let Some(outcome) = commit_per_platform(&target, VALID, &opts_at(&hist)) else {
+            return;
+        };
         assert_eq!(outcome.revision, Some(1));
         assert_eq!(outcome.bytes, VALID.len());
         assert_eq!(fs::read_to_string(&target).expect("read"), VALID);
@@ -721,7 +766,10 @@ mod tests {
         let hist = tmp.join("hist");
         let target = tmp.join("config.toml");
 
-        commit(&target, VALID, &opts_at(&hist)).expect("first commit");
+        match commit_per_platform(&target, VALID, &opts_at(&hist)) {
+            Some(_) => {}
+            None => return,
+        }
         let before = fs::read_to_string(&target).expect("read");
 
         let bad = "schema_version = 1\nbogus_key = true\n";
@@ -739,7 +787,14 @@ mod tests {
         let hist = tmp.join("hist");
         let target = tmp.join("config.toml");
 
-        commit(&target, "schema_version = 1\nno_color = true\n", &opts_at(&hist)).expect("c1");
+        match commit_per_platform(
+            &target,
+            "schema_version = 1\nno_color = true\n",
+            &opts_at(&hist),
+        ) {
+            Some(_) => {}
+            None => return,
+        }
         let second = "schema_version = 1\nno_color = false\ntelemetry = true\n";
         commit(&target, second, &opts_at(&hist)).expect("c2");
         assert_eq!(fs::read_to_string(&target).expect("read"), second);
@@ -762,7 +817,12 @@ mod tests {
         let target = blocker.join("config.toml");
 
         let err = commit(&target, VALID, &opts_at(&hist)).expect_err("blocked parent");
+        #[cfg(unix)]
         assert_eq!(err.code(), crate::config::schema::CODE_WRITE_IO, "{err}");
+        // Non-unix refuses earlier (the history root cannot be made owner-only),
+        // so the code differs but the contract does not: no write happens.
+        #[cfg(not(unix))]
+        assert_refusal_names_mechanism(&err);
         assert!(!target.exists());
         // No partial artifact anywhere: the blocker is still a file with its
         // original content.
@@ -796,7 +856,9 @@ mod tests {
         let tmp = crate::config::test_support::TempDir::new("perms");
         let hist = tmp.join("hist");
         let target = tmp.join("config.toml");
-        commit(&target, VALID, &opts_at(&hist)).expect("commit");
+        let Some(_) = commit_per_platform(&target, VALID, &opts_at(&hist)) else {
+            return;
+        };
         #[cfg(unix)]
         assert_eq!(mode_of(&target), CONFIG_FILE_MODE, "0600 for config artifacts");
         let _ = target;
@@ -833,7 +895,7 @@ mod tests {
             perms: FilePermsPolicy::OwnerOnlyWhenSecretBearing,
             ledger: None,
         };
-        commit(&target, content, &opts).expect("commit secret-bearing");
+        let _ = commit_per_platform(&target, content, &opts);
         #[cfg(unix)]
         assert_eq!(
             mode_of(&target),
@@ -849,7 +911,9 @@ mod tests {
         let hist = tmp.join("hist");
         let target = tmp.join("config.toml");
 
-        let outcome = commit(&target, VALID, &opts_at(&hist)).expect("commit");
+        let Some(outcome) = commit_per_platform(&target, VALID, &opts_at(&hist)) else {
+            return;
+        };
         assert_eq!(outcome.revision, Some(1));
         let rev_dir = history_revision_dir(&hist, 1);
         assert!(rev_dir.is_dir());
@@ -900,7 +964,9 @@ mod tests {
         assert_eq!(next_revision(&hist).expect("next"), 4);
 
         let target = tmp.join("config.toml");
-        let outcome = commit(&target, VALID, &opts_at(&hist)).expect("commit");
+        let Some(outcome) = commit_per_platform(&target, VALID, &opts_at(&hist)) else {
+            return;
+        };
         assert_eq!(outcome.revision, Some(4), "no reuse of existing revisions");
     }
 
@@ -921,7 +987,9 @@ mod tests {
         let tmp = crate::config::test_support::TempDir::new("nohist");
         let target = tmp.join("config.toml");
         let opts = WriteOptions::default().without_history().without_ledger();
-        let outcome = commit(&target, VALID, &opts).expect("commit");
+        let Some(outcome) = commit_per_platform(&target, VALID, &opts) else {
+            return;
+        };
         assert_eq!(outcome.revision, None);
         assert_eq!(fs::read_to_string(&target).expect("read"), VALID);
     }
@@ -954,7 +1022,9 @@ mod tests {
         let sink = RecordingSink::default();
         let opts = WriteOptions::with_history_dir(hist.clone()).with_ledger(&sink);
 
-        let outcome = commit(&target, VALID, &opts).expect("commit");
+        let Some(outcome) = commit_per_platform(&target, VALID, &opts) else {
+            return;
+        };
         let events = sink.events.lock().expect("lock");
         assert_eq!(events.len(), 1, "one accepted write → one ledger record");
         let ev = &events[0];
@@ -972,7 +1042,9 @@ mod tests {
         let sink = FailingSink;
         let opts = WriteOptions::with_history_dir(hist).with_ledger(&sink);
 
-        let outcome = commit(&target, VALID, &opts).expect("best-effort (D8)");
+        let Some(outcome) = commit_per_platform(&target, VALID, &opts) else {
+            return;
+        };
         assert_eq!(outcome.revision, Some(1));
         assert_eq!(fs::read_to_string(&target).expect("read"), VALID);
     }
