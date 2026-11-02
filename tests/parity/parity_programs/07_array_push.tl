@@ -1,14 +1,17 @@
+// parity: expect-build-fallback
 // 07_array_push.tl — ARRAY .push() GROWTH canary.
 //
 // Interpreter: grows an array via .push() in a loop, then iterates it; prints
-// the real sum (sum=1225 for n=50), rc=0.
+// the real sum (sum 1225 for n=50), rc=0.
 //
-// Native: the .push() growth lowering SEGFAULTs (signal, rc=139) even at a
-// small n. There is no error text and no exit code, so `tallow run`'s
-// run-path fallback silently re-runs the interpreter — which is why the
-// benchmark harness never saw a failure. Only `tallow build` + direct binary
-// execution surfaces it (it is a signal death, so the "native crashed" branch
-// fires). This canary makes the array-push regression a first-class condition.
+// Native: `.push()` growth has no lowering in the compiled plane, and `tallow
+// build` REFUSES it by name ("the native backend has no lowering for
+// Array.push"), so no binary is produced and `tallow run` falls back to the
+// interpreter. That is the improvement this canary now records: the lowering
+// used to SEGFAULT instead — a signal death with no error text and no exit
+// code, which the run-path fallback swallowed, so only `tallow build` plus a
+// direct binary run surfaced it. A named refusal replaces a silent crash; the
+// lowering itself is still unimplemented.
 //
 // NOT covered by 03_loops_arrays.tl (which reads a fixed literal array and
 // iterates; it never mutates via push in a loop).

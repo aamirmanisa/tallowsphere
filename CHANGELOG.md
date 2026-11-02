@@ -91,6 +91,12 @@ Measured, not hedged — each line names what is still true when this tag ships:
   because the scope gate refused it before the GET, not because the pinned Chrome for
   Testing artifact was wrong. The grant is exact-host, `public-read-only`, GET/HEAD,
   expiring 2027-11-02.
+- **`Array.push` has no lowering on the compiled plane.** `tallow build` refuses a
+  program that grows an array with `.push()` by name ("the native backend has no
+  lowering for Array.push") and `tallow run` falls back to the interpreter, so the
+  behaviour is correct and slow rather than wrong. The lowering used to SEGFAULT with no
+  error text, which the fallback swallowed; a named refusal is the improvement, and the
+  E1 parity table now records it as such instead of expecting a byte match.
 
 ## [v1.6.0] — 2026-10-31 — Eight compiler defects closed, and the gates move into the binary
 
