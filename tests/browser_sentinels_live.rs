@@ -13,6 +13,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,6 +46,21 @@ fn serve(counter: Arc<AtomicUsize>, paths: Arc<Mutex<Vec<String>>>) -> u16 {
     port
 }
 
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// Run the generated program.
+///
+/// The child runs from the workspace root, not from the program's temp
+/// directory: the scope gate resolves its default register
+/// (`configs/tallow/scope/authorized-hosts.toml`) relative to the process cwd,
+/// so a private cwd made the register unreadable and the gate failed closed —
+/// correctly — with `scope:register-unreadable` before any browser work. The
+/// workspace root is where an operator runs `tallow run`, so that is what the
+/// test exercises. The program itself is passed by absolute path and does not
+/// need the private cwd; `TraceRecorder` writes under the cwd, so its trace
+/// lands in `<workspace>/.tallow-traces` (gitignored).
 fn run(source: &str, name: &str) -> (bool, String) {
     let dir = std::env::temp_dir().join(format!("sentinel-live-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("dir");
@@ -53,7 +69,7 @@ fn run(source: &str, name: &str) -> (bool, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_tallow"))
         .arg("run")
         .arg(&file)
-        .current_dir(&dir)
+        .current_dir(workspace_root())
         .env("TALLOW_ALLOW_DIRECT", "1")
         .output()
         .expect("run tallow");
