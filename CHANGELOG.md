@@ -97,6 +97,26 @@ Measured, not hedged — each line names what is still true when this tag ships:
   behaviour is correct and slow rather than wrong. The lowering used to SEGFAULT with no
   error text, which the fallback swallowed; a named refusal is the improvement, and the
   E1 parity table now records it as such instead of expecting a byte match.
+- **A cookie array's length stops at 1 on the compiled plane.** Measured by
+  `tests/browser_array_parity_cookies.rs`, both planes on the same program:
+  `native=["0","1","1"]` against `interp=["0","1","3"]` for `page.get_cookies().len`
+  before any cookie, after `set_cookies_from_header("a=1", …)`, and after
+  `set_cookies_from_header("a=1; b=2; c=3", …)`. The interpreter counts the cookies the
+  header carries; the native plane reports 1 for a three-cookie header. This is the
+  silent early-exit the test was written to catch — a loop over `get_cookies()` returns
+  after the first entry rather than crashing. `Element.classes` is the same family and
+  has no lowering at all; it stays pinned as a refusal in
+  `tests/browser_unlowered_gaps.rs`. Not fixed at this tag.
+- **The three browser suites had never run before this tag.** `browser_sentinels_live`,
+  `browser_array_parity_cookies` and `browser_flow_runtime_integration` were not
+  exercised on any earlier tag: the Chrome-for-Testing install step failed before them
+  (the scope gate refusal recorded in the `storage.googleapis.com` entry above), so CI
+  never reached their bodies. Their first real execution is this tag's own CI run
+  (41389719617), where all three are red. Of the causes measured so far,
+  `browser_sentinels_live` fails at `tests/browser_sentinels_live.rs:56`, which spawns
+  the binary with `.current_dir(&dir)` while the register path it passes is relative;
+  `browser_flow_runtime_integration`'s cause is not yet established. They are newly
+  observed, not newly broken.
 
 ## [v1.6.0] — 2026-10-31 — Eight compiler defects closed, and the gates move into the binary
 
