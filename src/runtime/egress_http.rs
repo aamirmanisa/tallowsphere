@@ -1431,8 +1431,7 @@ mod tests {
         F: Fn(&Hit) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + 'static,
     {
         use std::sync::atomic::{AtomicBool, Ordering};
-        let listener = std::net::TcpListener::bind(bind)
-            .unwrap_or_else(|e| panic!("bind {bind}: {e}"));
+        let listener = crate::loopback_alias::bind_loopback(bind);
         listener
             .set_nonblocking(true)
             .expect("nonblocking accept");
@@ -1497,15 +1496,8 @@ mod tests {
     fn redirects_unlisted_target_is_refused() {
         let _delay = DelayOff::new();
         let _grant = grant_loopback();
-        // Bind only `127.0.0.1`. macOS configures no `127.0.0.2` on `lo0`, so a
-        // fixture that binds it fails at `bind` before the policy is reached.
-        // The register keys on host, not port (`scope::split_host_path` drops
-        // the port), so a second server on `127.0.0.1:<other port>` would be
-        // authorised by this same grant and prove nothing. The unlisted hop is
-        // therefore addressed by the name `localhost`: a host the grant above
-        // never names, resolving to the same loopback socket on every platform.
-        let unlisted = serve("127.0.0.1:0", |_| (200, vec![], b"LEAKED".to_vec()));
-        let leak = format!("http://localhost:{}/leak", unlisted.addr.port());
+        let unlisted = serve("127.0.0.2:0", |_| (200, vec![], b"LEAKED".to_vec()));
+        let leak = format!("http://127.0.0.2:{}/leak", unlisted.addr.port());
         let listed = serve("127.0.0.1:0", {
             let leak = leak.clone();
             move |_| (302, vec![("Location".into(), leak.clone())], vec![])
@@ -1521,7 +1513,7 @@ mod tests {
         match &err {
             FollowRefusal::Scope { url, .. } => {
                 assert!(
-                    url.contains("localhost") && url.contains("/leak"),
+                    url.contains("127.0.0.2") && url.contains("/leak"),
                     "refused url: {url}"
                 );
             }
@@ -1529,11 +1521,11 @@ mod tests {
         }
         assert!(
             unlisted_hits.is_empty(),
-            "unlisted host received {unlisted_hits:?}"
+            "unlisted host 127.0.0.2 received {unlisted_hits:?}"
         );
         let sentence = err.to_string();
         assert!(
-            sentence.contains("localhost") && sentence.starts_with("redirect-scope: refusing "),
+            sentence.contains("127.0.0.2") && sentence.starts_with("redirect-scope: refusing "),
             "sentence: {sentence}"
         );
     }
