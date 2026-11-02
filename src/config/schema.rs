@@ -630,6 +630,21 @@ fn read_owner_only_secret(path: &Path) -> Result<String, ConfigError> {
                 detail: format!("`{}` is not a regular file", path.display()),
             });
         }
+        // The policy this function implements *is* the mode check: no symlink,
+        // no dir, 0600 before the value is trusted. Without POSIX mode bits this
+        // build cannot make that check or tighten a loose file, and the value is
+        // a secret. Reading it anyway would state "owner-only is satisfied" from
+        // zero measurements — refuse, and name the alternative.
+        return Err(ConfigError::SecretResolution {
+            scheme: "file",
+            detail: format!(
+                "`{}`: file: secrets require an owner-only (0600) regular file and this platform \
+                 has no POSIX mode bits or ACL implementation in this build — refusing to \
+                 resolve an unverifiable secret; use `env:` or move the secret to a host where \
+                 the mode is enforced",
+                path.display()
+            ),
+        });
     }
 
     let value = std::fs::read_to_string(path)

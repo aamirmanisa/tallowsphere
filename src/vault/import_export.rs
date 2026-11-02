@@ -860,6 +860,8 @@ pub fn import_encrypted_json(
 /// Security contract (F-g1-5/-6):
 /// - The file is created/truncated with mode `0600` and the mode is re-set
 ///   explicitly after open — never umask-dependent, never world-readable.
+///   On a platform without POSIX mode bits the write **refuses**: an export
+///   whose containment cannot be established is not written at all.
 /// - If `path` is a symlink, or an existing file there is group/other
 ///   accessible, the write is refused instead of overwriting it.
 /// - `plaintext == true` emits an explicit stderr warning (every secret in
@@ -912,13 +914,18 @@ pub fn write_export_file(
     }
     #[cfg(not(unix))]
     {
-        if plaintext {
-            eprintln!(
-                "warning: writing a PLAINTEXT vault export to {} — every secret is in the clear",
-                path.display()
-            );
-        }
-        std::fs::write(path, data).map_err(|e| format!("write error on {}: {e}", path.display()))
+        // Every secret in the vault leaves through this function. On a platform
+        // with no mode bits this build cannot create the file `0600` (or tighten
+        // a pre-existing loose target), so writing it would put the whole vault
+        // on disk under whatever ACL the directory happens to carry — with a
+        // plaintext export that is every secret in the clear. Refuse.
+        let _ = (data, plaintext);
+        Err(format!(
+            "refusing to write {}: a vault export must be created owner-only (0600) and this \
+             platform has no POSIX mode bits and no ACL implementation in this build — writing \
+             it would leave the export readable by whatever the directory ACL admits",
+            path.display()
+        ))
     }
 }
 
