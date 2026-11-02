@@ -8,8 +8,20 @@
 //! `reports/egress-surface-inventory.md` is the measurement; this file is the
 //! widened meter. It does not gate any file.
 //!
-//! A file is gated if its production region (cut at the first `#[cfg(test)]`)
-//! contains `scope::require`. Comment lines are not sites.
+//! A file is gated if its production region (cut at the first test-only
+//! `#[cfg(...)]` — `#[cfg(test)]`, `#[cfg(all(test, unix))]`, or any cfg whose
+//! expression mentions the `test` token) contains `scope::require`. Comment
+//! lines are not sites.
+//!
+//! The gate is line-text, so it has no cfg *awareness*: it cannot tell a site
+//! compiled on every platform from one compiled only on Unix. `CFG_EGRESS`
+//! below closes that blind spot. It is the measured census of every
+//! egress-capable site inside a `#[cfg(...)]` span (inline or inherited from a
+//! `#[cfg(...)] mod`), each with a Windows verdict. The scanner is bidirectional
+//! and stale-checked, so a new cfg-gated egress path fails this test until it
+//! is enumerated and its other-platform behavior is stated. Measurement:
+//! `reports/egress-surface-inventory.md` ("CFG-gated egress census") and
+//! `reports/probes/cfg_unix_egress_census.py`.
 //!
 //! Negative control (the exact one-line edit that must turn this test red):
 //!
@@ -112,13 +124,39 @@ const DEBT: &[(&str, &str)] = &[
 
 const DEBT_CAP: usize = 10;
 
-/// Production region: everything before the first `#[cfg(test)]`.
-/// Matches `reports/egress-surface-inventory.md` / `inventory_scan.py`.
+/// Production region: everything before the first test-only `#[cfg(...)]`.
+///
+/// The old cut looked for the literal `#[cfg(test)]` only. That misses
+/// `#[cfg(all(test, unix))]` (cdp.rs:187, runtime/hardening.rs:110), so a
+/// test-only socket would be counted as production egress and a
+/// `scope::require` inside such a test module would mark the whole file gated.
+/// Both are false readings; the cut is now expression-based.
 fn production_region(text: &str) -> &str {
-    match text.find("#[cfg(test)]") {
-        Some(i) => &text[..i],
-        None => text,
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if let Some(expr) = cfg_attr_expr(line) {
+            if cfg_expr_mentions_test(expr) {
+                return &text[..offset];
+            }
+        }
+        offset += line.len();
     }
+    text
+}
+
+/// `#[cfg(<expr>)]` on its own line → `<expr>`. `#[cfg_attr(...)]` and
+/// `cfg!(...)` do not match.
+fn cfg_attr_expr(line: &str) -> Option<&str> {
+    let t = line.trim();
+    let rest = t.strip_prefix("#[cfg(")?;
+    let inner = rest.strip_suffix(")]")?;
+    Some(inner.trim())
+}
+
+/// True when a cfg expression names the bare `test` predicate.
+fn cfg_expr_mentions_test(expr: &str) -> bool {
+    expr.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|tok| tok == "test")
 }
 
 fn is_comment(line: &str) -> bool {
@@ -304,4 +342,789 @@ fn debt_list_is_not_stale() {
         "stale DEBT entries:\n  {}",
         stale.join("\n  ")
     );
+}
+// ── CFG-gated egress census ────────────────────────────────────────────────
+//
+// The gate above is line-text: it cannot tell a site compiled everywhere from
+// one a Windows build never sees. `CFG_EGRESS` is the measured set of every
+// egress-capable site inside a `#[cfg(...)]` span, either inline (`#[cfg(unix)]
+// fn launch`) or inherited from a `#[cfg(...)] mod` (`#[cfg(unix)] pub mod
+// sandbox_runtime;`). Each row states what the *other* platform does.
+//
+// Measured 2026-11-02 at 7f744ac with `reports/probes/cfg_unix_egress_census.py`
+// (read-only; 595 files, 271 egress-capable production sites: 14 absent on
+// Windows, 10 only on Windows, 0 under `cfg_both`). The table is a pin, not an
+// allowlist: a cfg-gated site with no row fails, a row that no longer matches a
+// site fails, and a row whose guard expression drifted fails. Adding a
+// cfg-gated egress path means adding a row that says what the other platform
+// does — that is the whole point.
+
+/// Egress primitives the cfg census must see. Wider than `REQUEST_VERBS`
+/// because platform-gated code is dominated by the classes the gate cannot
+/// model: child processes, raw sockets, UDP binds, DNS. Same order and
+/// first-class-wins rule as `reports/probes/cfg_unix_egress_census.py`.
+const CFG_EGRESS_CLASSES: &[(&str, &str)] = &[
+    ("tls", "ClientConnection::new("),
+    ("tls", "TlsConnector::new("),
+    ("tls", "TlsConnector::builder("),
+    ("quic", "quinn::Endpoint::"),
+    ("quic", ".connect(addr"),
+    ("tcp", "TcpStream::connect("),
+    ("tcp", "TcpStream::connect_timeout("),
+    ("tcp", "TcpListener::bind("),
+    ("udp", "UdpSocket::bind("),
+    ("udp", ".send_to("),
+    ("ws", "tokio_tungstenite::connect_async"),
+    ("ws", "tungstenite::connect"),
+    ("raw", "libc::socket("),
+    ("dns", "lookup_host("),
+    ("dns", "to_socket_addrs("),
+    ("dns", ".lookup_ip("),
+    ("proc", "Command::new("),
+];
+
+/// Verdict vocabulary. A row must open with one of these so the test can
+/// refuse a hand-wavy "n/a".
+const V_UNREACHABLE: &str = "unreachable:";
+const V_EQUIVALENT: &str = "equivalent:";
+const V_ONLY_WINDOWS: &str = "only-on-windows:";
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PlatformView {
+    /// The site is compiled out on Windows (`cfg(unix)`, `cfg(target_os = ...)`).
+    AbsentOnWindows,
+    /// The site is compiled only on Windows; no Unix counterpart exists.
+    OnlyOnWindows,
+}
+
+struct CfgSite {
+    file: &'static str,
+    line: usize,
+    /// The cfg expression exactly as written inside `#[cfg( ... )]`.
+    guard: &'static str,
+    /// Census class (`proc`, `raw`, `udp`, `tcp`, `dns`, ...).
+    class: &'static str,
+    view: PlatformView,
+    /// What the other platform does — one verdict, machine-checked prefix.
+    other_platform: &'static str,
+    /// Open defect or reachability note, or "".
+    note: &'static str,
+}
+
+const CFG_EGRESS: &[CfgSite] = &[
+    // ── absent on Windows ──────────────────────────────────────────────────
+    CfgSite {
+        file: "src/browser/juggler.rs",
+        line: 91,
+        guard: "unix",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: juggler.rs:223 #[cfg(not(unix))] launch returns ConnectionFailed and spawns nothing",
+        note: "open: juggler.rs has no scope::require; the Unix browser launch is ungated child-process egress",
+    },
+    CfgSite {
+        file: "src/browser/trace.rs",
+        line: 455,
+        guard: "target_os = \"macos\"",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "equivalent: trace.rs:449 #[cfg(target_os = \"windows\")] Command::new(\"cmd\")",
+        note: "local trace-viewer open; not network egress",
+    },
+    CfgSite {
+        file: "src/browser/trace.rs",
+        line: 461,
+        guard: "target_os = \"linux\"",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "equivalent: trace.rs:449 #[cfg(target_os = \"windows\")] Command::new(\"cmd\")",
+        note: "local trace-viewer open; not network egress",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 2203,
+        guard: "target_os = \"macos\"",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "equivalent: main.rs:2167 winget / main.rs:2183 choco #[cfg(target_os = \"windows\")]",
+        note: "ffmpeg package-manager install; local OS maintenance",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 2220,
+        guard: "not(any(target_os = \"windows\", target_os = \"macos\"))",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "equivalent: main.rs:2167 winget / main.rs:2183 choco #[cfg(target_os = \"windows\")]",
+        note: "ffmpeg package-manager install (apt); local OS maintenance",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 2230,
+        guard: "not(any(target_os = \"windows\", target_os = \"macos\"))",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "equivalent: main.rs:2167 winget / main.rs:2183 choco #[cfg(target_os = \"windows\")]",
+        note: "ffmpeg package-manager install (dnf); local OS maintenance",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 2240,
+        guard: "not(any(target_os = \"windows\", target_os = \"macos\"))",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "equivalent: main.rs:2167 winget / main.rs:2183 choco #[cfg(target_os = \"windows\")]",
+        note: "ffmpeg package-manager install (pacman); local OS maintenance",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 4813,
+        guard: "unix",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "equivalent: main.rs:4973/:4984/:4992 #[cfg(windows)] icacls save/restore",
+        note: "local file metadata preservation; not network egress",
+    },
+    CfgSite {
+        file: "src/runtime/io_uring_runtime.rs",
+        line: 123,
+        guard: "all(target_os = \"linux\", feature = \"io-uring-backend\")",
+        class: "proc",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: fn is cfg'd out and is_available() returns false off Linux",
+        note: "local `uname -r` probe; not network egress",
+    },
+    CfgSite {
+        file: "src/stdlib/topology.rs",
+        line: 593,
+        guard: "target_os = \"linux\"",
+        class: "raw",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: topology.rs:1001 #[cfg(not(target_os = \"linux\"))] mod raw returns Unsupported",
+        note: "open: raw ICMPv6 socket; icmpv6_echo has no scope::require",
+    },
+    CfgSite {
+        file: "src/stdlib/topology.rs",
+        line: 701,
+        guard: "target_os = \"linux\"",
+        class: "udp",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: topology.rs:1001 #[cfg(not(target_os = \"linux\"))] mod raw returns Unsupported",
+        note: "udp_source_v6 routes a connect() to select a source address; sends no packet",
+    },
+    CfgSite {
+        file: "src/stdlib/topology.rs",
+        line: 714,
+        guard: "target_os = \"linux\"",
+        class: "raw",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: topology.rs:1001 #[cfg(not(target_os = \"linux\"))] mod raw returns Unsupported",
+        note: "open: raw TCP SYN socket; RawSyn::open has no scope::require",
+    },
+    CfgSite {
+        file: "src/stdlib/topology.rs",
+        line: 743,
+        guard: "target_os = \"linux\"",
+        class: "udp",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: topology.rs:1001 #[cfg(not(target_os = \"linux\"))] mod raw returns Unsupported",
+        note: "RawSyn::source_for routes a connect() to select a source address; sends no packet",
+    },
+    CfgSite {
+        file: "src/stdlib/topology.rs",
+        line: 832,
+        guard: "target_os = \"linux\"",
+        class: "raw",
+        view: PlatformView::AbsentOnWindows,
+        other_platform: "unreachable: topology.rs:1001 #[cfg(not(target_os = \"linux\"))] mod raw returns Unsupported",
+        note: "open: raw ICMP socket; icmp_echo has no scope::require",
+    },
+    // ── only on Windows (the counterparts, so the pair is auditable) ───────
+    CfgSite {
+        file: "src/browser/process.rs",
+        line: 1397,
+        guard: "windows",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: tasklist liveness probe; Unix uses libc::kill at :1381",
+        note: "local process liveness; not network egress",
+    },
+    CfgSite {
+        file: "src/browser/trace.rs",
+        line: 449,
+        guard: "target_os = \"windows\"",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: opens the trace viewer via cmd",
+        note: "local viewer open; not network egress",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 2167,
+        guard: "target_os = \"windows\"",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: winget install",
+        note: "ffmpeg package-manager install; local OS maintenance",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 2183,
+        guard: "target_os = \"windows\"",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: choco install",
+        note: "ffmpeg package-manager install; local OS maintenance",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 4973,
+        guard: "windows",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: icacls availability probe",
+        note: "local file metadata preservation; not network egress",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 4984,
+        guard: "windows",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: icacls /save",
+        note: "local file metadata preservation; not network egress",
+    },
+    CfgSite {
+        file: "src/main.rs",
+        line: 4992,
+        guard: "windows",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: icacls /restore",
+        note: "local file metadata preservation; not network egress",
+    },
+    CfgSite {
+        file: "src/pkg/cache.rs",
+        line: 575,
+        guard: "windows",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: cmd to create a directory junction",
+        note: "local package-cache link; not network egress",
+    },
+    CfgSite {
+        file: "src/pkg/cache.rs",
+        line: 618,
+        guard: "windows",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: cmd to create a directory link",
+        note: "local package-cache link; not network egress",
+    },
+    CfgSite {
+        file: "src/stdlib/transfer.rs",
+        line: 718,
+        guard: "windows",
+        class: "proc",
+        view: PlatformView::OnlyOnWindows,
+        other_platform: "only-on-windows: powershell VSS copy",
+        note: "local file copy; not network egress",
+    },
+];
+
+const CFG_EGRESS_CAP: usize = 24;
+
+#[derive(Clone, Debug)]
+struct FoundCfgSite {
+    line: usize,
+    class: &'static str,
+    guard: String,
+}
+
+#[derive(Clone, Debug)]
+struct ModGuard {
+    name: String,
+    path: Option<String>,
+    guard: String,
+}
+
+fn strip_line_comment(line: &str) -> &str {
+    match line.find("//") {
+        Some(i) => &line[..i],
+        None => line,
+    }
+}
+
+/// 0-based last line of the item starting at `start`, by brace / `;` matching.
+/// Returns `(line, ended_with_semicolon)`.
+fn item_end(lines: &[&str], start: usize) -> (usize, bool) {
+    let mut depth: i32 = 0;
+    let mut seen_open = false;
+    let mut in_block = false;
+    let mut i = start;
+    while i < lines.len() {
+        let raw = lines[i];
+        if in_block {
+            if raw.contains("*/") {
+                in_block = false;
+            }
+            i += 1;
+            continue;
+        }
+        if raw.contains("/*") && !raw.contains("*/") {
+            in_block = true;
+            i += 1;
+            continue;
+        }
+        let code = strip_line_comment(raw);
+        if !seen_open && depth == 0 && code.trim_end().ends_with(';') {
+            return (i, true);
+        }
+        for ch in code.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    seen_open = true;
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 && seen_open {
+                        return (i, false);
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    (lines.len().saturating_sub(1), false)
+}
+
+fn path_attr(line: &str) -> Option<&str> {
+    let t = line.trim();
+    let rest = t.strip_prefix("#[path")?.trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    rest.split('"').next()
+}
+
+fn mod_decl(line: &str) -> Option<&str> {
+    let t = line.trim();
+    let t = t
+        .strip_prefix("pub(crate) ")
+        .or_else(|| t.strip_prefix("pub(super) "))
+        .or_else(|| t.strip_prefix("pub "))
+        .unwrap_or(t);
+    let rest = t.strip_prefix("mod ")?;
+    let name = rest.strip_suffix(';')?.trim();
+    if name.is_empty() || name.contains('{') || name.contains(' ') {
+        return None;
+    }
+    Some(name)
+}
+
+/// HTTP egress, matching the probe's `(blocking::)?` handling.
+fn has_cfg_http(line: &str) -> bool {
+    const VERBS: &[&str] = &[
+        "get(",
+        "post(",
+        "put(",
+        "delete(",
+        "head(",
+        "patch(",
+        "request(",
+        "agent(",
+        "agent_with_timeouts(",
+        "Agent::config_builder(",
+        "Client::new",
+        "Client::builder",
+    ];
+    for prefix in ["egress_http::", "ureq::", "reqwest::"] {
+        let mut hay = line;
+        while let Some(pos) = hay.find(prefix) {
+            let mut rest = &hay[pos + prefix.len()..];
+            if prefix == "reqwest::" {
+                if let Some(r) = rest.strip_prefix("blocking::") {
+                    rest = r;
+                }
+            }
+            if VERBS.iter().any(|v| rest.starts_with(v)) {
+                return true;
+            }
+            hay = &hay[pos + prefix.len()..];
+        }
+    }
+    false
+}
+
+fn classify_cfg_line(line: &str) -> Option<&'static str> {
+    if has_cfg_http(line) {
+        return Some("http");
+    }
+    for (class, needle) in CFG_EGRESS_CLASSES {
+        if line.contains(needle) {
+            return Some(class);
+        }
+    }
+    None
+}
+
+/// Inline cfg spans: every line that invokes an egress primitive inside an
+/// attribute's item span, plus any `#[cfg(...)] mod X;` declarations.
+fn scan_cfg_spans(text: &str) -> (Vec<FoundCfgSite>, Vec<ModGuard>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let n_prod = production_region(text).lines().count();
+    // line -> (span length, guard, class); the innermost (shortest) span wins.
+    let mut sites: BTreeMap<usize, (usize, String, &'static str)> = BTreeMap::new();
+    let mut mods = Vec::new();
+
+    for i in 0..lines.len() {
+        let Some(expr) = cfg_attr_expr(lines[i]) else {
+            continue;
+        };
+        if cfg_expr_mentions_test(expr) {
+            continue;
+        }
+        let mut j = i + 1;
+        let mut pattr: Option<String> = None;
+        while j < lines.len() {
+            let t = lines[j].trim();
+            if t.is_empty() || t.starts_with("//") {
+                j += 1;
+                continue;
+            }
+            if t.starts_with("#[") {
+                if let Some(p) = path_attr(lines[j]) {
+                    pattr = Some(p.to_string());
+                }
+                j += 1;
+                continue;
+            }
+            break;
+        }
+        if j >= lines.len() {
+            break;
+        }
+        let (end, semi) = item_end(&lines, j);
+        for k in i..=end {
+            if k + 1 > n_prod {
+                continue;
+            }
+            let code = strip_line_comment(lines[k]);
+            let t = code.trim();
+            if t.is_empty() || t.starts_with("//") || cfg_attr_expr(code).is_some() {
+                continue;
+            }
+            let Some(class) = classify_cfg_line(code) else {
+                continue;
+            };
+            let span = end - i;
+            sites
+                .entry(k + 1)
+                .and_modify(|e| {
+                    if span < e.0 {
+                        *e = (span, expr.to_string(), class);
+                    }
+                })
+                .or_insert((span, expr.to_string(), class));
+        }
+        if semi {
+            if let Some(name) = mod_decl(lines[j]) {
+                mods.push(ModGuard {
+                    name: name.to_string(),
+                    path: pattr,
+                    guard: expr.to_string(),
+                });
+            }
+        }
+    }
+
+    (
+        sites
+            .into_iter()
+            .map(|(line, (_, guard, class))| FoundCfgSite { line, class, guard })
+            .collect(),
+        mods,
+    )
+}
+
+fn path_join(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
+fn normalize_rel(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
+}
+
+fn resolve_mod(decl_rel: &str, name: &str, pattr: Option<&str>) -> Vec<String> {
+    let dir = decl_rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let mut out = Vec::new();
+    if let Some(p) = pattr {
+        out.push(normalize_rel(&path_join(dir, p)));
+    }
+    out.push(normalize_rel(&path_join(dir, &format!("{name}.rs"))));
+    out.push(normalize_rel(&path_join(dir, &format!("{name}/mod.rs"))));
+    out
+}
+
+/// Every `mod X;` in a file (cfg-attributed or not), for guard inheritance.
+fn all_mod_decls(text: &str) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    let mut pending_path: Option<String> = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("//") {
+            continue;
+        }
+        if t.starts_with("#[") {
+            if let Some(p) = path_attr(line) {
+                pending_path = Some(p.to_string());
+            }
+            continue;
+        }
+        if t.is_empty() {
+            continue;
+        }
+        if let Some(name) = mod_decl(line) {
+            out.push((name.to_string(), pending_path.take()));
+        } else if !t.starts_with("#![") {
+            pending_path = None;
+        }
+    }
+    out
+}
+
+/// File-level guards: `#[cfg(...)] mod X;` resolves to the module file, and a
+/// module declared inside a guarded file inherits that file's guard.
+fn file_guards(files: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut guards: BTreeMap<String, String> = BTreeMap::new();
+    let mut direct: Vec<(String, String, Option<String>, String)> = Vec::new();
+    for (rel, text) in files {
+        let (_, mods) = scan_cfg_spans(text);
+        for m in mods {
+            direct.push((rel.clone(), m.name, m.path, m.guard));
+        }
+    }
+    // Seed from direct cfg-mod declarations.
+    for (decl_rel, name, pattr, guard) in &direct {
+        for cand in resolve_mod(decl_rel, name, pattr.as_deref()) {
+            if files.contains_key(&cand) {
+                guards.entry(cand).or_insert_with(|| guard.clone());
+                break;
+            }
+        }
+    }
+    // Propagate through unguarded children of a guarded file.
+    loop {
+        let mut changed = false;
+        for (rel, guard) in guards.clone() {
+            let Some(text) = files.get(&rel) else {
+                continue;
+            };
+            for (name, pattr) in all_mod_decls(text) {
+                for cand in resolve_mod(&rel, &name, pattr.as_deref()) {
+                    if files.contains_key(&cand) && !guards.contains_key(&cand) {
+                        guards.insert(cand, guard.clone());
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    guards
+}
+
+/// Every cfg-gated egress site in the tree, with its effective guard.
+fn cfg_egress_sites(files: &BTreeMap<String, String>) -> Vec<(&str, FoundCfgSite)> {
+    let guards = file_guards(files);
+    let mut out = Vec::new();
+    for (rel, text) in files {
+        let (inline, _) = scan_cfg_spans(text);
+        let inline_lines: BTreeSet<usize> = inline.iter().map(|s| s.line).collect();
+        for site in inline {
+            out.push((rel.as_str(), site));
+        }
+        let Some(guard) = guards.get(rel) else {
+            continue;
+        };
+        let n_prod = production_region(text).lines().count();
+        for (idx, line) in text.lines().enumerate() {
+            let lineno = idx + 1;
+            if lineno > n_prod {
+                break;
+            }
+            if inline_lines.contains(&lineno) || is_comment(line) {
+                continue;
+            }
+            if let Some(class) = classify_cfg_line(line) {
+                out.push((
+                    rel.as_str(),
+                    FoundCfgSite {
+                        line: lineno,
+                        class,
+                        guard: guard.clone(),
+                    },
+                ));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn cfg_gated_egress_sites_are_enumerated() {
+    assert!(
+        CFG_EGRESS.len() <= CFG_EGRESS_CAP,
+        "CFG_EGRESS has {} entries; more than {CFG_EGRESS_CAP} means the census is growing faster than it is audited",
+        CFG_EGRESS.len()
+    );
+
+    let files = load_src();
+    let found = cfg_egress_sites(&files);
+
+    let mut problems = Vec::new();
+    let mut seen: BTreeSet<(String, usize)> = BTreeSet::new();
+
+    for (file, site) in &found {
+        let key = (file.to_string(), site.line);
+        if !seen.insert(key) {
+            problems.push(format!(
+                "{file}:{}: classified twice — the scanner or the census has a duplicate",
+                site.line
+            ));
+            continue;
+        }
+        let row = CFG_EGRESS
+            .iter()
+            .find(|r| r.file == *file && r.line == site.line);
+        match row {
+            None => problems.push(format!(
+                "{file}:{}: new cfg-gated egress site [{}] under `{}` has no CFG_EGRESS row — \
+                 state what the other platform does before it can land",
+                site.line, site.class, site.guard
+            )),
+            Some(r) => {
+                if r.guard != site.guard {
+                    problems.push(format!(
+                        "{file}:{}: guard drifted — census `{}`, source `{}`",
+                        site.line, r.guard, site.guard
+                    ));
+                }
+                if r.class != site.class {
+                    problems.push(format!(
+                        "{file}:{}: class drifted — census `{}`, source `{}`",
+                        site.line, r.class, site.class
+                    ));
+                }
+            }
+        }
+    }
+
+    for row in CFG_EGRESS {
+        if !seen.contains(&(row.file.to_string(), row.line)) {
+            problems.push(format!(
+                "{}:{}: stale CFG_EGRESS row — no cfg-gated egress site at that line",
+                row.file, row.line
+            ));
+        }
+        let ok_prefix = row.other_platform.starts_with(V_UNREACHABLE)
+            || row.other_platform.starts_with(V_EQUIVALENT)
+            || row.other_platform.starts_with(V_ONLY_WINDOWS);
+        if !ok_prefix {
+            problems.push(format!(
+                "{}:{}: other-platform verdict must start with {V_UNREACHABLE:?}, \
+                 {V_EQUIVALENT:?} or {V_ONLY_WINDOWS:?}: {:?}",
+                row.file, row.line, row.other_platform
+            ));
+        }
+        if row.note.is_empty() {
+            problems.push(format!(
+                "{}:{}: every cfg row carries a one-line note — say why it is safe or name the open defect",
+                row.file, row.line
+            ));
+        }
+        let expected_view = if row.view == PlatformView::OnlyOnWindows {
+            V_ONLY_WINDOWS
+        } else {
+            ""
+        };
+        if !expected_view.is_empty() && !row.other_platform.starts_with(expected_view) {
+            problems.push(format!(
+                "{}:{}: OnlyOnWindows row must carry an only-on-windows verdict",
+                row.file, row.line
+            ));
+        }
+    }
+
+    eprintln!(
+        "cfg census: {} sites scanned, {} rows ({} absent, {} windows-only, cap {})",
+        found.len(),
+        CFG_EGRESS.len(),
+        CFG_EGRESS
+            .iter()
+            .filter(|r| r.view == PlatformView::AbsentOnWindows)
+            .count(),
+        CFG_EGRESS
+            .iter()
+            .filter(|r| r.view == PlatformView::OnlyOnWindows)
+            .count(),
+        CFG_EGRESS_CAP
+    );
+
+    assert!(
+        problems.is_empty(),
+        "cfg-gated egress census is out of date:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+#[test]
+fn production_region_cuts_every_test_only_cfg() {
+    // The forms that appear in this tree, plus the two a future author might use.
+    for marker in [
+        "#[cfg(test)]",
+        "#[cfg(all(test, unix))]",
+        "#[cfg(any(test, feature = \"harness\"))]",
+    ] {
+        let text = format!("fn prod() {{}}\n{marker}\nmod tests {{}}");
+        assert_eq!(
+            production_region(&text),
+            "fn prod() {}\n",
+            "production_region must cut at {marker}"
+        );
+    }
+    // A platform cfg is not a test cut.
+    let text = "fn prod() {}\n#[cfg(unix)]\nfn f() {}\n";
+    assert_eq!(production_region(text), text);
+}
+
+#[test]
+fn cfg_scanner_sees_a_planted_unix_site() {
+    // Negative control for the scanner itself: if this stops finding the
+    // planted site, the census above is green by blindness, not by coverage.
+    let text =
+        "fn a() {}\n#[cfg(unix)]\nfn launch() {\n    let _ = Command::new(\"browser\");\n}\n";
+    let (sites, _) = scan_cfg_spans(text);
+    assert_eq!(sites.len(), 1, "scanner missed the planted site: {sites:?}");
+    assert_eq!(sites[0].line, 4);
+    assert_eq!(sites[0].class, "proc");
+    assert_eq!(sites[0].guard, "unix");
 }
