@@ -13,7 +13,6 @@
 //! `#[allow(unsafe_code)]` and a `// SAFETY:` comment documenting the
 //! invariants being upheld.
 
-#[cfg(unix)]
 use crate::error::CryptoError;
 use crate::error::Result;
 
@@ -66,8 +65,9 @@ pub fn prevent_core_dumps() -> Result<()> {
 /// # Platform Support
 ///
 /// - **Unix**: Uses `mlock(2)` to pin pages
-/// - **Windows**: No-op (VirtualLock deferred to future release)
-/// - **Other**: No-op
+/// - **Other**: **refuses** — this build has no `VirtualLock` implementation, so
+///   returning `Ok` would certify a secrecy property the OS never promised
+///   (the pages stay swappable and land in a swap file or a hibernation image).
 #[allow(unsafe_code)]
 pub fn lock_memory(ptr: *const u8, len: usize) -> Result<()> {
     if len == 0 || ptr.is_null() {
@@ -95,10 +95,19 @@ pub fn lock_memory(ptr: *const u8, len: usize) -> Result<()> {
 
     #[cfg(not(unix))]
     {
-        // Windows VirtualLock and other platforms: deferred
         let _ = (ptr, len);
+        // Fail closed: this build has no `VirtualLock`/`mlock` equivalent, so
+        // there is no mechanism behind the claim. A silent `Ok(())` here is the
+        // "safety property that lives in a document" failure — a caller that
+        // `?`-propagates would believe the key page cannot be swapped.
+        return Err(CryptoError::Io(
+            "lock_memory: page locking (mlock/VirtualLock) is not implemented in this \
+             build — refusing rather than reporting key material as non-swappable"
+                .to_string(),
+        ));
     }
 
+    #[cfg(unix)]
     Ok(())
 }
 
@@ -129,6 +138,10 @@ pub fn unlock_memory(ptr: *const u8, len: usize) -> Result<()> {
     #[cfg(not(unix))]
     {
         let _ = (ptr, len);
+        // Nothing was ever locked: `lock_memory` refuses on this platform, so
+        // there is no lock to release. `Ok` here states a fact ("these pages are
+        // swappable, which they already were") rather than certifying a
+        // capability, so it is not the silent-success shape.
     }
 
     Ok(())

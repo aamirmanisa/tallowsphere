@@ -1066,9 +1066,14 @@ fn secret_target_finding(path: &Path) -> Option<(String, String)> {
 /// On-disk protection of the config artifact itself (zero-trust pack, W7202):
 /// `None` = nothing to report. Unix metadata only; a non-file or unreadable
 /// source is left to the kernel's own diagnostics.
+///
+/// On a platform without POSIX mode bits the check cannot be measured. The old
+/// arm returned `None` — i.e. "the artifact is fine" — from zero measurements.
+/// It now reports the gap as a finding: a lint that did not look must not read
+/// as clean.
 fn artifact_mode_finding(path: &Path) -> Option<(String, String)> {
     #[cfg(unix)]
-    {
+    let verdict: Option<(String, String)> = {
         use std::os::unix::fs::PermissionsExt;
         let meta = std::fs::metadata(path).ok()?;
         if !meta.is_file() {
@@ -1076,7 +1081,7 @@ fn artifact_mode_finding(path: &Path) -> Option<(String, String)> {
         }
         let mode = meta.permissions().mode() & 0o777;
         if mode & 0o077 != 0 {
-            return Some((
+            Some((
                 format!(
                     "artifact `{}` has group/other access (mode {mode:o}) — a local account can \
                      read the declared posture and secret-reference layout; the kernel writes \
@@ -1084,14 +1089,31 @@ fn artifact_mode_finding(path: &Path) -> Option<(String, String)> {
                     path.display()
                 ),
                 format!("chmod 0600 {}", path.display()),
-            ));
+            ))
+        } else {
+            None
         }
-    }
+    };
     #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    None
+    let verdict: Option<(String, String)> = {
+        if !path.is_file() {
+            return None;
+        }
+        Some((
+            format!(
+                "artifact `{}` permissions could not be verified: this platform has no POSIX \
+                 mode bits and this build has no ACL probe, so group/other access to the \
+                 declared posture and secret-reference layout is unmeasured",
+                path.display()
+            ),
+            format!(
+                "confirm the artifact is protected by an owner-only ACL (e.g. `icacls \
+                 \"{}\"`) — 0600 is enforced only on unix targets",
+                path.display()
+            ),
+        ))
+    };
+    verdict
 }
 
 /// Directory verdict for a `file:` secret target (zero-trust pack, W7203):
@@ -1107,34 +1129,53 @@ fn secret_dir_finding(target: &Path) -> Option<(String, String)> {
     if !meta.is_dir() {
         return None;
     }
-    let mode = {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            meta.permissions().mode() & 0o777
-        }
-        #[cfg(not(unix))]
-        {
-            0o700
+    // A directory verdict needs the mode. Without POSIX mode bits the check
+    // cannot be measured; the old arm substituted a clean-looking `0o700`,
+    // which made the predicate below unsatisfiable and reported every non-unix
+    // path as clean. Report the gap instead.
+    #[cfg(unix)]
+    let verdict: Option<(String, String)> = {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o022 != 0 {
+            Some((
+                format!(
+                    "`file:` target `{}` sits in `{}` (mode {mode:o}) — the directory is writable by \
+                     group/other, so another local account can replace or pre-create the target; \
+                     0600 on the file does not protect the path",
+                    target.display(),
+                    parent.display()
+                ),
+                format!(
+                    "move the target into an owner-only directory (0700): `chmod 0700 {}` — or use \
+                     an operator-controlled secrets directory (e.g. `/run/secrets`)",
+                    parent.display()
+                ),
+            ))
+        } else {
+            None
         }
     };
-    if mode & 0o022 != 0 {
-        return Some((
+    #[cfg(not(unix))]
+    let verdict: Option<(String, String)> = {
+        let _ = meta;
+        Some((
             format!(
-                "`file:` target `{}` sits in `{}` (mode {mode:o}) — the directory is writable by \
-                 group/other, so another local account can replace or pre-create the target; \
-                 0600 on the file does not protect the path",
+                "`file:` target `{}` sits in `{}`; owner-only could not be verified — this \
+                 platform has no POSIX mode bits and this build has no ACL probe, so another \
+                 local account may be able to replace or pre-create the target",
                 target.display(),
                 parent.display()
             ),
             format!(
-                "move the target into an owner-only directory (0700): `chmod 0700 {}` — or use \
-                 an operator-controlled secrets directory (e.g. `/run/secrets`)",
+                "confirm `{}` is protected by an owner-only ACL (e.g. `icacls \"{}\"`), or keep \
+                 the target on a host where 0700 is enforced",
+                parent.display(),
                 parent.display()
             ),
-        ));
-    }
-    None
+        ))
+    };
+    verdict
 }
 
 /// Static secret-path shape checks (secure-by-default pack, row #196):
@@ -1216,34 +1257,52 @@ fn artifact_dir_finding(path: &Path) -> Option<(String, String)> {
     if !meta.is_dir() {
         return None;
     }
-    let mode = {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            meta.permissions().mode() & 0o777
-        }
-        #[cfg(not(unix))]
-        {
-            0o700
+    // Same reasoning as `secret_dir_finding`: a constant `0o700` on the
+    // non-unix arm made the predicate unsatisfiable, so this check reported
+    // every non-unix artifact directory as clean. Unmeasured is not clean.
+    #[cfg(unix)]
+    let verdict: Option<(String, String)> = {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o022 != 0 {
+            Some((
+                format!(
+                    "artifact `{}` sits in `{}` (mode {mode:o}) — the directory is writable by \
+                     group/other, so another local account can replace the config by name; the \
+                     loaded posture (profile floors, secret-reference layout) is not protected by \
+                     the artifact's own mode",
+                    path.display(),
+                    parent.display()
+                ),
+                format!(
+                    "chmod 0700 {} — or keep the artifact in an owner-only config directory",
+                    parent.display()
+                ),
+            ))
+        } else {
+            None
         }
     };
-    if mode & 0o022 != 0 {
-        return Some((
+    #[cfg(not(unix))]
+    let verdict: Option<(String, String)> = {
+        let _ = meta;
+        Some((
             format!(
-                "artifact `{}` sits in `{}` (mode {mode:o}) — the directory is writable by \
-                 group/other, so another local account can replace the config by name; the \
-                 loaded posture (profile floors, secret-reference layout) is not protected by \
-                 the artifact's own mode",
+                "artifact `{}` sits in `{}`; owner-only could not be verified — this platform has \
+                 no POSIX mode bits and this build has no ACL probe, so another local account may \
+                 be able to replace the config by name",
                 path.display(),
                 parent.display()
             ),
             format!(
-                "chmod 0700 {} — or keep the artifact in an owner-only config directory",
+                "confirm `{}` is protected by an owner-only ACL (e.g. `icacls \"{}\"`), or keep \
+                 the artifact in a directory where 0700 is enforced",
+                parent.display(),
                 parent.display()
             ),
-        ));
-    }
-    None
+        ))
+    };
+    verdict
 }
 
 /// Operator fix suggestions for the kernel's own codes (KB-1 block).
