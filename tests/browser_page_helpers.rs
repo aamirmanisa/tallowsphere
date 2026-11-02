@@ -1,6 +1,6 @@
 //! End-to-end tests for the live-page helpers (`browser.page_*`).
 //!
-//! These run the shipped binary against a local `file://` fixture, so they
+//! These run the shipped binary against a local loopback fixture, so they
 //! exercise the real path: interpreter → current-page registry → CDP →
 //! Chromium. That is the path the manual probes used during the 2026-10-22
 //! surface pass took, and until now none of it lived in `cargo test`.
@@ -9,12 +9,19 @@
 //! browser, and pretending otherwise would make CI red for an absent
 //! dependency rather than a broken feature.
 
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 fn chrome_available() -> bool {
     let path = tallow::browser::process::find_chrome_path();
     path.is_file()
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 fn fixture_dir() -> PathBuf {
@@ -24,6 +31,11 @@ fn fixture_dir() -> PathBuf {
 }
 
 /// Run a `.tl` program through the shipped binary and return stdout.
+///
+/// The child runs from the workspace root: the scope gate resolves
+/// `configs/tallow/scope/authorized-hosts.toml` relative to cwd. Loopback
+/// navigation also needs `TALLOW_ALLOW_DIRECT=1` — the browser zone otherwise
+/// routes 127.0.0.1 through Tor, which refuses it.
 fn run_program(source: &str, name: &str) -> String {
     let dir = fixture_dir();
     let program = dir.join(format!("{name}.tl"));
@@ -31,6 +43,8 @@ fn run_program(source: &str, name: &str) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_tallow"))
         .arg("run")
         .arg(&program)
+        .current_dir(workspace_root())
+        .env("TALLOW_ALLOW_DIRECT", "1")
         .output()
         .expect("run tallow");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -42,24 +56,41 @@ fn run_program(source: &str, name: &str) -> String {
     stdout
 }
 
-fn fixture_html() -> String {
-    let dir = fixture_dir();
-    let file = dir.join("fixture.html");
-    std::fs::write(
-        &file,
-        concat!(
-            "<html><head><title>Fixture</title>",
-            "<script type=\"application/ld+json\">{\"@type\":\"Article\",\"name\":\"T\"}</script>",
-            "</head><body><h1>Hello</h1>",
-            "<p class=\"x\">A</p><p class=\"x\">B</p>",
-            "<a rel=\"next\" href=\"/page/2\">Next</a></body></html>"
-        ),
-    )
-    .expect("write fixture");
-    format!("file://{}", file.display())
+const FIXTURE_HTML: &str = concat!(
+    "<html><head><title>Fixture</title>",
+    "<script type=\"application/ld+json\">{\"@type\":\"Article\",\"name\":\"T\"}</script>",
+    "</head><body><h1>Hello</h1>",
+    "<p class=\"x\">A</p><p class=\"x\">B</p>",
+    "<a rel=\"next\" href=\"/page/2\">Next</a></body></html>"
+);
+
+/// Serve the extractor fixture on loopback. `file://` is not in the
+/// authorization register, so `page.goto` would refuse before CDP; 127.0.0.1
+/// is the grant this workspace already ships.
+fn serve_fixture() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                FIXTURE_HTML.len(),
+                FIXTURE_HTML
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    format!("http://127.0.0.1:{port}/")
 }
 
-const PRELUDE: &str = r#"
+/// Plan annotations attach to the next item. E5004/E5100 require them on
+/// `main`, not on a helper — so the helper sits below `main`.
+const PLAN: &str = r#"
+@cra_class(.default)
 @legal(
     basis:         .public_data,
     purpose:       "exercise live page helpers against a local fixture",
@@ -67,13 +98,26 @@ const PRELUDE: &str = r#"
     robots_txt:    .respect,
     rate_limit:    1.per_second
 )
+@persona(id: "page-helpers", cover_class: .researcher, compartment: "helpers", fingerprint_seed: "page-helpers-1102")
+@burn_plan(persona: "page-helpers", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
+@fingerprint_policy(policy: .normalize, bot_identity: "TallowPageHelpers/1.0 (+https://tallow.invalid/bot)", network: .monitored)
+@stealth(profile: .chrome_windows, evasions: .all)
+"#;
+
+/// `open_page` returns `Page`, so it cannot `bail` (E0126). Unwrap launch /
+/// new_page / goto the same way the sibling live suites do.
+const OPEN_PAGE: &str = r#"
 fn open_page(url: String) -> Page {
-    let b = Browser.launch(true) match { Ok(b) -> b, Err(e) -> { bail "launch: {e}" } }
-    let p = b.new_page() match { Ok(p) -> p, Err(e) -> { bail "page: {e}" } }
-    p.goto(url) match { Ok(_) -> (), Err(e) -> { bail "goto: {e}" } }
+    let b = Browser.launch(true)
+    let p = b.new_page()
+    p.goto(url)
     return p
 }
 "#;
+
+fn live_program(url: &str, body: &str) -> String {
+    format!("{PLAN}\nfn main() {{\n    let p = open_page(\"{url}\")\n    {body}\n}}\n{OPEN_PAGE}")
+}
 
 #[test]
 fn extractors_read_the_live_document() {
@@ -81,9 +125,10 @@ fn extractors_read_the_live_document() {
         eprintln!("skipping: no Chrome on this machine");
         return;
     }
-    let url = fixture_html();
-    let program = format!(
-        "{PRELUDE}\nfn main() {{\n    let p = open_page(\"{url}\")\n    print(browser.page_extract_all_text(\"p.x\"))\n    print(browser.page_extract_all_attrs(\"p.x\", [\"class\"]))\n    print(browser.page_extract_all_text(\"h1\"))\n}}\n"
+    let url = serve_fixture();
+    let program = live_program(
+        &url,
+        "print(browser.page_extract_all_text(\"p.x\"))\n    print(browser.page_extract_all_attrs(\"p.x\", [\"class\"]))\n    print(browser.page_extract_all_text(\"h1\"))",
     );
     let out = run_program(&program, "extractors");
     assert!(out.contains("[\"A\", \"B\"]"), "text extraction: {out}");
@@ -97,9 +142,10 @@ fn structured_data_and_snapshot_read_the_live_document() {
         eprintln!("skipping: no Chrome on this machine");
         return;
     }
-    let url = fixture_html();
-    let program = format!(
-        "{PRELUDE}\nfn main() {{\n    let p = open_page(\"{url}\")\n    let sd = browser.page_structured_data()\n    print(sd.has_json_ld)\n    let dom = browser.page_capture_dom_snapshot()\n    print(dom.len() > 100)\n}}\n"
+    let url = serve_fixture();
+    let program = live_program(
+        &url,
+        "let sd = browser.page_structured_data()\n    print(sd.has_json_ld)\n    let dom = browser.page_capture_dom_snapshot()\n    print(dom.len() > 100)",
     );
     let out = run_program(&program, "structured");
     assert!(out.contains("true"), "json-ld detection: {out}");
@@ -111,9 +157,10 @@ fn pagination_and_consent_answer_on_a_fixture() {
         eprintln!("skipping: no Chrome on this machine");
         return;
     }
-    let url = fixture_html();
-    let program = format!(
-        "{PRELUDE}\nfn main() {{\n    let p = open_page(\"{url}\")\n    let pg = browser.page_detect_pagination()\n    print(pg.strategy)\n    print(browser.page_handle_cookie_consent(\"accept\"))\n}}\n"
+    let url = serve_fixture();
+    let program = live_program(
+        &url,
+        "let pg = browser.page_detect_pagination()\n    print(pg.strategy)\n    print(browser.page_handle_cookie_consent(\"accept\"))",
     );
     let out = run_program(&program, "pagination");
     assert!(out.contains("next_button"), "pagination strategy: {out}");
@@ -127,9 +174,10 @@ fn evaluate_preserves_javascript_types() {
         eprintln!("skipping: no Chrome on this machine");
         return;
     }
-    let url = fixture_html();
-    let program = format!(
-        "{PRELUDE}\nfn main() {{\n    let p = open_page(\"{url}\")\n    print(p.evaluate(\"typeof document.title\"))\n    print(p.evaluate(\"1 + 41\"))\n    print(p.evaluate(\"document.querySelectorAll('p.x').length\"))\n}}\n"
+    let url = serve_fixture();
+    let program = live_program(
+        &url,
+        "print(p.evaluate(\"typeof document.title\"))\n    print(p.evaluate(\"1 + 41\"))\n    print(p.evaluate(\"document.querySelectorAll('p.x').length\"))",
     );
     let out = run_program(&program, "evaluate");
     assert!(out.contains("\"string\""), "string result: {out}");
@@ -209,6 +257,10 @@ fn main() {
 /// type a match-arm binding that came from one of these calls, so it refuses
 /// the build by name and `tallow run` falls back here. Asserting the
 /// interpreter is asserting what every program actually gets.
+///
+/// The interpreter still wraps these helpers in `Ok` (measured: `.loaded` on
+/// the bare call is `unknown method: .loaded() on Ok`). `bail` is legal only
+/// in a `Result`-returning function (E0126), so the body lives in `run`.
 #[test]
 fn struct_returning_helpers_return_the_declared_fields() {
     if !chrome_available() {
@@ -223,6 +275,9 @@ fn struct_returning_helpers_return_the_declared_fields() {
 @fingerprint_policy(policy: .normalize, bot_identity: "TallowParity/1.0 (+https://tallow.invalid/bot)", network: .monitored)
 @stealth(profile: .chrome_windows, evasions: .all)
 fn main() {
+    run() match { Ok(_) -> (), Err(e) -> { print(e) } }
+}
+fn run() -> Result<i64> {
     let b = Browser.launch(true)
     let p = b.new_page()
     let set = browser.page_set_content("<h1>Hi</h1>") match { Ok(v) -> v, Err(e) -> { bail "set: {e}" } }
@@ -241,6 +296,7 @@ fn main() {
     let tag = browser.page_add_style_tag("h1") match { Ok(v) -> v, Err(e) -> { bail "tag: {e}" } }
     print(tag.kind)
     b.close()
+    Ok(0)
 }
 "#;
     let dir = fixture_dir();
@@ -250,6 +306,8 @@ fn main() {
         .arg("run")
         .arg("--interpret")
         .arg(&file)
+        .current_dir(workspace_root())
+        .env("TALLOW_ALLOW_DIRECT", "1")
         .output()
         .expect("run tallow");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
