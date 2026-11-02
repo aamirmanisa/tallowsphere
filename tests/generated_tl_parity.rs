@@ -17,7 +17,7 @@ import tallow.http
 
 @legal(basis: .public_data, purpose: "generated parity fixture")
 @cra_class(.L1)
-fn main() {
+fn main() with Net(batch) {
     let target_urls = ["http://127.0.0.1:9/alpha", "http://127.0.0.1:9/beta"]
     let headers = {"Accept": "text/plain", "User-Agent": "tallow-generated-parity"}
     let l1_concurrency = 2
