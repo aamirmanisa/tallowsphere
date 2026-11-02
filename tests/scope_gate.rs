@@ -45,6 +45,7 @@ basis = "written-consent"
 granted_by = "operator"
 granted_at = "2026-01-01"
 expires_at = "2027-01-01"
+evidence = "docs/consent/asserted.example.txt"
 
 [[authorized]]
 host = "*.wild.example"
@@ -118,16 +119,47 @@ fn a_lapsed_grant_is_refused_and_the_reason_names_the_date() {
 
 #[test]
 fn written_consent_without_evidence_is_refused() {
+    // A dedicated register: the shared FIXTURE predates the load-time evidence
+    // rule, so its written-consent row now carries a pointer. This test is the
+    // remaining proof that an evidence-less assertion is not a grant. The
+    // loader fail-closes the whole file (a defective entry is not skipped), so
+    // the refusal is RegisterMalformed, not a per-host EvidenceMissing that
+    // would leave sound siblings authorised.
     let d = tmp_dir("evidence");
     let p = d.join("register.toml");
-    fs::write(&p, FIXTURE).expect("write register");
+    fs::write(
+        &p,
+        r#"
+[[authorized]]
+host = "asserted.example"
+basis = "written-consent"
+granted_by = "operator"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+"#,
+    )
+    .expect("write register");
     let r = ScopeRegister::load(&p);
+    assert!(
+        matches!(r.load_failure(), Some(Refusal::RegisterMalformed { .. })),
+        "an evidence-less written-consent entry is a defective register: {:?}",
+        r.load_failure()
+    );
     let decision = r.authorize("https://asserted.example/", "GET", T);
     assert!(
-        matches!(decision.refusal(), Some(Refusal::EvidenceMissing { .. })),
+        !decision.is_allowed(),
         "an assertion without an evidence pointer is not a grant: {}",
         decision.render()
     );
+    match decision.refusal() {
+        Some(Refusal::RegisterMalformed { detail, .. }) => {
+            assert!(
+                detail.contains("asserted.example") && detail.contains("evidence"),
+                "the refusal must name the entry and the missing pointer: {detail}"
+            );
+        }
+        other => panic!("expected a register-malformed refusal, got {other:?}"),
+    }
 }
 
 #[test]
