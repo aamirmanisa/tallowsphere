@@ -45620,12 +45620,21 @@ fn main() {
     }
 
     /// Chained `.len` on the three previously-silent FFI results must load the
-    /// count slot, not `strlen` the header. Extract the `@main` body so a
-    /// module-level `declare i64 @strlen` cannot make the assertion vacuous.
-    fn main_body(ir: &str) -> &str {
-        let start = ir.find("define i32 @main").expect("module defines @main");
-        let rest = &ir[start..];
-        rest.split("\ndefine ").next().unwrap_or(rest)
+    /// count slot, not `strlen` the header.
+    ///
+    /// The function that does the work is not always `@main`: on macOS the body
+    /// is emitted into a separate `define` after a `@main` that only calls
+    /// `@__tallow_entry`, and even on Linux unrelated functions in the same
+    /// module call `@strlen` for their own reasons. So the assertion selects the
+    /// one function that loads the count and checks that *that* function does not
+    /// then call `strlen` — which is the property under test.
+    fn body_loading_the_count(ir: &str) -> &str {
+        ir.split("\ndefine ")
+            .skip(1)
+            .find(|body| body.contains("load i64, ptr"))
+            .unwrap_or_else(|| {
+                panic!("no emitted function loads the count slot; module:\n{ir}")
+            })
     }
 
     #[test]
@@ -45637,7 +45646,7 @@ fn main() {
             }
         "#,
         );
-        let body = main_body(&ir);
+        let body = body_loading_the_count(&ir);
         assert!(
             body.contains("load i64, ptr"),
             "chained Transfer.chunk(...).len must load the count slot: {body}"
@@ -45658,7 +45667,7 @@ fn main() {
             }
         "#,
         );
-        let body = main_body(&ir);
+        let body = body_loading_the_count(&ir);
         assert!(
             body.contains("load i64, ptr"),
             "chained llm.providers().len must load the count slot: {body}"
@@ -45679,7 +45688,7 @@ fn main() {
             }
         "#,
         );
-        let body = main_body(&ir);
+        let body = body_loading_the_count(&ir);
         assert!(
             body.contains("load i64, ptr"),
             "chained llm.models(...).len must load the count slot: {body}"
