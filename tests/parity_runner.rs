@@ -119,6 +119,15 @@ fn expect_for(name: &str) -> Expect {
             must_print: &["add5(10) = 15", "CLOSURE_RETURN_OK"],
             guard: "returns a closure",
         },
+        // Array growth via `.push()` has no lowering in the compiled plane, and
+        // `tallow build` refuses it by name. It used to SEGFAULT instead — a
+        // signal death the run-path fallback swallowed. The contract recorded
+        // here is the same fail-loud one 08 documents: build refuses, run falls
+        // back to the interpreter. The lowering itself is still unimplemented.
+        "07_array_push.tl" => Expect::NativeFailLoud {
+            must_print: &["sum 1225", "ARRAY_PUSH_OK"],
+            guard: "no lowering for Array.push",
+        },
         n if n.ends_with("_refusal.tl") => Expect::RefuseBoth,
         _ => Expect::Match,
     }
