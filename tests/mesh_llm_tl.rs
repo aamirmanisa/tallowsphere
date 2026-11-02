@@ -89,9 +89,27 @@ fn fixture_server_with(answer: &'static str, as_reasoning: bool) -> (u16, Arc<At
     (port, stop)
 }
 
+/// The scope gate is deny-by-default and `llm` now consults it before its own
+/// request (`src/stdlib/llm.rs::send`). The suite runs the binary with the temp
+/// directory as cwd, so the register it loads is `configs/tallow/scope/
+/// authorized-hosts.toml` *under that directory* — not the repository's. The
+/// fixture therefore plants its own register: the loopback model server is a
+/// target like any other, and a test may not borrow the repo's grant to reach
+/// it. `complete` POSTs; discovery (`list_models`, `verify`) GETs.
+fn authorize_loopback(dir: &std::path::Path) {
+    let cfg = dir.join("configs/tallow/scope");
+    std::fs::create_dir_all(&cfg).expect("scope dir");
+    std::fs::write(
+        cfg.join("authorized-hosts.toml"),
+        "[[authorized]]\nhost = \"127.0.0.1\"\nbasis = \"self-hosted\"\ngranted_by = \"test\"\ngranted_at = \"2026-01-01\"\nexpires_at = \"2099-01-01\"\nmethods = [\"GET\", \"POST\"]\nnotes = \"loopback model fixture owned by the test\"\n",
+    )
+    .expect("scope register");
+}
+
 fn run_env(dir: &std::path::Path, source: &str, name: &str, cfg: &std::path::Path) -> (bool, String) {
     let file = dir.join(format!("{name}.tl"));
     std::fs::write(&file, source).expect("write program");
+    authorize_loopback(dir);
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_tallow"))
         .arg("run")
         .arg(&file)
