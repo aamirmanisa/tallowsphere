@@ -303,7 +303,9 @@ pub fn record_revision(
     ensure_dir_secure(root).map_err(|e| ConfigError::HistoryPath {
         message: format!("cannot create history root {}: {e}", root.display()),
     })?;
-    tighten_dir(root);
+    tighten_dir(root).map_err(|e| ConfigError::HistoryPath {
+        message: format!("cannot verify history root {} is owner-only: {e}", root.display()),
+    })?;
 
     let revision = next_revision(root)?;
     let dir = history_revision_dir(root, revision);
@@ -450,11 +452,11 @@ fn unix_ms_now() -> u64 {
 
 /// Create the directory (and parents) owner-only on unix when we create it.
 fn ensure_dir_secure(dir: &Path) -> std::io::Result<()> {
-    if dir.is_dir() {
-        return Ok(());
-    }
     #[cfg(unix)]
     {
+        if dir.is_dir() {
+            return Ok(());
+        }
         use std::os::unix::fs::DirBuilderExt;
         fs::DirBuilder::new()
             .recursive(true)
@@ -463,14 +465,33 @@ fn ensure_dir_secure(dir: &Path) -> std::io::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        fs::create_dir_all(dir)
+        // `KERNEL_DIR_MODE` (0700) is the mechanism, not a detail: the config
+        // history holds every accepted artifact (`0600` files) and its metadata,
+        // and this function is also the parent-directory check for
+        // `atomic_replace`. This build has no ACL implementation, so it cannot
+        // create *or verify* an owner-only directory — including an existing one
+        // (the unix arm's `is_dir()` shortcut is inside the unix block for that
+        // reason). Refuse rather than hand back a directory whose containment
+        // was never established.
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!(
+                "cannot create/verify owner-only config directory '{}': 0700 is a POSIX mode \
+                 and this build has no ACL implementation",
+                dir.display()
+            ),
+        ))
     }
 }
 
 /// Tighten existing loose group/other bits on a kernel-managed directory
 /// (D6: dir 0700). Best-effort with a warning — the *files* we create are
 /// always created with the right mode.
-fn tighten_dir(dir: &Path) {
+///
+/// Returns `Err` where the platform has no mode bits: "not tightened" is then
+/// not a best-effort miss on an otherwise-protected directory (the unix shape),
+/// it is the absence of the mechanism entirely.
+fn tighten_dir(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -487,9 +508,19 @@ fn tighten_dir(dir: &Path) {
                 }
             }
         }
+        Ok(())
     }
     #[cfg(not(unix))]
-    let _ = dir;
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!(
+                "cannot tighten '{}' to 0700: POSIX mode bits are unavailable and this build \
+                 has no ACL implementation",
+                dir.display()
+            ),
+        ))
+    }
 }
 
 fn create_dir_owner_only(dir: &Path) -> std::io::Result<()> {
@@ -500,7 +531,18 @@ fn create_dir_owner_only(dir: &Path) -> std::io::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        fs::create_dir(dir)
+        // The name states the contract; `fs::create_dir(dir)` kept the name and
+        // dropped the contract (the revision directory would come out under the
+        // process default ACL). Refuse instead of creating a directory the
+        // caller will label owner-only.
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!(
+                "cannot create revision directory '{}' owner-only (0700): no POSIX mode bits \
+                 and no ACL implementation in this build",
+                dir.display()
+            ),
+        ))
     }
 }
 
@@ -528,6 +570,24 @@ fn atomic_replace(
     perms: FilePermsPolicy,
     secret_bearing: bool,
 ) -> Result<(), ConfigError> {
+    // The staged temp file is created with the mode policy below; on a platform
+    // without mode bits the policy is unenforceable, so the replace is refused
+    // before the target directory is touched.
+    #[cfg(not(unix))]
+    let mode_policy: Result<(), ConfigError> = {
+        let _ = (perms, secret_bearing);
+        Err(ConfigError::Write {
+            path: path.to_path_buf(),
+            message: "cannot stage a config write on this platform: the temp file must be \
+                      created 0600 (or the loose policy's mode) and this build has no POSIX \
+                      mode bits or ACL implementation"
+                .to_string(),
+        })
+    };
+    #[cfg(unix)]
+    let mode_policy: Result<(), ConfigError> = Ok(());
+    mode_policy?;
+
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -552,6 +612,9 @@ fn atomic_replace(
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(perms.temp_mode(secret_bearing));
         }
+        // Unreachable in practice: `mode_policy?` above already refused on a
+        // platform without mode bits. The binding is consumed here only so the
+        // unused-variable lint stays quiet for the arm that cannot apply it.
         #[cfg(not(unix))]
         let _ = (perms, secret_bearing);
         let mut file = options.open(&tmp_path)?;

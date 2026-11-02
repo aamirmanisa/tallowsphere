@@ -1268,9 +1268,19 @@ fn atomic_replace_bytes(target: &Path, bytes: &[u8]) -> Result<(), MigrateError>
         }
         #[cfg(not(unix))]
         {
-            fs::create_dir_all(parent).map_err(|e| MigrateError::Snapshot {
-                message: format!("cannot create {}: {e}", parent.display()),
-            })?;
+            // A restore target's parent holds the staged artifact written just
+            // below. On unix it is created 0700 before anything lands in it; this
+            // build has no mode bits and no ACL implementation, so it cannot
+            // create *or* verify that containment. Refuse before the staging
+            // write instead of creating a directory under the process default.
+            return Err(MigrateError::Snapshot {
+                message: format!(
+                    "cannot create {} owner-only (0700): POSIX mode bits are unavailable and \
+                     this build has no ACL implementation — refusing to stage a restore whose \
+                     directory containment is unverified",
+                    parent.display()
+                ),
+            });
         }
     }
 
