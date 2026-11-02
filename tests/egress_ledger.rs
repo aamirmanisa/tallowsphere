@@ -139,7 +139,7 @@ const PROGRAM: &str = r#"
 @persona(id: "egress-test", cover_class: .researcher, compartment: "egress", fingerprint_seed: "egress-1")
 @burn_plan(persona: "egress-test", after: .run, method: .revoke_and_quarantine, artifacts: .quarantine)
 @fingerprint_policy(policy: .normalize, bot_identity: "TallowTest/1.0 (+https://tallow.invalid/bot)")
-fn main() {
+fn main() with Net(batch) {
     let rs = http.batch(["http://127.0.0.1:PORT/one"], 1)
     print(len(rs))
 }
