@@ -52,6 +52,11 @@ Two further defects, measured rather than inferred:
 
 ### Fixed
 
+- The element of an array-of-arrays is not a string. `[10, 20].zip([30, 40])[0][1]` and the
+  same shape from `chunk`/`enumerate` travelled the string index path because the inner
+  slot is pointer-shaped: it read the inner count word as text and then failed with
+  `runtime error: index 1 out of bounds`. The array lowering now asks whether the slot is
+  an untagged inner array before asking whether it is a pointer.
 - `https://host?q=1` was refused as the host `host?q=1`; the authority now ends at the
   first `/`, `?` or `#`, and a query-carried auth path is still refused.
 - Mesh test fixtures took a cross-process lock, so concurrent worktrees no longer collide
