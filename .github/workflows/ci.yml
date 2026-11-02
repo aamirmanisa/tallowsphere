@@ -313,6 +313,7 @@ jobs:
           --test browser_sentinels_tl
           --test directorate_desks
           --test egress_census
+          --test chained_native_array_len
           --test egress_scope_gate
           --test egress_gate_coverage
           --test process_contract
