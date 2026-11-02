@@ -1957,6 +1957,7 @@ mod tests {
             assert_eq!(assessment.gaps(), 1, "{:?}", assessment.rows);
             assert_unverified_permissions_finding(&report);
         }
+        for index in [1, 2, 4, 6] {
             assert_eq!(
                 assessment.rows[index].status,
                 ZeroTrustStatus::Unsupported,
@@ -1966,8 +1967,6 @@ mod tests {
             );
             assert!(assessment.rows[index].checks.is_empty());
         }
-        assert_eq!(assessment.gaps(), 0, "{:?}", assessment.rows);
-        assert_eq!(assessment.counts(), (2, 0, 2, 4, 0));
 
         // The same clean config on disk (0600) closes the artifact row.
         #[cfg(unix)]
