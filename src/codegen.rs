@@ -586,6 +586,28 @@ fn array_shape_of_kind(kind: &str) -> Option<ArrayElemShape> {
     }
 }
 
+/// Kinds whose VALUE is a native `[count: i64][slot: i64]…` array.
+///
+/// One list, because two call sites must agree: `expr_is_native_array` (which
+/// routes `.len`, `arr[i]`, truthiness and the array-method table) and the
+/// chained-call arm of `infer_kind`. A native array is not a String even though
+/// both are `i8*`: `strlen` over the count slot reads its LOW BYTE and stops at
+/// the NUL of the second byte, so it answers 1 for every count in 1..=255 (a
+/// 3-cookie array reported 1) and 0 only when the count is 0.
+fn kind_is_native_array(kind: &str) -> bool {
+    matches!(
+        kind,
+        "StringArray"
+            | "HtmlElementArray"
+            | "ElementArray"
+            | "ResultArray"
+            | "BatchResponseArray"
+            | "PageEventArray"
+            | "CookieArray"
+            | "AntibotStepArray"
+    )
+}
+
 /// Result kind of calling `method` on a receiver of kind `recv_kind`.
 /// Mirrors the `(kind, method)` table in `emit_stmt`'s `Let`-tracking so that a
 /// chained call (`html.parse(b).select_one("h1")`) resolves exactly like the
@@ -12695,7 +12717,21 @@ void tallow_async_runtime_shutdown(void) {
                 {
                     return true;
                 }
-                matches!(method.as_str(), "map" | "filter" | "filter_ok" | "flatten")
+                if matches!(method.as_str(), "map" | "filter" | "filter_ok" | "flatten") {
+                    return true;
+                }
+                // A CHAINED call whose static kind is a native array:
+                // `page.get_cookies()`, `page.query_selector_all(sel)`,
+                // `page.extract_all_text(sel)`, `page.drain_events(..)`,
+                // `doc.select(..)`, `el.classes()`, `env.args()`,
+                // `http.batch(..)`. The registry test above only knows array
+                // *methods*; these are FFI results whose kind lives in
+                // `method_result_kind`. Without this branch the arm answered
+                // false even though `infer_kind` on the same expression
+                // answered "CookieArray", so `.len` fell to `strlen` over the
+                // count slot — measured: a 3-element array printed 1, and only
+                // a 0-element one printed 0.
+                kind_is_native_array(self.infer_kind(expr).as_deref().unwrap_or(""))
             }
             // Payload-only array kinds belong here too. Omitting them sent
             // `.len` on `rep.steps` (a field of a Result payload) to `strlen`
