@@ -1,0 +1,273 @@
+{
+  "schema": "tallow-bench/1",
+  "generated_at": "2026-11-02T02:52:47Z",
+  "binary": {
+    "path": "/home/aamir/tallow-worktrees/w13/shared-target/release/tallow",
+    "sha256": "5e732720db7874100609d6efc61dc830c88ec4b52457dd212b3cc50cb19f3939",
+    "profile": "release",
+    "version_raw": "tallow 1.7.0"
+  },
+  "corpus": {
+    "glob": "benchmarks/corpus/manifest.json",
+    "files": 57,
+    "sha256": "7f942d1c09869698f7ac417285e8c468c4ae41eb073accc2053ba4ebaf78d411"
+  },
+  "environment": {
+    "kernel": "6.8.0-147-generic",
+    "arch": "aarch64",
+    "cpu": "0xd0c",
+    "cpus": 8,
+    "loadavg": [
+      4.03,
+      2.83,
+      3.71
+    ]
+  },
+  "params": {
+    "iters": 5,
+    "warmup": 2,
+    "parser_mode": "recover"
+  },
+  "metrics": {
+    "files_total": 57,
+    "files_ok": 57,
+    "success_rate": 1.0,
+    "unresolved": 0,
+    "check_ms_median": 13.764,
+    "check_ms_min": 10.793,
+    "check_ms_p95": 17.486,
+    "check_ms_max": 25.869,
+    "throughput_files_per_s": 71.417,
+    "peak_rss_mb": 27.1
+  },
+  "per_file": {
+    "benchmarks/corpus/agent_demo.tl": {
+      "ok": true,
+      "median_ms": 13.325
+    },
+    "benchmarks/corpus/agent_memory_demo.tl": {
+      "ok": true,
+      "median_ms": 14.218
+    },
+    "benchmarks/corpus/agent_valid.tl": {
+      "ok": true,
+      "median_ms": 13.766
+    },
+    "benchmarks/corpus/bail_test.tl": {
+      "ok": true,
+      "median_ms": 13.605
+    },
+    "benchmarks/corpus/browser_demo.tl": {
+      "ok": true,
+      "median_ms": 14.572
+    },
+    "benchmarks/corpus/browser_full_demo.tl": {
+      "ok": true,
+      "median_ms": 13.764
+    },
+    "benchmarks/corpus/browser_plugins_demo.tl": {
+      "ok": true,
+      "median_ms": 13.599
+    },
+    "benchmarks/corpus/channels_demo.tl": {
+      "ok": true,
+      "median_ms": 12.5
+    },
+    "benchmarks/corpus/closure_advanced.tl": {
+      "ok": true,
+      "median_ms": 14.575
+    },
+    "benchmarks/corpus/closure_capture.tl": {
+      "ok": true,
+      "median_ms": 14.003
+    },
+    "benchmarks/corpus/dealhunter.tl": {
+      "ok": true,
+      "median_ms": 13.394
+    },
+    "benchmarks/corpus/dealhunter_pipeline.tl": {
+      "ok": true,
+      "median_ms": 13.806
+    },
+    "benchmarks/corpus/enums.tl": {
+      "ok": true,
+      "median_ms": 14.301
+    },
+    "benchmarks/corpus/error_handling.tl": {
+      "ok": true,
+      "median_ms": 13.315
+    },
+    "benchmarks/corpus/fn_array_param.tl": {
+      "ok": true,
+      "median_ms": 12.759
+    },
+    "benchmarks/corpus/full_demo.tl": {
+      "ok": true,
+      "median_ms": 12.968
+    },
+    "benchmarks/corpus/hello_simple.tl": {
+      "ok": true,
+      "median_ms": 13.114
+    },
+    "benchmarks/corpus/hof_chain.tl": {
+      "ok": true,
+      "median_ms": 13.765
+    },
+    "benchmarks/corpus/hof_full.tl": {
+      "ok": true,
+      "median_ms": 13.63
+    },
+    "benchmarks/corpus/hof_test.tl": {
+      "ok": true,
+      "median_ms": 13.484
+    },
+    "benchmarks/corpus/if_let_test.tl": {
+      "ok": true,
+      "median_ms": 12.984
+    },
+    "benchmarks/corpus/int_match_default.tl": {
+      "ok": true,
+      "median_ms": 12.918
+    },
+    "benchmarks/corpus/integration_test.tl": {
+      "ok": true,
+      "median_ms": 14.585
+    },
+    "benchmarks/corpus/interp_test.tl": {
+      "ok": true,
+      "median_ms": 12.274
+    },
+    "benchmarks/corpus/interpolation.tl": {
+      "ok": true,
+      "median_ms": 11.753
+    },
+    "benchmarks/corpus/ippool_demo.tl": {
+      "ok": true,
+      "median_ms": 14.509
+    },
+    "benchmarks/corpus/legal_valid.tl": {
+      "ok": true,
+      "median_ms": 13.422
+    },
+    "benchmarks/corpus/live_tor_test.tl": {
+      "ok": true,
+      "median_ms": 13.161
+    },
+    "benchmarks/corpus/map_test.tl": {
+      "ok": true,
+      "median_ms": 13.262
+    },
+    "benchmarks/corpus/match_test.tl": {
+      "ok": true,
+      "median_ms": 13.748
+    },
+    "benchmarks/corpus/mega_test.tl": {
+      "ok": true,
+      "median_ms": 15.771
+    },
+    "benchmarks/corpus/msurface_one.tl": {
+      "ok": true,
+      "median_ms": 14.215
+    },
+    "benchmarks/corpus/negative_test.tl": {
+      "ok": true,
+      "median_ms": 15.855
+    },
+    "benchmarks/corpus/phone_osint.tl": {
+      "ok": true,
+      "median_ms": 15.153
+    },
+    "benchmarks/corpus/pqc_crypto.tl": {
+      "ok": true,
+      "median_ms": 12.316
+    },
+    "benchmarks/corpus/privacy_valid.tl": {
+      "ok": true,
+      "median_ms": 12.065
+    },
+    "benchmarks/corpus/public_source_get_batch.tl": {
+      "ok": true,
+      "median_ms": 14.228
+    },
+    "benchmarks/corpus/question_mark_test.tl": {
+      "ok": true,
+      "median_ms": 15.495
+    },
+    "benchmarks/corpus/recursive_test.tl": {
+      "ok": true,
+      "median_ms": 13.221
+    },
+    "benchmarks/corpus/relay_room_auth_demo.tl": {
+      "ok": true,
+      "median_ms": 13.699
+    },
+    "benchmarks/corpus/relay_room_bytes_demo.tl": {
+      "ok": true,
+      "median_ms": 14.113
+    },
+    "benchmarks/corpus/relay_room_demo.tl": {
+      "ok": true,
+      "median_ms": 15.194
+    },
+    "benchmarks/corpus/relay_room_multi_demo.tl": {
+      "ok": true,
+      "median_ms": 14.329
+    },
+    "benchmarks/corpus/result_test.tl": {
+      "ok": true,
+      "median_ms": 13.747
+    },
+    "benchmarks/corpus/scrape_speed_test.tl": {
+      "ok": true,
+      "median_ms": 14.534
+    },
+    "benchmarks/corpus/self_host.tl": {
+      "ok": true,
+      "median_ms": 23.396
+    },
+    "benchmarks/corpus/showcase.tl": {
+      "ok": true,
+      "median_ms": 13.681
+    },
+    "benchmarks/corpus/sitescan_demo.tl": {
+      "ok": true,
+      "median_ms": 13.097
+    },
+    "benchmarks/corpus/sqlite_demo.tl": {
+      "ok": true,
+      "median_ms": 13.868
+    },
+    "benchmarks/corpus/stdlib_codegen_test.tl": {
+      "ok": true,
+      "median_ms": 13.073
+    },
+    "benchmarks/corpus/string_compare_test.tl": {
+      "ok": true,
+      "median_ms": 13.589
+    },
+    "benchmarks/corpus/string_ops.tl": {
+      "ok": true,
+      "median_ms": 13.568
+    },
+    "benchmarks/corpus/struct_array.tl": {
+      "ok": true,
+      "median_ms": 13.762
+    },
+    "benchmarks/corpus/structs.tl": {
+      "ok": true,
+      "median_ms": 15.739
+    },
+    "benchmarks/corpus/test_dealhunter.tl": {
+      "ok": true,
+      "median_ms": 15.924
+    },
+    "benchmarks/corpus/tor_single_test.tl": {
+      "ok": true,
+      "median_ms": 14.401
+    },
+    "benchmarks/corpus/while_test.tl": {
+      "ok": true,
+      "median_ms": 15.012
+    }
+  }
+}
