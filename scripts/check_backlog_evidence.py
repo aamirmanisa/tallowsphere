@@ -5,6 +5,8 @@ Every row marked DONE must cite at least one real path, and any `path:line`
 citation must point inside the file. A symbol named without a file is rejected:
 "`parse_sdl:748`" cannot be followed by a reader, and a stale line number is the
 cheapest way for a DONE claim to become false without anyone editing the row.
+A `path:line` with no identifier after it is reported as an advisory (it cannot
+be drift-checked) but does not fail the run.
 
 Usage: scripts/check_backlog_evidence.py [--root .] [--file PATH]
 Exit 0 = every DONE row is checkable; 1 = at least one is not.
@@ -37,6 +39,7 @@ def main() -> int:
             by_name.setdefault(p.name, p)
 
     problems: list[str] = []
+    bare: list[str] = []
     checked_rows = 0
     refs = 0
 
@@ -79,10 +82,23 @@ def main() -> int:
                             problems.append(
                                 f"{cells[0]}: {path}:{lineno} does not mention `{sym}`"
                             )
+                    else:
+                        # No identifier follows the line number, so nothing ties the
+                        # number to the code it is meant to evidence. Such a ref cannot
+                        # drift *visibly*: G07 carried `src/typeck.rs:4801` for months
+                        # while the file gained 66 lines above it and the row kept
+                        # pointing at an unrelated `let mut covered`. Reported, not
+                        # failed, because the check is advisory here and the rows that
+                        # carry an unanchored ref predate this rule.
+                        bare.append(f"{cells[0]}: {path}:{lineno} has no symbol anchor")
         if not found:
             problems.append(f"{cells[0]}: DONE with no checkable path — {cells[6][:70]}")
 
     print(f"backlog evidence: {checked_rows} DONE rows, {refs} path refs, {len(problems)} problem(s)")
+    if bare:
+        print(f"  advisory: {len(bare)} citation(s) name a line but no symbol to check it against")
+        for b in bare:
+            print(f"    {b}")
     for p in problems:
         print(f"  FAIL {p}")
     return 1 if problems else 0
