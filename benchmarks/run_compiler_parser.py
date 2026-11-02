@@ -15,6 +15,10 @@ Usage:
   python3 benchmarks/run_compiler_parser.py                 # -> benchmarks/out/current.json
   python3 benchmarks/run_compiler_parser.py --tallow target/release/tallow
   python3 benchmarks/run_compiler_parser.py --iters 7 --warmup 2 --out /tmp/cur.json
+
+  # the pinned corpus (what the regression gate measures; see scripts/pin_perf_corpus.py)
+  python3 benchmarks/run_compiler_parser.py \\
+      --corpus-manifest benchmarks/corpus/manifest.json --tallow target/release/tallow
 """
 from __future__ import annotations
 
@@ -73,8 +77,28 @@ def corpus_sha(files: list[Path]) -> str:
     return h.hexdigest()
 
 
-def binary_version(binp: Path) -> dict:
-    out = {"path": str(binp), "sha256": sha256_file(binp)}
+def build_profile(binp: Path, explicit: str | None = None) -> str:
+    """Which cargo profile produced this binary.
+
+    The gate only compares timing between measurements made with the SAME profile: a
+    debug build is ~20x slower than a release build on this tree, so pairing them is
+    two unrelated measurements, not a regression. Derived from the target path, which
+    is where cargo puts it (`.../release/tallow`, `.../debug/tallow`), with an explicit
+    override for binaries copied elsewhere.
+    """
+    if explicit:
+        return explicit.strip().lower()
+    parts = binp.resolve().parts
+    if "release" in parts:
+        return "release"
+    if "debug" in parts:
+        return "debug"
+    return "unknown"
+
+
+def binary_version(binp: Path, profile: str | None = None) -> dict:
+    out = {"path": str(binp), "sha256": sha256_file(binp),
+           "profile": build_profile(binp, profile)}
     try:
         r = subprocess.run([str(binp), "--version"], capture_output=True, text=True, timeout=30)
         out["version_raw"] = (r.stdout or r.stderr).strip().splitlines()[0] if (r.stdout or r.stderr) else ""
@@ -135,6 +159,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Tallow compiler/parser benchmark harness")
     ap.add_argument("--tallow", default=None, help="path to the tallow binary")
     ap.add_argument("--corpus-glob", default="examples/*.tl", help="repo-relative glob (default examples/*.tl)")
+    ap.add_argument("--corpus-manifest", default=None,
+                    help="measure the pinned corpus in this manifest (benchmarks/corpus/manifest.json); "
+                         "refuses to run if the pinned files were modified")
+    ap.add_argument("--build-profile", default=None, choices=["release", "debug"],
+                    help="override profile detection (default: inferred from the binary path)")
     ap.add_argument("--iters", type=int, default=5)
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--parser-mode", default="recover", choices=["recover", "fast"])
@@ -148,10 +177,48 @@ def main() -> int:
               "  (or pass --tallow <path>, or set TALLOW_BIN)", file=sys.stderr)
         return 2
 
-    files = corpus_files(args.corpus_glob)
-    if not files:
-        print(f"run_compiler_parser: no files match {args.corpus_glob!r}", file=sys.stderr)
-        return 2
+    # Corpus selection. A pinned corpus is a fixed fixture: the harness measures exactly
+    # the files the manifest lists and refuses to measure anything else, so a measurement
+    # identity cannot drift when an example is edited for unrelated reasons.
+    corpus_source = args.corpus_glob
+    if args.corpus_manifest:
+        try:
+            man = json.loads(Path(args.corpus_manifest).read_text())
+        except Exception as e:
+            print(f"run_compiler_parser: cannot read --corpus-manifest: {e}", file=sys.stderr)
+            return 2
+        members = man.get("members")
+        if not isinstance(members, dict) or not members:
+            print("run_compiler_parser: manifest has no 'members' map", file=sys.stderr)
+            return 2
+        rels = sorted(members)
+        files = [REPO / r for r in rels]
+        missing = [r for r in rels if not (REPO / r).is_file()]
+        if missing:
+            print("run_compiler_parser: pinned corpus files are missing:", file=sys.stderr)
+            for r in missing:
+                print(f"  - {r}", file=sys.stderr)
+            return 2
+        drift = [r for r in rels if sha256_file(REPO / r) != members[r]]
+        if drift:
+            print("run_compiler_parser: pinned corpus was MODIFIED — refusing to measure a "
+                  "different corpus under the pin's identity:", file=sys.stderr)
+            for r in drift:
+                print(f"  - {r}", file=sys.stderr)
+            print("  re-pin deliberately: python3 scripts/pin_perf_corpus.py", file=sys.stderr)
+            return 2
+        got = corpus_sha(files)
+        if got != man.get("sha256"):
+            print(f"run_compiler_parser: pinned corpus sha does not reproduce "
+                  f"({got[:12]}.. != {man.get('sha256', '')[:12]}..); re-pin with "
+                  f"scripts/pin_perf_corpus.py", file=sys.stderr)
+            return 2
+        corpus_source = args.corpus_manifest
+    else:
+        files = corpus_files(args.corpus_glob)
+        if not files:
+            print(f"run_compiler_parser: no files match {args.corpus_glob!r}", file=sys.stderr)
+            return 2
 
     # warm-up (JIT/fs cache) — not measured
     for f in files:
@@ -196,8 +263,8 @@ def main() -> int:
     doc = {
         "schema": "tallow-bench/1",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "binary": binary_version(binp),
-        "corpus": {"glob": args.corpus_glob, "files": len(files), "sha256": corpus_sha(files)},
+        "binary": binary_version(binp, args.build_profile),
+        "corpus": {"glob": corpus_source, "files": len(files), "sha256": corpus_sha(files)},
         "environment": env_info(),
         "params": {"iters": args.iters, "warmup": args.warmup, "parser_mode": args.parser_mode},
         "metrics": metrics,
