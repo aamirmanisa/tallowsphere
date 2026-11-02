@@ -215,16 +215,17 @@ mod redirect_measurement {
     //! Loopback harness for `docs/spec/EGRESS-REDIRECTS.md` requirement 7:
     //! the stealth plane must not follow a hop the register never authorised.
     //!
-    //! Server A (`127.0.0.1`, "listed") answers `302` to server B, a second
-    //! origin the caller never named ("unlisted"); B records every request it
-    //! receives. The passing condition is A receives the request, the caller
-    //! receives the `302`, and B receives nothing.
+    //! Server A (`127.0.0.1`, "listed") answers `302` to server B
+    //! (`127.0.0.2`, "unlisted"); B records every request it receives. The
+    //! passing condition is A receives the request, the caller receives the
+    //! `302`, and B receives nothing.
     //!
-    //! Both servers bind `127.0.0.1:0`. macOS configures only `127.0.0.1` on
-    //! `lo0` — `127.0.0.2` is not a local address there, so binding it fails
-    //! the fixture before the policy under test is reached. B is reached by the
-    //! name `localhost` instead: a distinct, never-named origin that resolves
-    //! to the same loopback socket on every platform.
+    //! B must be a *different host*, not a different port: the scope register
+    //! keys on host (`scope::host_key` ends a name or IPv4 literal at its port
+    //! separator), so `127.0.0.1:<other port>` is the same authorised target.
+    //! Linux configures all of `127.0.0.0/8` on `lo`; on macOS only
+    //! `127.0.0.1` is on `lo0`, so [`crate::loopback_alias::bind_loopback`]
+    //! adds the `127.0.0.2` alias and fails loudly if it cannot.
     //!
     //! This drives [`super::get_blocking`] rather than `http.get` on purpose:
     //! `stdlib/http.rs::is_loopback_target` routes every loopback literal off
@@ -232,7 +233,7 @@ mod redirect_measurement {
     //! `wreq` client at all.
 
     use std::io::{Read, Write};
-    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::net::{SocketAddr, TcpStream};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -251,8 +252,7 @@ mod redirect_measurement {
         where
             F: Fn(&str) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + 'static,
         {
-            let listener = TcpListener::bind(bind)
-                .unwrap_or_else(|e| panic!("bind {bind}: {e}"));
+            let listener = crate::loopback_alias::bind_loopback(bind);
             listener.set_nonblocking(true).expect("nonblocking accept");
             let addr = listener.local_addr().expect("local addr");
             let hits = Arc::new(Mutex::new(Vec::new()));
@@ -299,12 +299,6 @@ mod redirect_measurement {
 
         fn url(&self, path: &str) -> String {
             format!("http://{}{}", self.addr, path)
-        }
-
-        /// Same socket, addressed by `host` instead of the bound literal —
-        /// used to name the hop target by a host the plane was never given.
-        fn url_as(&self, host: &str, path: &str) -> String {
-            format!("http://{host}:{}{path}", self.addr.port())
         }
 
         fn hits(&self) -> Vec<String> {
@@ -382,10 +376,10 @@ mod redirect_measurement {
     }
 
     fn harness() -> Harness {
-        let unlisted = Server::start("127.0.0.1:0", |_| {
+        let unlisted = Server::start("127.0.0.2:0", |_| {
             (200, Vec::new(), b"LEAKED".to_vec())
         });
-        let leak = unlisted.url_as("localhost", "/leak");
+        let leak = unlisted.url("/leak");
         let listed = Server::start("127.0.0.1:0", move |_| {
             (
                 302,
@@ -432,8 +426,7 @@ mod redirect_measurement {
         assert_ne!(body, "LEAKED", "body must not come from the unlisted host");
         assert!(
             unlisted_hits.is_empty(),
-            "unlisted origin localhost:{} received {unlisted_hits:?}",
-            h.unlisted.addr.port()
+            "unlisted host 127.0.0.2 received {unlisted_hits:?}"
         );
     }
 
