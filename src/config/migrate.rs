@@ -1362,6 +1362,45 @@ mod tests {
             .with_now_ms(1_700_000_000_000)
     }
 
+    /// A snapshot/staging write under this platform's permission contract.
+    ///
+    /// unix: must succeed — the test then asserts the resulting bytes/history.
+    /// non-unix: this build has no POSIX mode bits and no ACL implementation, so
+    /// the staging path refuses before writing. The refusal must name that
+    /// mechanism, and `None` tells the caller its unix post-conditions cannot
+    /// exist here.
+    fn snapshot_write<T>(result: Result<T, MigrateError>) -> Option<T> {
+        #[cfg(unix)]
+        {
+            Some(result.unwrap_or_else(|e| panic!("unix: snapshot write must succeed: {e}")))
+        }
+        #[cfg(not(unix))]
+        {
+            match result {
+                Ok(_) => panic!(
+                    "non-unix build has no POSIX mode bits and no ACL implementation; \
+                     the staging path must refuse, not write"
+                ),
+                Err(err) => {
+                    assert_refusal_names_mechanism(&err);
+                    None
+                }
+            }
+        }
+    }
+
+    /// A refusal on a platform with no mode bits must name the absent mechanism
+    /// (`POSIX mode bits` / `ACL implementation`), not fail as an opaque I/O
+    /// error.
+    #[cfg(not(unix))]
+    fn assert_refusal_names_mechanism(err: &MigrateError) {
+        let msg = err.to_string();
+        assert!(
+            msg.contains("POSIX mode") || msg.contains("ACL implementation"),
+            "non-unix refusal must name the absent mechanism, got: {msg}"
+        );
+    }
+
     // ── Registry / ladder ────────────────────────────────────────────────────
 
     #[test]
@@ -1552,7 +1591,14 @@ mod tests {
         let hist = tmp.join("hist");
         let sample = "schema_version = 1\ntelemetry = true\n[secrets]\ntok = \"env:TALLOW_X\"\n";
 
-        let snap = capture_snapshot(&hist, sample, &tmp.join("config.toml"), 42).expect("capture");
+        let Some(snap) = snapshot_write(capture_snapshot(
+            &hist,
+            sample,
+            &tmp.join("config.toml"),
+            42,
+        )) else {
+            return;
+        };
         assert_eq!(snap.revision, 1);
         assert_eq!(
             snap.blake3,
@@ -1593,7 +1639,9 @@ mod tests {
         let hist = tmp.join("hist");
         let target = tmp.join("config.toml");
         fs::write(&target, CURRENT).expect("seed");
-        capture_snapshot(&hist, CURRENT, &target, 1).expect("snapshot");
+        let Some(_) = snapshot_write(capture_snapshot(&hist, CURRENT, &target, 1)) else {
+            return;
+        };
 
         // Deploy something else, then roll back to revision 1.
         fs::write(&target, "schema_version = 1\ntelemetry = false\n").expect("deploy");
@@ -1606,7 +1654,10 @@ mod tests {
     fn revision_status_sidecar_roundtrips() {
         let tmp = crate::config::test_support::TempDir::new("kb3-status");
         let hist = tmp.join("hist");
-        capture_snapshot(&hist, CURRENT, &tmp.join("config.toml"), 5).expect("snapshot");
+        let Some(_) =
+            snapshot_write(capture_snapshot(&hist, CURRENT, &tmp.join("config.toml"), 5)) else {
+                return;
+            };
         assert!(
             read_revision_status(&hist, 1).expect("read").is_none(),
             "unmarked revision reads as None"
@@ -1642,7 +1693,10 @@ mod tests {
         fs::write(&target, CURRENT).expect("seed");
         let candidate = "schema_version = 1\ntelemetry = true\nno_color = true\n";
 
-        let out = staged_apply(&target, candidate, || Ok(()), &opts_at(&hist)).expect("apply");
+        let Some(out) = snapshot_write(staged_apply(&target, candidate, || Ok(()), &opts_at(&hist)))
+        else {
+            return;
+        };
         assert_eq!(out.health, HealthOutcome::Healthy);
         assert_eq!(out.snapshot_revision, Some(1), "pre-apply snapshot recorded");
         assert_eq!(out.revision, 2, "candidate recorded as the next revision");
@@ -1663,13 +1717,14 @@ mod tests {
         let candidate = "schema_version = 1\ntelemetry = true\nno_color = true\n";
         let sink = RecordingSink::default();
 
-        let out = staged_apply(
+        let Some(out) = snapshot_write(staged_apply(
             &target,
             candidate,
             || Err("probe: simulated health-check failure".to_string()),
             &opts_with_sink(&hist, &sink),
-        )
-        .expect("apply-with-revert is a safe outcome");
+        )) else {
+            return;
+        };
 
         match &out.health {
             HealthOutcome::Reverted {
@@ -1718,13 +1773,14 @@ mod tests {
         let tmp = crate::config::test_support::TempDir::new("kb3-apply-absent");
         let hist = tmp.join("hist");
         let target = tmp.join("config.toml");
-        let out = staged_apply(
+        let Some(out) = snapshot_write(staged_apply(
             &target,
             CURRENT,
             || Err("probe: nope".to_string()),
             &opts_at(&hist),
-        )
-        .expect("apply");
+        )) else {
+            return;
+        };
         assert_eq!(out.snapshot_revision, None, "nothing to snapshot");
         match &out.health {
             HealthOutcome::Reverted {
@@ -1768,7 +1824,9 @@ mod tests {
         let target = tmp.join("config.toml");
         fs::write(&target, V0_LEGACY).expect("seed v0");
 
-        let outcome = migrate_file(&target, &opts_at(&hist)).expect("migrate");
+        let Some(outcome) = snapshot_write(migrate_file(&target, &opts_at(&hist))) else {
+            return;
+        };
         let (from_version, to_version, steps, apply_outcome) = match outcome {
             FileMigration::Migrated {
                 from_version,
@@ -1837,8 +1895,24 @@ mod tests {
         //     (E7058) and the target bytes are byte-identical.
         let err = migrate_file_with(&target, CORRUPT, 1, &opts_with_sink(&hist, &corrupt_sink))
             .expect_err("corrupted migration refused");
-        assert_eq!(err.code(), CODE_MIGRATE_REVERTED, "{err}");
-        assert!(err.to_string().contains("strict kernel validation"), "{err}");
+        #[cfg(unix)]
+        {
+            assert_eq!(err.code(), CODE_MIGRATE_REVERTED, "{err}");
+            assert!(err.to_string().contains("strict kernel validation"), "{err}");
+        }
+        // On a build with no POSIX mode bits the pre-migration snapshot is
+        // refused before the ladder runs; the refusal must name that mechanism
+        // and the target must be untouched.
+        #[cfg(not(unix))]
+        {
+            assert_refusal_names_mechanism(&err);
+            assert_eq!(
+                fs::read_to_string(&target).expect("read"),
+                V0_LEGACY,
+                "refused migration must leave the artifact byte-identical"
+            );
+            return;
+        }
         assert_eq!(
             fs::read_to_string(&target).expect("read"),
             V0_LEGACY,
@@ -1921,13 +1995,14 @@ mod tests {
         let tmp = crate::config::test_support::TempDir::new("kb3-diff");
         let hist = tmp.join("hist");
         let src = tmp.join("config.toml");
-        capture_snapshot(
+        let Some(_) = snapshot_write(capture_snapshot(
             &hist,
             "schema_version = 1\ntelemetry = true\nno_color = false\n[secrets]\ntok = \"env:A\"\n",
             &src,
             1,
-        )
-        .expect("r1");
+        )) else {
+            return;
+        };
         capture_snapshot(
             &hist,
             "schema_version = 1\ntelemetry = false\nprofile = \"privacy\"\n[secrets]\ntok = \"env:A\"\n",

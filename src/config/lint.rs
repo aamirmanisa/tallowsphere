@@ -1391,22 +1391,52 @@ mod tests {
         path
     }
 
+    /// On a build with no POSIX mode bits the permission probes cannot measure
+    /// anything. The contract is that the lint says so — a finding naming `no
+    /// POSIX mode bits` — instead of scoring the configuration clean.
+    #[cfg(not(unix))]
+    fn assert_unverified_permissions_finding(report: &LintReport) {
+        let hit = report.findings.iter().any(|f| {
+            matches!(
+                f.code,
+                CODE_ZT_ARTIFACT_MODE | CODE_ZT_SECRET_DIR | CODE_SBD_ARTIFACT_DIR
+            ) && f.message.contains("no POSIX mode bits")
+        });
+        assert!(
+            hit,
+            "lint must report the unmeasured permission instead of a clean verdict: {:?}",
+            report.findings
+        );
+    }
+
     #[test]
     fn clean_config_scores_full_marks() {
         let tmp = TempDir::new("lint-clean");
         let secret = make_secret_file(&tmp, "key", 0o600);
         let loaded = load_from_str(&clean_privacy_config(&secret), None);
         let report = lint(&loaded, &LintOptions::default());
-        assert!(
-            report.findings.is_empty(),
-            "clean config must be finding-free: {:?}",
-            report.findings
-        );
-        assert_eq!(report.score, MAX_SCORE);
-        assert_eq!(report.verdict(), "pass");
-        assert_eq!(report.exit_code(), 0);
-        assert_eq!(report.errors(), 0);
-        assert_eq!(report.warnings(), 0);
+        #[cfg(unix)]
+        {
+            assert!(
+                report.findings.is_empty(),
+                "clean config must be finding-free: {:?}",
+                report.findings
+            );
+            assert_eq!(report.score, MAX_SCORE);
+            assert_eq!(report.verdict(), "pass");
+            assert_eq!(report.exit_code(), 0);
+            assert_eq!(report.errors(), 0);
+            assert_eq!(report.warnings(), 0);
+        }
+        // This build has no POSIX mode bits and no ACL probe: 0600/0700 cannot
+        // be verified, so the lint must report the unmeasured permission by
+        // name rather than score the config clean.
+        #[cfg(not(unix))]
+        {
+            assert_unverified_permissions_finding(&report);
+            assert_eq!(report.errors(), 0, "{:?}", report.findings);
+            assert_eq!(report.exit_code(), 0, "{:?}", report.findings);
+        }
     }
 
     #[test]
@@ -1913,8 +1943,20 @@ mod tests {
         assert_eq!(assessment.rows[0].status, ZeroTrustStatus::Covered);
         assert_eq!(assessment.rows[3].status, ZeroTrustStatus::Covered);
         assert_eq!(assessment.rows[5].status, ZeroTrustStatus::Partial);
-        assert_eq!(assessment.rows[7].status, ZeroTrustStatus::Partial);
-        for index in [1, 2, 4, 6] {
+        #[cfg(unix)]
+        {
+            assert_eq!(assessment.rows[7].status, ZeroTrustStatus::Partial);
+            assert_eq!(assessment.gaps(), 0, "{:?}", assessment.rows);
+            assert_eq!(assessment.counts(), (2, 0, 2, 4, 0));
+        }
+        // Without POSIX mode bits the artifact/target protection row is a gap
+        // carrying the unverified-permission finding: unmeasured is not clean.
+        #[cfg(not(unix))]
+        {
+            assert_eq!(assessment.rows[7].status, ZeroTrustStatus::Gap);
+            assert_eq!(assessment.gaps(), 1, "{:?}", assessment.rows);
+            assert_unverified_permissions_finding(&report);
+        }
             assert_eq!(
                 assessment.rows[index].status,
                 ZeroTrustStatus::Unsupported,
