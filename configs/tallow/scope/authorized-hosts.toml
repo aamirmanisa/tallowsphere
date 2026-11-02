@@ -120,3 +120,35 @@ expires_at = "2027-10-16"
 evidence = "https://check.torproject.org — public, unauthenticated"
 methods = ["GET", "HEAD"]
 notes = "egress-plane proof (see toregress); the target sees a Tor exit, never the box IP"
+
+# Chrome-for-Testing artifact bucket — the download plane for the pinned
+# browser, not a scrape target. `tallow browser install` builds the URL from the
+# in-repo pin table (`src/browser/cft_pins.rs`), so the only thing this entry
+# authorizes is fetching a compile-time-pinned, digest-verified build. Without
+# it the installer is refused as `scope:not-listed` *before* the GET and the CLI
+# exits 5 (IO_ERROR); that is what took the CI Browser suites and WordPress jobs
+# red on 2026-11-02.
+#
+# This is a supply-chain fetch of a public artifact, carried on the plain
+# HTTP egress plane, not an authorization to read any host's content: no
+# authentication, no cookies, no personal data, no crawl surface follows from it
+# (`chrome-for-testing-public` exposes only release zips). Kept to exact host,
+# GET/HEAD, with an expiry like every other grant.
+#
+# Verified 2026-11-02 (this change): the pinned artifact
+# `156.0.8078.47/linux64/chrome-headless-shell-linux64.zip` answers HTTP 200 and
+# its SHA-256 matches the row in `src/browser/cft_pins.rs`
+# (0d5acc62c3e213f8c87d3c298d66ffcf9a236d12ea4b9f85318bf85dbc279daa), so this
+# grant is sufficient on its own: the pinned install path never reads
+# `googlechromelabs.github.io` — that host is only contacted by the unpinned
+# "latest stable" fallback, which is not reached while a pin exists for the
+# platform.
+[[authorized]]
+host = "storage.googleapis.com"
+basis = "public-read-only"
+granted_by = "published public artifact service (Google Chrome for Testing)"
+granted_at = "2026-11-02"
+expires_at = "2027-11-02"
+evidence = "https://googlechromelabs.github.io/chrome-for-testing/ — public, unauthenticated release bucket"
+methods = ["GET", "HEAD"]
+notes = "pinned Chrome-for-Testing install only (src/browser/cft_pins.rs, src/browser/download.rs)"

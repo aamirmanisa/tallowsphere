@@ -23,14 +23,19 @@ yanked = "warn"
 # needs re-deciding, so the decision is re-made rather than inherited.
 # review-deadline: 2027-01-31
 ignore = [
-    # ── zstd advisory trio (RUSTSEC-2026-0391 / -0398 / -0403), added 2026-11-01 ──
-    # zstd 0.13.4 / zstd-safe 7.4.0 are the newest published releases and both are
-    # still flagged: no patched version exists yet, and wreq-util 3.0.0-rc.14 pins
-    # zstd ^0.13.3 so the crate cannot be removed by upgrading. Exposure is bounded:
-    # tallow compresses and decompresses its own archives, not untrusted network
-    # streams, so the uninitialised-memory and seek paths are reachable only when a
-    # caller decompresses a hostile file. Revisit the moment zstd ships a fixed
-    # 0.13.x — do not let this pair survive the file's review deadline.
+    # ── zstd advisory trio (RUSTSEC-2026-0391 / -0398 / -0403), added 2026-11-01,
+    #    rationale corrected 2026-11-02 ──
+    # Patched releases exist (zstd 0.14.3 / zstd-safe 8.2.0) and tallow's own
+    # dependency is on that line; the earlier note here said no patched version
+    # existed, which was wrong. The 0.13.4 / 7.4.0 pair survives in the lockfile
+    # only through wreq-util 3.0.0-rc.14 (`zstd ^0.13.3` inside its default
+    # `emulation` feature, which is also the only gate on `Profile`, the type the
+    # default `stealth-http` client is built from) and parquet 59.3.1 (a default
+    # codec, only compiled under the optional `parquet-storage` feature). Neither
+    # can be moved without removing a capability, so the copies stay and the
+    # advisories are answered per affected function in .cargo/audit.toml, which
+    # carries the same three entries and the same deadline. Re-decide by the
+    # marker above; delete all three in the commit that moves wreq-util past 0.13.
     "RUSTSEC-2026-0391",
     "RUSTSEC-2026-0398",
     "RUSTSEC-2026-0403",
