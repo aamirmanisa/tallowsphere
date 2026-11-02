@@ -36,6 +36,34 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # ORDER MATTERS: this step must stay ABOVE dtolnay/rust-toolchain.
+      # That action exports RUSTUP_TOOLCHAIN=1.98.1 into GITHUB_ENV, which the
+      # cargo-deny container forwards; inside it the host triple is
+      # x86_64-unknown-linux-musl, so the pin resolves to
+      # 1.98.1-x86_64-unknown-linux-musl and fails with "override toolchain is not
+      # installed". CI's own deny job has no toolchain step and therefore works.
+      - name: Dependency advisories (blocking)
+        # `deny.toml` states that advisory verdicts are BLOCKING and that the CI `deny` job no
+        # longer carries `continue-on-error`. That was true of CI and false of this file: until now
+        # the release gate ran the five static scripts and went straight to the build, so a tag
+        # could publish an artifact whose dependency graph fails `cargo deny`.
+        #
+        # Measured 2026-10-31 (advisory-db 2295466c, 2026-10-30), same arguments CI uses:
+        #   cargo deny --all-features check advisories
+        #   error[vulnerability] zstd 0.13.3      RUSTSEC-2026-0391  (>=0.14.3)
+        #   error[vulnerability] zstd-safe 7.3.0  RUSTSEC-2026-0398  (>=8.2.0)
+        #   error[vulnerability] zstd-safe 7.3.0  RUSTSEC-2026-0403  (>=8.2.0)
+        # Three vulnerabilities found, exit 1 — and v1.6.0 was published from this tree anyway,
+        # because nothing in this file asked. This step makes the release gate red until zstd is
+        # off 0.13.3. That is the intended behaviour: a gate that cannot fail is not a gate.
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          # CI runs the superset (`--all-features`); the released artifact is the default graph.
+          # Checking both is free here and the all-features run is the one deny.toml is written
+          # against, so it is the one gated on.
+          command: check
+          arguments: --all-features
+
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.1
@@ -67,28 +95,6 @@ jobs:
           python3 scripts/check_ffi_symbols.py
           python3 scripts/check_test_coverage.py
           python3 scripts/check_deny_expiry.py
-
-      - name: Dependency advisories (blocking)
-        # `deny.toml` states that advisory verdicts are BLOCKING and that the CI `deny` job no
-        # longer carries `continue-on-error`. That was true of CI and false of this file: until now
-        # the release gate ran the five static scripts and went straight to the build, so a tag
-        # could publish an artifact whose dependency graph fails `cargo deny`.
-        #
-        # Measured 2026-10-31 (advisory-db 2295466c, 2026-10-30), same arguments CI uses:
-        #   cargo deny --all-features check advisories
-        #   error[vulnerability] zstd 0.13.3      RUSTSEC-2026-0391  (>=0.14.3)
-        #   error[vulnerability] zstd-safe 7.3.0  RUSTSEC-2026-0398  (>=8.2.0)
-        #   error[vulnerability] zstd-safe 7.3.0  RUSTSEC-2026-0403  (>=8.2.0)
-        # Three vulnerabilities found, exit 1 — and v1.6.0 was published from this tree anyway,
-        # because nothing in this file asked. This step makes the release gate red until zstd is
-        # off 0.13.3. That is the intended behaviour: a gate that cannot fail is not a gate.
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
-        with:
-          # CI runs the superset (`--all-features`); the released artifact is the default graph.
-          # Checking both is free here and the all-features run is the one deny.toml is written
-          # against, so it is the one gated on.
-          command: check
-          arguments: --all-features
 
       - name: SBOM drift (blocking)
         # `tests/gate_sbom_parity.rs` compares the two *implementations* of the SBOM generator on
