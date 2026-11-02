@@ -13,6 +13,37 @@
 # review-deadline: 2027-01-31
 [advisories]
 ignore = [
+    # ── the zstd 0.13.4 / zstd-safe 7.4.0 set, added 2026-11-02 ──────────────
+    # Patched lines exist and tallow already builds on them: the workspace's own
+    # `zstd` dependency is 0.14.3 (zstd-safe 8.2.0) since the 2026-11-02 bump. The
+    # 0.13.4 / 7.4.0 copy survives in the lockfile only through two dependents that
+    # pin the old line and cannot be moved here:
+    #   * wreq-util 3.0.0-rc.14 — `zstd ^0.13.3` sits inside its DEFAULT `emulation`
+    #     feature, which is also the only gate on `Profile`; tallow's default
+    #     `stealth-http` client is built from `Profile` (src/stdlib/stealth_http.rs),
+    #     so `default-features = false` is not available without removing the
+    #     TLS-emulation client itself.
+    #   * parquet 59.3.1 — `zstd` is one of its default codecs; only built under the
+    #     optional `parquet-storage` feature.
+    # Every advisory names one function; none of the three is called from this graph:
+    #   * RUSTSEC-2026-0391 (zstd) — `stream::raw::{Encoder,Decoder}::with_context`.
+    #     tallow uses `zstd::encode_all` / `zstd::decode_all` (src/stdlib/compress.rs,
+    #     src/stdlib/transfer.rs) and wreq-util uses `stream::{Encoder,Decoder}::new`
+    #     (emulate/compress.rs); both construct a fresh context per call.
+    #   * RUSTSEC-2026-0398 (zstd-safe) — `seekable::Seekable::decompress`, compiled
+    #     only with zstd-safe's `seekable` feature. Nothing in the workspace enables
+    #     it (no `seekable`/`zstd_seekable` anywhere in src/, crates/ or Cargo.toml).
+    #   * RUSTSEC-2026-0403 (zstd-safe) — `DCtx::decompress_stream` as reached via
+    #     `zstd::stream::write::Decoder`. Neither caller uses that type; the advisory
+    #     names `read::Decoder`, `decode_all` and the bulk API as unaffected, which
+    #     are exactly the three entry points in use.
+    # Re-decide by 2027-01-31 (the marker above, enforced by
+    # scripts/check_deny_expiry.py). Delete all three entries in the commit that
+    # moves wreq-util onto a zstd 0.14 line.
+    "RUSTSEC-2026-0391",
+    "RUSTSEC-2026-0398",
+    "RUSTSEC-2026-0403",
+
     # crypto-bigint 0.5.5 — timing variability. Reached via elliptic-curve 0.13
     # <- p256 <- hpke/age, and via opaque-ke/voprf. Our OPAQUE is Ristretto255;
     # the P-256 use is HPKE with ephemeral keys. No upgrade exists: age 0.12.1

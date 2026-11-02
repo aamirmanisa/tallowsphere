@@ -7529,7 +7529,7 @@ dependencies = [
  "xattr",
  "zeroize",
  "zip",
- "zstd 0.13.4",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -7729,7 +7729,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "zeroize",
- "zstd 0.13.4",
+ "zstd 0.14.3",
 ]
 
 [[package]]
