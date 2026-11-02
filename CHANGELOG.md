@@ -66,6 +66,32 @@ Two further defects, measured rather than inferred:
   `native fn` form, so `hpke_seal`, `hpke_open` and the FROST/BBS+/age/opaque surface
   were missing from a report that claimed to enumerate them.
 
+### Known at tag time
+
+Measured, not hedged — each line names what is still true when this tag ships:
+
+- **Windows and macOS are CI verdicts, not locally measured ones.** The release was cut
+  on aarch64 Linux. The unix-only topology, ICMP and probe paths now carry
+  `cfg(unix)` guards with refusing stubs that name the missing capability, and a cfg
+  census (`tests/egress_gate_coverage.rs`, 28 pinned sites) fails the tree if a new
+  cfg-gated egress site appears without a row stating what the other platform does.
+  Whether the Windows build and the macOS lib suite are green is answered by the tag's
+  own CI run, and only by it.
+- **`zstd 0.13.4` stays in the lock.** `wreq-util 3.0.0-rc.14` requires `zstd ^0.13.3`
+  inside its default `emulation` feature, which also gates the `Profile` type the
+  default stealth-http client is built from, so that copy cannot leave the graph
+  without deleting a capability. RUSTSEC-2026-0391/-0398/-0403 are answered per
+  affected function in `.cargo/audit.toml` — none of those three functions is called
+  in this graph — under a review deadline of 2027-01-31, after which the gate fails
+  again.
+- **The perf gate compares like with like or not at all.** The corpus is pinned and the
+  baseline is selected by architecture and build profile; a cross-architecture
+  comparison is refused rather than reported as a regression.
+- **`storage.googleapis.com` is now a register entry.** The CI browser jobs were failing
+  because the scope gate refused it before the GET, not because the pinned Chrome for
+  Testing artifact was wrong. The grant is exact-host, `public-read-only`, GET/HEAD,
+  expiring 2027-11-02.
+
 ## [v1.6.0] — 2026-10-31 — Eight compiler defects closed, and the gates move into the binary
 
 ### Added
