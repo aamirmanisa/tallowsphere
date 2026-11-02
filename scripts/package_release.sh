@@ -121,7 +121,25 @@ else
     # Sorted members, zeroed owner/group, fixed mtime, gzip with -n (no name or
     # timestamp in the header). `tar czf` alone is NOT reproducible: it records
     # the staged files' mtimes, which `cp` sets to the moment of packing.
-    tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$EPOCH" \
+    #
+    # bsdtar (macOS) supports none of --sort/--owner/--group and dies with
+    # "Option --sort=name is not supported", which failed both macOS targets.
+    # Prefer a GNU tar — Homebrew's gnu-tar installs it as `gtar` — and fall back
+    # to bsdtar's own flags, saying plainly that the archive is then not
+    # byte-reproducible instead of pretending the flags were applied.
+    if tar --sort=name -cf /dev/null --files-from /dev/null 2>/dev/null; then
+        TAR=tar
+        TARFLAGS=(--sort=name --owner=0 --group=0 --numeric-owner --mtime="@$EPOCH")
+    elif command -v gtar >/dev/null 2>&1; then
+        TAR=gtar
+        TARFLAGS=(--sort=name --owner=0 --group=0 --numeric-owner --mtime="@$EPOCH")
+    else
+        echo "package_release: no GNU tar on this host — members are staged at a fixed" \
+             "mtime, but the archive is NOT byte-reproducible here (bsdtar has no --sort)" >&2
+        TAR=tar
+        TARFLAGS=(--uid 0 --gid 0 --uname root --gname wheel)
+    fi
+    "$TAR" "${TARFLAGS[@]}" \
         -cf - -C "$STAGE" LICENSE NOTICE libtallow.a tallow | gzip -n -9 > "$ARCHIVE"
 fi
 
