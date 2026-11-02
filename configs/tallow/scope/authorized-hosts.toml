@@ -17,8 +17,17 @@
 #
 # ---------------------------------------------------------------------------
 # Adding a target. Every entry needs all four of: host, basis, granted_by,
-# granted_at. `expires_at` is strongly preferred; an entry without one is
-# listed explicitly by `tallow scope list` as unbounded.
+# granted_at. Every shipped entry also carries `expires_at`, and
+# `tallow scope verify` treats an entry without one as a defect (it prints the
+# entry as `unbounded` from `scope list` and exits non-zero from `verify`), so
+# "strongly preferred" understates it: in this register an unexpiring grant is a
+# finding, not a style choice.
+#
+# Matching is on the HOST alone — the register has no path field. An entry on a
+# shared-hosting name therefore authorises every path on that host for the
+# granted verbs, not one bucket or one object prefix. Grant a shared host only
+# for a read-only plane you can justify without the path, and say in `notes`
+# which call sites the host-wide reach covers.
 #
 #   [[authorized]]
 #   host = "shop.example"              # exact host, or "*.example" for
@@ -42,9 +51,12 @@
 # register does not grant it to any host. CONNECT here is not HTTP CONNECT
 # (RFC 9110 proxy tunneling).
 #
-# Written-consent entries are refused without `evidence`. Ownership entries are
-# refused if the grant has expired. Nothing else enables a target: absence of an
-# entry, an unreadable register, or a malformed register all refuse every host.
+# Written-consent entries are refused without `evidence`. Every entry, whatever
+# its basis, is refused once its grant has expired: `ScopeRegister::authorize`
+# compares `today` against `expires_at` before it looks at the basis
+# (src/scope.rs:721-731), and an entry expiring today is still valid for today.
+# Nothing else enables a target: absence of an entry, an unreadable register, or
+# a malformed register all refuse every host.
 # ---------------------------------------------------------------------------
 
 # Loopback — the workspace's own infrastructure. Self-hosted by definition.
@@ -129,11 +141,33 @@ notes = "egress-plane proof (see toregress); the target sees a Tor exit, never t
 # exits 5 (IO_ERROR); that is what took the CI Browser suites and WordPress jobs
 # red on 2026-11-02.
 #
-# This is a supply-chain fetch of a public artifact, carried on the plain
-# HTTP egress plane, not an authorization to read any host's content: no
-# authentication, no cookies, no personal data, no crawl surface follows from it
-# (`chrome-for-testing-public` exposes only release zips). Kept to exact host,
-# GET/HEAD, with an expiry like every other grant.
+# What this grant is NOT. The register matches the host alone (no path field),
+# so this entry authorises GET/HEAD on *every* path of storage.googleapis.com,
+# not only `chrome-for-testing-public`. Measured 2026-11-02 through the gate:
+# `https://storage.googleapis.com/somebody-elses-bucket/private/key.json` is
+# allowed; `https://evil.storage.googleapis.com/x` is not (no wildcard).
+#
+# Two consequences, stated rather than assumed:
+#   * The HMAC-credentialed GCS helpers in `src/stdlib/transfer.rs`
+#     (`cloud_gcs_list`, `cloud_gcs_download`, `cloud_gcs_head` — gated at
+#     transfer.rs:3160) build `https://storage.googleapis.com/<bucket>` and are
+#     GET/HEAD, so they now pass this gate for any bucket where before the
+#     entry existed they were refused `scope:not-listed`. That is a wider reach
+#     than the pinned-install justification above; the grant is not scoped to
+#     it and the `cloud_gcs_*` call sites are not audited by this change.
+#     Uploads and deletes stay refused: `cloud_gcs_upload` is PUT and
+#     `cloud_gcs_delete`/`cloud_gcs_upload`'s neighbours are DELETE, and this
+#     entry grants neither (measured: PUT/DELETE/POST/CONNECT all
+#     `scope:method-not-allowed`).
+#   * The unpinned branch is unreachable, and on a platform with no pin row that
+#     is a refusal twice: `install_browser` falls back to
+#     `fetch_latest_stable_version`, whose host `googlechromelabs.github.io` is
+#     NOT listed (measured: `scope:not-listed`), and the artifact would then be
+#     refused by the SHA-256 pin check anyway. So `tallow browser install`
+#     works only where `src/browser/cft_pins.rs` has a row for the
+#     (platform, variant) — today linux64 and linux-arm64,
+#     chrome-headless-shell only. A Windows or macOS install needs a pin row,
+#     not a second host grant.
 #
 # Verified 2026-11-02 (this change): the pinned artifact
 # `156.0.8078.47/linux64/chrome-headless-shell-linux64.zip` answers HTTP 200 and
