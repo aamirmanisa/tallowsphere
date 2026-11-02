@@ -7,13 +7,17 @@
 //! with `undefined variable: scope` — a compile-time model enforced against a
 //! runtime that could not execute it.
 //!
-//! The egress half is not weakened and is not re-proved here: the register is
-//! the same file, consulted at the same place, and `tests/scope_gate.rs`
+//! The egress half is not weakened and is not re-proved here: an unlisted host
+//! is still refused by the same `ScopeRegister`, and `tests/scope_gate.rs`
 //! (`an_unlisted_host_is_refused`, `the_shipped_register_parses_and_is_deny_by_default`)
-//! remains the proof.
+//! remains the proof. The shipped register grants GET/HEAD/POST on loopback,
+//! never CONNECT; a raw socket needs an operator line. The loopback grant test
+//! plants that line in a cwd-local register rather than widening the shipped
+//! file.
 
 use std::io::Read;
 use std::net::TcpListener;
+use std::path::Path;
 use std::process::Command;
 use std::thread;
 
@@ -26,6 +30,28 @@ fn fixture(name: &str) -> String {
 
 fn tallow() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tallow"))
+}
+
+/// Operator line the spec requires for a local raw socket: CONNECT on loopback,
+/// in a cwd-local register so the shipped file stays GET/HEAD/POST.
+fn authorize_loopback_connect(dir: &Path) {
+    let cfg = dir.join("configs/tallow/scope");
+    std::fs::create_dir_all(&cfg).expect("scope dir");
+    std::fs::write(
+        cfg.join("authorized-hosts.toml"),
+        r#"
+[[authorized]]
+host = "127.0.0.1"
+basis = "self-hosted"
+granted_by = "test"
+granted_at = "2026-01-01"
+expires_at = "2027-01-01"
+evidence = "loopback interface on this host"
+methods = ["CONNECT"]
+notes = "cwd-local operator line for the scope.grant runtime fixture"
+"#,
+    )
+    .expect("scope register");
 }
 
 #[test]
@@ -42,11 +68,18 @@ fn trust_root_mints_a_grant_and_the_program_runs() {
         peer
     });
 
+    let cwd =
+        std::env::temp_dir().join(format!("tallow-scope-grant-runtime-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cwd);
+    std::fs::create_dir_all(&cwd).expect("cwd");
+    authorize_loopback_connect(&cwd);
+
     let out = tallow()
         .arg("run")
         .arg("--target")
         .arg("x86_64-linux")
         .arg(fixture("scope_grant_loopback.tl"))
+        .current_dir(&cwd)
         .output()
         .expect("run tallow");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
