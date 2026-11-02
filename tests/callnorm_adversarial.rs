@@ -1254,6 +1254,10 @@ fn main() { }
 /// A cycle whose closing call lives in an imported module must render its
 /// `-->` against *that* file. The path was always right; the location was an
 /// offset from `lib.tl` read against the entry file (audit §6.5).
+///
+/// `g` has to be `pub`: G09 (E0153) refuses a private name at the importer,
+/// and a private `g` is not merged, so the cycle is never in the program.
+/// Exporting it is what lets E0125 fire on the closing call in lib.tl.
 #[test]
 fn a_cycle_closing_in_an_imported_module_names_that_module() {
     let entry = "import lib
@@ -1261,7 +1265,7 @@ fn a_cycle_closing_in_an_imported_module_names_that_module() {
 fn f(a: Int, b: Int = g()) -> Int { return b; }
 fn main() { }
 ";
-    let lib = "fn g(c: Int = f(2)) -> Int { return c; }
+    let lib = "pub fn g(c: Int = f(2)) -> Int { return c; }
 ";
     let (entry_path, _lib_path) = write_import_pair("cycle-import", entry, lib);
     let run = run_file(&["check"], &entry_path);
