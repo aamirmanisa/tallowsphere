@@ -448,6 +448,9 @@ fn array_elem_kind(array_kind: Option<&str>) -> Option<String> {
         "CookieArray" => Some("CdpCookie".to_string()),
         "WaveCheckpointArray" => Some("WaveCheckpoint".to_string()),
         "AntibotStepArray" => Some("AntibotResolveStep".to_string()),
+        "ChunkInfoArray" => Some("ChunkInfo".to_string()),
+        "ModelInfoArray" => Some("ModelInfo".to_string()),
+        "ProviderInfoArray" => Some("ProviderInfo".to_string()),
         // `http.batch` entries are `%struct.BatchResponse` records, so
         // `rs[0].ok` GEPs into the entry instead of treating the slot as a
         // string or falling back to the by-name struct scan.
@@ -581,19 +584,29 @@ fn array_shape_of_kind(kind: &str) -> Option<ArrayElemShape> {
         "BoolArray" => Some(ArrayElemShape::Scalar(ELEM_BOOL)),
         // `ResultArray`, `ElementArray`, `HtmlElementArray`, the checkpoint/
         // cookie kinds: element is a handle with its own rendering path.
-        other if other.ends_with("Array") => Some(ArrayElemShape::Handle),
+        other if kind_is_native_array(other) => Some(ArrayElemShape::Handle),
         _ => None,
     }
 }
 
 /// Kinds whose VALUE is a native `[count: i64][slot: i64]…` array.
 ///
-/// One list, because two call sites must agree: `expr_is_native_array` (which
-/// routes `.len`, `arr[i]`, truthiness and the array-method table) and the
-/// chained-call arm of `infer_kind`. A native array is not a String even though
-/// both are `i8*`: `strlen` over the count slot reads its LOW BYTE and stops at
-/// the NUL of the second byte, so it answers 1 for every count in 1..=255 (a
-/// 3-cookie array reported 1) and 0 only when the count is 0.
+/// One list. Every consumer that must not `strlen` a count slot asks this
+/// function (`expr_is_native_array`, `field_kind_is_array`, the handle `.len`
+/// arm, `array_expr_elem_is_ptr`, print Ident, `apply_binding_kind`,
+/// `array_shape_of_kind`'s Handle fallback). `infer_kind` does not *test* the
+/// list; it produces kinds, and `method_result_kind` is what has to name an
+/// `*Array` kind for a chained call to reach this predicate.
+///
+/// `ends_with("Array")` is not the test: `stdlib/beehiiv.tl` declares
+/// `list_products(...) -> Array`, which is not this layout, and a bare
+/// `"Array"` kind would match the suffix. The list is the census of codegen
+/// Kind strings that actually are the native buffer.
+///
+/// A native array is not a String even though both are `i8*`: `strlen` over
+/// the count slot reads its LOW BYTE and stops at the NUL of the second byte,
+/// so it answers 1 for every count in 1..=255 (a 3-cookie array reported 1)
+/// and 0 only when the count is 0.
 fn kind_is_native_array(kind: &str) -> bool {
     matches!(
         kind,
@@ -605,6 +618,30 @@ fn kind_is_native_array(kind: &str) -> bool {
             | "PageEventArray"
             | "CookieArray"
             | "AntibotStepArray"
+            | "WaveCheckpointArray"
+            | "I64Array"
+            | "IntArray"
+            | "FloatArray"
+            | "BoolArray"
+            | "BytesArray"
+            | "ChunkInfoArray"
+            | "ModelInfoArray"
+            | "ProviderInfoArray"
+    )
+}
+
+/// Pointer-backed slots of a native array (strings/handles), vs integer slots
+/// (`I64Array` / `IntArray` / `FloatArray` / `BoolArray`).
+fn native_array_elem_is_ptr(kind: Option<&str>) -> bool {
+    let Some(k) = kind else {
+        return false;
+    };
+    if !kind_is_native_array(k) {
+        return false;
+    }
+    !matches!(
+        array_shape_of_kind(k),
+        Some(ArrayElemShape::Scalar(ELEM_INT | ELEM_FLOAT | ELEM_BOOL))
     )
 }
 
@@ -649,9 +686,17 @@ fn method_result_kind(recv_kind: Option<&str>, method: &str) -> Option<String> {
         // structs (`provider`, `elapsed_ms`) is ambiguous and the field read
         // refuses by name — correct, but it means the lowering is unusable.
         ("llm" | "Llm", "complete") => Some("Completion".to_string()),
+        // `llm.models` / `llm.providers` return native arrays. Without these
+        // rows a chained `.len` (`llm.providers().len`) never sees an `*Array`
+        // kind, so `kind_is_native_array` is never consulted and `.len` strlen's
+        // the count slot. Bound form was already saved by Let-tracking.
+        ("llm" | "Llm", "models") => Some("ModelInfoArray".to_string()),
+        ("llm" | "Llm", "providers") => Some("ProviderInfoArray".to_string()),
         ("Mesh" | "mesh", "plan") => Some("MeshPlan".to_string()),
         ("Mesh" | "mesh", "replay") => Some("MeshReplay".to_string()),
         ("llm" | "Llm", "verify") => Some("VerifyReport".to_string()),
+        // `Transfer.chunk(path) -> []ChunkInfo`. Same chained-`.len` hole.
+        ("Transfer" | "transfer", "chunk") => Some("ChunkInfoArray".to_string()),
         ("crypto", "age_keygen") => Some("AgeKeypair".to_string()),
         ("crypto", "generate_keypair") => Some("KeyPair".to_string()),
         ("crypto", "age_encrypt_dir") => Some("AgeStreamEncrypted".to_string()),
@@ -5971,6 +6016,8 @@ void tallow_async_runtime_shutdown(void) {
                             if matches!(obj_name.as_str(), "Transfer" | "transfer")
                                 && method == "chunk"
                             {
+                                self.browser_variables
+                                    .insert(name.clone(), "ChunkInfoArray".to_string());
                                 self.variable_is_array.insert(name.clone(), true);
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_array_elem_struct
@@ -5995,6 +6042,8 @@ void tallow_async_runtime_shutdown(void) {
                                     .insert(name.clone(), "VerifyReport".to_string());
                             }
                             if matches!(obj_name.as_str(), "llm" | "Llm") && method == "providers" {
+                                self.browser_variables
+                                    .insert(name.clone(), "ProviderInfoArray".to_string());
                                 self.variable_is_array.insert(name.clone(), true);
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_array_elem_struct
@@ -6003,6 +6052,8 @@ void tallow_async_runtime_shutdown(void) {
                                     .insert(name.clone(), "ProviderInfo".to_string());
                             }
                             if matches!(obj_name.as_str(), "llm" | "Llm") && method == "models" {
+                                self.browser_variables
+                                    .insert(name.clone(), "ModelInfoArray".to_string());
                                 self.variable_is_array.insert(name.clone(), true);
                                 self.variable_array_elem_is_ptr.insert(name.clone(), true);
                                 self.variable_array_elem_struct
@@ -12400,6 +12451,11 @@ void tallow_async_runtime_shutdown(void) {
                     "Crawler" => Some("Crawler".to_string()),
                     // Module namespaces whose calls return named structs.
                     "llm" | "Llm" => Some("llm".to_string()),
+                    // `Transfer.chunk(...)` — namespace kind so a chained call
+                    // resolves through `method_result_kind` even when the Ident
+                    // is reached via `infer_kind(object)` rather than the
+                    // module-name shortcut above it.
+                    "Transfer" | "transfer" => Some("Transfer".to_string()),
                     // `crypto.*` results that are named structs (AgeKeypair,
                     // the OPAQUE records). Without this the binding had no type,
                     // and a field shared by two structs (`request`) could not be
@@ -12591,15 +12647,6 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_truthy_i1(val)
     }
 
-    /// Is `kind` one of the native array kinds (`[count][elem…]`)?
-    ///
-    /// Every native array kind ends in `Array`; the count slot is an i64 prefix,
-    /// so reading it is what `.len` must do — `strlen` over that slot answers 1
-    /// for any non-zero count because the count is followed by NUL bytes.
-    fn kind_is_native_array(kind: Option<&str>) -> bool {
-        kind.map(|k| k.ends_with("Array")).unwrap_or(false)
-    }
-
     /// Does `field` of `owner_kind` hold a native array? Falls back to the
     /// expression's own inferred kind when the owner is unknown.
     fn field_kind_is_array(&self, owner_kind: Option<&str>, expr: &Expr) -> bool {
@@ -12610,12 +12657,14 @@ void tallow_async_runtime_shutdown(void) {
             } {
                 if let Some(layout) = self.struct_layouts.get(owner) {
                     if let Some(k) = layout.field_kinds.get(&field) {
-                        return Self::kind_is_native_array(Some(k));
+                        return kind_is_native_array(k);
                     }
                 }
             }
         }
-        Self::kind_is_native_array(self.infer_kind(expr).as_deref())
+        self.infer_kind(expr)
+            .as_deref()
+            .is_some_and(kind_is_native_array)
     }
 
     /// The result layout of `method` when called on an array receiver, read
@@ -12658,14 +12707,11 @@ void tallow_async_runtime_shutdown(void) {
         match &expr.kind {
             ExprKind::Ident(name) => {
                 self.variable_is_array.get(name).copied().unwrap_or(false)
-                    || matches!(
-                        self.browser_variables.get(name).map(String::as_str),
-                        Some("StringArray")
-                            | Some("HtmlElementArray")
-                            | Some("ElementArray")
-                            | Some("ResultArray")
-                            | Some("BatchResponseArray")
-                    )
+                    || self
+                        .browser_variables
+                        .get(name)
+                        .map(String::as_str)
+                        .is_some_and(kind_is_native_array)
             }
             ExprKind::Array(_) => true,
             // A struct field declared as `[]T` is a native array: `p.wave_sizes.len`
@@ -12737,17 +12783,10 @@ void tallow_async_runtime_shutdown(void) {
             // `.len` on `rep.steps` (a field of a Result payload) to `strlen`
             // over the count slot, which returns 1 for any count because the
             // little-endian count is followed by a NUL byte.
-            _ => matches!(
-                self.infer_kind(expr).as_deref(),
-                Some("StringArray")
-                    | Some("HtmlElementArray")
-                    | Some("ElementArray")
-                    | Some("ResultArray")
-                    | Some("BatchResponseArray")
-                    | Some("PageEventArray")
-                    | Some("CookieArray")
-                    | Some("AntibotStepArray")
-            ),
+            _ => self
+                .infer_kind(expr)
+                .as_deref()
+                .is_some_and(kind_is_native_array),
         }
     }
 
@@ -12765,7 +12804,7 @@ void tallow_async_runtime_shutdown(void) {
                     ExprKind::Ident(n) => n.as_str(),
                     _ => "",
                 })
-                .is_some_and(|k| k.ends_with("Array"));
+                .is_some_and(|k| kind_is_native_array(k));
         if is_array {
             return false;
         }
@@ -12852,22 +12891,9 @@ void tallow_async_runtime_shutdown(void) {
             ExprKind::MethodCall { method, object, .. } => match self.array_result_layout(method) {
                 Some(ArrayResultLayout::ArrayOfArray) => true,
                 Some(ArrayResultLayout::SameAsReceiver) => self.array_expr_elem_is_ptr(object),
-                _ => matches!(
-                    self.infer_kind(array).as_deref(),
-                    Some("StringArray")
-                        | Some("HtmlElementArray")
-                        | Some("ElementArray")
-                        | Some("ResultArray")
-                ),
+                _ => native_array_elem_is_ptr(self.infer_kind(array).as_deref()),
             },
-            _ => matches!(
-                self.infer_kind(array).as_deref(),
-                Some("StringArray")
-                    | Some("HtmlElementArray")
-                    | Some("ElementArray")
-                    | Some("ResultArray")
-                    | Some("BatchResponseArray")
-            ),
+            _ => native_array_elem_is_ptr(self.infer_kind(array).as_deref()),
         }
     }
 
@@ -12878,17 +12904,22 @@ void tallow_async_runtime_shutdown(void) {
     /// call to the generic `0` default (`Browser.new_page()` would stop returning
     /// a page handle), so it must cover every kind the emitter handles.
     fn is_handle_kind(kind: &str) -> bool {
+        // Native-array kinds that this dispatcher owns (it has `.len` plus, for
+        // `StringArray`, `push`/`reverse`). Other native arrays stay off this
+        // list so their array methods (`map`, `filter`, …) reach the array
+        // table instead of the handle refusal. Membership of the ARRAY half
+        // still goes through `kind_is_native_array`.
+        if kind_is_native_array(kind) {
+            return matches!(kind, "ElementArray" | "HtmlElementArray" | "StringArray");
+        }
         matches!(
             kind,
             "Response"
                 | "Browser"
                 | "Page"
                 | "Element"
-                | "ElementArray"
                 | "HtmlDocument"
                 | "HtmlElement"
-                | "HtmlElementArray"
-                | "StringArray"
                 // `Bytes` (t_70cad4f2) is not a browser handle, but it is a
                 // kind `emit_browser_method_call` dispatches on: the value is a
                 // pointer (so it must read as string-like in array literals) and
@@ -14839,12 +14870,11 @@ void tallow_async_runtime_shutdown(void) {
             // now — `[count: i64][elem0: i64]…` — so `.len` reads the count
             // straight from slot 0. `tallow_array_len` would be wrong here: it
             // expects the legacy `Box<Vec<*mut c_void>>` handle.
-            ("ElementArray", "len")
-            | ("HtmlElementArray", "len")
-            | ("StringArray", "len")
-            | ("PageEventArray", "len")
-            | ("CookieArray", "len")
-            | ("AntibotStepArray", "len") => {
+            // Native arrays that reached this dispatcher (StringArray via
+            // `env.args()`, ElementArray / HtmlElementArray via the html/page
+            // arms) load the count prefix. The kind test is the one list, not
+            // a six-name subset that drifted from it.
+            (kind, "len") if kind_is_native_array(kind) => {
                 let len64 = self.fresh_reg();
                 self.emit_line(&format!("{len64} = load i64, ptr {}", obj.reg));
                 Ok(LLValue::new(len64, LLType::I64))
@@ -15447,7 +15477,9 @@ void tallow_async_runtime_shutdown(void) {
                              --interpret"
                         ));
                     }
-                    Some("ElementArray") | Some("HtmlElementArray") | Some("ResultArray") => {
+                    Some(k) if kind_is_native_array(k)
+                        && matches!(array_shape_of_kind(k), Some(ArrayElemShape::Handle)) =>
+                    {
                         return Err(format!(
                             "print() of a browser/handle array (`{name}`) is not supported by the \
                              native backend; use the interpreter"
@@ -15499,9 +15531,9 @@ void tallow_async_runtime_shutdown(void) {
                     "I64Array" | "IntArray" => Ok(Some(PrintCompositeRoute::Array {
                         elem_kind: ELEM_INT,
                     })),
-                    // Any other array kind (a struct/handle array such as
+                    // Any other native-array kind (a struct/handle array such as
                     // `WaveCheckpointArray`) has no scalar element rendering.
-                    other if other.ends_with("Array") => Ok(Some(PrintCompositeRoute::Array {
+                    other if kind_is_native_array(other) => Ok(Some(PrintCompositeRoute::Array {
                         elem_kind: scalar_elem_kind_or_refuse(ArrayElemShape::Handle)?,
                     })),
                     _ => Ok(None),
@@ -25339,14 +25371,19 @@ void tallow_async_runtime_shutdown(void) {
     /// test emptiness. Each of the three was previously set (or forgotten) in a
     /// different arm — the reason `pos.len()` and `pos[i]` disagreed.
     fn apply_binding_kind(&mut self, name: &str, kind: &str) {
-        match kind {
-            "StringArray" => {
-                self.browser_variables
-                    .insert(name.to_string(), "StringArray".to_string());
-                self.variable_array_elem_is_ptr
-                    .insert(name.to_string(), true);
-                self.variable_is_array.insert(name.to_string(), true);
+        if kind_is_native_array(kind) {
+            self.browser_variables
+                .insert(name.to_string(), kind.to_string());
+            self.variable_is_array.insert(name.to_string(), true);
+            self.variable_array_elem_is_ptr
+                .insert(name.to_string(), native_array_elem_is_ptr(Some(kind)));
+            if let Some(elem) = array_elem_kind(Some(kind)) {
+                self.variable_array_elem_struct
+                    .insert(name.to_string(), elem);
             }
+            return;
+        }
+        match kind {
             "Bytes" => {
                 self.browser_variables
                     .insert(name.to_string(), "Bytes".to_string());
@@ -45503,6 +45540,154 @@ fn main() {
         );
         let _ = std::fs::remove_file(&ll_path);
         let _ = std::fs::remove_file(&obj_path);
+    }
+
+    /// The kinds f972560's list omitted, plus the three silent FFI results, are
+    /// on the one list. `"Array"` (beehiiv `list_products`) is not.
+    #[test]
+    fn kind_is_native_array_is_the_one_list() {
+        for kind in [
+            "StringArray",
+            "HtmlElementArray",
+            "ElementArray",
+            "ResultArray",
+            "BatchResponseArray",
+            "PageEventArray",
+            "CookieArray",
+            "AntibotStepArray",
+            "WaveCheckpointArray",
+            "I64Array",
+            "IntArray",
+            "FloatArray",
+            "BoolArray",
+            "BytesArray",
+            "ChunkInfoArray",
+            "ModelInfoArray",
+            "ProviderInfoArray",
+        ] {
+            assert!(
+                kind_is_native_array(kind),
+                "{kind} is a native `[count][slot…]` kind"
+            );
+        }
+        for kind in [
+            "Array",
+            "Bytes",
+            "Page",
+            "String",
+            "Completion",
+            "MeshPlan",
+            "MeshReplay",
+            "ChunkInfo",
+            "ModelInfo",
+            "ProviderInfo",
+            "VerifyReport",
+        ] {
+            assert!(
+                !kind_is_native_array(kind),
+                "{kind} must not take the count-slot path"
+            );
+        }
+        assert!(native_array_elem_is_ptr(Some("ChunkInfoArray")));
+        assert!(native_array_elem_is_ptr(Some("StringArray")));
+        assert!(!native_array_elem_is_ptr(Some("I64Array")));
+        assert!(!native_array_elem_is_ptr(Some("Array")));
+    }
+
+    #[test]
+    fn method_result_kind_names_the_three_silent_array_methods() {
+        assert_eq!(
+            method_result_kind(Some("Transfer"), "chunk").as_deref(),
+            Some("ChunkInfoArray")
+        );
+        assert_eq!(
+            method_result_kind(Some("transfer"), "chunk").as_deref(),
+            Some("ChunkInfoArray")
+        );
+        assert_eq!(
+            method_result_kind(Some("llm"), "models").as_deref(),
+            Some("ModelInfoArray")
+        );
+        assert_eq!(
+            method_result_kind(Some("Llm"), "providers").as_deref(),
+            Some("ProviderInfoArray")
+        );
+        assert!(kind_is_native_array("ChunkInfoArray"));
+        assert!(kind_is_native_array("ModelInfoArray"));
+        assert!(kind_is_native_array("ProviderInfoArray"));
+        assert!(kind_is_native_array("WaveCheckpointArray"));
+        assert!(kind_is_native_array("I64Array"));
+    }
+
+    /// Chained `.len` on the three previously-silent FFI results must load the
+    /// count slot, not `strlen` the header. Extract the `@main` body so a
+    /// module-level `declare i64 @strlen` cannot make the assertion vacuous.
+    fn main_body(ir: &str) -> &str {
+        let start = ir.find("define i32 @main").expect("module defines @main");
+        let rest = &ir[start..];
+        rest.split("\ndefine ").next().unwrap_or(rest)
+    }
+
+    #[test]
+    fn chained_transfer_chunk_len_loads_the_count() {
+        let ir = compile_to_ir(
+            r#"
+            fn main() {
+                print(Transfer.chunk("/tmp/x", 4000).len)
+            }
+        "#,
+        );
+        let body = main_body(&ir);
+        assert!(
+            body.contains("load i64, ptr"),
+            "chained Transfer.chunk(...).len must load the count slot: {body}"
+        );
+        assert!(
+            !body.contains("@strlen"),
+            "chained Transfer.chunk(...).len must not strlen the header: {body}"
+        );
+    }
+
+    #[test]
+    fn chained_llm_providers_len_loads_the_count() {
+        let ir = compile_to_ir(
+            r#"
+            import tallow.llm
+            fn main() {
+                print(llm.providers().len)
+            }
+        "#,
+        );
+        let body = main_body(&ir);
+        assert!(
+            body.contains("load i64, ptr"),
+            "chained llm.providers().len must load the count slot: {body}"
+        );
+        assert!(
+            !body.contains("@strlen"),
+            "chained llm.providers().len must not strlen the header: {body}"
+        );
+    }
+
+    #[test]
+    fn chained_llm_models_len_loads_the_count() {
+        let ir = compile_to_ir(
+            r#"
+            import tallow.llm
+            fn main() {
+                print(llm.models("mock").len)
+            }
+        "#,
+        );
+        let body = main_body(&ir);
+        assert!(
+            body.contains("load i64, ptr"),
+            "chained llm.models(...).len must load the count slot: {body}"
+        );
+        assert!(
+            !body.contains("@strlen"),
+            "chained llm.models(...).len must not strlen the header: {body}"
+        );
     }
 }
 
