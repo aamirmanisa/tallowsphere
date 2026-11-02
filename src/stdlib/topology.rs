@@ -467,12 +467,14 @@ fn scope_id_for(zone: &str) -> Result<u32, String> {
         }
         Ok(index)
     }
+    // `if_nametoindex` is a libc entry point that Windows does not export. A
+    // numeric scope id above still works; a *named* zone cannot be resolved
+    // here, and pretending otherwise (returning 0) would silently address the
+    // wrong interface.
     #[cfg(not(unix))]
     {
         Err(format!(
-            "topology: IPv6 scope id '{zone}' names an interface, and interface-name lookup \
-             needs if_nametoindex(3), which this build does not implement on this platform; \
-             pass the numeric scope id instead"
+            "topology: IPv6 scope id '{zone}' is an interface name, and resolving a name to a scope id needs if_nametoindex, which this build does not implement on this platform (unix only); pass the numeric interface index instead"
         ))
     }
 }
@@ -1053,7 +1055,10 @@ mod raw {
         }
 
         pub fn source_for(_dst: Ipv4Addr) -> io::Result<Ipv4Addr> {
-            Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "topology.syn_scan: choosing a source address needs a routing lookup through a raw socket, which this build does not implement on this platform (Linux only)",
+            ))
         }
 
         pub fn send_probe(
@@ -1065,7 +1070,10 @@ mod raw {
             _seq: u32,
             _flags: u8,
         ) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "topology.syn_scan: sending a hand-built TCP segment needs a raw socket (IP_HDRINCL), which this build does not implement on this platform (Linux only)",
+            ))
         }
 
         pub fn collect(
@@ -1075,7 +1083,14 @@ mod raw {
             _probes: &[u16],
             _timeout: Duration,
         ) -> io::Result<Vec<(u16, PortState)>> {
-            Ok(Vec::new())
+            // A raw SYN probe never opened (see `open()`), so there is nothing
+            // to collect. Returning an empty vector would be indistinguishable
+            // from "every port was probed and none answered", so it is an
+            // error naming the missing capability instead.
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "topology: reading raw SYN replies needs raw sockets, which this build does not implement on this platform (Linux only)",
+            ))
         }
     }
 }
@@ -2398,6 +2413,11 @@ fn udp_scan_fn(args: Vec<Value>) -> StdlibResult {
 // TTL walk (N08)
 // ══════════════════════════════════════════════════════════════════
 
+/// Windows has no libc `socket`/`recv`/`setsockopt`, so the TTL walk is a
+/// unix-only path: the ASN table it uses exists only to annotate hops, and the
+/// non-unix build refuses `traceroute` by name below rather than returning an
+/// empty hop list.
+#[cfg(unix)]
 /// Optional offline ASN database (ip2asn-v4.tsv: start, end, asn, cc, org).
 ///
 /// No lookup is invented when the file is absent: a hop with no database says
