@@ -123,6 +123,8 @@ pub mod liaison;
 pub mod lineage_pass;
 pub mod link_chain;
 pub mod logging;
+#[cfg(test)]
+pub(crate) mod loopback_alias;
 pub mod lsp;
 pub mod marking_flow;
 pub mod mcp;

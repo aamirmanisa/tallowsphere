@@ -1431,8 +1431,7 @@ mod tests {
         F: Fn(&Hit) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + 'static,
     {
         use std::sync::atomic::{AtomicBool, Ordering};
-        let listener = std::net::TcpListener::bind(bind)
-            .unwrap_or_else(|e| panic!("bind {bind}: {e}"));
+        let listener = crate::loopback_alias::bind_loopback(bind);
         listener
             .set_nonblocking(true)
             .expect("nonblocking accept");
@@ -1522,7 +1521,7 @@ mod tests {
         }
         assert!(
             unlisted_hits.is_empty(),
-            "unlisted host received {unlisted_hits:?}"
+            "unlisted host 127.0.0.2 received {unlisted_hits:?}"
         );
         let sentence = err.to_string();
         assert!(
