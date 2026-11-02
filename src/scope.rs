@@ -1210,7 +1210,11 @@ methods = ["FROBNICATE"]
 
     #[test]
     fn test_seam_source_is_cfg_test_gated() {
-        let src = include_str!("scope.rs");
+        // `include_str!` embeds the file as checked out. A Windows runner with
+        // core.autocrlf=true hands us CRLF, where a `\n`-anchored assertion
+        // would fail on a tree that is perfectly correct — so normalise first
+        // rather than weakening the check.
+        let src = include_str!("scope.rs").replace("\r\n", "\n");
         assert!(
             src.contains("#[cfg(not(test))]\nconst TEST_REGISTER_OVERRIDE_ABSENT"),
             "non-test build must name the absence of the override cell"
