@@ -53,7 +53,11 @@ struct Opts {
 
 fn parse_opts(args: &[String]) -> Opts {
     let mut o = Opts {
-        register: DEFAULT_REGISTER_PATH.to_string(),
+        // `scope::register_path()` honours TALLOW_SCOPE_REGISTER and otherwise
+        // falls back to DEFAULT_REGISTER_PATH relative to the working directory.
+        // Using the constant directly here is what made the variable inert: the
+        // default was fixed before any override could be consulted.
+        register: crate::scope::register_path().display().to_string(),
         today: today_iso(),
         json: false,
         method: "GET".to_string(),
@@ -278,7 +282,10 @@ pub fn run_scope_cmd(args: &[String]) -> Result<(), String> {
             println!("  tallow scope verify");
             println!("      Audit the register (expired, missing evidence, unbounded).");
             println!();
-            println!("  --register PATH   default {DEFAULT_REGISTER_PATH}");
+            println!(
+                "  --register PATH   default: $TALLOW_SCOPE_REGISTER, else {DEFAULT_REGISTER_PATH} \
+                 relative to the working directory"
+            );
             println!("  --today YYYY-MM-DD  override the expiry date (reproducible output)");
             Ok(())
         }
