@@ -409,7 +409,6 @@ members = [
     "crates/tallow-protocol",
     "crates/tallow-daemon",
     "crates/tallow-reader",
-    "crates/tallow-copy-engine",
     "crates/tallow-svid",
     "crates/tallow-admission",
     "crates/tallow-registry",
