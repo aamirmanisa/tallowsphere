@@ -388,13 +388,23 @@ fn main() {{
     print("REG=" + page.on_console("on_msg"))
     print("EXPOSE=" + page.expose_function("tlNotify", "on_bind"))
     page.add_script_tag("if (window.tlNotify) \{{ tlNotify('from-js'); \}}")
-    page.wait_for_timeout(400)
+    page.wait_for_timeout(1500)
     browser.close()
 }}
 "#
     )
 }
 
+/// The binding leg of this test waits on an asynchronous `Runtime.bindingCalled`
+/// event, not on the call itself: `Runtime.addBinding` is acked before the
+/// program continues, so installation is not the racy part.
+///
+/// Measured 2026-11-03: 12/12 serial runs passed locally at a 400 ms wait
+/// (0.63-1.14 s wall each). One CI run failed at this assertion under
+/// `--test-threads=2` with 140 test binaries and a cold browser, so the wait is
+/// the only timing knob that can explain it. 1500 ms gives that path ~3.7x the
+/// margin and changes nothing about what is asserted — the handler must still
+/// have run. This is mitigation of an unreproduced flake, not a proven fix.
 #[test]
 fn page_handlers_and_bindings_fire_from_tallow_source() {
     let port = serve(PAGE_EVENTS);
