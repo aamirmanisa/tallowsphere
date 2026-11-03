@@ -7381,7 +7381,7 @@ checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
 name = "tallow"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "aegis",
  "aes-gcm",
@@ -7558,15 +7558,6 @@ dependencies = [
  "serde_json",
  "tallow-registry",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "tallow-copy-engine"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "filetime",
- "tempfile",
 ]
 
 [[package]]
