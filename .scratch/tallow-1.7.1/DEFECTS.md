@@ -26,25 +26,27 @@ a 1.7.1 cut is not the list-of-nine job an older note implied.
 
 ## What is actually open
 
-### 1. Closure write capture is lost — on BOTH planes (spec violation, not a split)
+### 1. Closure write capture — RESOLVED as a spec correction (decision: code is right)
 
-`spec/04-semantics.md:69` says mutation "is visible to closures that captured
-them *(reference)*".
+`spec/04-semantics.md:69` used to say mutation "is visible to closures that
+captured them *(reference)*", while the implementation captures a snapshot
+(`src/interp.rs:189-191`) and `closure_snapshot_semantics` pins that.
+
+Measured on the published 1.7.0 binary, both planes identical:
 
 ```tallow
-fn main() {
-    var n = 0
-    let bump = { -> n = n + 1 }
-    bump()
-    bump()
-    print(n)
-}
+var n = 0
+let bump = { -> n = n + 1; n }
+print(bump())   // 1   the closure's own copy persists across calls
+print(bump())   // 2
+print(n)        // 0   the enclosing binding never changes
 ```
 
-Both planes print `0`. The closure mutates a copy, so the language does not do
-what its own spec says. This is the worst kind of defect to leave in a patch
-release: not a divergence a parity suite can catch, because both engines are
-wrong together.
+Operator decision 2026-11-03: the implementation is the contract; the spec is the
+outlier. Tallow-Language `62a4251` rewrote 4.6 to state snapshot capture
+normatively, explain the surprise, and point at `reduce` for accumulation.
+Reference capture, if wanted, is a language change for 1.8 with its own migration
+note — not a patch.
 
 ### 2. The element of a literal array-of-arrays indexes wrong on the compiled plane
 
