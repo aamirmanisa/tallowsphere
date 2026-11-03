@@ -130,20 +130,6 @@ fn a_closed_ipv6_port_comes_back_closed() {
     );
 }
 
-/// Raw sockets need CAP_NET_RAW, which only root has. Non-Unix targets have no
-/// raw-socket path at all, so this reports `false` and each test skips with its
-/// stated reason instead of failing to compile on a `libc` call Windows lacks.
-#[cfg(unix)]
-fn is_root() -> bool {
-    // SAFETY: `geteuid` takes no arguments, touches no memory, cannot fail.
-    unsafe { libc::geteuid() == 0 }
-}
-
-#[cfg(not(unix))]
-fn is_root() -> bool {
-    false
-}
-
 #[test]
 fn ipv6_discovery_reports_loopback_alive_from_an_icmpv6_reply() {
     // A raw ICMPv6 socket needs CAP_NET_RAW. Skip with the measured reason
@@ -245,4 +231,21 @@ fn a_raw_syn_scan_on_an_ipv6_literal_names_the_connect_path() {
         !stdout.contains("open=[]"),
         "a refusal is not an empty scan:\n{stdout}"
     );
+}
+
+/// Raw sockets need CAP_NET_RAW, which only root has. Non-Unix targets have no
+/// raw-socket path at all, so this reports `false` and the test skips with its
+/// stated reason instead of failing to compile on a `libc` call Windows lacks.
+///
+/// Deliberately at the end of the file: inserting it above the test would shift
+/// cited lines and break the DONE-backlog evidence gate.
+#[cfg(unix)]
+fn is_root() -> bool {
+    // SAFETY: `geteuid` takes no arguments, touches no memory, cannot fail.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(unix))]
+fn is_root() -> bool {
+    false
 }

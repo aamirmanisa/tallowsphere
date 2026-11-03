@@ -51,20 +51,6 @@ fn a_connect_scan_separates_open_from_closed() {
     );
 }
 
-/// Raw sockets need CAP_NET_RAW, which only root has. Non-Unix targets have no
-/// raw-socket path at all, so this reports `false` and each test skips with its
-/// stated reason instead of failing to compile on a `libc` call Windows lacks.
-#[cfg(unix)]
-fn is_root() -> bool {
-    // SAFETY: `geteuid` takes no arguments, touches no memory, cannot fail.
-    unsafe { libc::geteuid() == 0 }
-}
-
-#[cfg(not(unix))]
-fn is_root() -> bool {
-    false
-}
-
 #[test]
 fn a_syn_scan_separates_open_from_closed() {
     // Raw sockets need CAP_NET_RAW. Root has it; a sandbox may not. Skip with
@@ -438,4 +424,22 @@ fn traceroute_sees_the_first_hop_and_the_destination() {
         stdout.contains("ms"),
         "the responder must carry a measured RTT:\n{stdout}"
     );
+}
+
+/// Raw sockets need CAP_NET_RAW, which only root has. Non-Unix targets have no
+/// raw-socket path at all, so this reports `false` and each test skips with its
+/// stated reason instead of failing to compile on a `libc` call Windows lacks.
+///
+/// Deliberately at the end of the file: inserting it above the first test would
+/// shift every cited line and break the DONE-backlog evidence gate, which pins
+/// tests by line number.
+#[cfg(unix)]
+fn is_root() -> bool {
+    // SAFETY: `geteuid` takes no arguments, touches no memory, cannot fail.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(unix))]
+fn is_root() -> bool {
+    false
 }
