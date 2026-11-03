@@ -34,6 +34,27 @@ use std::path::{Path, PathBuf};
 /// Default register location, relative to the workspace root.
 pub const DEFAULT_REGISTER_PATH: &str = "configs/tallow/scope/authorized-hosts.toml";
 
+/// Environment override for the register's location.
+///
+/// [`DEFAULT_REGISTER_PATH`] is relative to the process working directory, which
+/// makes an installed `tallow` unable to find the register outside the source
+/// tree — `tallow scope check` from anywhere else fails closed with
+/// `scope:register-unreadable`, correctly but uselessly. This variable names the
+/// register explicitly. It is the ONLY override: there is deliberately no search
+/// up the directory tree, because a register discovered from the directory you
+/// happen to be standing in is a register an attacker can supply.
+pub const REGISTER_ENV: &str = "TALLOW_SCOPE_REGISTER";
+
+/// The register path in force: the environment override when it is set and
+/// non-empty, otherwise [`DEFAULT_REGISTER_PATH`] relative to the working
+/// directory.
+pub fn register_path() -> PathBuf {
+    match std::env::var_os(REGISTER_ENV) {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => PathBuf::from(DEFAULT_REGISTER_PATH),
+    }
+}
+
 /// Why a target may be contacted.
 ///
 /// Deliberately excludes anything credential-shaped: there is no
@@ -214,10 +235,17 @@ impl Refusal {
                 "refused: {host}{path} is an authentication surface; the posture is \
                  read-only public data (no authentication surfaces, no credentials)"
             ),
-            Refusal::RegisterUnreadable { path, detail } => format!(
-                "refused: the register at {path} could not be read ({detail}); \
-                 with no register nothing is authorized"
-            ),
+            Refusal::RegisterUnreadable { path, detail } => {
+                let cwd = std::env::current_dir()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|_| "unknown".to_string());
+                format!(
+                    "refused: the register at {path} could not be read ({detail}); \
+                     with no register nothing is authorized. The path is relative to the \
+                     working directory ({cwd}); set {REGISTER_ENV} to name the register \
+                     explicitly, or run from the directory that holds {DEFAULT_REGISTER_PATH}"
+                )
+            }
             Refusal::RegisterMalformed { path, detail } => format!(
                 "refused: the register at {path} is malformed ({detail}); \
                  with no valid register nothing is authorized"
@@ -603,7 +631,7 @@ impl ScopeRegister {
 
     /// The default register, from [`DEFAULT_REGISTER_PATH`].
     pub fn load_default() -> Self {
-        Self::load(DEFAULT_REGISTER_PATH)
+        Self::load(register_path())
     }
 
     /// A register with no entries and no failure: every host is refused as
