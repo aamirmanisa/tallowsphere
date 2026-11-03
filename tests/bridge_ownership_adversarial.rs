@@ -518,11 +518,19 @@ fn two_live_bridged_results_do_not_free_each_other() {
 
 // ── 8. A loop that prints inside: correctness and RSS ───────────────────────
 
+#[cfg(unix)]
 fn resident_kb(pid: u32) -> Option<u64> {
     let text = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
     let resident_pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;
+    // SAFETY: `sysconf(_SC_PAGESIZE)` takes no pointers and cannot fail here.
     let page_kb = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64 / 1024;
     Some(resident_pages * page_kb)
+}
+
+/// No `/proc` on this target, so RSS is unavailable rather than wrong.
+#[cfg(not(unix))]
+fn resident_kb(_pid: u32) -> Option<u64> {
+    None
 }
 
 /// 1000 iterations, each binding a ~32 KiB bridged `String`, **printing inside
