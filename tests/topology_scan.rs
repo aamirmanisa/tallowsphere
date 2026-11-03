@@ -51,11 +51,25 @@ fn a_connect_scan_separates_open_from_closed() {
     );
 }
 
+/// Raw sockets need CAP_NET_RAW, which only root has. Non-Unix targets have no
+/// raw-socket path at all, so this reports `false` and each test skips with its
+/// stated reason instead of failing to compile on a `libc` call Windows lacks.
+#[cfg(unix)]
+fn is_root() -> bool {
+    // SAFETY: `geteuid` takes no arguments, touches no memory, cannot fail.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(unix))]
+fn is_root() -> bool {
+    false
+}
+
 #[test]
 fn a_syn_scan_separates_open_from_closed() {
     // Raw sockets need CAP_NET_RAW. Root has it; a sandbox may not. Skip with
     // the measured reason rather than pretending the scan ran.
-    if unsafe { libc::geteuid() } != 0 {
+    if !is_root() {
         eprintln!("skipping: raw SYN scan needs CAP_NET_RAW (not root)");
         return;
     }
@@ -112,7 +126,7 @@ fn a_fin_scan_never_claims_open() {
     // N03: silence from a non-SYN probe is open|filtered. A closed port must
     // still be decisive (RST), and the caveat must travel with the result so a
     // reader cannot mistake "no RST" for "open".
-    if unsafe { libc::geteuid() } != 0 {
+    if !is_root() {
         eprintln!("skipping: FIN scan needs CAP_NET_RAW (not root)");
         return;
     }
@@ -141,7 +155,7 @@ fn a_fin_scan_never_claims_open() {
 fn discovery_unions_icmp_and_tcp() {
     // N04: loopback answers both. The assertion is about presence and the
     // confidence being non-zero, not about which method won.
-    if unsafe { libc::geteuid() } != 0 {
+    if !is_root() {
         eprintln!("skipping: raw ICMP discovery needs CAP_NET_RAW (not root)");
         return;
     }
@@ -406,7 +420,7 @@ fn traceroute_sees_the_first_hop_and_the_destination() {
     // N08: loopback is one hop. The probe must be observed (ICMP quoted back),
     // the destination must be recognised as reached, and the responder must be
     // recorded with an RTT — a TTL walk that returns no hops proves nothing.
-    if unsafe { libc::geteuid() } != 0 {
+    if !is_root() {
         eprintln!("skipping: traceroute needs CAP_NET_RAW (not root)");
         return;
     }
