@@ -60,7 +60,7 @@ arrays — the element of a `NonScalar` array is not a string); a literal nested
 array is a different producer and still takes the string path. Recorded as
 `Tallow-Language/conformance/findings/nested-array-index.tl`.
 
-### 3. `tallow scope check` only works from a directory containing the register
+### 3. `tallow scope check` only works from a directory containing the register — FIXED (f90471f)
 
 ```
 $ cd ~ && tallow scope check 192.0.2.1 --method CONNECT
@@ -71,10 +71,18 @@ $ cd <engine repo> && tallow scope check 192.0.2.1 --method CONNECT
 scope:not-listed — refused: 192.0.2.1 is not in the authorization register
 ```
 
-The refusal is correct and fail-closed, but the path is resolved against the
-process cwd, so the operator tool is unusable anywhere but the repo root. The
+The refusal was correct and fail-closed, but the path was resolved against the
+process cwd, so the operator tool was unusable anywhere but the repo root. The
 same shape is what made four test suites report `register-unreadable` until they
 were changed to run the binary from the workspace root.
+
+Fixed in `f90471f`: `TALLOW_SCOPE_REGISTER` names the register, there is no
+upward search (an attacker-planted register is the reason), the refusal names the
+working directory and the variable, and the CLI now defaults through
+`scope::register_path()` instead of the constant. Verified from /tmp: no override
+gives `register-unreadable`; with it, `192.0.2.1` gives `not-listed` and
+`127.0.0.1` + CONNECT gives `method-not-allowed`. `cargo test --lib scope`:
+87 passed.
 
 ### 4. `Array.push` has no lowering on the compiled plane
 
