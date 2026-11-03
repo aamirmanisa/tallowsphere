@@ -7632,6 +7632,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tallow-egress"
+version = "0.1.0"
+dependencies = [
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "tallow-jobs"
 version = "0.1.0"
 dependencies = [
