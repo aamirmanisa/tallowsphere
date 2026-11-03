@@ -227,14 +227,19 @@ jobs:
   #                                   a function-local agent on the loopback path, so http.get/post semantics
   #                                   are unchanged (http unit tests still 61 passed, 0 failed).
   contract-cli:
-    name: Contract and CLI suites (integration)
+    name: Contract and CLI suites (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     needs: check
-    # 45, not 30: `codegen_fallthrough` re-runs the native-lowering sweep —
-    # every module the census recorded as `lowers` is compiled again (one clang
-    # link each, two at a time). That is ~11 min on an 8-core box by itself, and
-    # the suite must not go red on a wall-clock technicality.
-    timeout-minutes: 45
+    # Sharded, not one 140-target job. The single job measured 43-45 min
+    # against a 45-minute limit and was killed by that limit twice
+    # (run 41574382080 on main, run 41674321593 attempt 1 on a PR), each time
+    # after ~45 minutes of work. The wall was the defect, not the tests.
+    # Three shards put each leg near 15 min, so 30 is 2x headroom.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
@@ -290,159 +295,172 @@ jobs:
         # *_refusal fixtures could never land in a named class. With
         # `Expect::RefuseBoth` they do: 10 MATCH, 4 REFUSED, 0 diverge.
         run: cargo test --locked --test parity_runner
-      - run: >-
-          cargo test --locked --no-fail-fast
-          --test audit_cli_contract
-          --test array_methods
-          --test bp22_array_lowerings
-          --test language_surface
-          --test pattern_destructure
-          --test doctest
-          --test module_visibility
-          --test browser_page_helpers
-          --test llm_providers
-          --test journal_crash_safety
-          --test mesh_plan_tl
-          --test mesh_run_tl
-          --test mesh_llm_tl
-          --test egress_ledger
-          --test egress_gate_coverage
-          --test http_batch_scope_parity
-          --test mesh_remote
-          --test mesh_workers
-          --test browser_sentinels_tl
-          --test directorate_desks
-          --test egress_census
-          --test chained_native_array_len
-          --test egress_scope_gate
-          --test egress_gate_coverage
-          --test process_contract
-          --test request_plan_cli
-          --test perf_binary_startup
-          --test perf_install
-          --test llm_native_parity
-          --test crypto_capability_registry
-          --test hpke_rfc9180
-          --test pq_tls_group
-          --test age_container
-          --test opaque_flow
-          --test secret_display
-          --test age_native_parity
-          --test opaque_native_parity
-          --test keypair_native_parity
-          --test kats
-          --test age_stream
-          --test mutation_robustness
-          --test rotation_drill
-          --test zeroize_adoption
-          --test mesh_plan_parity
-          --test stdlib_method_refusals
-          --test transfer_transport
-          --test injection_redteam
-          --test ombuds_mesh_tl
-          --test fingerprint_audit_cli
-          --test http_result_model
-          --test http_status_as_data_parity
-          --test pkg_cli
-          --test replay_determinism
-          --test scope_gate
-          --test sec1_honesty_sweep
-          --test stdlib_scraper_doctor_cli
-          --test transport_coherence_audit
-          --test vault_enforcement_cli
-          --test veil_connect_cli
-          --test pkg_archive
-          --test pkg_cache
-          --test stdlib_math_env
-          --test transfer_bwlimit
-          --test crawler_parity
-          --test interp_codegen_parity
-          --test string_index_bounds
-          --test generated_tl_parity
-          --test optional_parity
-          --test process_exec_parity
-          --test result_truthiness_parity
-          --test result_payload_typing
-          --test fuzz_safety
-          --test enum_semantics_parity
-          --test match_exhaustiveness_parity
-          --test truthiness_parity
-          --test data_enum_print_parity
-          --test fn_value_call_parity
-          --test format_spec_parity
-          --test deals_integration
-          --test artifact_sealing
-          --test browser_contracts
-          --test browser_dispatch_reachability
-          --test browser_fallback_service
-          --test closure_capture_return
-          --test copy_engine_basic
-          --test derived_recompute
-          --test export_gate_matrix
-          --test extraction_migration
-          --test fingerprint_coherence_suite
-          --test fingerprint_policy_pass_e2e
-          --test fixity_drill
-          --test kt_log_read_only
-          --test mcp_client
-          --test pkg_import
-          --test pkg_lockfile
-          --test pkg_manifest
-          --test pkg_registry
-          --test pkg_resolver
-          --test proxy_layers_integration
-          --test relay_ws_interop
-          --test sigpipe_pipeline
-          --test stdlib_dispatch
-          --test stdlib_fs
-          --test stdlib_json
-          --test stdlib_rand
-          --test stdlib_time_log
-          --test struct_array_parity
-          --test float_array_parity
-          --test print_array_refusal
-          --test structured_data_parity
-          --test transfer_chunk_parity
-          --test exit_in_conditional
-          --test fs_read_file_native
-          --test native_fn_decl
-          --test optional_implicit_wrap
-          --test optional_exhaustiveness
-          --test optional_match_unwrap
-          --test script_mode
-          --test api_parity_native
-          --test checker_diagnostics
-          --test effect_rows
-          --test intel_ip_fixtures
-          --test intel_api_method_matrix
-          --test language_ergonomics
-          --test len_scalar_parity
-          --test module_value
-          --test named_default_parity
-          --test scope_adversarial
-          --test scope_grant_runtime
-          --test stdlib_bridge_returns
-          --test bridge_marshal_adversarial
-          --test bridge_overhead
-          --test callnorm_adversarial
-          --test newtype_parity
-          --test unsupported_net_refusal
-          --test capability_inference
-          --test bridge_ownership_adversarial
-          --test defer_parity
-          --test codegen_fallthrough
-          --test async_await_idempotent
-          --test await_payload_kinds
-          --test gate_capability_registry_parity
-          --test gate_census_page_methods_parity
-          --test gate_census_surface_parity
-          --test gate_crypto_inventory_parity
-          --test gate_docs_examples_parity
-          --test gate_ffi_symbols_parity
-          --test gate_panic_policy_parity
-          --test gate_release_parity
-          --test gate_sbom_parity
-          -- --test-threads=2
+      - name: Run this shard's contract and CLI targets
+        # Index split, not hand-picked groups: the slowest target
+        # (codegen_fallthrough, ~11 min of native relinking on its own) lands
+        # in exactly one shard and the rest spread evenly.
+        run: |
+          set -euo pipefail
+          targets=(
+
+            audit_cli_contract
+            array_methods
+            bp22_array_lowerings
+            language_surface
+            pattern_destructure
+            doctest
+            module_visibility
+            browser_page_helpers
+            llm_providers
+            journal_crash_safety
+            mesh_plan_tl
+            mesh_run_tl
+            mesh_llm_tl
+            egress_ledger
+            egress_gate_coverage
+            http_batch_scope_parity
+            mesh_remote
+            mesh_workers
+            browser_sentinels_tl
+            directorate_desks
+            egress_census
+            chained_native_array_len
+            egress_scope_gate
+            process_contract
+            request_plan_cli
+            perf_binary_startup
+            perf_install
+            llm_native_parity
+            crypto_capability_registry
+            hpke_rfc9180
+            pq_tls_group
+            age_container
+            opaque_flow
+            secret_display
+            age_native_parity
+            opaque_native_parity
+            keypair_native_parity
+            kats
+            age_stream
+            mutation_robustness
+            rotation_drill
+            zeroize_adoption
+            mesh_plan_parity
+            stdlib_method_refusals
+            transfer_transport
+            injection_redteam
+            ombuds_mesh_tl
+            fingerprint_audit_cli
+            http_result_model
+            http_status_as_data_parity
+            pkg_cli
+            replay_determinism
+            scope_gate
+            sec1_honesty_sweep
+            stdlib_scraper_doctor_cli
+            transport_coherence_audit
+            vault_enforcement_cli
+            veil_connect_cli
+            pkg_archive
+            pkg_cache
+            stdlib_math_env
+            transfer_bwlimit
+            crawler_parity
+            interp_codegen_parity
+            string_index_bounds
+            generated_tl_parity
+            optional_parity
+            process_exec_parity
+            result_truthiness_parity
+            result_payload_typing
+            fuzz_safety
+            enum_semantics_parity
+            match_exhaustiveness_parity
+            truthiness_parity
+            data_enum_print_parity
+            fn_value_call_parity
+            format_spec_parity
+            deals_integration
+            artifact_sealing
+            browser_contracts
+            browser_dispatch_reachability
+            browser_fallback_service
+            closure_capture_return
+            copy_engine_basic
+            derived_recompute
+            export_gate_matrix
+            extraction_migration
+            fingerprint_coherence_suite
+            fingerprint_policy_pass_e2e
+            fixity_drill
+            kt_log_read_only
+            mcp_client
+            pkg_import
+            pkg_lockfile
+            pkg_manifest
+            pkg_registry
+            pkg_resolver
+            proxy_layers_integration
+            relay_ws_interop
+            sigpipe_pipeline
+            stdlib_dispatch
+            stdlib_fs
+            stdlib_json
+            stdlib_rand
+            stdlib_time_log
+            struct_array_parity
+            float_array_parity
+            print_array_refusal
+            structured_data_parity
+            transfer_chunk_parity
+            exit_in_conditional
+            fs_read_file_native
+            native_fn_decl
+            optional_implicit_wrap
+            optional_exhaustiveness
+            optional_match_unwrap
+            script_mode
+            api_parity_native
+            checker_diagnostics
+            effect_rows
+            intel_ip_fixtures
+            intel_api_method_matrix
+            language_ergonomics
+            len_scalar_parity
+            module_value
+            named_default_parity
+            scope_adversarial
+            scope_grant_runtime
+            stdlib_bridge_returns
+            bridge_marshal_adversarial
+            bridge_overhead
+            callnorm_adversarial
+            newtype_parity
+            unsupported_net_refusal
+            capability_inference
+            bridge_ownership_adversarial
+            defer_parity
+            codegen_fallthrough
+            async_await_idempotent
+            await_payload_kinds
+            gate_capability_registry_parity
+            gate_census_page_methods_parity
+            gate_census_surface_parity
+            gate_crypto_inventory_parity
+            gate_docs_examples_parity
+            gate_ffi_symbols_parity
+            gate_panic_policy_parity
+            gate_release_parity
+            gate_sbom_parity
+          )
+          args=()
+          for i in "${!targets[@]}"; do
+            if (( i % 3 == ${{ matrix.shard }} )); then
+              args+=(--test "${targets[$i]}")
+            fi
+          done
+          echo "shard ${{ matrix.shard }}: $(( ${#args[@]} / 2 )) test targets"
+          cargo test --locked --no-fail-fast "${args[@]}" -- --test-threads=2
 
   # Structured logging (G52): `log.record` / `log.set_trace` / `log.trace`, per
   # docs/spec/STRUCTURED-LOGGING.md. Each case drives the real binary on the
