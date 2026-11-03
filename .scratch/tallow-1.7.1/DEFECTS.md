@@ -48,7 +48,7 @@ normatively, explain the surprise, and point at `reduce` for accumulation.
 Reference capture, if wanted, is a language change for 1.8 with its own migration
 note — not a patch.
 
-### 2. The element of a literal array-of-arrays indexes wrong on the compiled plane
+### 2. The element of a literal array-of-arrays indexes wrong on the compiled plane — a LOWERING GAP, not to be patched blind
 
 ```tallow
 let m = [[10, 20], [30, 40]]
@@ -57,8 +57,24 @@ print(m[1][0])          // interpreter 30, native 0
 
 Exit 0 on both. 1.7.0 fixed the FFI-produced shape (`zip`, `chunk`, cookie
 arrays — the element of a `NonScalar` array is not a string); a literal nested
-array is a different producer and still takes the string path. Recorded as
-`Tallow-Language/conformance/findings/nested-array-index.tl`.
+array is a different producer.
+
+Mechanism, measured by isolating the shapes (`print(m[1])` prints nothing at all,
+which is the tell):
+
+- `ExprKind::Array` in the compiled plane stores every element through
+  `coerce_to_i64` into an `i64` slot (`src/codegen.rs:7908-7977`, comment: "Each
+  element stored as i64 for simplicity"). For a nested array the element is an
+  `I8Ptr`, so the slot does not round-trip through `ptrtoint`/`inttoptr` and the
+  inner array's identity is lost.
+- Reading it back, `m[1]` yields an `i64`, and `[0]` on that i64 indexes nothing
+  meaningful — hence `0`.
+
+The fix is a lowering feature, not a correction: store `ptrtoint` for
+`NonScalar` elements, `inttoptr` + `I8Ptr` at the index when the parent's element
+shape is `NonScalar`, and route the result to the array printer. Three sites, one
+shape rule, and a native test for each. That is 1.8 work unless a 1.7.1 patch
+release is meant to carry a feature.
 
 ### 3. `tallow scope check` only works from a directory containing the register — FIXED (f90471f)
 
