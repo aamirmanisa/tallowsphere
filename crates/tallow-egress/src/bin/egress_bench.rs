@@ -20,20 +20,24 @@ use std::cmp::Ordering;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use serde_json::{Value, json};
+use tallow_egress::node::{EgressNode, NodeKind, NodePool, NodeStat};
+use tallow_egress::proxy::ProxiedFetcher;
 use tallow_egress::{
-    CapabilityReport, FetchError, HttpRangeFetcher, PoolConfig, ShardStat, fetch_plan, plan_shards,
-    probe_host,
+    CapabilityReport, FetchError, Fetcher, HttpRangeFetcher, PoolConfig, ShardStat, fetch_plan,
+    plan_shards, probe_host,
 };
 
 const USAGE: &str = "\
 usage: egress-bench --url <URL> [--streams 1,2,4,8,16] [--bytes 67108864] \
-[--retries 3] [--timeout 30] [--json <PATH>] [--probe-only]
+[--retries 3] [--timeout 30] [--nodes direct,socks5://host:port] \
+[--json <PATH>] [--probe-only]
 
   --url <URL>        target to benchmark (required unless --probe-only)
   --streams <csv>    stream counts to sweep, ascending, deduplicated
@@ -42,6 +46,9 @@ usage: egress-bench --url <URL> [--streams 1,2,4,8,16] [--bytes 67108864] \
                      min(N, content length) (default 67108864 = 64 MiB)
   --retries <N>      retries per shard before a run fails (default 3)
   --timeout <secs>   per-request timeout (default 30)
+  --nodes <csv>      egress exits to fan out across, each `direct`,
+                     `socks5://host:port` or `http://host:port`. Omit to fetch
+                     every range over the host's own route
   --json <PATH>      write the report JSON to PATH instead of stdout
   --probe-only       print this host's capability report and exit; no network I/O
 
@@ -75,6 +82,7 @@ struct Args {
     bytes: u64,
     retries: u32,
     timeout_secs: u64,
+    nodes: Option<Vec<String>>,
     json_path: Option<PathBuf>,
     probe_only: bool,
 }
@@ -108,6 +116,33 @@ where
         .map_err(|e| format!("{flag}: `{raw}` is not a valid number ({e})"))
 }
 
+/// Parse `--nodes`: a comma-separated list of `direct`, `socks5://host:port` or
+/// `http://host:port`. Order is preserved because it is the assignment order the
+/// pool sees on its first pass.
+fn parse_nodes(raw: &str) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let ok = part == "direct"
+            || part.starts_with("socks5://")
+            || part.starts_with("http://")
+            || part.starts_with("https://");
+        if !ok {
+            return Err(format!(
+                "--nodes: `{part}` is not `direct`, `socks5://…` or `http(s)://…`"
+            ));
+        }
+        out.push(part.to_string());
+    }
+    if out.is_empty() {
+        return Err("--nodes: at least one exit is required".to_string());
+    }
+    Ok(out)
+}
+
 fn parse_streams(raw: &str) -> Result<Vec<u32>, String> {
     let mut out: Vec<u32> = Vec::new();
     for part in raw.split(',') {
@@ -138,6 +173,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut retries: Option<u32> = None;
     let mut timeout_secs: Option<u64> = None;
     let mut json_path: Option<PathBuf> = None;
+    let mut nodes: Option<Vec<String>> = None;
     let mut probe_only = false;
 
     let mut i = 1usize;
@@ -170,6 +206,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                     flag,
                 )?);
             }
+            "--nodes" => nodes = Some(parse_nodes(&take_value(argv, inline, &mut i, flag)?)?),
             "--json" => json_path = Some(PathBuf::from(take_value(argv, inline, &mut i, flag)?)),
             "--probe-only" => {
                 if inline.is_some() {
@@ -203,6 +240,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         bytes,
         retries: retries.unwrap_or(DEFAULT_RETRIES),
         timeout_secs,
+        nodes,
         json_path,
         probe_only,
     })
@@ -331,6 +369,8 @@ struct Run {
     gbit: f64,
     per_shard: Vec<ShardStat>,
     shards_planned: usize,
+    /// Per-node counters, empty when the run used the host's own route.
+    nodes: Vec<NodeStat>,
 }
 
 struct Report {
@@ -425,14 +465,43 @@ fn measure(
             backoff_ms: DEFAULT_BACKOFF_MS,
             timeout_secs: client_timeout,
         };
-        let fetcher = HttpRangeFetcher::new(args.url.clone());
+        // Fan-out is opt-in. Without --nodes every range leaves over the host's
+        // own route, which is what the stream sweep is measuring; with it, each
+        // range is leased a node so the aggregate ceiling becomes nodes x node.
+        let (fetcher, pool): (Box<dyn Fetcher>, Option<Arc<NodePool>>) = match &args.nodes {
+            None => (Box::new(HttpRangeFetcher::new(args.url.clone())), None),
+            Some(specs) => {
+                let per_node = (streams as usize).div_ceil(specs.len()).max(1);
+                let mut built: Vec<EgressNode> = Vec::with_capacity(specs.len());
+                for (idx, spec) in specs.iter().enumerate() {
+                    let kind = if spec == "direct" {
+                        NodeKind::Direct
+                    } else if spec.starts_with("socks5://") {
+                        NodeKind::Socks5(spec.clone())
+                    } else {
+                        NodeKind::Http(spec.clone())
+                    };
+                    built.push(EgressNode {
+                        id: format!("node-{idx}"),
+                        kind,
+                        max_inflight: per_node,
+                    });
+                }
+                let pool = Arc::new(NodePool::new(built));
+                let fetcher = ProxiedFetcher::new(args.url.clone(), Arc::clone(&pool));
+                (Box::new(fetcher), Some(pool))
+            }
+        };
 
         let started = Instant::now();
-        let report = match fetch_plan(&plan, &fetcher, &config) {
+        let report = match fetch_plan(&plan, fetcher.as_ref(), &config) {
             Ok(report) => report,
             Err(err) => return Err(fetch_failure(streams, err)),
         };
         let elapsed = started.elapsed();
+        // Snapshot before the pool is dropped: this is the only record that the
+        // ranges actually spread across exits rather than sticking to one.
+        let node_stats = pool.as_ref().map(|p| p.stats()).unwrap_or_default();
 
         let elapsed_ms_f = elapsed.as_secs_f64() * 1000.0;
         let bytes = report.total_bytes;
@@ -467,6 +536,7 @@ fn measure(
             gbit,
             per_shard: report.per_shard,
             shards_planned: plan.shards.len(),
+            nodes: node_stats,
         });
     }
 
@@ -532,6 +602,31 @@ fn render_human(report: &Report, target_len: u64) -> String {
             "{:>7}  {:>12}  {:>10}  {:>8.1}  {:>7.2}  {:>7.2}x",
             run.streams, run.bytes, run.elapsed_ms, run.mbs, run.gbit, factor
         );
+    }
+
+    if report.runs.iter().any(|r| !r.nodes.is_empty()) {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "egress exits (shards served per node):");
+        for run in &report.runs {
+            if run.nodes.is_empty() {
+                continue;
+            }
+            let spread: Vec<String> = run
+                .nodes
+                .iter()
+                .map(|n| format!("{}={}", n.id, n.successes))
+                .collect();
+            let failures: u64 = run.nodes.iter().map(|n| n.failures).sum();
+            let idle = run.nodes.iter().filter(|n| n.successes == 0).count();
+            let _ = writeln!(
+                out,
+                "  streams={:<3} {}  failures={}  idle_nodes={}",
+                run.streams,
+                spread.join("  "),
+                failures,
+                idle
+            );
+        }
     }
 
     for run in &report.runs {
@@ -606,6 +701,17 @@ fn json_report(report: &Report) -> Result<String, String> {
                 "mbs": run.mbs,
                 "gbit": run.gbit,
                 "per_shard": per_shard,
+                "nodes": run
+                    .nodes
+                    .iter()
+                    .map(|n| json!({
+                        "id": n.id,
+                        "kind": n.kind,
+                        "inflight": n.inflight,
+                        "successes": n.successes,
+                        "failures": n.failures,
+                    }))
+                    .collect::<Vec<Value>>(),
             })
         })
         .collect();
@@ -737,4 +843,41 @@ fn run(argv: &[String]) -> u8 {
     }
 
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nodes_accept_the_three_kinds() {
+        let got = parse_nodes("direct, socks5://127.0.0.1:9050,http://10.0.0.1:3128")
+            .expect("valid spec list");
+        assert_eq!(
+            got.join(","),
+            "direct,socks5://127.0.0.1:9050,http://10.0.0.1:3128"
+        );
+    }
+
+    #[test]
+    fn nodes_reject_an_unknown_scheme() {
+        let err = parse_nodes("ftp://example.org").expect_err("must be refused");
+        assert!(
+            err.contains("ftp://example.org"),
+            "error must name the spec: {err}"
+        );
+    }
+
+    #[test]
+    fn nodes_reject_an_empty_list() {
+        assert!(
+            parse_nodes(" , ").is_err(),
+            "an empty --nodes must be an error"
+        );
+    }
+
+    #[test]
+    fn streams_still_sort_and_dedupe() {
+        assert_eq!(parse_streams("8,1,8,4").expect("parse"), vec![1, 4, 8]);
+    }
 }

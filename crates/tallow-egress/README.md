@@ -65,7 +65,18 @@ them so a run cannot silently pretend otherwise.
 
 ```
 egress-bench --url <URL> [--streams 1,2,4,8,16] [--bytes 67108864]
-             [--retries 3] [--timeout 30] [--json <PATH>] [--probe-only]
+             [--retries 3] [--timeout 30] [--nodes direct,socks5://h:p]
+             [--json <PATH>] [--probe-only]
+```
+
+`--nodes` fans the ranges across egress exits; omit it to fetch every range over
+the host's own route. A run with two nodes and four streams reports the split,
+which is the evidence that the ranges actually spread rather than sticking:
+
+```
+egress exits (shards served per node):
+  streams=1   node-0=1  node-1=0  failures=0  idle_nodes=1
+  streams=4   node-0=2  node-1=2  failures=0  idle_nodes=0
 ```
 
 Exit codes: `0` success, `2` bad arguments, `3` target does not support byte
@@ -87,10 +98,9 @@ driven by `fetch_plan`, including a test double.
 
 ## Not done
 
-- `ProxiedFetcher` fans ranges across a `NodePool` and is covered by tests, but
-  `egress-bench` has no `--nodes` flag yet, so the measured table above is the
-  *stream* lever only. Fan-out cannot be measured on this host regardless: there
-  is no second exit to fan across, and pointing it at Tor would measure Tor.
+- Fan-out is measurable only where a second exit exists. On this host the only
+  candidate is Tor, so a `--nodes socks5://127.0.0.1:9050` run would measure Tor,
+  not the scheduler. The two-direct-node run above proves the wiring, not a gain.
 - No cross-node retry inside one `fetch_range`: a failed node is recorded and
   `fetch_plan`'s retry loop picks the next shard attempt, which re-leases. Doing
   both would multiply attempt counts and hide the real failure rate.
