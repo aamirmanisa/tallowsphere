@@ -6,11 +6,12 @@
 //!
 //! Scope: single-file copies (with automatic creation of a missing destination
 //! parent directory). Directory trees, symlink policies, metadata policies,
-//! verification and parallelism are the domain of the full
-//! `tallow-copy-engine` crate (`crates/tallow-copy-engine`,
-//! `use tallow_copy_engine`) — the crate is what `transfer.fast_copy` /
-//! `transfer.fast_copy_dir` route through. Any plan action this minimal engine
-//! cannot honestly perform is refused with an explicit error pointing there.
+//! verification and parallelism are **not implemented here**, and there is no
+//! separate crate behind this module: `transfer.fast_copy` calls
+//! `copy_file_with_fallback` in `src/stdlib/transfer.rs`, which is this same
+//! std::fs path plus a reflink attempt. A plan action this minimal engine cannot
+//! honestly perform is refused with an explicit error rather than reported as a
+//! success with `bytes_copied: 0`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
