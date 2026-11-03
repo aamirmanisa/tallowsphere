@@ -22,7 +22,7 @@ pub mod probe;
 pub mod proxy;
 
 pub use node::{EgressNode, NodeKind, NodePool, NodeStat, Reservation};
-pub use plan::{PlanError, Shard, ShardPlan, plan_shards};
+pub use plan::{PlanError, Shard, ShardPlan, plan_shards, plan_shards_weighted};
 pub use pool::{
     FetchError, Fetcher, HttpRangeFetcher, PoolConfig, PoolReport, ShardStat, fetch_plan,
 };

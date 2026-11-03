@@ -31,7 +31,7 @@ use tallow_egress::node::{EgressNode, NodeKind, NodePool, NodeStat};
 use tallow_egress::proxy::ProxiedFetcher;
 use tallow_egress::{
     CapabilityReport, FetchError, Fetcher, HttpRangeFetcher, PoolConfig, ShardStat, fetch_plan,
-    plan_shards, probe_host,
+    plan_shards, plan_shards_weighted, probe_host,
 };
 
 const USAGE: &str = "\
@@ -83,6 +83,7 @@ struct Args {
     retries: u32,
     timeout_secs: u64,
     nodes: Option<Vec<String>>,
+    weights: Option<Vec<u32>>,
     json_path: Option<PathBuf>,
     probe_only: bool,
 }
@@ -143,6 +144,30 @@ fn parse_nodes(raw: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// Parse `--weights`: one positive integer per `--nodes` entry, in the same
+/// order. A weight of 0 would name a path that carries nothing, so it is an
+/// error rather than a silent drop from the plan.
+fn parse_weights(raw: &str) -> Result<Vec<u32>, String> {
+    let mut out: Vec<u32> = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let w: u32 = part
+            .parse()
+            .map_err(|_| format!("--weights: `{part}` is not a positive integer"))?;
+        if w == 0 {
+            return Err("--weights: every weight must be at least 1".to_string());
+        }
+        out.push(w);
+    }
+    if out.is_empty() {
+        return Err("--weights: at least one weight is required".to_string());
+    }
+    Ok(out)
+}
+
 fn parse_streams(raw: &str) -> Result<Vec<u32>, String> {
     let mut out: Vec<u32> = Vec::new();
     for part in raw.split(',') {
@@ -174,6 +199,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut timeout_secs: Option<u64> = None;
     let mut json_path: Option<PathBuf> = None;
     let mut nodes: Option<Vec<String>> = None;
+    let mut weights: Option<Vec<u32>> = None;
     let mut probe_only = false;
 
     let mut i = 1usize;
@@ -207,6 +233,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 )?);
             }
             "--nodes" => nodes = Some(parse_nodes(&take_value(argv, inline, &mut i, flag)?)?),
+            "--weights" => weights = Some(parse_weights(&take_value(argv, inline, &mut i, flag)?)?),
             "--json" => json_path = Some(PathBuf::from(take_value(argv, inline, &mut i, flag)?)),
             "--probe-only" => {
                 if inline.is_some() {
@@ -234,6 +261,22 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         return Err("--timeout must be greater than zero seconds".to_string());
     }
 
+    if let Some(w) = &weights {
+        match &nodes {
+            None => {
+                return Err("--weights needs --nodes: a weight is per exit".to_string());
+            }
+            Some(n) if n.len() != w.len() => {
+                return Err(format!(
+                    "--weights has {} entries but --nodes has {}",
+                    w.len(),
+                    n.len()
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+
     Ok(Args {
         url,
         streams: streams.unwrap_or_else(|| parse_streams(DEFAULT_STREAMS).unwrap_or_default()),
@@ -241,6 +284,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         retries: retries.unwrap_or(DEFAULT_RETRIES),
         timeout_secs,
         nodes,
+        weights,
         json_path,
         probe_only,
     })
@@ -445,12 +489,21 @@ fn measure(
     if baseline_added {
         list.insert(0, 1);
     }
+    // With --weights the shard count *is* the number of exits: the point of the
+    // run is how bytes split across paths, not how many connections open.
+    if let Some(w) = &args.weights {
+        list = vec![w.len() as u32];
+    }
 
     let mut runs: Vec<Run> = Vec::with_capacity(list.len());
     let mut mismatches: Vec<String> = Vec::new();
 
     for streams in list {
-        let plan = match plan_shards(target_len, streams, MIN_CHUNK_BYTES) {
+        let planned = match &args.weights {
+            Some(weights) => plan_shards_weighted(target_len, weights, MIN_CHUNK_BYTES),
+            None => plan_shards(target_len, streams, MIN_CHUNK_BYTES),
+        };
+        let plan = match planned {
             Ok(plan) => plan,
             Err(err) => {
                 eprintln!(
@@ -459,6 +512,10 @@ fn measure(
                 return Err(4);
             }
         };
+        if let Some(weights) = &args.weights {
+            let sizes: Vec<u64> = plan.shards.iter().map(|s| s.len()).collect();
+            eprintln!("egress-bench: weights {weights:?} -> shard bytes {sizes:?}");
+        }
         let config = PoolConfig {
             streams,
             retries: args.retries,
@@ -874,6 +931,22 @@ mod tests {
             parse_nodes(" , ").is_err(),
             "an empty --nodes must be an error"
         );
+    }
+
+    #[test]
+    fn weights_parse_in_order() {
+        assert_eq!(parse_weights("10, 1").expect("parse"), vec![10, 1]);
+    }
+
+    #[test]
+    fn weights_reject_zero() {
+        let err = parse_weights("1,0").expect_err("must refuse");
+        assert!(err.contains("at least 1"), "{err}");
+    }
+
+    #[test]
+    fn weights_reject_empty() {
+        assert!(parse_weights(" , ").is_err());
     }
 
     #[test]
