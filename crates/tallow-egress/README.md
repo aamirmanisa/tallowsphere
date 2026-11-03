@@ -96,6 +96,26 @@ assert_eq!(report.total_bytes, total_len);
 `Fetcher` is the seam: anything that returns exactly `end - start` bytes can be
 driven by `fetch_plan`, including a test double.
 
+## Measured across two genuinely distinct exits
+
+`--nodes direct,socks5://127.0.0.1:9050` on this box: the direct leg leaves from
+`204.168.219.219`, the SOCKS5 leg from Tor exit `185.220.101.21`. Two real
+exits, 2 MiB per run:
+
+```
+streams   elapsed ms    MB/s   Gbit/s   speedup   exits
+      1          404     5.2     0.04     1.00x   node-0=1  node-1=0
+      2          867     2.4     0.02     0.46x   node-0=1  node-1=1
+      4          866     2.4     0.02     0.46x   node-0=2  node-1=2
+```
+
+The shards spread exactly as designed — 1/1 at two streams, 2/2 at four, zero
+failures — and throughput **halved**, because the transfer finishes only when
+its slowest shard does and every shard is the same size. Fan-out across
+asymmetric exits buys per-IP distribution, not aggregate bandwidth. Making it a
+throughput win needs shard sizes proportional to each exit's measured goodput,
+which `plan_shards` does not do yet.
+
 ## Not done
 
 - Fan-out is measurable only where a second exit exists. On this host the only

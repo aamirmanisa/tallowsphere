@@ -145,7 +145,14 @@ impl ProxiedFetcher {
             .timeout(REQUEST_TIMEOUT)
             .send()
             .map_err(|err| {
-                FetchError::Transport(format!("GET {url} bytes={start}-{last} via {node}: {err}"))
+                // `reqwest::Error`'s Display is only the outermost layer ("error
+                // sending request"), which is exactly useless when the cause is a
+                // proxy handshake. Walk the source chain so the bench output names
+                // the real failure.
+                FetchError::Transport(format!(
+                    "GET {url} bytes={start}-{last} via {node}: {}",
+                    describe(&err)
+                ))
             })?;
 
         let status = response.status();
@@ -205,25 +212,65 @@ impl Fetcher for ProxiedFetcher {
 }
 
 /// Build a client that egresses through `kind`.
+/// Flatten a reqwest error's source chain into one line.
+///
+/// `Display` on `reqwest::Error` stops at the outermost layer, so a SOCKS
+/// handshake failure reads "error sending request" with no cause. This is
+/// diagnostic only — it never changes control flow.
+fn describe(err: &reqwest::Error) -> String {
+    let mut out = err.to_string();
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        out.push_str(" <- ");
+        out.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    out
+}
+
+/// Rewrite a `socks5://` proxy URL to `socks5h://` so the proxy resolves the
+/// target name instead of this host.
+///
+/// Extracted from the client builder so the rewrite is testable without opening
+/// a socket: the failure it prevents is silent, and only surfaces as a generic
+/// "error sending request" when it is wrong.
+fn socks_remote_url(url: &str) -> String {
+    match url.strip_prefix("socks5://") {
+        Some(rest) => format!("socks5h://{rest}"),
+        None => url.to_string(),
+    }
+}
+
 fn build_client(kind: &NodeKind) -> Result<Client, FetchError> {
     let builder = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT);
 
-    let builder = match kind {
-        // Explicitly `no_proxy`: reqwest otherwise honours HTTP(S)_PROXY in the
-        // environment, which would silently route a "direct" node through a
-        // proxy and make the node layout a lie.
-        NodeKind::Direct => builder.no_proxy(),
-        NodeKind::Http(url) => builder.proxy(
-            reqwest::Proxy::http(url.as_str())
-                .map_err(|err| FetchError::Transport(format!("bad HTTP proxy {url}: {err}")))?,
-        ),
-        NodeKind::Socks5(url) => builder.proxy(
-            reqwest::Proxy::all(url.as_str())
-                .map_err(|err| FetchError::Transport(format!("bad SOCKS5 proxy {url}: {err}")))?,
-        ),
-    };
+    let builder =
+        match kind {
+            // Explicitly `no_proxy`: reqwest otherwise honours HTTP(S)_PROXY in the
+            // environment, which would silently route a "direct" node through a
+            // proxy and make the node layout a lie.
+            NodeKind::Direct => builder.no_proxy(),
+            NodeKind::Http(url) => builder
+                .proxy(reqwest::Proxy::http(url.as_str()).map_err(|err| {
+                    FetchError::Transport(format!("bad HTTP proxy {url}: {err}"))
+                })?),
+            NodeKind::Socks5(url) => {
+                // `socks5://` makes reqwest resolve the target name locally and only
+                // tunnel the connection; `socks5h://` hands the name to the proxy.
+                // For a Tor exit the local resolver is both useless and a leak — the
+                // query leaves from this host before the tunnel exists.
+                //
+                // Measured 2026-11-03 against this box's Tor: `curl --socks5` to a
+                // range target failed outright while `--socks5-hostname` returned
+                // 206, i.e. the non-h variant does not merely leak, it breaks.
+                let remote = socks_remote_url(url);
+                builder.proxy(reqwest::Proxy::all(remote.as_str()).map_err(|err| {
+                    FetchError::Transport(format!("bad SOCKS5 proxy {url}: {err}"))
+                })?)
+            }
+        };
 
     builder.build().map_err(|err| {
         FetchError::Transport(format!("could not build a client for {kind:?}: {err}"))
@@ -503,5 +550,26 @@ mod tests {
         }
         let total: u64 = stats.iter().map(|stat| stat.successes).sum();
         assert_eq!(total, REQUESTS, "each request is counted once");
+    }
+}
+
+#[cfg(test)]
+mod socks_tests {
+    use super::socks_remote_url;
+
+    #[test]
+    fn socks5_is_rewritten_to_socks5h() {
+        assert_eq!(
+            socks_remote_url("socks5://127.0.0.1:9050"),
+            "socks5h://127.0.0.1:9050"
+        );
+    }
+
+    #[test]
+    fn socks5h_is_left_alone() {
+        assert_eq!(
+            socks_remote_url("socks5h://127.0.0.1:9050"),
+            "socks5h://127.0.0.1:9050"
+        );
     }
 }
