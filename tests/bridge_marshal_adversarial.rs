@@ -525,11 +525,19 @@ fn a_float_that_is_not_decimal_exact_round_trips_bit_identically() {
 
 // ── 5. Repeated calls: RSS ─────────────────────────────────────────────────
 
+#[cfg(unix)]
 fn resident_kb(pid: u32) -> Option<u64> {
     let text = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
     let resident_pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;
+    // SAFETY: `sysconf(_SC_PAGESIZE)` takes no pointers and cannot fail here.
     let page_kb = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64 / 1024;
     Some(resident_pages * page_kb)
+}
+
+/// No `/proc` on this target, so RSS is unavailable rather than wrong.
+#[cfg(not(unix))]
+fn resident_kb(_pid: u32) -> Option<u64> {
+    None
 }
 
 /// **Was red; now green (F1).** 600 bridged calls that each return a ~32 KiB

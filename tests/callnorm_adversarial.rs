@@ -187,9 +187,16 @@ fn run_file(args: &[&str], path: &std::path::Path) -> Run {
         let _ = pipe.read_to_string(&mut stderr);
     }
 
-    use std::os::unix::process::ExitStatusExt;
     let (code, signal) = match status {
-        Some(s) => (s.code(), s.signal()),
+        #[cfg(unix)]
+        Some(s) => {
+            use std::os::unix::process::ExitStatusExt;
+            (s.code(), s.signal())
+        }
+        // Windows has no wait-status signal field; a process either exits with a
+        // code or the call fails, so `None` is the accurate answer, not a gap.
+        #[cfg(not(unix))]
+        Some(s) => (s.code(), None),
         None => (None, None),
     };
     Run {
