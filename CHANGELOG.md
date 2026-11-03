@@ -9,6 +9,60 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.7.1] — 2026-11-03 — The scope tool works outside the repo, and the spec stops disagreeing with the compiler
+
+### What was wrong
+
+Two artefacts did not describe the thing that shipped.
+
+`tallow scope check` is the operator's "may I fetch this" verb, and it only
+worked from a directory containing
+`configs/tallow/scope/authorized-hosts.toml`. The default path is relative to the
+working directory and there was no way to name a register explicitly, so an
+installed binary answered every check with `scope:register-unreadable` — correct,
+fail-closed, and useless to anyone outside the source tree. The CLI had a second
+fault under it: `src/cli/scope_cmd.rs` built its default straight from the
+constant and called `ScopeRegister::load(&o.register)`, so any override added to
+`scope.rs` alone would have been inert.
+
+The semantics chapter said something the compiler does not do. `spec/04-semantics`
+§4.6 read "mutation is visible to closures that captured them *(reference)*",
+while both engines copy the captured bindings at creation — `src/interp.rs:189-191`
+says so in the field description, and `closure_snapshot_semantics` pins it with a
+test. A reader trusting the spec would write an accumulator that silently does
+nothing.
+
+### What was fixed
+
+- `TALLOW_SCOPE_REGISTER` names the register explicitly. There is deliberately no
+  search up the directory tree: a register discovered from whatever directory you
+  happen to be standing in is one an attacker can supply.
+- The refusal now names the working directory the relative path resolved against
+  and the variable that overrides it, so the failure is actionable instead of
+  merely correct.
+- `tallow scope --help` says both, and the CLI resolves through
+  `scope::register_path()` so the override actually reaches it.
+- The semantics spec now states snapshot capture normatively, explains the
+  surprise, and points at `reduce` for accumulation (Tallow-Language `62a4251`).
+
+Measured with the published 1.7.0 binary, both planes identical: a closure that
+increments a captured `var` returns 1 then 2 across calls while the enclosing
+variable stays 0.
+
+### Known at tag time
+
+- **A literal array-of-arrays indexes wrong on the compiled plane.**
+  `[[10, 20], [30, 40]][1][0]` prints 30 interpreted and 0 natively, exit 0 both,
+  and `print(m[1])` prints nothing — the tell. The literal lowerer stores every
+  element through `coerce_to_i64` into an `i64` slot
+  (`src/codegen.rs:7908-7977`), so an `I8Ptr` element never round-trips through
+  `ptrtoint`/`inttoptr` and the inner array's identity is lost. This is a lowering
+  feature (three coordinated sites plus a test each), scheduled for 1.8, not a
+  patch-release correction.
+- **`Array.push` still has no lowering on the compiled plane.** `tallow build`
+  refuses such a program by name and `tallow run` falls back to the interpreter.
+  Also 1.8.
+
 ## [v1.7.0] — 2026-11-01 — Every egress path consults the register, and http.batch has a type
 
 ### What was wrong
