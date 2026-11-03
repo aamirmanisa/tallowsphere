@@ -406,6 +406,7 @@ incremental = false
 members = [
     "crates/tallow-crypto",
     "crates/tallow-net",
+    "crates/tallow-egress",
     "crates/tallow-protocol",
     "crates/tallow-daemon",
     "crates/tallow-reader",

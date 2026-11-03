@@ -1,0 +1,20 @@
+[package]
+name = "tallow-egress"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Egress throughput: parallel range streams, exit-node fan-out, and path capability probes"
+
+# Cargo derives a binary target name from the file stem, which would expose
+# `egress_bench`; name the installed binary the way the CLI documents itself.
+[[bin]]
+name = "egress-bench"
+path = "src/bin/egress_bench.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# Feature set matches the root package exactly so the workspace target dir
+# reuses already-compiled artifacts instead of rebuilding reqwest from scratch.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "socks"] }
