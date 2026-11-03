@@ -11,6 +11,14 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 ## [v1.7.1] — 2026-11-03 — The scope tool works outside the repo, and the spec stops disagreeing with the compiler
 
+### Added
+
+- `TALLOW_SCOPE_REGISTER` — names the outbound authorization register explicitly,
+  so `tallow scope` works from any directory instead of only from the tree that
+  holds `configs/tallow/scope/authorized-hosts.toml`. There is deliberately no
+  search up the directory tree: a register discovered from whatever directory you
+  happen to stand in is one an attacker can supply.
+
 ### What was wrong
 
 Two artefacts did not describe the thing that shipped.
