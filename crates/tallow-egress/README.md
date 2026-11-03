@@ -87,8 +87,12 @@ driven by `fetch_plan`, including a test double.
 
 ## Not done
 
-- `NodePool` is built and tested but not yet wired into `HttpRangeFetcher`;
-  the bench measures streams, not nodes. A `ProxiedFetcher` that leases a node
-  per range is the next commit.
+- `ProxiedFetcher` fans ranges across a `NodePool` and is covered by tests, but
+  `egress-bench` has no `--nodes` flag yet, so the measured table above is the
+  *stream* lever only. Fan-out cannot be measured on this host regardless: there
+  is no second exit to fan across, and pointing it at Tor would measure Tor.
+- No cross-node retry inside one `fetch_range`: a failed node is recorded and
+  `fetch_plan`'s retry loop picks the next shard attempt, which re-leases. Doing
+  both would multiply attempt counts and hide the real failure rate.
 - Per-shard accounting reports wall time but not time-to-first-byte, so a slow
   start and a slow transfer are not distinguished in the JSON.

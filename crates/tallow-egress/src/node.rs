@@ -237,11 +237,10 @@ impl Reservation {
         self.state.successes.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record that the work done under this lease failed (in addition to the
-    /// pool-level counter, which the scheduler reads).
-    pub fn failure(&self) {
-        self.state.failures.fetch_add(1, Ordering::Relaxed);
-    }
+    // No `failure()` here on purpose: it would increment the same counter that
+    // `NodePool::record_failure` owns, and a caller holding a lease would have
+    // two plausible ways to report one failure — double-counting the attempt and
+    // skewing the least-loaded ordering. Failure goes through the pool.
 }
 
 impl Drop for Reservation {
