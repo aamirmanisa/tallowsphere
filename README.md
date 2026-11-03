@@ -8,6 +8,10 @@
 
 **A schema you write once, applied to a page you already have — no model, no API key, no network.**
 
+> **Scope:** Tallow ships command-line programs. The engine, the language and the tools are
+> CLIs — there is no GUI or desktop application in this repository or in `Tallow-Language`
+> or `Tallow-Copy`. A UI is a separate product decision, not a direction of this tree.
+
 <sub><a href="#extraction-in-five-minutes">Extraction</a> &nbsp;·&nbsp; <a href="#install">Install</a> &nbsp;·&nbsp; <a href="#the-language-underneath">The language</a> &nbsp;·&nbsp; <a href="#architecture">Architecture</a> &nbsp;·&nbsp; <a href="#building-from-source">Build</a> &nbsp;·&nbsp; <a href="#hosting-and-deployment">Deploy</a> &nbsp;·&nbsp; <a href="#what-it-does-not-do-yet">Limits</a></sub>
 
 ![release 1.6.0](https://img.shields.io/badge/release-1.6.0-E39B3E?style=flat-square&labelColor=171513)
