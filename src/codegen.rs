@@ -15156,6 +15156,12 @@ void tallow_async_runtime_shutdown(void) {
 
     // ── Print Emission ──────────────────────────────────────────────────────
 
+    /// `print(a, b, ...)` — every argument, space-separated, one trailing newline,
+    /// matching the interpreter's framing.
+    ///
+    /// Before this loop the native backend printed only `args[0]` and dropped the
+    /// rest silently: `print(1, 2)` printed `1`, `print("a", "b")` printed `a`.
+    /// That is worse than a refusal — the program exits 0 having lost output.
     fn emit_print(&mut self, args: &[CallArg]) -> Result<LLValue, String> {
         if args.is_empty() {
             let reg = self.fresh_reg();
@@ -15164,11 +15170,29 @@ void tallow_async_runtime_shutdown(void) {
             ));
             return Ok(LLValue::new("0".into(), LLType::I64));
         }
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                let sep = self.intern_string(" ");
+                let reg = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{reg} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {sep})"
+                ));
+            }
+            self.emit_print_value(&arg.value)?;
+        }
+        let nl = self.fresh_reg();
+        self.emit_line(&format!(
+            "{nl} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
+        ));
+        Ok(LLValue::new("0".into(), LLType::I64))
+    }
 
+    /// Print one value with no framing: no separator, no newline.
+    fn emit_print_value(&mut self, expr: &Expr) -> Result<LLValue, String> {
         // A payload-carrying enum is a tagged struct, not a string. Printing it as
         // one emitted a raw byte of the discriminant (register #125); refuse so the
         // interpreter prints `Variant(payload)` instead of garbage.
-        if self.expr_is_data_enum(&args[0].value) {
+        if self.expr_is_data_enum(expr) {
             return Err(concat!(
                 "cannot print a data-carrying enum natively: it is a tagged struct, ",
                 "not a string; read its fields instead, or run without --require-native ",
@@ -15178,7 +15202,7 @@ void tallow_async_runtime_shutdown(void) {
         }
 
         // ── Privacy enforcement: intercept print of private/secret values ──
-        if let Some(privacy) = self.expr_privacy(&args[0].value).cloned() {
+        if let Some(privacy) = self.expr_privacy(expr).cloned() {
             match privacy {
                 PrivacyLevel::Secret => {
                     // Secret types must NEVER be printed — emit "[SECRET]" instead
@@ -15187,16 +15211,12 @@ void tallow_async_runtime_shutdown(void) {
                     self.emit_line(&format!(
                         "{reg} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {redacted})"
                     ));
-                    let nl = self.fresh_reg();
-                    self.emit_line(&format!(
-                        "{nl} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
-                    ));
                     return Ok(LLValue::new("0".into(), LLType::I64));
                 }
                 PrivacyLevel::Private => {
                     // Private types get redacted: call tallow_redact_private() to mask the value.
                     // The runtime function replaces all but the first and last chars with '*'.
-                    let val = self.emit_expr(&args[0].value)?;
+                    let val = self.emit_expr(expr)?;
                     let str_val = self.coerce_to_string(&val)?;
                     let redacted = self.fresh_reg();
                     self.emit_line(&format!(
@@ -15205,10 +15225,6 @@ void tallow_async_runtime_shutdown(void) {
                     let reg = self.fresh_reg();
                     self.emit_line(&format!(
                         "{reg} = call i32 (ptr, ...) @printf(ptr @.fmt.str, ptr {redacted})"
-                    ));
-                    let nl = self.fresh_reg();
-                    self.emit_line(&format!(
-                        "{nl} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
                     ));
                     return Ok(LLValue::new("0".into(), LLType::I64));
                 }
@@ -15221,15 +15237,11 @@ void tallow_async_runtime_shutdown(void) {
         // count byte (`[1,2,3]` printed `\x03`). Route composites to the
         // runtime display renderers so `print([1,2,3])` / `print({"k": 1})`
         // match the interpreter's `display()` byte for byte.
-        if self.emit_composite_print(&args[0].value)? {
-            let nl = self.fresh_reg();
-            self.emit_line(&format!(
-                "{nl} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
-            ));
+        if self.emit_composite_print(expr)? {
             return Ok(LLValue::new("0".into(), LLType::I64));
         }
 
-        let val = self.emit_expr(&args[0].value)?;
+        let val = self.emit_expr(expr)?;
 
         // An optional prints as `nil` or as its payload rendered by the boxed
         // kind; the runtime owns the dispatch so the value never reaches a
@@ -15239,10 +15251,6 @@ void tallow_async_runtime_shutdown(void) {
             self.emit_line(&format!(
                 "{printed} = call i32 @tallow_print_optional(ptr {})",
                 val.reg
-            ));
-            let nl = self.fresh_reg();
-            self.emit_line(&format!(
-                "{nl} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
             ));
             return Ok(LLValue::new("0".into(), LLType::I64));
         }
@@ -15399,12 +15407,6 @@ void tallow_async_runtime_shutdown(void) {
                 ));
             }
         }
-
-        // Print newline
-        let nl = self.fresh_reg();
-        self.emit_line(&format!(
-            "{nl} = call i32 (ptr, ...) @printf(ptr @.fmt.newline)"
-        ));
 
         Ok(LLValue::new("0".into(), LLType::I64))
     }
@@ -44450,6 +44452,29 @@ fn main() {
                  enclosing branch has nothing live to branch into:\n{ir}"
             );
         }
+    }
+
+    /// `print(a, b)` must emit a print for every argument, not just the first.
+    ///
+    /// The native backend read `args[0]` and dropped the rest, so `print(1, 2)`
+    /// printed `1` and exited 0 — silent output loss on the compiled plane while
+    /// the interpreter printed `1 2`. The IR assertion is the cheap half;
+    /// `tests/parity/parity_programs/25_print_multi_args.tl` is the end-to-end
+    /// half (interpreter vs native, byte for byte).
+    #[test]
+    fn e2e_print_emits_every_argument() {
+        let ir = compile_to_ir("fn main() {\n    print(1, 2)\n}");
+        validate_ir(&ir);
+        let int_prints = ir.matches("@printf(ptr @.fmt.int").count();
+        assert_eq!(
+            int_prints, 2,
+            "print(1, 2) must emit two integer prints, got {int_prints}:\n{ir}"
+        );
+        let newlines = ir.matches("@printf(ptr @.fmt.newline)").count();
+        assert_eq!(
+            newlines, 1,
+            "print(1, 2) is one line: exactly one newline expected, got {newlines}"
+        );
     }
 
     #[test]

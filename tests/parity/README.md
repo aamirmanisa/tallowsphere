@@ -71,6 +71,7 @@ attribute a case to a feature area:
 | `05_maps.tl` | map literal, `[]` index, `.get()` — literal-read maps (now sound) |
 | `06_map_mut.tl` | map `.set()` mutation in a loop — **silent native miscompile canary** |
 | `07_array_push.tl` | array `.push()` growth + iterate — **native SIGSEGV canary** |
+| `25_print_multi_args.tl` | `print(a, b, …)` framing: every argument, space-separated, one newline — **silent output-loss canary** (native printed only `args[0]` until 2026-11-04) |
 
 All programs are **deterministic**: no randomness, no time/clock reads, no
 network, no filesystem imports. Their output is a fixed, reproducible byte
