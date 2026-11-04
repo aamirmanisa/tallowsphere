@@ -234,8 +234,8 @@ jobs:
     # against a 45-minute limit and was killed by that limit twice
     # (run 41574382080 on main, run 41674321593 attempt 1 on a PR), each time
     # after ~45 minutes of work. The wall was the defect, not the tests.
-    # Three shards put each leg near 15 min, so 30 is 2x headroom.
-    timeout-minutes: 30
+    # Three shards put each leg near 15 min; parity adds ~15 (see RUNNER_TIMEOUT_S).
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

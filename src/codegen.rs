@@ -6362,6 +6362,30 @@ void tallow_async_runtime_shutdown(void) {
                             self.variable_array_elem_is_ptr.insert(name.clone(), true);
                         }
                     }
+                    // An empty literal has no first element to infer from, so the
+                    // declared type has to supply the element kind. Without this,
+                    // `var out: []String = []` never records that its slots are
+                    // pointers, and every later push/index/print reads them as
+                    // i64 — the interpreter prints "alpha", the native plane
+                    // prints an address. Measured 2026-11-04.
+                    if items.is_empty() {
+                        if let Some(type_expr) = ty {
+                            if let TypeExprKind::Slice(inner) = &type_expr.kind {
+                                if let TypeExprKind::Named(elem_name) = &inner.kind {
+                                    if elem_name == "String" {
+                                        self.variable_array_elem_is_ptr
+                                            .insert(name.clone(), true);
+                                        self.browser_variables
+                                            .insert(name.clone(), "StringArray".to_string());
+                                    }
+                                }
+                                if let Some(shape) = self.array_shape_of_type_expr(type_expr) {
+                                    self.variable_array_elem_shape
+                                        .insert(name.clone(), shape);
+                                }
+                            }
+                        }
+                    }
                     // Check if array elements are struct literals
                     if let Some(first) = items.first() {
                         if let ExprKind::StructLit {
@@ -31873,6 +31897,22 @@ fn pick_runtime_archive(
         .collect();
 
     let legacy_same = legacy.as_ref().is_some_and(|l| l.profile == running_profile);
+
+    // The archive beside the binary is the one this compiler was BUILT with, so
+    // prefer it outright when the profiles match. A `deps/` archive can be newer
+    // and same-profile while still being a different build: `cargo test` unifies
+    // dev-dependencies, so it writes a runtime with a different feature set, and
+    // linking that produces IR the runtime does not implement. Measured
+    // 2026-11-04 on run 41790919054: adding a dependency feature made the deps
+    // archive newer, the compiler linked it, and clang rejected the result with
+    // "PHINode should have one entry for each predecessor" — an error that looks
+    // like a codegen bug and is not one.
+    if legacy_same {
+        if let Some(l) = &legacy {
+            return Some(l.path.clone());
+        }
+    }
+
     let mut pool: Vec<RuntimeArchive> = if legacy_same {
         let mut v = same;
         if let Some(l) = legacy.clone() {
@@ -34615,15 +34655,16 @@ mod tests {
 
     #[test]
     fn codegen_array_push() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // Was a named refusal until 2026-11-04. The symptom (a pushed string printing
+        // as a raw address) came from element kind being inferred only from a
+        // literal's FIRST element, so `var out: []String = []` never recorded that
+        // its slots hold pointers. With that fixed in the array-literal path, push
+        // lowers and matches the interpreter; end-to-end parity lives in
+        // tests/array_methods.rs.
         assert!(
-            !crate::array_methods::lookup("push").expect("registry row").native,
-            "Array.push must be refused on the native plane"
+            crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push is lowered once element kind survives an empty literal; \
+             tests/array_methods.rs holds it to the interpreter"
         );
     }
 
@@ -35722,15 +35763,16 @@ mod tests {
 
     #[test]
     fn codegen_array_push_element() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // Was a named refusal until 2026-11-04. The symptom (a pushed string printing
+        // as a raw address) came from element kind being inferred only from a
+        // literal's FIRST element, so `var out: []String = []` never recorded that
+        // its slots hold pointers. With that fixed in the array-literal path, push
+        // lowers and matches the interpreter; end-to-end parity lives in
+        // tests/array_methods.rs.
         assert!(
-            !crate::array_methods::lookup("push").expect("registry row").native,
-            "Array.push must be refused on the native plane"
+            crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push is lowered once element kind survives an empty literal; \
+             tests/array_methods.rs holds it to the interpreter"
         );
     }
 
@@ -36387,15 +36429,16 @@ mod tests {
 
     #[test]
     fn codegen_array_push_extends() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // Was a named refusal until 2026-11-04. The symptom (a pushed string printing
+        // as a raw address) came from element kind being inferred only from a
+        // literal's FIRST element, so `var out: []String = []` never recorded that
+        // its slots hold pointers. With that fixed in the array-literal path, push
+        // lowers and matches the interpreter; end-to-end parity lives in
+        // tests/array_methods.rs.
         assert!(
-            !crate::array_methods::lookup("push").expect("registry row").native,
-            "Array.push must be refused on the native plane"
+            crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push is lowered once element kind survives an empty literal; \
+             tests/array_methods.rs holds it to the interpreter"
         );
     }
 
@@ -37705,15 +37748,16 @@ mod tests {
 
     #[test]
     fn codegen_array_push_method() {
-        // BP21: the emitter still carries an arm for this method, but it disagrees with the
-        // interpreter (measured: native returns 1 where the interpreter returns N for zip, take,
-        // chunk, enumerate, flat_map and unique; push yielded a raw 0x02 byte). The refusal lives
-        // in the method registry, which the check phase consults before codegen is reached -- so
-        // the honest unit assertion is on the registry flag, not on IR that can no longer be
-        // produced for an Array receiver. End-to-end refusal: tests/array_methods.rs.
+        // Was a named refusal until 2026-11-04. The symptom (a pushed string printing
+        // as a raw address) came from element kind being inferred only from a
+        // literal's FIRST element, so `var out: []String = []` never recorded that
+        // its slots hold pointers. With that fixed in the array-literal path, push
+        // lowers and matches the interpreter; end-to-end parity lives in
+        // tests/array_methods.rs.
         assert!(
-            !crate::array_methods::lookup("push").expect("registry row").native,
-            "Array.push must be refused on the native plane"
+            crate::array_methods::lookup("push").expect("registry row").native,
+            "Array.push is lowered once element kind survives an empty literal; \
+             tests/array_methods.rs holds it to the interpreter"
         );
     }
 
@@ -45748,12 +45792,21 @@ mod runtime_archive_selection {
         RuntimeArchive::at(p)
     }
 
+    /// The sibling archive wins even when a deps/ build has a later mtime.
+    ///
+    /// This test used to assert the opposite. `cargo test` unifies dev-dependencies,
+    /// so it writes a *same-profile* archive from a different feature set; "newest
+    /// wins" then links a runtime this compiler was not built against, and the
+    /// mismatch surfaces as invalid IR ("PHINode should have one entry for each
+    /// predecessor") rather than as a link error. Measured 2026-11-04: adding a
+    /// dependency feature made the deps archive newer and native builds in CI failed
+    /// on a program that compiles fine.
     #[test]
-    fn newer_deps_archive_beats_stale_top_level() {
+    fn sibling_archive_beats_a_newer_deps_build() {
         let dir = scratch("newer-deps");
         let legacy = candidate(&dir, "debug", "libtallow.a", 1_750_000_000);
         let fresh = candidate(&dir, "debug", "libtallow-aaaa1111.a", 1_750_003_600);
-        let want = fresh.path.clone();
+        let want = legacy.path.clone();
         assert_eq!(
             pick_runtime_archive(Some(legacy), vec![fresh], Profile::Debug),
             Some(want)

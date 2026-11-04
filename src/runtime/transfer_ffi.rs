@@ -21,13 +21,48 @@ pub extern "C" fn tallow_file_hash(path: *const c_char) -> *mut c_char {
             return std::ptr::null_mut();
         }
     };
-    match std::fs::read(p) {
-        Ok(data) => string_to_cstr(&blake3::hash(&data).to_hex().to_string()),
+    // Streamed and parallel, not `std::fs::read` + `blake3::hash`:
+    //   * `read` pulls the whole file into memory before hashing starts — a
+    //     256 MiB allocation for a copy that is already streaming;
+    //   * `blake3::hash` is single-threaded, so the verify pass used one core of
+    //     four.
+    // Measured 2026-11-04: the native binary hashed 256 MiB slower than the
+    // interpreter did, which is backwards. 1 MiB chunks with `update_rayon`
+    // above a 1 MiB threshold keeps small files on the cheap path.
+    const CHUNK: usize = 1 << 20;
+    let file = match std::fs::File::open(p) {
+        Ok(f) => f,
         Err(e) => {
             set_last_error(format!("read: {e}"));
-            std::ptr::null_mut()
+            return std::ptr::null_mut();
+        }
+    };
+    // Size the buffer to the file, capped at CHUNK. A flat 1 MiB buffer is a
+    // regression on a tree of small files: two hashes per file x 2,000 files
+    // meant 4,000 MiB-scale allocations, and the tree case went 205 -> 838 ms
+    // (measured 2026-11-04). Big files still get the full chunk, so the parallel
+    // path is unchanged.
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let chunk = std::cmp::min(len.max(4096) as usize, CHUNK);
+    let mut reader = std::io::BufReader::with_capacity(chunk, file);
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; chunk];
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => {
+                set_last_error(format!("read: {e}"));
+                return std::ptr::null_mut();
+            }
+        };
+        if n >= CHUNK {
+            hasher.update_rayon(&buf[..n]);
+        } else {
+            hasher.update(&buf[..n]);
         }
     }
+    string_to_cstr(&hasher.finalize().to_hex().to_string())
 }
 
 /// `transfer.hash_prefix(path, len)` — BLAKE3 of the first `len` bytes.
@@ -309,7 +344,8 @@ pub extern "C" fn tallow_delta_scan(dir: *const c_char) -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::{CStr, CString};
+    use std::io::Read;
+use std::ffi::{CStr, CString};
 
     #[test]
     fn test_file_hash_ffi() {
