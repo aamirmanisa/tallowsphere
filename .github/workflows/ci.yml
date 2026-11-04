@@ -295,6 +295,16 @@ jobs:
         # *_refusal fixtures could never land in a named class. With
         # `Expect::RefuseBoth` they do: 10 MATCH, 4 REFUSED, 0 diverge.
         run: cargo test --locked --test parity_runner
+      - name: Refresh the engine binary against the runtime archive
+        # A dependency-feature change rebuilds target/debug/deps/libtallow-*.a
+        # while target/debug/tallow can be restored from cache, leaving the
+        # engine older than the runtime it links. The engine says so —
+        # "runtime archive: ... is newer than <binary>" — and then emits IR that
+        # does not match, which surfaces as an unrelated-looking codegen error
+        # ("PHINode should have one entry for each predecessor"). Measured on run
+        # 41790919054, shard 2/3. Rebuild the binary after the test-profile lib
+        # exists so the two always come from the same build.
+        run: cargo build --locked --bin tallow
       - name: Run this shard's contract and CLI targets
         # Index split, not hand-picked groups: the slowest target
         # (codegen_fallthrough, ~11 min of native relinking on its own) lands
