@@ -54,7 +54,7 @@ png = "0.17"
 sha1 = "0.10"
 ctrlc = "3"
 regex = "1.12"
-blake3 = "1.8"
+blake3 = { version = "1.8", features = ["rayon"] }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 argon2 = "0.5"

@@ -159,6 +159,13 @@ pub const ARRAY_METHODS: &[ArrayMethod] = &[
         // Codegen has an arm for this name and it is wrong on this plane (the
         // bound result printed a raw byte). The contract for BP21 is explicit:
         // a registry method the native plane cannot lower is a named refusal.
+        //
+        // Re-tested 2026-11-04 by flipping this to `true` with a rebuilt engine:
+        // integer pushes are correct, but a pushed STRING comes back as a raw
+        // pointer value (interpreter: "alpha", native: 196608...), so the array
+        // shape is still lost through push for pointer elements. The refusal is
+        // accurate; do not flip this again without a two-plane parity test on
+        // both an []i64 and an []String.
         native: false,
         functional: true,
         doc: "returns a NEW array with the value appended; a bare `a.push(2)` mutates nothing",
