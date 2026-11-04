@@ -29,11 +29,11 @@
 //! it also cannot protect the claim.
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -254,6 +254,22 @@ fn handle_request(mut stream: TcpStream) {
     );
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.write_all(body);
+
+    // Close cleanly. A POST leaves its request body unread — this handler only
+    // ever reads the first segment — and on Linux a close with unread received
+    // data sends RST instead of FIN, which lets the peer discard the response
+    // that was just written. Measured 2026-11-03 on run 41738066552:
+    // post_404_measured_values saw `status: 404, body: ""` against a server
+    // that had sent `Content-Length: 17`. GETs never hit it because they send
+    // no body, which is why only the POST assertions flaked.
+    let _ = stream.shutdown(Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+    let mut sink = [0_u8; 1024];
+    while let Ok(n) = stream.read(&mut sink) {
+        if n == 0 {
+            break;
+        }
+    }
 }
 
 fn closed_url() -> String {
@@ -468,7 +484,11 @@ fn connection_refused_measured_values() {
         "native abort message moved: {:?}",
         native_fields.stderr
     );
-    assert!(native_fields.stdout.trim().is_empty(), "native printed a value: {:?}", native_fields.stdout);
+    assert!(
+        native_fields.stdout.trim().is_empty(),
+        "native printed a value: {:?}",
+        native_fields.stdout
+    );
 }
 
 #[test]
