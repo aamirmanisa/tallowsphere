@@ -659,7 +659,7 @@ const CFG_EGRESS: &[CfgSite] = &[
     },
     CfgSite {
         file: "src/stdlib/transfer.rs",
-        line: 718,
+        line: 732,
         guard: "windows",
         class: "proc",
         view: PlatformView::OnlyOnWindows,
