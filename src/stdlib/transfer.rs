@@ -283,14 +283,28 @@ fn file_hash(args: &[Value]) -> StdlibResult {
     };
     let file = std::fs::File::open(&path)
         .map_err(|e| format!("transfer.file_hash: cannot open '{}': {}", path, e))?;
-    let mut reader = BufReader::with_capacity(65536, file);
+    // 1 MiB chunks, hashed in parallel above a threshold. BLAKE3's Rayon
+    // feature splits one `update_rayon` across cores; on a 4-vCPU box that is
+    // the difference between using one core and four for the verify pass, which
+    // is a full pass over the data. Small reads stay on the cheap path so the
+    // per-file cost of a 2,000-file tree does not grow.
+    const CHUNK: usize = 1 << 20;
+    const RAYON_MIN: usize = 1 << 20;
+    let mut reader = BufReader::with_capacity(CHUNK, file);
     let mut hasher = blake3::Hasher::new();
-    let mut buf = [0u8; 65536];
+    let mut buf = vec![0u8; CHUNK];
     loop {
-        let n = reader.read(&mut buf)
+        let n = reader
+            .read(&mut buf)
             .map_err(|e| format!("transfer.file_hash: read error: {}", e))?;
-        if n == 0 { break; }
-        hasher.update(&buf[..n]);
+        if n == 0 {
+            break;
+        }
+        if n >= RAYON_MIN {
+            hasher.update_rayon(&buf[..n]);
+        } else {
+            hasher.update(&buf[..n]);
+        }
     }
     Ok(Value::String(hasher.finalize().to_hex().to_string()))
 }
