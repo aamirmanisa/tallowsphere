@@ -19,7 +19,12 @@ TALLOW="${TALLOW:-$REPO/target/debug/tallow}"
 PROGS_DIR="$(dirname "$0")/parity_programs"
 # A cross triple forces the interpreter path (is_cross guard skips native).
 CROSS_TARGET="${CROSS_TARGET:-x86_64-linux}"
-TIMEOUT_S="${TIMEOUT_S:-30}"
+# Per-step cap. A cold native build of the larger fixtures (05_maps, 06_map_mut,
+# 17_structured_data, 19_crawler_from_links) measured ~21s on a warm aarch64 box;
+# at the old 30s cap the x86_64 CI runner killed them mid-link, `timeout` printed
+# nothing, and the verdict surfaced as an unnamed ERROR(build) on four fixtures.
+# The cap has to cover a cold link on the slowest runner, not the local best case.
+TIMEOUT_S="${TIMEOUT_S:-120}"
 
 if [ ! -x "$TALLOW" ]; then
   echo "ERROR: tallow binary not found at $TALLOW (build it first: cargo build --bin tallow)"
@@ -61,7 +66,16 @@ for f in "$PROGS_DIR"/*.tl; do
       fallback=$((fallback+1))
     else
       echo "$name: ERROR(build)"
-      echo "  reason: $(printf '%s' "$bld_out" | grep -iE 'error|refus|not supported|unavailable' | head -1 | cut -c1-140)"
+      # Never print an empty reason: rc=124 is `timeout`, and "no diagnostic
+      # matched" is a different failure from "the build said something we did
+      # not recognise". An unnamed ERROR(build) cost a CI investigation once.
+      reason=$(printf '%s' "$bld_out" | grep -iE 'error|refus|not supported|unavailable' | head -1 | cut -c1-140)
+      if [ "$bld_rc" -eq 124 ]; then
+        reason="build exceeded TIMEOUT_S=${TIMEOUT_S}s (rc=124: killed mid-link; raise TIMEOUT_S)"
+      elif [ -z "$reason" ]; then
+        reason="rc=$bld_rc with no matching diagnostic; last output: $(printf '%s' "$bld_out" | tail -1 | cut -c1-120)"
+      fi
+      echo "  reason: $reason"
       error=$((error+1))
     fi
   else
