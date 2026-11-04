@@ -112,9 +112,29 @@ streams   elapsed ms    MB/s   Gbit/s   speedup   exits
 The shards spread exactly as designed — 1/1 at two streams, 2/2 at four, zero
 failures — and throughput **halved**, because the transfer finishes only when
 its slowest shard does and every shard is the same size. Fan-out across
-asymmetric exits buys per-IP distribution, not aggregate bandwidth. Making it a
-throughput win needs shard sizes proportional to each exit's measured goodput,
-which `plan_shards` does not do yet.
+asymmetric exits buys per-IP distribution, not aggregate bandwidth.
+
+## Weighted shards fix that
+
+`--weights` allocates each path's bytes in proportion to its measured goodput
+instead of splitting evenly. Same two exits, same 2 MiB, three runs:
+
+```
+run                              elapsed ms    MB/s
+direct only, 2 streams                  341     6.2
+equal shards, direct + tor             2023     1.0
+weighted 10:1, direct + tor             382     5.5
+```
+
+`--weights 10,1` produced shards of 1,906,502 and 190,650 bytes (90.9% / 9.1%),
+spread 1/1 across the exits with zero failures, and finished within 12% of
+direct-only — **5.3x faster than the equal split**. The slow leg stops setting
+the finish time because it is given proportionally less work.
+
+The weight has to come from somewhere: measure each exit first, then pass the
+ratio. A weight of 0 is rejected rather than silently dropping the path, and
+`--weights` without `--nodes` (or with a different length) is an argument error.
+
 
 ## Not done
 
