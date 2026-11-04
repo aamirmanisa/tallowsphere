@@ -3,7 +3,7 @@
     "harness": "benchmarks/copy-engine/run_copy_bench.py",
     "binary": "/usr/local/bin/tallow",
     "binary_sha256": "bfad86d432313d2b34970563321f25e2311e077afa2fe9b1a931377ad6ed352b",
-    "dataset": "/root/.hermes/profiles/alden/cache/scratch/copybench/data-1g",
+    "dataset": "<scratch>/copybench/data-1g",
     "dataset_sha256": "98c09ff41e1e7e583d43a7876010402343537259ea889ae42b4583afab2a9831",
     "dataset_matches_manifest": true,
     "dataset_bytes": 1073741824,
