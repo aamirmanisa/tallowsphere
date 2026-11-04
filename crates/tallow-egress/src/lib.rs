@@ -15,12 +15,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod calibrate;
 pub mod node;
 pub mod plan;
 pub mod pool;
 pub mod probe;
 pub mod proxy;
 
+pub use calibrate::weights_from_goodput;
 pub use node::{EgressNode, NodeKind, NodePool, NodeStat, Reservation};
 pub use plan::{PlanError, Shard, ShardPlan, plan_shards, plan_shards_weighted};
 pub use pool::{
