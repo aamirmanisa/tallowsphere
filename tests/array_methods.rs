@@ -497,41 +497,36 @@ fn bare_push_mutates_nothing() {
         "a bare `a.push(2)` must mutate nothing on the interpreter"
     );
 
-    assert_ne!(native.rc, 0, "the native plane must refuse Array.push");
-    assert!(
-        native.stdout.is_empty(),
-        "a refused build cannot mutate anything, and must not print: {:?}",
-        native.stdout
-    );
-    assert!(
-        native.stderr.contains(&native_refusal("push")),
-        "{}",
-        native.stderr
+    // Until 2026-11-04 this asserted a refusal. Push lowers now, so the claim
+    // that carries weight is the one the method is documented for: a bare call
+    // discards the returned array and mutates nothing — on BOTH planes.
+    assert_eq!(native.rc, 0, "native build failed: {}", native.stderr);
+    assert_eq!(
+        native.stdout, interp.stdout,
+        "a bare `a.push(2)` must leave the array untouched on the native plane too"
     );
 }
 
-/// No `--interpret` fallback hides the refusal: `--require-native` is fatal.
+/// `push` compiles and runs on the native plane, matching the interpreter.
+///
+/// This test was `native_refusal_is_fatal_under_require_native`: it asserted that
+/// `--require-native` died with "no lowering for Array.push". The lowering exists
+/// now (element kind survives an empty literal), so the useful assertion is the
+/// opposite — the native plane runs it and agrees.
 #[test]
-fn native_refusal_is_fatal_under_require_native() {
+fn push_runs_under_require_native() {
     let path = write_program(
         "push-require-native",
         "fn main() {\n    let b = [1].push(2)\n    print(b.first())\n}\n",
     );
+    let interp = run(&path, "--interpret");
     let native = run(&path, "--require-native");
     let _ = std::fs::remove_file(&path);
-    assert_ne!(native.rc, 0);
-    assert!(native.stdout.is_empty(), "{:?}", native.stdout);
-    assert!(
-        native.stderr.contains(
-            "the native backend has no lowering for Array.push; run with --interpret"
-        ),
-        "the refusal must be the documented sentence:\n{}",
-        native.stderr
-    );
-    assert!(
-        native.stderr.contains("--require-native refuses the interpreter fallback"),
-        "a refused build under --require-native must not silently fall back:\n{}",
-        native.stderr
+
+    assert_eq!(native.rc, 0, "native build failed: {}", native.stderr);
+    assert_eq!(
+        native.stdout, interp.stdout,
+        "--require-native must agree with --interpret for push"
     );
 }
 
