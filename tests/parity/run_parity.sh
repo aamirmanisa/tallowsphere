@@ -32,6 +32,33 @@ if [ ! -x "$TALLOW" ]; then
   exit 2
 fi
 
+# Snapshot the compiler before the first fixture runs.
+#
+# `cargo` replaces `target/debug/tallow` with a rename, so anything that rebuilds
+# in the same target dir while this run is in progress makes every later exec of
+# the live path fail with ENOENT. CI hit exactly that on 2026-11-04: fixtures
+# 01-08 reported MATCH and then 17, 19, 22, 23, 24 reported
+# `ERROR(build) reason: timeout: failed to execute process: No such file or
+# directory (os error 2)` — the binary under test had been replaced mid-run. A
+# hard link keeps the old inode alive and makes the run immune to that.
+#
+# The runtime archive must sit next to the compiler: find_runtime_lib_for_target
+# resolves libtallow.a through current_exe()'s parent.
+SNAP_DIR=$(mktemp -d)
+SNAP_TALLOW="$SNAP_DIR/$(basename "$TALLOW")"
+ln "$TALLOW" "$SNAP_TALLOW" 2>/dev/null || cp -f "$TALLOW" "$SNAP_TALLOW" || {
+  echo "ERROR: cannot snapshot $TALLOW into $SNAP_DIR"
+  exit 2
+}
+LIVE_DIR=$(dirname "$TALLOW")
+for lib in "$LIVE_DIR"/libtallow*.a; do
+  [ -e "$lib" ] || continue
+  base=$(basename "$lib")
+  ln "$lib" "$SNAP_DIR/$base" 2>/dev/null || cp -f "$lib" "$SNAP_DIR/$base"
+done
+TALLOW="$SNAP_TALLOW"
+trap 'rm -rf "$SNAP_DIR"' EXIT
+
 pass=0; diverge=0; refused=0; fallback=0; error=0
 for f in "$PROGS_DIR"/*.tl; do
   name=$(basename "$f")
@@ -70,7 +97,9 @@ for f in "$PROGS_DIR"/*.tl; do
       # matched" is a different failure from "the build said something we did
       # not recognise". An unnamed ERROR(build) cost a CI investigation once.
       reason=$(printf '%s' "$bld_out" | grep -iE 'error|refus|not supported|unavailable' | head -1 | cut -c1-140)
-      if [ "$bld_rc" -eq 124 ]; then
+      if [ ! -x "$TALLOW" ]; then
+        reason="the compiler under test vanished mid-run ($TALLOW); the snapshot should have prevented this"
+      elif [ "$bld_rc" -eq 124 ]; then
         reason="build exceeded TIMEOUT_S=${TIMEOUT_S}s (rc=124: killed mid-link; raise TIMEOUT_S)"
       elif [ -z "$reason" ]; then
         reason="rc=$bld_rc with no matching diagnostic; last output: $(printf '%s' "$bld_out" | tail -1 | cut -c1-120)"
