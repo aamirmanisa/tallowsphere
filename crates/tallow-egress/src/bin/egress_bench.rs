@@ -27,7 +27,7 @@ use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use serde_json::{Value, json};
-use tallow_egress::calibrate::weights_from_goodput;
+use tallow_egress::calibrate::{median, weights_from_goodput};
 use tallow_egress::node::{EgressNode, NodeKind, NodePool, NodeStat};
 use tallow_egress::proxy::ProxiedFetcher;
 use tallow_egress::{
@@ -520,18 +520,35 @@ fn measure(
                 .expect("validated: --calibrate needs --nodes");
             let mut goodput: Vec<f64> = Vec::with_capacity(specs.len());
             for spec in specs {
-                let measured =
-                    probe_exit_goodput(&args.url, spec, target_len, args.retries, client_timeout);
-                match measured {
-                    Some(bps) => eprintln!(
-                        "egress-bench: calibrate {spec} -> {:.2} MB/s",
-                        bps / 1_000_000.0
-                    ),
-                    None => {
-                        eprintln!("egress-bench: calibrate {spec} -> probe failed, floor weight")
+                let mut samples: Vec<f64> = Vec::with_capacity(CALIBRATION_REPS as usize);
+                for _ in 0..CALIBRATION_REPS {
+                    if let Some(bps) = probe_exit_goodput(
+                        &args.url,
+                        spec,
+                        target_len,
+                        args.retries,
+                        client_timeout,
+                    ) {
+                        samples.push(bps);
                     }
                 }
-                goodput.push(measured.unwrap_or(0.0));
+                // Median, not mean: one congested circuit must not drag the
+                // ratio with it (measured spread on this box: 1.2-2.3 MB/s).
+                let chosen = median(&samples).unwrap_or(0.0);
+                if samples.is_empty() {
+                    eprintln!("egress-bench: calibrate {spec} -> every probe failed, floor weight");
+                } else {
+                    let lo = samples.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let hi = samples.iter().cloned().fold(0.0_f64, f64::max);
+                    eprintln!(
+                        "egress-bench: calibrate {spec} -> {:.2} MB/s median of {} (range {:.2}-{:.2})",
+                        chosen / 1_000_000.0,
+                        samples.len(),
+                        lo / 1_000_000.0,
+                        hi / 1_000_000.0
+                    );
+                }
+                goodput.push(chosen);
             }
             let derived = weights_from_goodput(&goodput);
             eprintln!("egress-bench: calibrated weights {derived:?}");
@@ -859,6 +876,14 @@ fn probe_json(probe: &CapabilityReport) -> Result<String, String> {
 /// moved 2 MiB at 5.3 MB/s, so the derived ratio over-weighted the slow exit
 /// by ~3x. The probe must be big enough that its own ramp-up is not the answer.
 const CALIBRATION_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Probes per exit during calibration.
+///
+/// More than one because a single reading is not reproducible on a congested
+/// path, and the weight ratio divides one exit by another, so both errors
+/// compound. Three keeps the cost bounded (3 x 2 MiB per exit) and gives
+/// `median` something to reject.
+const CALIBRATION_REPS: u32 = 3;
 
 /// Measure one exit's goodput with a small ranged fetch through that exit alone.
 ///

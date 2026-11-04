@@ -133,39 +133,50 @@ the finish time because it is given proportionally less work.
 
 ## Auto-calibration, and what it does *not* fix
 
-`--calibrate` measures each exit with a 2 MiB probe and derives the weights, so
-the ratio does not have to be guessed. The probe size matters: a 256 KiB probe
-reported the direct path at 0.98 MB/s while the same path moved 2 MiB at
-5.3 MB/s — slow start was the measurement, not the path. At 2 MiB the probe
-reads 5.30 MB/s, matching an independent direct-only run.
+`--calibrate` measures each exit with three 2 MiB probes and takes the median.
+The probe size matters: a 256 KiB probe reported the direct path at 0.98 MB/s
+while the same path moved 2 MiB at 5.3 MB/s — slow start was the measurement,
+not the path.
 
-But calibrating correctly does not make a slow exit worth using here. At 4 MiB,
-all on the same target:
+The repetition matters as much. A single probe of the Tor exit read 2.32 MB/s;
+five readings of the same exit on the same box within the hour gave 1.2, 1.6,
+1.7, 1.9 and 2.32. A ratio built from one sample carries that noise, and it
+compounds because the weight divides one exit by another. At three probes the
+medians were direct 5.47 MB/s (range 5.39-5.49) and Tor 1.55 (range 1.40-1.77),
+giving weights `[100, 28]` — where the single-probe version had said `[100, 44]`
+and put 44% of the bytes on the slow leg.
+
+Probing still underestimates both paths slightly, because a 2 MiB probe sees the
+per-connection rate before a longer transfer amortises its ramp-up.
+
+## And the result still contradicts the model
+
+At 4 MiB, all on the same target:
 
 ```
 connections                          elapsed ms    MB/s
 1 stream, direct                           515     8.1
 2 streams, direct (both fast)              394    10.6
-2 streams, direct + tor (calibrated)       583     7.2
+2 streams, direct + tor (calibrated)       707     5.9
 ```
 
-Adding the Tor exit lost to direct-only at both concurrency levels — 7.2 against
-8.1 for a single direct stream and 10.6 for two. At 2 MiB the weighted split was
-5.5 MB/s against 5.3 MB/s direct-only, i.e. break-even inside the noise.
+Adding the Tor exit lost to direct-only at both concurrency levels. At 2 MiB the
+weighted split was 5.5 MB/s against 5.3 MB/s direct-only — break-even inside the
+noise.
 
-Proportional allocation predicts the opposite: with rates 8.1 and 2.3 MB/s, a
-correct 78/22 split puts the same wall time on both legs and should land near
-`total / (r_fast + r_slow)` ≈ 10 MB/s. Measured: 7.2. The fast leg delivered
-2.91 MB in those 583 ms — 5.0 MB/s, not the 8.1 it reaches alone. So the model's
-assumption (each path keeps its standalone rate when running alongside another)
-does not hold on this link, and I do not have data that explains why: candidates
-are Tor circuit churn, the origin throttling when it sees parallel range
-requests, or CPU contention in the client. This needs more runs than I have.
+Proportional allocation predicts the opposite: with rates 8.1 and 1.7 MB/s a
+correct split puts the same wall time on both legs and should land near
+`total / (r_fast + r_slow)` ≈ 9.8 MB/s. Measured 5.9. The fast leg does not keep
+its standalone rate when it runs alongside a slow one, and I do not have data
+that isolates why — Tor circuit churn, the origin throttling on parallel range
+requests, and client CPU contention all fit. Single samples of a shared WAN
+target cannot settle it.
 
 What stands regardless: **prefer another stream on the fast exit over adding a
 slow exit.** Fan-out earns its keep only when the fast exit is already capped —
 per-IP rate limits, connection limits, or a single account — because then the
 extra connection buys nothing and the slow path is the only capacity left.
+
 
 
 

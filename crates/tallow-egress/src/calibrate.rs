@@ -21,6 +21,30 @@ pub const FLOOR_WEIGHT: u32 = 1;
 /// get for a given transfer.
 pub const MAX_WEIGHT: u32 = 100;
 
+/// Median of the finite samples, or `None` when there are none.
+///
+/// The probe takes several samples because a single one is not trustworthy on a
+/// congested path: Tor measured 1.2, 1.6, 1.7, 1.9 and 2.32 MB/s across five
+/// readings on the same box within minutes. The median rejects that kind of
+/// outlier, which a mean would carry into the weight ratio.
+pub fn median(samples: &[f64]) -> Option<f64> {
+    let mut finite: Vec<f64> = samples
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .collect();
+    if finite.is_empty() {
+        return None;
+    }
+    finite.sort_by(|a, b| a.partial_cmp(b).expect("finite values compare"));
+    let mid = finite.len() / 2;
+    Some(if finite.len() % 2 == 0 {
+        (finite[mid - 1] + finite[mid]) / 2.0
+    } else {
+        finite[mid]
+    })
+}
+
 /// Convert per-exit goodput (bytes per second, same order as the exits) into
 /// integer weights.
 ///
@@ -97,5 +121,26 @@ mod tests {
     #[test]
     fn empty_input_yields_no_weights() {
         assert!(weights_from_goodput(&[]).is_empty());
+    }
+
+    #[test]
+    fn median_of_odd_samples_is_the_middle_one() {
+        assert_eq!(median(&[1.2, 2.32, 1.7]), Some(1.7));
+    }
+
+    #[test]
+    fn median_of_even_samples_averages_the_middle_pair() {
+        assert_eq!(median(&[1.0, 2.0, 3.0, 4.0]), Some(2.5));
+    }
+
+    #[test]
+    fn median_ignores_non_finite_and_zero_samples() {
+        assert_eq!(median(&[f64::NAN, 0.0, 5.0, f64::INFINITY, 7.0]), Some(6.0));
+    }
+
+    #[test]
+    fn median_of_nothing_is_none() {
+        assert_eq!(median(&[]), None);
+        assert_eq!(median(&[0.0, f64::NAN]), None);
     }
 }
