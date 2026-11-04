@@ -60,7 +60,15 @@ const AS_LIMIT_KB: u32 = 2_000_000;
 const BUILD_AS_LIMIT_KB: u32 = 6_000_000;
 const INTERP_TIMEOUT_S: u32 = 60;
 const NATIVE_TIMEOUT_S: u32 = 120;
-const RUNNER_TIMEOUT_S: u32 = 300;
+// 300 until 2026-11-04, when the shell runner started hitting rc=124 on three
+// shards with empty `reason:` fields — the runner was killed before those
+// fixtures were ever compiled. The budget was sized while many fixtures failed
+// fast (archive/binary skew made `tallow build` error immediately); with that
+// skew fixed they compile and link the ~485 MB runtime archive for real, so the
+// same set of fixtures now costs several minutes. Measured: `07_array_push.tl`
+// went from REFUSED to MATCH, and the two map fixtures went from an instant
+// ERROR(build) to a full build.
+const RUNNER_TIMEOUT_S: u32 = 900;
 
 /// A cross target forces `tallow run` down the tree-walking interpreter path.
 const CROSS_TARGET: &str = "x86_64-linux";
@@ -119,15 +127,11 @@ fn expect_for(name: &str) -> Expect {
             must_print: &["add5(10) = 15", "CLOSURE_RETURN_OK"],
             guard: "returns a closure",
         },
-        // Array growth via `.push()` has no lowering in the compiled plane, and
-        // `tallow build` refuses it by name. It used to SEGFAULT instead — a
-        // signal death the run-path fallback swallowed. The contract recorded
-        // here is the same fail-loud one 08 documents: build refuses, run falls
-        // back to the interpreter. The lowering itself is still unimplemented.
-        "07_array_push.tl" => Expect::NativeFailLoud {
-            must_print: &["sum 1225", "ARRAY_PUSH_OK"],
-            guard: "no lowering for Array.push",
-        },
+        // `07_array_push.tl` was NativeFailLoud ("no lowering for Array.push")
+        // until 2026-11-04. It now MATCHes: element kind for an empty `[]String`
+        // literal is taken from the declared type, so push lowers and the two
+        // planes agree. Falls through to Expect::Match deliberately — restoring
+        // a fail-loud entry here would mean the lowering regressed.
         n if n.ends_with("_refusal.tl") => Expect::RefuseBoth,
         _ => Expect::Match,
     }
