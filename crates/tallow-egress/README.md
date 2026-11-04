@@ -114,7 +114,7 @@ failures — and throughput **halved**, because the transfer finishes only when
 its slowest shard does and every shard is the same size. Fan-out across
 asymmetric exits buys per-IP distribution, not aggregate bandwidth.
 
-## Weighted shards fix that
+## Weighted shards fix the equal split
 
 `--weights` allocates each path's bytes in proportion to its measured goodput
 instead of splitting evenly. Same two exits, same 2 MiB, three runs:
@@ -131,9 +131,43 @@ spread 1/1 across the exits with zero failures, and finished within 12% of
 direct-only — **5.3x faster than the equal split**. The slow leg stops setting
 the finish time because it is given proportionally less work.
 
-The weight has to come from somewhere: measure each exit first, then pass the
-ratio. A weight of 0 is rejected rather than silently dropping the path, and
-`--weights` without `--nodes` (or with a different length) is an argument error.
+## Auto-calibration, and what it does *not* fix
+
+`--calibrate` measures each exit with a 2 MiB probe and derives the weights, so
+the ratio does not have to be guessed. The probe size matters: a 256 KiB probe
+reported the direct path at 0.98 MB/s while the same path moved 2 MiB at
+5.3 MB/s — slow start was the measurement, not the path. At 2 MiB the probe
+reads 5.30 MB/s, matching an independent direct-only run.
+
+But calibrating correctly does not make a slow exit worth using here. At 4 MiB,
+all on the same target:
+
+```
+connections                          elapsed ms    MB/s
+1 stream, direct                           515     8.1
+2 streams, direct (both fast)              394    10.6
+2 streams, direct + tor (calibrated)       583     7.2
+```
+
+Adding the Tor exit lost to direct-only at both concurrency levels — 7.2 against
+8.1 for a single direct stream and 10.6 for two. At 2 MiB the weighted split was
+5.5 MB/s against 5.3 MB/s direct-only, i.e. break-even inside the noise.
+
+Proportional allocation predicts the opposite: with rates 8.1 and 2.3 MB/s, a
+correct 78/22 split puts the same wall time on both legs and should land near
+`total / (r_fast + r_slow)` ≈ 10 MB/s. Measured: 7.2. The fast leg delivered
+2.91 MB in those 583 ms — 5.0 MB/s, not the 8.1 it reaches alone. So the model's
+assumption (each path keeps its standalone rate when running alongside another)
+does not hold on this link, and I do not have data that explains why: candidates
+are Tor circuit churn, the origin throttling when it sees parallel range
+requests, or CPU contention in the client. This needs more runs than I have.
+
+What stands regardless: **prefer another stream on the fast exit over adding a
+slow exit.** Fan-out earns its keep only when the fast exit is already capped —
+per-IP rate limits, connection limits, or a single account — because then the
+extra connection buys nothing and the slow path is the only capacity left.
+
+
 
 
 ## Not done

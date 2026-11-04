@@ -27,6 +27,7 @@ use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use serde_json::{Value, json};
+use tallow_egress::calibrate::weights_from_goodput;
 use tallow_egress::node::{EgressNode, NodeKind, NodePool, NodeStat};
 use tallow_egress::proxy::ProxiedFetcher;
 use tallow_egress::{
@@ -84,6 +85,7 @@ struct Args {
     timeout_secs: u64,
     nodes: Option<Vec<String>>,
     weights: Option<Vec<u32>>,
+    calibrate: bool,
     json_path: Option<PathBuf>,
     probe_only: bool,
 }
@@ -200,6 +202,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut json_path: Option<PathBuf> = None;
     let mut nodes: Option<Vec<String>> = None;
     let mut weights: Option<Vec<u32>> = None;
+    let mut calibrate = false;
     let mut probe_only = false;
 
     let mut i = 1usize;
@@ -235,6 +238,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--nodes" => nodes = Some(parse_nodes(&take_value(argv, inline, &mut i, flag)?)?),
             "--weights" => weights = Some(parse_weights(&take_value(argv, inline, &mut i, flag)?)?),
             "--json" => json_path = Some(PathBuf::from(take_value(argv, inline, &mut i, flag)?)),
+            "--calibrate" => {
+                if inline.is_some() {
+                    return Err("--calibrate takes no value".to_string());
+                }
+                calibrate = true;
+            }
             "--probe-only" => {
                 if inline.is_some() {
                     return Err("--probe-only takes no value".to_string());
@@ -261,6 +270,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         return Err("--timeout must be greater than zero seconds".to_string());
     }
 
+    if calibrate {
+        if nodes.is_none() {
+            return Err("--calibrate needs --nodes: there is nothing to measure".to_string());
+        }
+        if weights.is_some() {
+            return Err("--calibrate measures the weights; do not also pass --weights".to_string());
+        }
+    }
     if let Some(w) = &weights {
         match &nodes {
             None => {
@@ -285,6 +302,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         timeout_secs,
         nodes,
         weights,
+        calibrate,
         json_path,
         probe_only,
     })
@@ -489,9 +507,42 @@ fn measure(
     if baseline_added {
         list.insert(0, 1);
     }
-    // With --weights the shard count *is* the number of exits: the point of the
+    // Calibration measures each exit once over a small range, then hands the
+    // same weighted planner a ratio derived from what the exits actually did.
+    // A failed probe yields 0.0, which `weights_from_goodput` turns into the
+    // floor weight rather than dropping the path.
+    let effective_weights: Option<Vec<u32>> = match (&args.weights, args.calibrate) {
+        (Some(explicit), _) => Some(explicit.clone()),
+        (None, true) => {
+            let specs = args
+                .nodes
+                .as_ref()
+                .expect("validated: --calibrate needs --nodes");
+            let mut goodput: Vec<f64> = Vec::with_capacity(specs.len());
+            for spec in specs {
+                let measured =
+                    probe_exit_goodput(&args.url, spec, target_len, args.retries, client_timeout);
+                match measured {
+                    Some(bps) => eprintln!(
+                        "egress-bench: calibrate {spec} -> {:.2} MB/s",
+                        bps / 1_000_000.0
+                    ),
+                    None => {
+                        eprintln!("egress-bench: calibrate {spec} -> probe failed, floor weight")
+                    }
+                }
+                goodput.push(measured.unwrap_or(0.0));
+            }
+            let derived = weights_from_goodput(&goodput);
+            eprintln!("egress-bench: calibrated weights {derived:?}");
+            Some(derived)
+        }
+        (None, false) => None,
+    };
+
+    // With weights the shard count *is* the number of exits: the point of the
     // run is how bytes split across paths, not how many connections open.
-    if let Some(w) = &args.weights {
+    if let Some(w) = &effective_weights {
         list = vec![w.len() as u32];
     }
 
@@ -499,7 +550,7 @@ fn measure(
     let mut mismatches: Vec<String> = Vec::new();
 
     for streams in list {
-        let planned = match &args.weights {
+        let planned = match &effective_weights {
             Some(weights) => plan_shards_weighted(target_len, weights, MIN_CHUNK_BYTES),
             None => plan_shards(target_len, streams, MIN_CHUNK_BYTES),
         };
@@ -512,7 +563,7 @@ fn measure(
                 return Err(4);
             }
         };
-        if let Some(weights) = &args.weights {
+        if let Some(weights) = &effective_weights {
             let sizes: Vec<u64> = plan.shards.iter().map(|s| s.len()).collect();
             eprintln!("egress-bench: weights {weights:?} -> shard bytes {sizes:?}");
         }
@@ -799,6 +850,57 @@ fn probe_json(probe: &CapabilityReport) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 // entry
 // ---------------------------------------------------------------------------
+
+/// Bytes fetched through each exit during calibration.
+///
+/// 2 MiB, not 256 KiB: a small probe is dominated by connection setup and TCP
+/// slow start, which makes a fast path look slow. Measured 2026-11-04 — a
+/// 256 KiB probe reported the direct path at 0.98 MB/s while the same path
+/// moved 2 MiB at 5.3 MB/s, so the derived ratio over-weighted the slow exit
+/// by ~3x. The probe must be big enough that its own ramp-up is not the answer.
+const CALIBRATION_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Measure one exit's goodput with a small ranged fetch through that exit alone.
+///
+/// Returns `None` when the probe fails: the caller turns that into the floor
+/// weight so the path stays in the plan and can fail visibly rather than being
+/// silently dropped.
+fn probe_exit_goodput(
+    url: &str,
+    spec: &str,
+    target_len: u64,
+    retries: u32,
+    timeout_secs: u64,
+) -> Option<f64> {
+    let kind = if spec == "direct" {
+        NodeKind::Direct
+    } else if spec.starts_with("socks5://") {
+        NodeKind::Socks5(spec.to_string())
+    } else {
+        NodeKind::Http(spec.to_string())
+    };
+    let pool = Arc::new(NodePool::new(vec![EgressNode {
+        id: "probe".to_string(),
+        kind,
+        max_inflight: 1,
+    }]));
+    let fetcher = ProxiedFetcher::new(url.to_string(), Arc::clone(&pool));
+    let bytes = CALIBRATION_BYTES.min(target_len);
+    let plan = plan_shards(bytes, 1, 1).ok()?;
+    let config = PoolConfig {
+        streams: 1,
+        retries,
+        backoff_ms: DEFAULT_BACKOFF_MS,
+        timeout_secs,
+    };
+    let started = Instant::now();
+    let report = fetch_plan(&plan, &fetcher, &config).ok()?;
+    let secs = started.elapsed().as_secs_f64();
+    if secs <= 0.0 || report.total_bytes == 0 {
+        return None;
+    }
+    Some(report.total_bytes as f64 / secs)
+}
 
 fn run(argv: &[String]) -> u8 {
     if argv
