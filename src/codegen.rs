@@ -26907,6 +26907,10 @@ impl<'a> CodeGen<'a> {
         if method == "fatal" {
             self.emit_line("call void @exit(i32 1)");
             self.emit_line("unreachable");
+            // Same reason as `process.exit`: an enclosing branch needs a live
+            // block to branch into, or its merge phi lists a terminated block.
+            let after = self.fresh_label("after.exit");
+            self.body.push_str(&format!("{after}:\n"));
         }
         Ok(Some(LLValue::new("0".into(), LLType::I64)))
     }
@@ -26931,6 +26935,16 @@ impl<'a> CodeGen<'a> {
                 };
                 self.emit_line(&format!("call void @exit(i32 {code})"));
                 self.emit_line("unreachable");
+                // Open the block after the exit. The enclosing `if`/`loop` emits
+                // its own `br` into that block; without this label the branch
+                // lands in a block that already ended, `emit_line` drops it, and
+                // the merge block's phi still lists the terminated block as a
+                // predecessor — invalid IR that LLVM 18 tolerated and LLVM >= 21
+                // rejects ("PHINode should have one entry for each predecessor").
+                // The bare `exit(..)` arm (emit_call, "exit") and `panic` already
+                // open this label; `process.exit` was the one arm that did not.
+                let after = self.fresh_label("after.exit");
+                self.body.push_str(&format!("{after}:\n"));
                 Ok(Some(LLValue::new("0".into(), LLType::I64)))
             }
             "run" | "exec" => {
@@ -44076,6 +44090,119 @@ fn main() {
             ir.contains("define i32 @main("),
             "missing C main entry point"
         );
+
+        validate_phi_predecessors(ir);
+    }
+
+    /// PHI/predecessor consistency (LLVM LangRef): a phi in a block must have
+    /// exactly one entry for each predecessor of that block, and may not name a
+    /// block that does not branch to it.
+    ///
+    /// This is the invariant that let invalid IR ship: `process.exit(n)` as a
+    /// *statement* inside an `if` emitted `unreachable` without opening a block
+    /// after it, so the enclosing merge phi still listed the terminated block as
+    /// a predecessor. LLVM 18 (this box) accepts that module; LLVM >= 21 (the
+    /// x86_64 CI runner) rejects it outright, so `exit_in_conditional` failed only
+    /// in CI. Enforcing the rule here makes any future emitter that fabricates a
+    /// phi edge fail on every platform, not just the ones with a new frontend.
+    fn validate_phi_predecessors(ir: &str) {
+        let mut in_fn = false;
+        let mut func = String::new();
+        let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
+        let mut cur: Option<usize> = None;
+
+        for line in ir.lines() {
+            let t = line.trim();
+            if t.starts_with("define ") {
+                in_fn = true;
+                func = t.to_string();
+                blocks.clear();
+                cur = None;
+                continue;
+            }
+            if !in_fn {
+                continue;
+            }
+            if t == "}" {
+                check_phi_predecessors_in(&func, &blocks);
+                in_fn = false;
+                continue;
+            }
+            if t.ends_with(':') && !t.starts_with(';') && !t.contains('=') {
+                blocks.push((t.trim_end_matches(':').to_string(), Vec::new()));
+                cur = Some(blocks.len() - 1);
+                continue;
+            }
+            if let Some(i) = cur {
+                blocks[i].1.push(t.to_string());
+            }
+        }
+    }
+
+    fn check_phi_predecessors_in(func: &str, blocks: &[(String, Vec<String>)]) {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut preds: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for (label, lines) in blocks {
+            for line in lines {
+                if line.starts_with("br ") || line.starts_with("switch ") {
+                    for target in branch_targets(line) {
+                        preds.entry(target).or_default().insert(label);
+                    }
+                }
+            }
+        }
+        for (label, lines) in blocks {
+            for line in lines {
+                if !line.contains(" = phi ") {
+                    continue;
+                }
+                let entries = phi_entry_labels(line);
+                let expected = preds.get(label.as_str()).cloned().unwrap_or_default();
+                assert_eq!(
+                    entries, expected,
+                    "phi/predecessor mismatch in `{func}` block `{label}`: \
+                     phi lists {entries:?} but the block's predecessors are {expected:?} \
+                     (LLVM >= 21 rejects this module: \"PHINode should have one entry for \
+                     each predecessor of its parent basic block\"); phi line: {line}"
+                );
+            }
+        }
+    }
+
+    /// Every `label %name` target of a terminator line.
+    fn branch_targets(line: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut rest = line;
+        while let Some(pos) = rest.find("label %") {
+            let tail = &rest[pos + "label %".len()..];
+            let end = tail
+                .find(|c: char| !(c.is_alphanumeric() || "._$-".contains(c)))
+                .unwrap_or(tail.len());
+            if end > 0 {
+                out.push(&tail[..end]);
+            }
+            rest = &tail[end..];
+        }
+        out
+    }
+
+    /// The predecessor labels a phi names, from its `[ value, %label ]` entries.
+    fn phi_entry_labels(line: &str) -> std::collections::BTreeSet<&str> {
+        let mut out = std::collections::BTreeSet::new();
+        let mut idx = 0;
+        while let Some(pos) = line[idx..].find(", %") {
+            let start = idx + pos + ", %".len();
+            let tail = &line[start..];
+            let end = tail
+                .find(|c: char| !(c.is_alphanumeric() || "._$-".contains(c)))
+                .unwrap_or(tail.len());
+            if end > 0 && tail[end..].trim_start().starts_with(']') {
+                out.insert(&tail[..end]);
+            }
+            idx = start + end.max(1);
+        }
+        out
     }
 
     #[test]
@@ -44278,6 +44405,50 @@ fn main() {
             assert!(ir.contains("sspstrong"), "should have stack protector");
         } else {
             assert!(!ir.contains("sspstrong"), "sspstrong must stay x86-only");
+        }
+    }
+
+    /// Regression: a terminating statement inside a branch must leave a block
+    /// for the enclosing branch to target.
+    ///
+    /// `process.exit(n)` and `log.fatal(..)` emitted `unreachable` and returned,
+    /// so the `if`'s merge phi kept a predecessor entry for the block that had
+    /// already terminated. That module is invalid LLVM IR ("PHINode should have
+    /// one entry for each predecessor of its parent basic block") but LLVM 18
+    /// accepted it, so the defect only appeared on the x86_64 CI runner, where
+    /// `tests/exit_in_conditional.rs` reported "native build unavailable" and
+    /// lost the native plane entirely.
+    #[test]
+    fn e2e_exit_inside_a_branch_keeps_phi_predecessors_honest() {
+        for (tag, src) in [
+            (
+                "process.exit statement inside if",
+                "fn main() {\n    var found: i64 = 1\n    if found > 0 {\n        process.exit(1)\n    }\n}",
+            ),
+            (
+                "process.exit inside if/else",
+                "fn main() {\n    var n: i64 = 2\n    if n > 1 {\n        process.exit(0)\n    } else {\n        print(n)\n    }\n}",
+            ),
+            (
+                "log.fatal statement inside if",
+                "fn main() {\n    var n: i64 = 2\n    if n > 1 {\n        log.fatal(\"boom\")\n    }\n}",
+            ),
+            (
+                "bare exit inside a loop inside an if",
+                "fn main() {\n    for i in 0..2 {\n        if i > 0 {\n            exit(3)\n        }\n    }\n}",
+            ),
+            (
+                "exit in expression position",
+                "fn main() {\n    let x: i64 = if 1 > 0 { exit(2) } else { 7 }\n    print(x)\n}",
+            ),
+        ] {
+            let ir = compile_to_ir(src);
+            validate_ir(&ir);
+            assert!(
+                ir.contains("after.exit"),
+                "{tag}: a terminating statement must open the block after the exit, or the \
+                 enclosing branch has nothing live to branch into:\n{ir}"
+            );
         }
     }
 
