@@ -469,7 +469,13 @@ jobs:
             i=$((i + 1))
           done <<< "$SHARD_TARGETS"
           echo "shard ${{ matrix.shard }}: $(( ${#args[@]} / 2 )) test targets"
-          cargo test --locked --no-fail-fast "${args[@]}" -- --test-threads=2
+          # -j 2: each test binary links the ~485 MB runtime archive. At the
+          # runner's default -j (one job per core) four concurrent links have
+          # been observed to OOM the linker outright — run 41757262699 died with
+          # `collect2: fatal error: ld terminated with signal 7 [Bus error]`.
+          # Two parallel links keeps peak RSS inside the runner's memory and
+          # still finishes a ~15 minute shard inside its 30 minute budget.
+          cargo test --locked --no-fail-fast -j 2 "${args[@]}" -- --test-threads=2
 
   # Structured logging (G52): `log.record` / `log.set_trace` / `log.trace`, per
   # docs/spec/STRUCTURED-LOGGING.md. Each case drives the real binary on the
