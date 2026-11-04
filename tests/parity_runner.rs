@@ -68,7 +68,13 @@ const NATIVE_TIMEOUT_S: u32 = 120;
 // same set of fixtures now costs several minutes. Measured: `07_array_push.tl`
 // went from REFUSED to MATCH, and the two map fixtures went from an instant
 // ERROR(build) to a full build.
-const RUNNER_TIMEOUT_S: u32 = 900;
+//
+// Then the *per-step* cap inside run_parity.sh (TIMEOUT_S, was 30s) started
+// killing those same builds mid-link on the x86_64 CI runner while a warm
+// aarch64 box finished them in ~21s. That cap is now 120s; the outer cap has to
+// stay above the worst realistic run (4 slow fixtures x 2 attempts x 120s), so
+// it moved 900 -> 1800. Worst case only happens when builds genuinely hang.
+const RUNNER_TIMEOUT_S: u32 = 1800;
 
 /// A cross target forces `tallow run` down the tree-walking interpreter path.
 const CROSS_TARGET: &str = "x86_64-linux";

@@ -724,6 +724,7 @@ jobs:
           done
           sudo apt-get install -y -o Acquire::Retries=3 --fix-missing \
             clang liblzma-dev libbz2-dev
+          clang --version
       - name: Run parity runner (DIVERGE fails)
         run: |
           set -uo pipefail
