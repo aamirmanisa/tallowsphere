@@ -6362,6 +6362,30 @@ void tallow_async_runtime_shutdown(void) {
                             self.variable_array_elem_is_ptr.insert(name.clone(), true);
                         }
                     }
+                    // An empty literal has no first element to infer from, so the
+                    // declared type has to supply the element kind. Without this,
+                    // `var out: []String = []` never records that its slots are
+                    // pointers, and every later push/index/print reads them as
+                    // i64 — the interpreter prints "alpha", the native plane
+                    // prints an address. Measured 2026-11-04.
+                    if items.is_empty() {
+                        if let Some(type_expr) = ty {
+                            if let TypeExprKind::Slice(inner) = &type_expr.kind {
+                                if let TypeExprKind::Named(elem_name) = &inner.kind {
+                                    if elem_name == "String" {
+                                        self.variable_array_elem_is_ptr
+                                            .insert(name.clone(), true);
+                                        self.browser_variables
+                                            .insert(name.clone(), "StringArray".to_string());
+                                    }
+                                }
+                                if let Some(shape) = self.array_shape_of_type_expr(type_expr) {
+                                    self.variable_array_elem_shape
+                                        .insert(name.clone(), shape);
+                                }
+                            }
+                        }
+                    }
                     // Check if array elements are struct literals
                     if let Some(first) = items.first() {
                         if let ExprKind::StructLit {
@@ -31873,6 +31897,22 @@ fn pick_runtime_archive(
         .collect();
 
     let legacy_same = legacy.as_ref().is_some_and(|l| l.profile == running_profile);
+
+    // The archive beside the binary is the one this compiler was BUILT with, so
+    // prefer it outright when the profiles match. A `deps/` archive can be newer
+    // and same-profile while still being a different build: `cargo test` unifies
+    // dev-dependencies, so it writes a runtime with a different feature set, and
+    // linking that produces IR the runtime does not implement. Measured
+    // 2026-11-04 on run 41790919054: adding a dependency feature made the deps
+    // archive newer, the compiler linked it, and clang rejected the result with
+    // "PHINode should have one entry for each predecessor" — an error that looks
+    // like a codegen bug and is not one.
+    if legacy_same {
+        if let Some(l) = &legacy {
+            return Some(l.path.clone());
+        }
+    }
+
     let mut pool: Vec<RuntimeArchive> = if legacy_same {
         let mut v = same;
         if let Some(l) = legacy.clone() {

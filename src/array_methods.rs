@@ -156,10 +156,13 @@ pub const ARRAY_METHODS: &[ArrayMethod] = &[
         max_args: 1,
         params: A,
         ret: Ret::Same,
-        // Codegen has an arm for this name and it is wrong on this plane (the
-        // bound result printed a raw byte). The contract for BP21 is explicit:
-        // a registry method the native plane cannot lower is a named refusal.
-        native: false,
+        // Was false because a pushed `[]String` element printed as a raw
+        // address. The cause was not this arm: element kind for an array
+        // variable was inferred only from the FIRST element of its literal, so
+        // `var out: []String = []` never recorded that its slots hold pointers.
+        // codegen now takes the element kind from the declared type when the
+        // literal is empty, and tests/push_parity keeps both planes honest.
+        native: true,
         functional: true,
         doc: "returns a NEW array with the value appended; a bare `a.push(2)` mutates nothing",
     },
@@ -780,7 +783,10 @@ mod tests {
         );
         assert_eq!(push.min_args, 1);
         assert_eq!(push.max_args, 1);
-        assert!(!push.native, "the native plane has no correct lowering for Array.push");
+        assert!(
+            push.native,
+            "push is lowered on the native plane; tests/push_parity holds it to the interpreter"
+        );
     }
 
     #[test]
