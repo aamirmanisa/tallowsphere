@@ -2,7 +2,7 @@
   "schema": "tallow-bench/1",
   "generated_at": "2026-11-02T02:52:47Z",
   "binary": {
-    "path": "/home/aamir/tallow-worktrees/w13/shared-target/release/tallow",
+    "path": "<build>/release/tallow",
     "sha256": "5e732720db7874100609d6efc61dc830c88ec4b52457dd212b3cc50cb19f3939",
     "profile": "release",
     "version_raw": "tallow 1.7.0"
