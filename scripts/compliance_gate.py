@@ -87,6 +87,20 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
 
 
+def manifest_sha256(manifest: dict[str, Any]) -> str:
+    """Stable digest of a manifest's semantic content, for approval binding.
+
+    Deliberately NOT the file hash: approval is bound to *what the manifest says*,
+    not to its whitespace or formatting, so reformatting the file does not silently
+    invalidate an approval while changing a target does. Keys are sorted and the
+    encoding is fixed, so the digest is reproducible.
+    """
+    if not isinstance(manifest, dict):
+        return ""
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return sha256_text(canonical)
+
+
 def vault_provider_id(auth_ref: str) -> tuple[str, str]:
     parsed = urlparse(auth_ref)
     if parsed.scheme == "vault":
@@ -278,7 +292,46 @@ def analyze_targets(manifest: dict[str, Any], network_scope: str, retention_acti
     now = utc_now()
 
     if network_scope == "live":
-        violations.append(violation("human_gate.live_external_execution_not_approved", "network_scope", "Live network scope is human-gated for Phase 9 autopilot"))
+        # Live scope is gated, not forbidden. The gate previously hard-refused every
+        # live run, which made live fetching architecturally impossible no matter
+        # what the operator authorised -- so the only way to use it was to bypass
+        # this script, which is exactly what it exists to prevent. Approval now
+        # unlocks live scope, but only when it is bound to THIS manifest: the
+        # approval ref must carry the manifest's sha256, so an approval given for
+        # one manifest can never authorise a different one, and editing the targets
+        # after approval invalidates it. No approval still means no live run.
+        #
+        # The digest is `manifest_sha256` (canonical content), which callers bind
+        # into the approval ref. `run-plan` independently re-checks the FILE hash
+        # recorded in the report, so approval and report binding are both enforced:
+        # the canonical hash guards against reformatting tricks, the file hash
+        # guards against a swapped manifest.
+        manifest_sha = manifest_sha256(manifest)
+        if not human_approval_ref:
+            violations.append(violation(
+                "human_gate.live_external_execution_not_approved",
+                "network_scope",
+                "Live network scope requires --human-approval-ref bound to this manifest",
+            ))
+        elif manifest_sha not in human_approval_ref:
+            violations.append(violation(
+                "human_gate.approval_not_bound_to_manifest",
+                "network_scope",
+                "Approval ref does not contain this manifest's sha256; an approval for "
+                "another manifest cannot authorise this one",
+            ))
+        else:
+            # ONLY on a verified approval. This append used to sit outside the
+            # if/elif, so a REFUSED live run recorded both the violation and a
+            # "Live scope approved by operator" warning — the audit record
+            # contradicted itself on the exact question it exists to answer
+            # (reproduced: rc=2 with live_external_execution_not_approved plus
+            # this warning).
+            warnings.append({
+                "code": "human_gate.live_scope_approved",
+                "path": "network_scope",
+                "message": "Live scope approved by operator; approval is bound to manifest sha256",
+            })
 
     validate_policy(manifest, violations, warnings)
 
@@ -443,7 +496,8 @@ def main() -> int:
     parser.add_argument("--output-dir", default="artifacts/phase9/local-no-secret-compliance-proof", help="Directory for Phase 9 proof reports")
     parser.add_argument("--report-path", default="", help="Optional compliance audit report path; defaults under output-dir")
     parser.add_argument("--scan-path", action="append", default=[], help="Local artifact/file path to scan for unredacted PII/secret markers")
-    parser.add_argument("--network-scope", choices=["local", "live"], default="local", help="Live scope is human-gated and fails closed")
+    parser.add_argument("--network-scope", choices=["local", "live"], default="local",
+                        help="Live scope requires --human-approval-ref containing this manifest's sha256; without it the run fails closed")
     parser.add_argument("--retention-action", choices=["dry-run", "purge"], default="dry-run", help="purge is human-gated and never performed by this tool")
     parser.add_argument("--human-approval-ref", default="", help="Records a human approval reference; does not enable destructive automation")
     args = parser.parse_args()
