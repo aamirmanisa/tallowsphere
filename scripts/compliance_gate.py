@@ -320,11 +320,18 @@ def analyze_targets(manifest: dict[str, Any], network_scope: str, retention_acti
                 "Approval ref does not contain this manifest's sha256; an approval for "
                 "another manifest cannot authorise this one",
             ))
-        warnings.append({
-            "code": "human_gate.live_scope_approved",
-            "path": "network_scope",
-            "message": "Live scope approved by operator; approval is bound to manifest sha256",
-        })
+        else:
+            # ONLY on a verified approval. This append used to sit outside the
+            # if/elif, so a REFUSED live run recorded both the violation and a
+            # "Live scope approved by operator" warning — the audit record
+            # contradicted itself on the exact question it exists to answer
+            # (reproduced: rc=2 with live_external_execution_not_approved plus
+            # this warning).
+            warnings.append({
+                "code": "human_gate.live_scope_approved",
+                "path": "network_scope",
+                "message": "Live scope approved by operator; approval is bound to manifest sha256",
+            })
 
     validate_policy(manifest, violations, warnings)
 

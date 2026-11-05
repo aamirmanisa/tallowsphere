@@ -289,6 +289,11 @@ jobs:
         # or `skip:<reason>`; the `run` ones are executed here. An unmarked block
         # is a failure, because silence is how an example rots into a lie.
         run: python3 scripts/docs_examples.py
+      - name: Phase 9 compliance-gate tests (python)
+        # tests/test_phase9_compliance_gate.py was not referenced by ANY workflow,
+        # so the live-approval binding it covers could regress with the pipeline
+        # green. It runs standalone (unittest), so there is no pytest dependency.
+        run: python3 tests/test_phase9_compliance_gate.py
       - name: Parity fixtures (interpreter vs native, both planes)
         # parity_runner was excluded as unclassified. It was failing because the
         # runner treated every non-zero interpreter exit as an error, so the
