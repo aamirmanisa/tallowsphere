@@ -2351,6 +2351,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_aes256_gcm_decrypt(ptr, ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_argon2id_hash(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare ptr @tallow_sha256(ptr)\n");
+        ir.push_str("declare ptr @tallow_json_stringify_map(ptr, i32)\n");
+        ir.push_str("declare ptr @tallow_json_stringify_array(ptr, i32)\n");
+        ir.push_str("declare ptr @tallow_json_stringify_scalar(i64, i64)\n");
         ir.push_str("declare ptr @tallow_redact_privacy(ptr)\n");
         ir.push_str("declare ptr @tallow_mask_privacy(ptr)\n");
         ir.push_str("declare ptr @tallow_log_timestamp()\n");
@@ -8088,7 +8091,18 @@ void tallow_async_runtime_shutdown(void) {
                         Some(t) => t.to_string(),
                         None => v.ty.type_tag().to_string(),
                     };
-                    let val_i64 = self.coerce_to_i64(&v)?;
+                    // A float value must be stored as its f64 BIT PATTERN: every
+                    // reader of a tagged map (display_ffi, json_ffi) reinterprets the
+                    // slot with `f64::from_bits`, and `coerce_to_i64` truncates with
+                    // fptosi — `{"a": 1.5}` printed 4.94e-324 (= bits 1) natively
+                    // while the interpreter printed 1.5.
+                    let val_i64 = if v.ty == LLType::F64 {
+                        let bits = self.fresh_reg();
+                        self.emit_line(&format!("{bits} = bitcast double {} to i64", v.reg));
+                        bits
+                    } else {
+                        self.coerce_to_i64(&v)?
+                    };
                     let val_ptr = self.fresh_reg();
                     self.emit_line(&format!(
                         "{val_ptr} = getelementptr i64, ptr {buf}, i32 {}",
@@ -8162,7 +8176,6 @@ void tallow_async_runtime_shutdown(void) {
                     // away, so the program exited 0 with the old value still in
                     // place — a store that silently did not store.
                     let val = self.emit_expr(value)?;
-                    let val_i64 = self.coerce_to_i64(&val)?;
                     let obj = self.emit_expr(object)?;
                     let obj = if obj.ty == LLType::ResultPtr {
                         self.unwrap_result_receiver(obj)
@@ -8189,7 +8202,30 @@ void tallow_async_runtime_shutdown(void) {
                         } else {
                             None
                         };
-                        self.emit_map_set(&obj, &idx_i64, &val_i64, string_keys, var_name)?;
+                        // The stored value needs its TYPE TAG and, for a float, its
+                        // f64 bit pattern — readers (display_ffi, json_ffi) decode the
+                        // slot by tag. `emit_map_set` used to take a bare i64, so the
+                        // tags array was never written: `m["a"] = 1.5` printed
+                        // `<tag:4113>` (whatever malloc left) and a truncated value.
+                        let val_tag = match self.expr_composite_tag(value) {
+                            Some(t) => t.to_string(),
+                            None => val.ty.type_tag().to_string(),
+                        };
+                        let val_i64 = if val.ty == LLType::F64 {
+                            let bits = self.fresh_reg();
+                            self.emit_line(&format!("{bits} = bitcast double {} to i64", val.reg));
+                            bits
+                        } else {
+                            self.coerce_to_i64(&val)?
+                        };
+                        self.emit_map_set(
+                            &obj,
+                            &idx_i64,
+                            &val_i64,
+                            &val_tag,
+                            string_keys,
+                            var_name,
+                        )?;
                         return Ok(val);
                     }
 
@@ -8204,7 +8240,10 @@ void tallow_async_runtime_shutdown(void) {
                                 .to_string(),
                         );
                     }
-                    self.emit_array_store(&obj, &idx_i64, &val_i64)?;
+                    // Array slots are bare i64s (no tags), so the store just needs
+                    // the coerced element value.
+                    let elem_i64 = self.coerce_to_i64(&val)?;
+                    self.emit_array_store(&obj, &idx_i64, &elem_i64)?;
                     Ok(val)
                 } else {
                     // Any other assign target: compute the value, store nothing.
@@ -11517,11 +11556,24 @@ void tallow_async_runtime_shutdown(void) {
                         let key_val = self.emit_expr(&args[0].value)?;
                         let key_i64 = self.coerce_to_i64(&key_val)?;
                         let val = self.emit_expr(&args[1].value)?;
-                        let val_i64 = self.coerce_to_i64(&val)?;
+                        // Same tag/bit-pattern rule as `m[k] = v`: readers decode the
+                        // slot by tag, so a bare i64 is not enough.
+                        let val_tag = match self.expr_composite_tag(&args[1].value) {
+                            Some(t) => t.to_string(),
+                            None => val.ty.type_tag().to_string(),
+                        };
+                        let val_i64 = if val.ty == LLType::F64 {
+                            let bits = self.fresh_reg();
+                            self.emit_line(&format!("{bits} = bitcast double {} to i64", val.reg));
+                            bits
+                        } else {
+                            self.coerce_to_i64(&val)?
+                        };
                         return self.emit_map_set(
                             &obj,
                             &key_i64,
                             &val_i64,
+                            &val_tag,
                             string_keys,
                             var_name_opt.as_deref(),
                         );
@@ -22975,11 +23027,19 @@ void tallow_async_runtime_shutdown(void) {
         Ok(LLValue::new(val_i64.to_string(), LLType::I64))
     }
 
+    /// `map[key] = value` / `map.set(key, value)`.
+    ///
+    /// The buffer is `[count, k0,v0,…,kN,vN, t0,…,tN]`, so a write has to keep the
+    /// trailing TAGS array in step with the pairs. It previously took a bare i64
+    /// and wrote no tag at all: readers decode the slot by tag, so every value
+    /// written this way rendered as `<tag:garbage>` (and a float was truncated by
+    /// `coerce_to_i64` on the way in).
     fn emit_map_set(
         &mut self,
         map: &LLValue,
         key_val: &str,
         val_i64: &str,
+        val_tag: &str,
         string_keys: bool,
         var_name: Option<&str>,
     ) -> Result<LLValue, String> {
@@ -23056,6 +23116,19 @@ void tallow_async_runtime_shutdown(void) {
             map.reg
         ));
         self.emit_line(&format!("store i64 {val_i64}, ptr {val_ptr}"));
+        // Tag slot for this entry: 1 + 2*count + idx.
+        let tag_stride = self.fresh_reg();
+        self.emit_line(&format!("{tag_stride} = mul i64 {count}, 2"));
+        let tag_base = self.fresh_reg();
+        self.emit_line(&format!("{tag_base} = add i64 {tag_stride}, 1"));
+        let tag_idx = self.fresh_reg();
+        self.emit_line(&format!("{tag_idx} = add i64 {tag_base}, {idx}"));
+        let tag_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{tag_ptr} = getelementptr i64, ptr {}, i64 {tag_idx}",
+            map.reg
+        ));
+        self.emit_line(&format!("store i64 {val_tag}, ptr {tag_ptr}"));
         self.emit_line(&format!("store i1 true, ptr {found_ptr}"));
         self.emit_line(&format!("br label %{end}"));
         self.body.push_str(&format!("{cont}:\n"));
@@ -23069,8 +23142,11 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!("{new_count} = add i64 {count}, 1"));
         let new_pairs = self.fresh_reg();
         self.emit_line(&format!("{new_pairs} = mul i64 {new_count}, 2"));
+        // Slots: 1 count + 2*new_count pairs + new_count tags.
+        let with_tags = self.fresh_reg();
+        self.emit_line(&format!("{with_tags} = add i64 {new_pairs}, {new_count}"));
         let new_total = self.fresh_reg();
-        self.emit_line(&format!("{new_total} = add i64 {new_pairs}, 1"));
+        self.emit_line(&format!("{new_total} = add i64 {with_tags}, 1"));
         let new_size = self.fresh_reg();
         self.emit_line(&format!("{new_size} = mul i64 {new_total}, 8"));
         let new_map = self.fresh_reg();
@@ -23083,6 +23159,44 @@ void tallow_async_runtime_shutdown(void) {
         self.emit_line(&format!("{nk_stride} = mul i64 {count}, 2"));
         let nk_off = self.fresh_reg();
         self.emit_line(&format!("{nk_off} = add i64 {nk_stride}, 1"));
+        // Move the existing tags forward by two slots: they used to start at
+        // 1 + 2*count and now start at 1 + 2*new_count.
+        let has_old_tags = self.fresh_reg();
+        self.emit_line(&format!("{has_old_tags} = icmp sgt i64 {count}, 0"));
+        let move_tags = self.fresh_label("mapset.move");
+        let tags_moved = self.fresh_label("mapset.tags");
+        self.emit_line(&format!(
+            "br i1 {has_old_tags}, label %{move_tags}, label %{tags_moved}"
+        ));
+        self.body.push_str(&format!("{move_tags}:\n"));
+        let old_tag_slots = self.fresh_reg();
+        self.emit_line(&format!("{old_tag_slots} = mul i64 {count}, 2"));
+        let old_tag_start = self.fresh_reg();
+        self.emit_line(&format!("{old_tag_start} = add i64 {old_tag_slots}, 1"));
+        let old_tag_bytes = self.fresh_reg();
+        self.emit_line(&format!("{old_tag_bytes} = mul i64 {old_tag_start}, 8"));
+        let src_tags = self.fresh_reg();
+        self.emit_line(&format!(
+            "{src_tags} = getelementptr i8, ptr {new_map}, i64 {old_tag_bytes}"
+        ));
+        let new_tag_slots = self.fresh_reg();
+        self.emit_line(&format!("{new_tag_slots} = mul i64 {new_count}, 2"));
+        let new_tag_start = self.fresh_reg();
+        self.emit_line(&format!("{new_tag_start} = add i64 {new_tag_slots}, 1"));
+        let new_tag_bytes = self.fresh_reg();
+        self.emit_line(&format!("{new_tag_bytes} = mul i64 {new_tag_start}, 8"));
+        let dst_tags = self.fresh_reg();
+        self.emit_line(&format!(
+            "{dst_tags} = getelementptr i8, ptr {new_map}, i64 {new_tag_bytes}"
+        ));
+        let tag_move_len = self.fresh_reg();
+        self.emit_line(&format!("{tag_move_len} = mul i64 {count}, 8"));
+        let _moved = self.fresh_reg(); // @memmove returns ptr; a bare call would desync %N
+        self.emit_line(&format!(
+            "{_moved} = call ptr @memmove(ptr {dst_tags}, ptr {src_tags}, i64 {tag_move_len})"
+        ));
+        self.emit_line(&format!("br label %{tags_moved}"));
+        self.body.push_str(&format!("{tags_moved}:\n"));
         let nk_ptr = self.fresh_reg();
         self.emit_line(&format!(
             "{nk_ptr} = getelementptr i64, ptr {new_map}, i64 {nk_off}"
@@ -23095,6 +23209,18 @@ void tallow_async_runtime_shutdown(void) {
             "{nv_ptr} = getelementptr i64, ptr {new_map}, i64 {nv_off}"
         ));
         self.emit_line(&format!("store i64 {val_i64}, ptr {nv_ptr}"));
+        // Tag for the appended entry: 1 + 2*new_count + count.
+        let nt_stride = self.fresh_reg();
+        self.emit_line(&format!("{nt_stride} = mul i64 {new_count}, 2"));
+        let nt_base = self.fresh_reg();
+        self.emit_line(&format!("{nt_base} = add i64 {nt_stride}, 1"));
+        let nt_idx = self.fresh_reg();
+        self.emit_line(&format!("{nt_idx} = add i64 {nt_base}, {count}"));
+        let nt_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{nt_ptr} = getelementptr i64, ptr {new_map}, i64 {nt_idx}"
+        ));
+        self.emit_line(&format!("store i64 {val_tag}, ptr {nt_ptr}"));
         self.emit_line(&format!("store ptr {new_map}, ptr {result_ptr}"));
         if let Some(vn) = var_name {
             if let Some((alloca, _)) = self.variables.get(vn).cloned() {
@@ -24424,11 +24550,25 @@ void tallow_async_runtime_shutdown(void) {
         ));
         let val = self.fresh_reg();
         self.emit_line(&format!("{val} = load i64, ptr {vp}"));
+        // Carry the SOURCE entry's tag across; the merge must not retype a value.
+        let src_tag_stride = self.fresh_reg();
+        self.emit_line(&format!("{src_tag_stride} = mul i64 {other_count}, 2"));
+        let src_tag_base = self.fresh_reg();
+        self.emit_line(&format!("{src_tag_base} = add i64 {src_tag_stride}, 1"));
+        let src_tag_idx = self.fresh_reg();
+        self.emit_line(&format!("{src_tag_idx} = add i64 {src_tag_base}, {idx}"));
+        let src_tag_ptr = self.fresh_reg();
+        self.emit_line(&format!(
+            "{src_tag_ptr} = getelementptr i64, ptr {}, i64 {src_tag_idx}",
+            other.reg
+        ));
+        let src_tag = self.fresh_reg();
+        self.emit_line(&format!("{src_tag} = load i64, ptr {src_tag_ptr}"));
         // Call emit_map_set on the current map pointer
         let cur_map = self.fresh_reg();
         self.emit_line(&format!("{cur_map} = load ptr, ptr {map_ptr}"));
         let cur_map_val = LLValue::new(cur_map.clone(), LLType::I8Ptr);
-        let _ = self.emit_map_set(&cur_map_val, &key, &val, string_keys, var_name)?;
+        let _ = self.emit_map_set(&cur_map_val, &key, &val, &src_tag, string_keys, var_name)?;
         // If var_name was updated by emit_map_set (realloc), reload it
         if let Some(vn) = var_name {
             if let Some((alloca, _)) = self.variables.get(vn).cloned() {
@@ -28137,6 +28277,90 @@ impl<'a> CodeGen<'a> {
                     "{_sn} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 {len64}, ptr {fmt}, ptr {s})"
                 ));
                 Ok(Some(LLValue::new(buf.to_string(), LLType::I8Ptr)))
+            }
+            "stringify" => {
+                // Composites reuse the classification `print` uses (map vs array,
+                // key/element kind); scalars go through the tagged scalar helper.
+                // The interpreter answers with serde_json's compact form, which
+                // the helpers reproduce (`{\"a\":1,\"b\":\"x\"}`, `1.0`, `null`).
+                let arg = args
+                    .first()
+                    .ok_or_else(|| "json.stringify() requires one argument".to_string())?;
+                if !target_arch_matches_host(&self.target.triple) {
+                    return Err(format!(
+                        "json.stringify() needs the runtime helpers, which are host-only \
+                         (target {} skips the runtime archive); use the interpreter",
+                        self.target.triple
+                    ));
+                }
+                match self.print_composite_route(&arg.value)? {
+                    Some(PrintCompositeRoute::Map { keys_are_strings }) => {
+                        let buf = self.emit_expr(&arg.value)?;
+                        let flag = if keys_are_strings { 1 } else { 0 };
+                        let reg = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{reg} = call ptr @tallow_json_stringify_map(ptr {}, i32 {flag})",
+                            buf.reg
+                        ));
+                        Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+                    }
+                    Some(PrintCompositeRoute::Array { elem_kind }) => {
+                        let buf = self.emit_expr(&arg.value)?;
+                        let reg = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{reg} = call ptr @tallow_json_stringify_array(ptr {}, i32 {elem_kind})",
+                            buf.reg
+                        ));
+                        Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+                    }
+                    None => {
+                        if matches!(arg.value.kind, ExprKind::Nil) {
+                            let reg = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{reg} = call ptr @tallow_json_stringify_scalar(i64 4, i64 0)"
+                            ));
+                            return Ok(Some(LLValue::new(reg, LLType::I8Ptr)));
+                        }
+                        let val = self.emit_expr(&arg.value)?;
+                        let (tag, payload) = match val.ty {
+                            LLType::I64 => (0i64, val.reg),
+                            LLType::F64 => {
+                                let bits = self.fresh_reg();
+                                self.emit_line(&format!(
+                                    "{bits} = bitcast double {} to i64",
+                                    val.reg
+                                ));
+                                (2, bits)
+                            }
+                            LLType::I1 => {
+                                let ext = self.fresh_reg();
+                                self.emit_line(&format!("{ext} = zext i1 {} to i64", val.reg));
+                                (3, ext)
+                            }
+                            LLType::I8Ptr | LLType::Tagged => {
+                                let as_int = self.fresh_reg();
+                                self.emit_line(&format!(
+                                    "{as_int} = ptrtoint ptr {} to i64",
+                                    val.reg
+                                ));
+                                (1, as_int)
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "json.stringify() has no lowering for a value of type {:?} \
+                                     natively; stringify a map, array, string, number, bool or nil, \
+                                     or run with --interpret",
+                                    val.ty
+                                ));
+                            }
+                        };
+                        let reg = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{reg} = call ptr @tallow_json_stringify_scalar(i64 {tag}, i64 {payload})"
+                        ));
+                        Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+                    }
+                }
             }
             // `json.parse` / `decode` / `stringify` / `encode` are NOT here,
             // and they cannot be handed to the generic bridge either: the
