@@ -2351,6 +2351,8 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_aes256_gcm_decrypt(ptr, ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_argon2id_hash(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare ptr @tallow_sha256(ptr)\n");
+        ir.push_str("declare ptr @tallow_redact_privacy(ptr)\n");
+        ir.push_str("declare ptr @tallow_mask_privacy(ptr)\n");
         ir.push_str("declare ptr @tallow_sha384(ptr)\n");
         ir.push_str("declare ptr @tallow_sha512(ptr)\n");
         ir.push_str("declare ptr @tallow_sha3_256(ptr)\n");
@@ -6467,13 +6469,20 @@ void tallow_async_runtime_shutdown(void) {
                 // Source 1+2: check if the type annotation names a privacy-qualified type alias
                 if let Some(type_expr) = ty {
                     if let TypeExprKind::Named(type_name) = &type_expr.kind {
-                        if let Some(resolved) = self.env.type_aliases.get(type_name.as_str()) {
-                            if resolved.is_secret() {
-                                self.variable_privacy
-                                    .insert(name.clone(), PrivacyLevel::Secret);
-                            } else if resolved.is_private() {
-                                self.variable_privacy
-                                    .insert(name.clone(), PrivacyLevel::Private);
+                        if let Some(level) = self.privacy_of_type_name(type_name) {
+                            self.variable_privacy.insert(name.clone(), level);
+                        }
+                    }
+                }
+                // A value cast into a privacy-qualified type (`let c = "…" as Email`)
+                // carried no privacy tag before: the annotation path only sees
+                // `let c: Email = …`, so `.mask()` on the cast form had no
+                // statically-known kind and the program was refused.
+                if !self.variable_privacy.contains_key(name) {
+                    if let ExprKind::Cast { ty: cast_ty, .. } = &value.kind {
+                        if let TypeExprKind::Named(type_name) = &cast_ty.kind {
+                            if let Some(level) = self.privacy_of_type_name(type_name) {
+                                self.variable_privacy.insert(name.clone(), level);
                             }
                         }
                     }
@@ -10653,6 +10662,32 @@ void tallow_async_runtime_shutdown(void) {
         method: &str,
         args: &[CallArg],
     ) -> Result<LLValue, String> {
+        // A privacy-wrapped value lowers to an i64 handle, so `.redact()` /
+        // `.mask()` / `.hash()` never reach the String arms above and fell into
+        // the unknown-method refusal. Route them to the runtime helpers that
+        // reproduce the interpreter's type-aware rules (email-shaped values keep
+        // their domain; everything else stars by character, not by byte). The
+        // privacy tag on the expression is the gate — the type checker refuses
+        // these methods on any other receiver.
+        if matches!(method, "redact" | "mask" | "hash") && self.expr_privacy(object).is_some() {
+            let val = self.emit_expr(object)?;
+            let as_ptr = if val.ty == LLType::I64 {
+                let p = self.fresh_reg();
+                self.emit_line(&format!("{p} = inttoptr i64 {} to ptr", val.reg));
+                p
+            } else {
+                val.reg
+            };
+            let callee = match method {
+                "hash" => "@tallow_sha256",
+                "mask" => "@tallow_mask_privacy",
+                _ => "@tallow_redact_privacy",
+            };
+            let result = self.fresh_reg();
+            self.emit_line(&format!("{result} = call ptr {callee}(ptr {as_ptr})"));
+            return Ok(LLValue::new(result, LLType::I8Ptr));
+        }
+
         // Check for Browser.launch() static call
         if let ExprKind::Ident(name) = &object.kind {
             if name == "Browser" && method == "launch" {
@@ -25243,6 +25278,26 @@ void tallow_async_runtime_shutdown(void) {
 
     /// Check if an expression refers to a variable with a privacy qualifier.
     /// Returns the privacy level if found.
+    /// Privacy level named by a type: a declared alias (`type Email = private
+    /// String`) or a built-in qualifier type (`Phone`, `Password`, …).
+    fn privacy_of_type_name(&self, name: &str) -> Option<PrivacyLevel> {
+        if let Some(resolved) = self.env.type_aliases.get(name) {
+            if resolved.is_secret() {
+                return Some(PrivacyLevel::Secret);
+            }
+            if resolved.is_private() {
+                return Some(PrivacyLevel::Private);
+            }
+        }
+        if crate::typeck::SECRET_TYPES.contains(&name) {
+            return Some(PrivacyLevel::Secret);
+        }
+        if crate::typeck::PRIVATE_TYPES.contains(&name) {
+            return Some(PrivacyLevel::Private);
+        }
+        None
+    }
+
     fn expr_privacy(&self, expr: &Expr) -> Option<&PrivacyLevel> {
         match &expr.kind {
             ExprKind::Ident(name) => self.variable_privacy.get(name),

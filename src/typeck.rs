@@ -297,10 +297,10 @@ pub enum FloatSize {
 // ── Built-in Privacy Types ───────────────────────────────────────────────────
 
 /// Types that are implicitly `private` (GDPR personal data).
-const PRIVATE_TYPES: &[&str] = &["Email", "IPAddress", "Name", "Phone", "Location", "SSN"];
+pub(crate) const PRIVATE_TYPES: &[&str] = &["Email", "IPAddress", "Name", "Phone", "Location", "SSN"];
 
 /// Types that are implicitly `secret` (credentials).
-const SECRET_TYPES: &[&str] = &["Password", "APIKey", "PrivateKey", "Token"];
+pub(crate) const SECRET_TYPES: &[&str] = &["Password", "APIKey", "PrivateKey", "Token"];
 
 // ── Agent Function Info ──────────────────────────────────────────────────────
 
