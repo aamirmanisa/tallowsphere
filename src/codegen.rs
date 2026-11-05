@@ -2351,6 +2351,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_aes256_gcm_decrypt(ptr, ptr, ptr, i64, ptr)\n");
         ir.push_str("declare i32 @tallow_argon2id_hash(ptr, ptr, i64, ptr)\n");
         ir.push_str("declare ptr @tallow_sha256(ptr)\n");
+        ir.push_str("declare ptr @tallow_json_stringify_map(ptr, i32)\n");
+        ir.push_str("declare ptr @tallow_json_stringify_array(ptr, i32)\n");
+        ir.push_str("declare ptr @tallow_json_stringify_scalar(i64, i64)\n");
         ir.push_str("declare ptr @tallow_redact_privacy(ptr)\n");
         ir.push_str("declare ptr @tallow_mask_privacy(ptr)\n");
         ir.push_str("declare ptr @tallow_log_timestamp()\n");
@@ -8088,7 +8091,18 @@ void tallow_async_runtime_shutdown(void) {
                         Some(t) => t.to_string(),
                         None => v.ty.type_tag().to_string(),
                     };
-                    let val_i64 = self.coerce_to_i64(&v)?;
+                    // A float value must be stored as its f64 BIT PATTERN: every
+                    // reader of a tagged map (display_ffi, json_ffi) reinterprets the
+                    // slot with `f64::from_bits`, and `coerce_to_i64` truncates with
+                    // fptosi — `{"a": 1.5}` printed 4.94e-324 (= bits 1) natively
+                    // while the interpreter printed 1.5.
+                    let val_i64 = if v.ty == LLType::F64 {
+                        let bits = self.fresh_reg();
+                        self.emit_line(&format!("{bits} = bitcast double {} to i64", v.reg));
+                        bits
+                    } else {
+                        self.coerce_to_i64(&v)?
+                    };
                     let val_ptr = self.fresh_reg();
                     self.emit_line(&format!(
                         "{val_ptr} = getelementptr i64, ptr {buf}, i32 {}",
@@ -28137,6 +28151,90 @@ impl<'a> CodeGen<'a> {
                     "{_sn} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 {len64}, ptr {fmt}, ptr {s})"
                 ));
                 Ok(Some(LLValue::new(buf.to_string(), LLType::I8Ptr)))
+            }
+            "stringify" => {
+                // Composites reuse the classification `print` uses (map vs array,
+                // key/element kind); scalars go through the tagged scalar helper.
+                // The interpreter answers with serde_json's compact form, which
+                // the helpers reproduce (`{\"a\":1,\"b\":\"x\"}`, `1.0`, `null`).
+                let arg = args
+                    .first()
+                    .ok_or_else(|| "json.stringify() requires one argument".to_string())?;
+                if !target_arch_matches_host(&self.target.triple) {
+                    return Err(format!(
+                        "json.stringify() needs the runtime helpers, which are host-only \
+                         (target {} skips the runtime archive); use the interpreter",
+                        self.target.triple
+                    ));
+                }
+                match self.print_composite_route(&arg.value)? {
+                    Some(PrintCompositeRoute::Map { keys_are_strings }) => {
+                        let buf = self.emit_expr(&arg.value)?;
+                        let flag = if keys_are_strings { 1 } else { 0 };
+                        let reg = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{reg} = call ptr @tallow_json_stringify_map(ptr {}, i32 {flag})",
+                            buf.reg
+                        ));
+                        Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+                    }
+                    Some(PrintCompositeRoute::Array { elem_kind }) => {
+                        let buf = self.emit_expr(&arg.value)?;
+                        let reg = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{reg} = call ptr @tallow_json_stringify_array(ptr {}, i32 {elem_kind})",
+                            buf.reg
+                        ));
+                        Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+                    }
+                    None => {
+                        if matches!(arg.value.kind, ExprKind::Nil) {
+                            let reg = self.fresh_reg();
+                            self.emit_line(&format!(
+                                "{reg} = call ptr @tallow_json_stringify_scalar(i64 4, i64 0)"
+                            ));
+                            return Ok(Some(LLValue::new(reg, LLType::I8Ptr)));
+                        }
+                        let val = self.emit_expr(&arg.value)?;
+                        let (tag, payload) = match val.ty {
+                            LLType::I64 => (0i64, val.reg),
+                            LLType::F64 => {
+                                let bits = self.fresh_reg();
+                                self.emit_line(&format!(
+                                    "{bits} = bitcast double {} to i64",
+                                    val.reg
+                                ));
+                                (2, bits)
+                            }
+                            LLType::I1 => {
+                                let ext = self.fresh_reg();
+                                self.emit_line(&format!("{ext} = zext i1 {} to i64", val.reg));
+                                (3, ext)
+                            }
+                            LLType::I8Ptr | LLType::Tagged => {
+                                let as_int = self.fresh_reg();
+                                self.emit_line(&format!(
+                                    "{as_int} = ptrtoint ptr {} to i64",
+                                    val.reg
+                                ));
+                                (1, as_int)
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "json.stringify() has no lowering for a value of type {:?} \
+                                     natively; stringify a map, array, string, number, bool or nil, \
+                                     or run with --interpret",
+                                    val.ty
+                                ));
+                            }
+                        };
+                        let reg = self.fresh_reg();
+                        self.emit_line(&format!(
+                            "{reg} = call ptr @tallow_json_stringify_scalar(i64 {tag}, i64 {payload})"
+                        ));
+                        Ok(Some(LLValue::new(reg, LLType::I8Ptr)))
+                    }
+                }
             }
             // `json.parse` / `decode` / `stringify` / `encode` are NOT here,
             // and they cannot be handed to the generic bridge either: the
