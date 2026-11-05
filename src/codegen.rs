@@ -2353,6 +2353,9 @@ void tallow_async_runtime_shutdown(void) {
         ir.push_str("declare ptr @tallow_sha256(ptr)\n");
         ir.push_str("declare ptr @tallow_redact_privacy(ptr)\n");
         ir.push_str("declare ptr @tallow_mask_privacy(ptr)\n");
+        ir.push_str("declare ptr @tallow_log_timestamp()\n");
+        ir.push_str("@stderr = external global ptr\n");
+        ir.push_str("declare i32 @fprintf(ptr, ptr, ...)\n");
         ir.push_str("declare ptr @tallow_sha384(ptr)\n");
         ir.push_str("declare ptr @tallow_sha512(ptr)\n");
         ir.push_str("declare ptr @tallow_sha3_256(ptr)\n");
@@ -26989,17 +26992,44 @@ impl<'a> CodeGen<'a> {
             _ => return Ok(None),
         };
         let prefix_str = self.intern_string(prefix);
-        // `%s%s` + a real newline: the previous literal `\0A` printed as the
-        // three visible characters `\0A` instead of ending the line.
-        let fmt_nl = self.intern_string("%s%s\n");
-        if let Some(arg) = args.first() {
+        // The interpreter writes `[LEVEL] [<ISO8601 UTC>] <args…>` to stderr
+        // (src/stdlib/log.rs). The compiled plane used to print `[LEVEL] <first arg>`
+        // to stdout — wrong stream, no timestamp, and every argument after the
+        // first was dropped. Match the interpreter: one line, timestamped,
+        // space-separated arguments, on stderr.
+        let open_bracket = self.intern_string("[");
+        let close_bracket = self.intern_string("] ");
+        let space = self.intern_string(" ");
+        let nl_fmt = self.intern_string("\n");
+        let head_fmt = self.intern_string("%s%s%s%s");
+
+        // `stderr` is a global holding the FILE*: load it once, then reuse the value.
+        let err_stream = self.fresh_reg();
+        self.emit_line(&format!("{err_stream} = load ptr, ptr @stderr"));
+        let ts = self.fresh_reg();
+        self.emit_line(&format!("{ts} = call ptr @tallow_log_timestamp()"));
+        let _h = self.fresh_reg(); // F1: an unassigned non-void call desyncs %N
+        self.emit_line(&format!(
+            "{_h} = call i32 (ptr, ...) @fprintf(ptr {err_stream}, ptr {head_fmt}, ptr {prefix_str}, ptr {open_bracket}, ptr {ts}, ptr {close_bracket})"
+        ));
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                let _sp = self.fresh_reg();
+                self.emit_line(&format!(
+                    "{_sp} = call i32 (ptr, ...) @fprintf(ptr {err_stream}, ptr @.fmt.str, ptr {space})"
+                ));
+            }
             let val = self.emit_expr(&arg.value)?;
             let s = self.coerce_to_string(&val)?;
-            let _lg = self.fresh_reg(); // F1: unassigned non-void call would desync %N
+            let _a = self.fresh_reg();
             self.emit_line(&format!(
-                "{_lg} = call i32 (ptr, ...) @printf(ptr {fmt_nl}, ptr {prefix_str}, ptr {s})"
+                "{_a} = call i32 (ptr, ...) @fprintf(ptr {err_stream}, ptr @.fmt.str, ptr {s})"
             ));
         }
+        let _nl = self.fresh_reg();
+        self.emit_line(&format!(
+            "{_nl} = call i32 (ptr, ...) @fprintf(ptr {err_stream}, ptr {nl_fmt})"
+        ));
         if method == "fatal" {
             self.emit_line("call void @exit(i32 1)");
             self.emit_line("unreachable");
@@ -44595,6 +44625,30 @@ fn main() {
         assert!(
             err.contains("inlined by Array.map/filter/each"),
             "refusal should name the inline path; got: {err}"
+        );
+    }
+
+    /// A `log.*` line must reach stderr with the interpreter's framing: level
+    /// prefix, ISO-8601 timestamp, every argument, one newline.
+    ///
+    /// The compiled plane used to write `[INFO] <first arg>` to stdout with no
+    /// timestamp — three divergences in one line.
+    #[test]
+    fn e2e_log_lines_are_timestamped_on_stderr_with_every_argument() {
+        let ir = compile_to_ir("fn main() {\n    log.info(\"a\", 1)\n}");
+        validate_ir(&ir);
+        assert!(
+            ir.contains("call ptr @tallow_log_timestamp()"),
+            "log line must take the runtime timestamp (interpreter emits one)"
+        );
+        assert!(
+            ir.contains("@fprintf(ptr ") && ir.contains("@stderr"),
+            "log line must go to stderr, as src/stdlib/log.rs::emit does"
+        );
+        let to_stderr = ir.matches("@fprintf(ptr %").count();
+        assert!(
+            to_stderr >= 3,
+            "prefix+timestamp, separator/argument and newline writes expected, got {to_stderr}"
         );
     }
 
