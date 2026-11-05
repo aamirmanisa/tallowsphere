@@ -1071,19 +1071,27 @@ mod tests {
     // parallel test would observe another's value.
 
     fn with_port_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
-        // A dedicated mutex rather than `unsafe` env mutation: tests in this
-        // crate already run single-threaded for env-sensitive cases.
+        // `set_var`/`remove_var` are unsafe in edition 2024: mutating the
+        // process environment is racy against any other thread reading it.
+        // The mutex serialises the whole read-modify-restore window so no two
+        // of these tests overlap; the crate's other env tests (browser.rs) do
+        // the same. Restores the previous value on the way out so a later test
+        // never inherits this one's setting.
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var(TOR_SOCKS_PORT_ENV).ok();
-        match value {
-            Some(v) => std::env::set_var(TOR_SOCKS_PORT_ENV, v),
-            None => std::env::remove_var(TOR_SOCKS_PORT_ENV),
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var(TOR_SOCKS_PORT_ENV, v),
+                None => std::env::remove_var(TOR_SOCKS_PORT_ENV),
+            }
         }
         let out = f();
-        match previous {
-            Some(v) => std::env::set_var(TOR_SOCKS_PORT_ENV, v),
-            None => std::env::remove_var(TOR_SOCKS_PORT_ENV),
+        unsafe {
+            match previous {
+                Some(v) => std::env::set_var(TOR_SOCKS_PORT_ENV, v),
+                None => std::env::remove_var(TOR_SOCKS_PORT_ENV),
+            }
         }
         out
     }
