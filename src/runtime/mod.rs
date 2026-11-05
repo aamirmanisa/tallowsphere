@@ -21,6 +21,7 @@ pub mod opaque_ffi;
 pub mod browser;
 pub mod crypto_ffi;
 pub mod db_ffi;
+pub mod privacy_ffi;
 pub mod provenance_ffi;
 pub mod url_ffi;
 pub mod fingerprint_ffi;
