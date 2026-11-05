@@ -11065,6 +11065,11 @@ fn real_main() -> anyhow::Result<()> {
                     }
                     match interp.run(&program) {
                         Ok(_) => {}
+                        // `log.fatal` ends the process with the interpreter's own
+                        // exit code, exactly as the compiled plane does.
+                        Err(tallow::interp::RuntimeError::Exit(code)) => {
+                            std::process::exit(code);
+                        }
                         Err(e) => {
                             // Graceful shutdown is not a real error
                             let msg = e.to_string();
