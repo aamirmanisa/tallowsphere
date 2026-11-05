@@ -997,6 +997,12 @@ pub enum RuntimeError {
     UndefinedFn(String),
     #[error("native function `{0}` has no interpreter implementation — it is bound at link time; run without --interpret")]
     NativeFnInInterpreter(String),
+    /// A program asked the process to end (`log.fatal`). Carried as an error
+    /// rather than calling `std::process::exit` inside the interpreter: `run()`
+    /// is also used in-process by `tallow test` and by embedders, where killing
+    /// the host would be wrong. The CLI maps this to the real exit code.
+    #[error("process exited with status {0}")]
+    Exit(i32),
 }
 
 // ── Environment (Scoped Variables) ───────────────────────────────────────────
@@ -1857,6 +1863,12 @@ impl Interpreter {
     /// executed statement's span and the loaded source text. Returns the error
     /// unchanged if no location is available.
     fn locate(&self, e: RuntimeError) -> RuntimeError {
+        // A requested exit is not a fault: rewriting it into `Error("… (at l:c)")`
+        // hid the exit code from the CLI, which then printed
+        // "runtime error: process exited with status 1 (at 2:5)".
+        if matches!(e, RuntimeError::Exit(_)) {
+            return e;
+        }
         if let (Some(sp), Some(src)) = (self.current_span, &self.source_text) {
             let (line, col) = sp.line_col(src);
             let base = e.to_string();
@@ -10183,8 +10195,11 @@ impl Interpreter {
                 crate::stdlib::log::emit(&line);
                 self.output.push(line);
                 if level == "FATAL" {
-                    // In interpreter, fatal logs and continues (exit handled by caller)
-                    // but we push the output for test capture
+                    // stdlib/log.tl: "/// Log fatal error and exit". The compiled
+                    // plane exits 1; the interpreter used to print the line and
+                    // carry on, so `log.fatal("x")` in main kept running
+                    // (verified: printed the next statement, rc=0).
+                    return Err(RuntimeError::Exit(1));
                 }
                 return Ok(Value::Nil);
             }
@@ -33918,6 +33933,24 @@ mod tests {
         let program = Parser::parse(tokens).unwrap();
         let mut interp = Interpreter::new();
         interp.run(&program)
+    }
+
+    /// `log.fatal` must end the run, not print and carry on.
+    ///
+    /// stdlib/log.tl declares "Log fatal error and exit" and the compiled plane
+    /// exits 1; the interpreter used to print the line and execute the next
+    /// statement (verified: `log.fatal("boom"); print("unreachable")` printed
+    /// both and returned rc=0).
+    #[test]
+    fn log_fatal_ends_the_run_with_exit_1() {
+        let err = run_result(
+            "fn main() {\n    log.fatal(\"boom\")\n    print(\"unreachable\")\n}",
+        )
+        .expect_err("log.fatal must not return control to the program");
+        match err {
+            RuntimeError::Exit(code) => assert_eq!(code, 1),
+            other => panic!("expected RuntimeError::Exit(1), got {other:?}"),
+        }
     }
 
     #[test]
