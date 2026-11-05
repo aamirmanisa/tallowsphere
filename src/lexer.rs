@@ -278,11 +278,21 @@ impl fmt::Display for TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
+    /// True when at least one newline was skipped between this token and the
+    /// previous one. The parser uses it to end a statement: without a newline
+    /// signal, `print("a")` followed by a line starting with `[1, 2]` parsed the
+    /// bracket as an index into the previous expression and then failed with
+    /// "expected ']', found ','" — a statement could never begin with `[`.
+    pub newline_before: bool,
 }
 
 impl Token {
     pub fn new(kind: TokenKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            newline_before: false,
+        }
     }
 }
 
@@ -357,15 +367,20 @@ impl<'src> Lexer<'src> {
                 continue;
             }
 
+            let before_gap = self.pos;
             self.skip_whitespace_and_comments();
+            let newline_before = self.source[before_gap..self.pos].contains('\n');
 
             if self.is_at_end() {
-                tokens.push(Token::new(TokenKind::Eof, Span::new(self.pos, self.pos)));
+                let mut eof = Token::new(TokenKind::Eof, Span::new(self.pos, self.pos));
+                eof.newline_before = newline_before;
+                tokens.push(eof);
                 break;
             }
 
             match self.next_token() {
-                Ok(tok) => {
+                Ok(mut tok) => {
+                    tok.newline_before = newline_before;
                     // Track brace depth inside interpolation expressions
                     if !self.interp_stack.is_empty() {
                         match &tok.kind {
