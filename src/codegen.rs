@@ -964,6 +964,13 @@ pub struct CodeGen<'a> {
     /// stores these values into a malloc'd env record and the drain reads them
     /// back from it, so a loop's defer sees its own iteration's values.
     defer_captures: Vec<Vec<(String, LLType)>>,
+    /// True while an Array.map/filter/each body is being inlined into the caller.
+    /// `return` inside such a body would emit `ret` of the ENCLOSING function —
+    /// the compiled plane then leaves the caller early and loses output
+    /// (`[1,2,3].filter { n -> return true }` printed nothing, rc=0). Refuse
+    /// instead: `tallow run` falls back to the interpreter, which scopes the
+    /// return to the closure.
+    inlining_closure: bool,
     /// Site id by the AST block's address. A drain emits deferred bodies, which
     /// re-executes `StmtKind::Defer` lowering for any `defer` nested inside one;
     /// keying on the source block keeps that from minting a duplicate id.
@@ -1127,6 +1134,7 @@ impl<'a> CodeGen<'a> {
             current_fn_name: None,
             defer_sites: Vec::new(),
             defer_captures: Vec::new(),
+            inlining_closure: false,
             defer_site_ids: HashMap::new(),
             defer_head: None,
             defer_cursor: None,
@@ -6657,6 +6665,16 @@ void tallow_async_runtime_shutdown(void) {
             }
 
             StmtKind::Return(Some(expr)) => {
+                if self.inlining_closure {
+                    return Err(concat!(
+                        "`return` inside a closure body inlined by Array.map/filter/each ",
+                        "would return from the enclosing function, not the closure — refusing ",
+                        "to compile a body that leaves its caller early; drop the `return` and ",
+                        "use the body's last expression, or run without --require-native ",
+                        "(the interpreter scopes the return to the closure)"
+                    )
+                    .into());
+                }
                 let val = self.emit_expr(expr)?;
                 // Run deferred blocks (LIFO) before returning
                 self.emit_defer_cleanup()?;
@@ -6709,6 +6727,15 @@ void tallow_async_runtime_shutdown(void) {
             }
 
             StmtKind::Return(None) => {
+                if self.inlining_closure {
+                    return Err(concat!(
+                        "`return` inside a closure body inlined by Array.map/filter/each ",
+                        "would return from the enclosing function, not the closure — refusing ",
+                        "to compile a body that leaves its caller early; run without ",
+                        "--require-native (the interpreter scopes the return to the closure)"
+                    )
+                    .into());
+                }
                 // Run deferred blocks (LIFO) before returning
                 self.emit_defer_cleanup()?;
                 self.emit_line("ret void");
@@ -11646,7 +11673,11 @@ void tallow_async_runtime_shutdown(void) {
                         if let ExprKind::Closure { params, body } = &arg.value.kind {
                             let param_name =
                                 params.first().map(|p| p.name.as_str()).unwrap_or("_it");
-                            return self.emit_array_map_inline(&obj, param_name, body);
+                            let saved = self.inlining_closure;
+                            self.inlining_closure = true;
+                            let r = self.emit_array_map_inline(&obj, param_name, body);
+                            self.inlining_closure = saved;
+                            return r;
                         }
                     }
                     return Ok(obj);
@@ -11657,7 +11688,11 @@ void tallow_async_runtime_shutdown(void) {
                         if let ExprKind::Closure { params, body } = &arg.value.kind {
                             let param_name =
                                 params.first().map(|p| p.name.as_str()).unwrap_or("_it");
-                            return self.emit_array_filter_inline(&obj, param_name, body);
+                            let saved = self.inlining_closure;
+                            self.inlining_closure = true;
+                            let r = self.emit_array_filter_inline(&obj, param_name, body);
+                            self.inlining_closure = saved;
+                            return r;
                         }
                     }
                     return Ok(obj);
@@ -11668,7 +11703,11 @@ void tallow_async_runtime_shutdown(void) {
                         if let ExprKind::Closure { params, body } = &arg.value.kind {
                             let param_name =
                                 params.first().map(|p| p.name.as_str()).unwrap_or("_it");
-                            return self.emit_array_foreach_inline(&obj, param_name, body);
+                            let saved = self.inlining_closure;
+                            self.inlining_closure = true;
+                            let r = self.emit_array_foreach_inline(&obj, param_name, body);
+                            self.inlining_closure = saved;
+                            return r;
                         }
                     }
                     return Ok(obj);
@@ -44474,6 +44513,33 @@ fn main() {
         assert_eq!(
             newlines, 1,
             "print(1, 2) is one line: exactly one newline expected, got {newlines}"
+        );
+    }
+
+    /// `return` inside a closure body that the native backend inlines must be
+    /// refused, not compiled.
+    ///
+    /// The inline emitters splice the body into the caller, so a `return` emitted
+    /// `ret` of the *enclosing* function: `[1,2,3].filter { n -> return true }`
+    /// left `main` before the next statement and the program printed nothing with
+    /// rc=0. The interpreter scopes the return to the closure, so the planes
+    /// disagreed on output. Refusing keeps `tallow run` on the interpreter (which
+    /// is correct) and stops `--require-native` from miscompiling.
+    #[test]
+    fn e2e_return_inside_inlined_closure_is_refused() {
+        let (tokens, errors) = lexer::tokenize(
+            "fn main() {\n    let nums = [1, 2, 3]\n    let r = nums.filter { n: i64 -> return true }\n    print(r.len())\n}",
+        );
+        assert!(errors.is_empty(), "lex errors: {errors:?}");
+        let program = parser::Parser::parse(tokens).expect("parse error");
+        let (env, _) = TypeChecker::new(&program).check();
+        let mut cg = CodeGen::new(&program, &env);
+        let err = cg
+            .emit_module()
+            .expect_err("a return inside an inlined closure must be refused");
+        assert!(
+            err.contains("inlined by Array.map/filter/each"),
+            "refusal should name the inline path; got: {err}"
         );
     }
 
