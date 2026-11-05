@@ -367,9 +367,10 @@ impl<'src> Lexer<'src> {
                 continue;
             }
 
-            let before_gap = self.pos;
-            self.skip_whitespace_and_comments();
-            let newline_before = self.source[before_gap..self.pos].contains('\n');
+            // The skip reports newlines itself: slicing the source by byte offset
+            // panicked on mid-character positions (fuzz_safety: unicode + control
+            // chars), because error recovery can leave `pos` inside a code point.
+            let newline_before = self.skip_whitespace_and_comments();
 
             if self.is_at_end() {
                 let mut eof = Token::new(TokenKind::Eof, Span::new(self.pos, self.pos));
@@ -1164,11 +1165,22 @@ impl<'src> Lexer<'src> {
 
     // ── Whitespace & comments ────────────────────────────────────────────
 
-    fn skip_whitespace_and_comments(&mut self) {
+    /// Skip whitespace and comments, reporting whether any newline was skipped.
+    ///
+    /// The newline flag is what gives the parser a statement boundary (see
+    /// `Token::newline_before`). It is computed here, byte by byte, rather than by
+    /// slicing the source afterwards: error recovery can leave the cursor inside a
+    /// multi-byte character, and `source[a..b]` panics there (found by
+    /// `tests/fuzz_safety.rs`).
+    fn skip_whitespace_and_comments(&mut self) -> bool {
+        let mut saw_newline = false;
         loop {
             // Skip whitespace
             while let Some(ch) = self.peek() {
                 if ch.is_ascii_whitespace() {
+                    if ch == b'\n' {
+                        saw_newline = true;
+                    }
                     self.advance();
                 } else {
                     break;
@@ -1201,6 +1213,9 @@ impl<'src> Lexer<'src> {
                         self.advance();
                         depth -= 1;
                     } else {
+                        if self.peek() == Some(b'\n') {
+                            saw_newline = true;
+                        }
                         self.advance();
                     }
                 }
@@ -1209,6 +1224,7 @@ impl<'src> Lexer<'src> {
 
             break;
         }
+        saw_newline
     }
 
     // ── Cursor helpers ───────────────────────────────────────────────────
