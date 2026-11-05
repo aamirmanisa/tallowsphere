@@ -3605,7 +3605,7 @@ impl Interpreter {
                     return self.call_function(&full_name, named_args, env);
                 }
 
-                self.call_method(obj, method, evaluated_args)
+                self.call_method_env(obj, method, evaluated_args, env)
             }
 
             // ── Field access ──
@@ -3745,7 +3745,7 @@ impl Interpreter {
                         )))
                     }
                     // For numeric/bool types, try as a method call (e.g., 30.seconds, x.abs)
-                    _ => self.call_method(obj.clone(), field, vec![]),
+                    _ => self.call_method_env(obj.clone(), field, vec![], env),
                 }
             }
 
@@ -14354,11 +14354,26 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Method dispatch without a caller frame. Higher-order methods that run a
+    /// closure body (`.each`, `.map`) cannot reach the caller's bindings through
+    /// this entry point, so they fall back to the closure's own capture snapshot.
+    /// The evaluator uses [`Interpreter::call_method_env`], which can inline.
     fn call_method(
         &mut self,
         object: Value,
         method: &str,
         args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let mut scratch = Env::new();
+        self.call_method_env(object, method, args, &mut scratch)
+    }
+
+    fn call_method_env(
+        &mut self,
+        object: Value,
+        method: &str,
+        args: Vec<Value>,
+        env: &mut Env,
     ) -> Result<Value, RuntimeError> {
         // Strip turbofish: "parse::<f64>" -> ("parse", Some("f64"))
         let (method, turbofish): (&str, Option<&str>) = if let Some(idx) = method.find("::<") {
@@ -15801,11 +15816,8 @@ impl Interpreter {
                 {
                     let mut result = Vec::new();
                     for item in arr {
-                        let mut call_env = Env::from_captures(&captures);
-                        if let Some(p) = params.first() {
-                            call_env.define(p.clone(), item.clone());
-                        }
-                        let val = self.exec_block(&body, &mut call_env)?;
+                        let val =
+                            self.call_closure_inlined(&params, &body, &captures, vec![item.clone()], env)?;
                         let val = match val {
                             Value::Return(v) => *v,
                             v => v,
@@ -15838,11 +15850,8 @@ impl Interpreter {
                 {
                     let mut result = Vec::new();
                     for item in arr {
-                        let mut call_env = Env::from_captures(&captures);
-                        if let Some(p) = params.first() {
-                            call_env.define(p.clone(), item);
-                        }
-                        let val = self.exec_block(&body, &mut call_env)?;
+                        let val =
+                            self.call_closure_inlined(&params, &body, &captures, vec![item], env)?;
                         let val = match val {
                             Value::Return(v) => *v,
                             v => v,
@@ -16008,9 +16017,15 @@ impl Interpreter {
                     Value::Range { start, end, step } => Self::range_to_array(start, end, step),
                     _ => return Ok(Value::Nil),
                 };
-                if let Some(closure) = args.into_iter().next() {
+                if let Some(Value::Function {
+                    params,
+                    body,
+                    captures,
+                    ..
+                }) = args.into_iter().next()
+                {
                     for item in items {
-                        self.call_closure(closure.clone(), vec![item])?;
+                        self.call_closure_inlined(&params, &body, &captures, vec![item], env)?;
                     }
                 }
                 Ok(Value::Nil)
@@ -23875,6 +23890,55 @@ impl Interpreter {
                 "expected closure/function".to_string(),
             ))
         }
+    }
+
+    /// Run a closure body inside the *caller's* frame.
+    ///
+    /// The native backend inlines the body of a closure passed to `.each`,
+    /// `.filter` and `.map`, so `sum = sum + n` inside the closure writes the
+    /// caller's `sum`. The interpreter ran every closure in its own capture
+    /// frame, where that write landed on a private snapshot and vanished, and the
+    /// two planes disagreed (`nums.each { n -> sum = sum + n }`: 0 vs 6).
+    /// Pushing a scope onto the caller's env keeps both planes on one answer.
+    /// Names the caller cannot see (a closure handed in from elsewhere) are seeded
+    /// from its capture snapshot, so they still resolve; a name the caller *can*
+    /// see resolves to the caller's binding, which is the point.
+    fn call_closure_inlined(
+        &mut self,
+        params: &[String],
+        body: &Block,
+        captures: &Rc<RefCell<Vec<(String, Value)>>>,
+        args: Vec<Value>,
+        env: &mut Env,
+    ) -> Result<Value, RuntimeError> {
+        if self.call_depth >= Self::MAX_CALL_DEPTH {
+            return Err(RuntimeError::Error(format!(
+                "maximum recursion depth exceeded ({}) in closure call",
+                Self::MAX_CALL_DEPTH
+            )));
+        }
+        self.call_depth += 1;
+        env.push_scope();
+        let unseen: Vec<(String, Value)> = captures
+            .borrow()
+            .iter()
+            .filter(|(name, _)| env.get(name).is_none())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        for (name, value) in unseen {
+            env.define(name, value);
+        }
+        for (i, p) in params.iter().enumerate() {
+            env.define(p.clone(), args.get(i).cloned().unwrap_or(Value::Nil));
+        }
+        let result = self.exec_block(body, env);
+        env.pop_scope();
+        self.call_depth -= 1;
+        let val = result?;
+        Ok(match val {
+            Value::Return(v) => *v,
+            v => v,
+        })
     }
 
     // ── Pattern Matching ─────────────────────────────────────────────────
@@ -39830,8 +39894,16 @@ world
     }
 
     #[test]
-    fn closure_snapshot_semantics() {
-        // Closures capture by value (snapshot) — mutations don't propagate back
+    fn closure_writes_through_inlined_higher_order_methods() {
+        // `.each` / `.map` / `.filter` inline the closure body on the compiled
+        // plane, so `total = total + n` there writes the caller's binding. The
+        // interpreter used to run that body in the closure's own capture frame,
+        // where the write vanished: this program printed 0 on `--interpret` and
+        // 60 compiled. The interpreter now runs inline-method bodies in the
+        // caller's frame, so the two planes agree.
+        //
+        // A *direct* closure call still keeps the closure's own captured state
+        // (second half) — that is the distinction, and it is pinned here.
         let (_, output) = run(r#"
             fn main() {
                 var total = 0
@@ -39839,11 +39911,16 @@ world
                 nums.each { n ->
                     total = total + n
                 }
-                // total is still 0 because closure captures snapshot
                 print(total)
+
+                var n = 0
+                let inc = { -> n = n + 1 }
+                inc()
+                inc()
+                print(n)
             }
         "#);
-        assert_eq!(output, vec!["0"]);
+        assert_eq!(output, vec!["60", "0"]);
     }
 
     #[test]
