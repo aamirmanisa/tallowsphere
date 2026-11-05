@@ -339,5 +339,105 @@ class Phase9ComplianceGateTests(unittest.TestCase):
             self.assertTrue(all("sha256" in finding for finding in report["findings"]))
 
 
+    # ── live-scope approval binding (PR: live scope gated, not forbidden) ──
+
+    def _live_manifest_sha(self, temp: Path) -> tuple[Path, str]:
+        """Write a manifest and return its canonical content digest.
+
+        The digest is computed exactly as compliance_gate.manifest_sha256 does:
+        sorted keys, compact separators. Approval must match this, not the file
+        hash — the gate deliberately binds to meaning, so reformatting is free
+        but changing a target is not.
+        """
+        manifest_path = temp / "live-manifest.v2.json"
+        manifest = target_manifest()
+        write_json(manifest_path, manifest)
+        canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return manifest_path, hashlib.sha256(canonical.encode()).hexdigest()
+
+    def test_live_scope_without_approval_still_fails_closed(self) -> None:
+        """The whole point of the fix: live must STILL refuse with no approval."""
+        phase_tmp_root = ROOT / "artifacts" / "phase9" / "tmp-tests"
+        phase_tmp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=phase_tmp_root) as td:
+            temp = Path(td)
+            manifest_path, _ = self._live_manifest_sha(temp)
+            output_dir = temp / "proof"
+            result = self.run_script(
+                "--target-manifest", str(manifest_path),
+                "--output-dir", str(output_dir),
+                "--network-scope", "live",
+            )
+            self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+            report = read_json(output_dir / "compliance_audit_report.json")
+            self.assertFalse(report["passed"])
+            codes = [v["code"] for v in report["violations"]]
+            self.assertIn("human_gate.live_external_execution_not_approved", codes)
+
+    def test_live_scope_with_unbound_approval_is_refused(self) -> None:
+        """An approval that does not name THIS manifest cannot authorise it."""
+        phase_tmp_root = ROOT / "artifacts" / "phase9" / "tmp-tests"
+        phase_tmp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=phase_tmp_root) as td:
+            temp = Path(td)
+            manifest_path, _ = self._live_manifest_sha(temp)
+            output_dir = temp / "proof"
+            result = self.run_script(
+                "--target-manifest", str(manifest_path),
+                "--output-dir", str(output_dir),
+                "--network-scope", "live",
+                "--human-approval-ref", "owner-said-yes",
+            )
+            self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+            report = read_json(output_dir / "compliance_audit_report.json")
+            self.assertFalse(report["passed"])
+            codes = [v["code"] for v in report["violations"]]
+            self.assertIn("human_gate.approval_not_bound_to_manifest", codes)
+
+    def test_live_scope_with_approval_from_another_manifest_is_refused(self) -> None:
+        """Repointing the manifest after approval must invalidate that approval."""
+        phase_tmp_root = ROOT / "artifacts" / "phase9" / "tmp-tests"
+        phase_tmp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=phase_tmp_root) as td:
+            temp = Path(td)
+            manifest_path, digest = self._live_manifest_sha(temp)
+            # Approve, then change the target set — the digest no longer matches.
+            manifest = target_manifest()
+            manifest["targets"][0]["url"] = "https://example.com/other"
+            write_json(manifest_path, manifest)
+            output_dir = temp / "proof"
+            result = self.run_script(
+                "--target-manifest", str(manifest_path),
+                "--output-dir", str(output_dir),
+                "--network-scope", "live",
+                "--human-approval-ref", f"owner;manifest:{digest}",
+            )
+            self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+            codes = [c["code"] for c in read_json(output_dir / "compliance_audit_report.json")["violations"]]
+            self.assertIn("human_gate.approval_not_bound_to_manifest", codes)
+
+    def test_live_scope_with_bound_approval_passes_and_records_binding(self) -> None:
+        phase_tmp_root = ROOT / "artifacts" / "phase9" / "tmp-tests"
+        phase_tmp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=phase_tmp_root) as td:
+            temp = Path(td)
+            manifest_path, digest = self._live_manifest_sha(temp)
+            output_dir = temp / "proof"
+            result = self.run_script(
+                "--target-manifest", str(manifest_path),
+                "--output-dir", str(output_dir),
+                "--network-scope", "live",
+                "--human-approval-ref", f"owner:Aamir Manisa;manifest:{digest}",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            report = read_json(output_dir / "compliance_audit_report.json")
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["network_scope"], "live")
+            # The report must carry the FILE hash so run-plan can re-verify it.
+            self.assertEqual(report["target_manifest"]["sha256"], sha256_file(manifest_path))
+            codes = [w["code"] for w in report["warnings"]]
+            self.assertIn("human_gate.live_scope_approved", codes)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

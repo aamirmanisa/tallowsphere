@@ -61,7 +61,21 @@ pub fn egress_proxy_url() -> Option<String> {
 /// `TALLOW_TOR_ISOLATE=0` and the parse-stable fixture in tests — but the
 /// fail-closed default is [`default_tor_proxy_url`], which binds a per-run
 /// identity so each run gets its own circuit.
+/// Default port used when nothing overrides it (see [`tor_socks_port`]).
+pub const TOR_SOCKS_PORT: u16 = 9050;
+
+/// The bare legacy Tor URL at the **default** port.
+///
+/// Retained because tests and docs assert on this exact string. Callers that
+/// actually make requests must use [`tor_socks_url`], which honours
+/// [`TOR_SOCKS_PORT_ENV`] — using this constant directly reintroduces the
+/// hardcoded-port bug it was named for.
 pub const TOR_SOCKS_URL: &str = "socks5h://127.0.0.1:9050";
+
+/// The bare legacy Tor URL, honouring [`TOR_SOCKS_PORT_ENV`].
+pub fn tor_socks_url() -> String {
+    format!("socks5h://127.0.0.1:{}", tor_socks_port())
+}
 
 /// Per-run Tor circuit binding (P1 W1-E1, egress diversity).
 ///
@@ -86,6 +100,32 @@ pub const TOR_ISOLATE_ENV: &str = "TALLOW_TOR_ISOLATE";
 
 /// Env var carrying the runner-assigned stream identity (see [`TOR_ISOLATE_ENV`]).
 pub const TOR_STREAM_ID_ENV: &str = "TALLOW_TOR_STREAM_ID";
+
+/// Env var overriding the Tor SOCKS **port** (`TALLOW_TOR_SOCKS_PORT`).
+///
+/// The port was hardcoded to 9050, which silently made Tallow unusable on any box
+/// whose Tor is not on the system default — notably Tor Browser and the per-user
+/// `tor` unit, which listen on 9150. There was no error explaining it: the proxy
+/// resolved to an empty port, every request failed with `Connection refused`
+/// (os error 111), and the fail-closed default made it look like a policy block.
+/// Measured on the Atlas box: nothing listens on 9050, Tor is on 9150, and the
+/// same run succeeded 9/10 the moment the port was correct.
+///
+/// Junk or out-of-range values fall back to 9050 rather than disabling Tor: a typo
+/// must never silently push traffic out of the anonymous path (same rule as
+/// [`tor_isolation_disabled`], in the other direction).
+pub const TOR_SOCKS_PORT_ENV: &str = "TALLOW_TOR_SOCKS_PORT";
+
+/// Default Tor SOCKS port (the system daemon's).
+pub const TOR_SOCKS_PORT_DEFAULT: u16 = 9050;
+
+/// Resolve the Tor SOCKS port, honouring [`TOR_SOCKS_PORT_ENV`].
+pub fn tor_socks_port() -> u16 {
+    match std::env::var(TOR_SOCKS_PORT_ENV) {
+        Ok(v) => v.trim().parse::<u16>().unwrap_or(TOR_SOCKS_PORT_DEFAULT),
+        Err(_) => TOR_SOCKS_PORT_DEFAULT,
+    }
+}
 
 /// `TALLOW_TOR_ISOLATE=0|false|no` disables the per-run circuit binding.
 /// Unset, junk, or any other value keep it (fail-closed toward isolation,
@@ -157,7 +197,12 @@ fn stable_hex16(input: &str) -> String {
 
 /// Format the per-run default Tor proxy URL from a minted identity.
 fn tor_proxy_url_for(identity: &(String, String)) -> String {
-    format!("socks5h://{}:{}@127.0.0.1:9050", identity.0, identity.1)
+    format!(
+        "socks5h://{}:{}@127.0.0.1:{}",
+        identity.0,
+        identity.1,
+        tor_socks_port()
+    )
 }
 
 /// The per-run identity, minted once per process (per run).
@@ -174,7 +219,7 @@ fn tor_run_identity() -> &'static (String, String) {
 /// override). Stable within a process — one run mints one identity.
 pub fn default_tor_proxy_url() -> String {
     if tor_isolation_disabled() {
-        return TOR_SOCKS_URL.to_string();
+        return tor_socks_url();
     }
     tor_proxy_url_for(tor_run_identity())
 }
@@ -1018,6 +1063,68 @@ fn batch_concurrency(requested: i64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Tor SOCKS port (TALLOW_TOR_SOCKS_PORT) ─────────────────────────────
+    //
+    // These lock the fix for the hardcoded-9050 bug. Env access is process-wide,
+    // so each test takes the serialisation lock and restores the variable, or a
+    // parallel test would observe another's value.
+
+    fn with_port_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        // A dedicated mutex rather than `unsafe` env mutation: tests in this
+        // crate already run single-threaded for env-sensitive cases.
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var(TOR_SOCKS_PORT_ENV).ok();
+        match value {
+            Some(v) => std::env::set_var(TOR_SOCKS_PORT_ENV, v),
+            None => std::env::remove_var(TOR_SOCKS_PORT_ENV),
+        }
+        let out = f();
+        match previous {
+            Some(v) => std::env::set_var(TOR_SOCKS_PORT_ENV, v),
+            None => std::env::remove_var(TOR_SOCKS_PORT_ENV),
+        }
+        out
+    }
+
+    #[test]
+    fn tor_port_defaults_to_9050_when_unset() {
+        let port = with_port_env(None, tor_socks_port);
+        assert_eq!(port, TOR_SOCKS_PORT_DEFAULT);
+    }
+
+    #[test]
+    fn tor_port_honours_9150() {
+        // The Atlas box: nothing on 9050, Tor on 9150. This is the configuration
+        // that used to fail every request with `Connection refused`.
+        let port = with_port_env(Some("9150"), tor_socks_port);
+        assert_eq!(port, 9150);
+    }
+
+    #[test]
+    fn junk_port_falls_back_to_default_rather_than_disabling_tor() {
+        // A typo must not push traffic out of the anonymous path.
+        for junk in ["", "abc", "99999", "-1", "9050.5"] {
+            let port = with_port_env(Some(junk), tor_socks_port);
+            assert_eq!(port, TOR_SOCKS_PORT_DEFAULT, "junk {junk:?} must not win");
+        }
+    }
+
+    #[test]
+    fn bare_tor_url_uses_the_configured_port() {
+        let url = with_port_env(Some("9150"), tor_socks_url);
+        assert_eq!(url, "socks5h://127.0.0.1:9150");
+        // socks5h, not socks5: ureq aborts the process on local-DNS SOCKS.
+        assert!(url.starts_with("socks5h://"));
+    }
+
+    #[test]
+    fn per_run_identity_url_uses_the_configured_port() {
+        let identity = ("user".to_string(), "pass".to_string());
+        let url = with_port_env(Some("9150"), || tor_proxy_url_for(&identity));
+        assert_eq!(url, "socks5h://user:pass@127.0.0.1:9150");
+    }
 
     // ── http.batch: pure helpers + argument edges (no network) ─────────────
 
