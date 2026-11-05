@@ -2144,7 +2144,13 @@ impl Parser {
                 }
 
                 // Index: expr[index] or expr[start..end] or expr[start..] or expr[..end]
-                TokenKind::LBracket => {
+                //
+                // Not across a newline: without this, a statement that begins
+                // with `[` on its own line (`[1, 2]` after any other statement)
+                // was parsed as an index into the previous expression and then
+                // failed with "expected ']', found ','", so a statement could
+                // never start with an array literal.
+                TokenKind::LBracket if !self.peek_token().newline_before => {
                     // Don't treat `[]` as index — it's a new empty array expression
                     if matches!(self.peek_kind_ahead(1), Some(TokenKind::RBracket)) {
                         break;
@@ -3394,6 +3400,14 @@ impl Parser {
         matches!(self.peek_kind_ahead(1), Some(TokenKind::Colon))
     }
 
+    /// The token at the cursor, for checks that need more than its kind
+    /// (e.g. whether a newline preceded it).
+    fn peek_token(&self) -> &Token {
+        self.tokens
+            .get(self.pos)
+            .unwrap_or_else(|| self.tokens.last().expect("parser has at least EOF"))
+    }
+
     fn peek_kind(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
     }
@@ -3470,6 +3484,8 @@ impl Parser {
             self.tokens[self.pos] = Token {
                 kind: TokenKind::Gt,
                 span: Span::new(span.start + 1, span.end),
+                // A split `>>` stays on the same line as the token it came from.
+                newline_before: self.tokens[self.pos].newline_before,
             };
             // Don't advance — the remaining Gt will be consumed by the caller
             Ok(())
@@ -3586,6 +3602,38 @@ fn compound_assign_op(op: &TokenKind) -> Option<BinOp> {
 
 #[cfg(test)]
 mod tests {
+    /// A statement may begin with `[`: the newline before the bracket ends the
+    /// previous expression instead of continuing it as an index.
+    ///
+    /// Before the newline check, `print("a")` followed by `[1, 2]` parsed the
+    /// bracket as an index into `print(...)` and failed with
+    /// "expected ']', found ','", so a statement could never start with an
+    /// array literal after any other statement.
+    #[test]
+    fn array_literal_can_start_a_statement_after_another() {
+        for src in [
+            "fn main() {\n    print(\"a\")\n    [1, 2]\n}",
+            "fn main() {\n    let x = 1\n    [1]\n}",
+            "fn main() {\n    var s = 0\n    let nums = [1, 2, 3]\n    nums.each { n: i64 -> s = s + n }\n}",
+        ] {
+            let (tokens, errors) = crate::lexer::tokenize(src);
+            assert!(errors.is_empty(), "lex errors: {errors:?}");
+            Parser::parse(tokens).expect("must parse");
+        }
+    }
+
+    /// Indexing on one line still indexes.
+    #[test]
+    fn index_on_the_same_line_still_indexes() {
+        let (tokens, errors) = crate::lexer::tokenize(
+            "fn main() {\n    let a = [1, 2, 3]\n    print(a[1])\n}",
+        );
+        assert!(errors.is_empty());
+        let program = Parser::parse(tokens).expect("must parse");
+        let printed = format!("{program:?}");
+        assert!(printed.contains("Index"), "expected an Index node, got: {printed}");
+    }
+
     use super::*;
     use crate::lexer;
 
