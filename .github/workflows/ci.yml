@@ -861,7 +861,7 @@ jobs:
       - name: Install cargo-audit
         run: |
           set -euo pipefail
-          cargo install cargo-audit --locked --version ^0.21
+          cargo install cargo-audit --locked --version ^0.22
       - name: cargo audit (advisory verdict is the job result)
         # `.cargo/audit.toml` carries the ignore entries (the zstd trio and the
         # rest) with the 2027-01-31 review deadline; `check_deny_expiry.py` in
@@ -869,6 +869,11 @@ jobs:
         # advisory outside the ignore list fails the job.
         run: |
           set -euo pipefail
+          # A database parse error is NOT a pass. cargo-audit 0.21 aborts on any
+          # advisory file it cannot parse (`unsupported CVSS version: 4.0` on
+          # RUSTSEC-2026-0276, run 42160420148), and the old wrapper action
+          # reported that as green. Only "no advisory found" over a database
+          # that actually parsed may exit 0.
           cargo audit --file Cargo.lock
 
   deny:
