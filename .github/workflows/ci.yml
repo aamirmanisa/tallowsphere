@@ -847,18 +847,34 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    # rustsec/audit-check reports its verdict by POSTing a check run, and the
-    # repository default token is read-only: with no `checks: write` the action
-    # fails at `Resource not accessible by integration` *after* a clean scan
-    # (0 vulnerabilities), turning a pass into a red job.
+    # rustsec/audit-check does not report a verdict as this job's result: it
+    # POSTs a SEPARATE check run named "Security audit" through the API (hence
+    # `checks: write`), and its own job passes whenever the scan exits cleanly.
+    # The two names differ only in casing and the second has no steps, so a
+    # reader cannot tell which one proves an audit ran, and a scan that posts
+    # no verdict still shows green here. This job therefore runs `cargo audit`
+    # itself and reads its exit status -- the job result is the verdict.
     permissions:
       contents: read
-      checks: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2 (SHA pin)
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cargo-audit
+        run: |
+          set -euo pipefail
+          cargo install cargo-audit --locked --version ^0.22
+      - name: cargo audit (advisory verdict is the job result)
+        # `.cargo/audit.toml` carries the ignore entries (the zstd trio and the
+        # rest) with the 2027-01-31 review deadline; `check_deny_expiry.py` in
+        # the deny job enforces that deadline. This step is the verdict: an
+        # advisory outside the ignore list fails the job.
+        run: |
+          set -euo pipefail
+          # A database parse error is NOT a pass. cargo-audit 0.21 aborts on any
+          # advisory file it cannot parse (`unsupported CVSS version: 4.0` on
+          # RUSTSEC-2026-0276, run 42160420148), and the old wrapper action
+          # reported that as green. Only "no advisory found" over a database
+          # that actually parsed may exit 0.
+          cargo audit --file Cargo.lock
 
   deny:
     name: Dependency Check
