@@ -113,16 +113,42 @@ const PLAN: &str = r#"
 const OPEN_PAGE: &str = r#"
 @legal(basis: .public_data, purpose: "module-level page helper parity", personal_data: false)
 @stealth(profile: .chrome_windows, evasions: .all)
-fn open_page(url: String) -> Page {
-    let b = Browser.launch(true)
-    let p = b.new_page()
-    p.goto(url)
-    return p
+fn open_page(url: String) -> Result<Page> {
+    // `Browser.launch` returns `Result<Browser>`. Calling `.new_page()` on a
+    // failed launch reports only "unknown method: .new_page() on Err", which
+    // cannot tell a launch failure from a broken helper -- that message made
+    // the 2026-11-05 shard-1 flake undiagnosable. Each step is matched so its
+    // Err arm bails with a message that names the step and the cause.
+    let launched: Result<Browser> = Browser.launch(true)
+    let b = launched match {
+        Ok(v) -> v
+        Err(e) -> {
+            bail "browser.launch failed: {e}"
+        }
+    }
+    let opened: Result<Page> = b.new_page()
+    let p = opened match {
+        Ok(v) -> v
+        Err(e) -> {
+            bail "new_page failed: {e}"
+        }
+    }
+    let navigated: Result<Page> = p.goto(url)
+    navigated match {
+        Ok(_) -> {}
+        Err(e) -> {
+            bail "goto {url} failed: {e}"
+        }
+    }
+    return Ok(p)
 }
 "#;
 
 fn live_program(url: &str, body: &str) -> String {
-    format!("{PLAN}\nfn main() {{\n    let p = open_page(\"{url}\")\n    {body}\n}}\n{OPEN_PAGE}")
+    // `open_page` now returns `Result<Page>` and bails with a named cause, so
+    // `main` is fallible too: `?` turns a launch/navigation failure into this
+    // program's own error message instead of a panic two frames later.
+    format!("{PLAN}\nfn main() -> Result<i64> {{\n    let p = open_page(\"{url}\")?\n    {body}\n    Ok(0)\n}}\n{OPEN_PAGE}")
 }
 
 #[test]

@@ -172,7 +172,7 @@ trade, not an oversight.
 | job | proves |
 |---|---|
 | `clippy` | `cargo clippy --locked --all-targets -- -W clippy::all` under **1.98.1** (not `stable` — installing the component only for `stable` left it absent for the pinned toolchain) |
-| `audit` | `rustsec/audit-check` over the dependency graph; needs `checks: write` or a clean scan reports as a red job |
+| `audit` | `cargo audit --file Cargo.lock` over the dependency graph (`.cargo/audit.toml` ignore list); the job's own exit status is the verdict — the rustsec/audit-check action was dropped 2026-11-05 because it posted a second, differently-cased check run and its job stayed green regardless |
 | `deny` | `cargo deny check --all-features` (blocking advisory verdicts), plus `scripts/check_deny_expiry.py` — the ignore lists carry review deadlines that nothing read before 2026-10-31 |
 | `sbom` | generates CycloneDX SBOMs (`tallow.sbom.json`, `tallow-crypto.sbom.json`) and uploads them as an artifact. It proves generation, not freshness |
 | `sbom-drift` | `scripts/sbom-gen.py --check scripts/sbom.snapshot.json` — the committed inventory byte-matches regeneration. **This** is the blocking one |

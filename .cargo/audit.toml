@@ -1,5 +1,5 @@
-# cargo-audit configuration — read by `cargo audit` and by the
-# rustsec/audit-check action in CI.
+# cargo-audit configuration — read by `cargo audit`, which the CI `audit`
+# job runs directly (the rustsec/audit-check action was dropped 2026-11-05).
 #
 # This is the second half of a two-file record. `deny.toml` covers the
 # cargo-deny gate; this file covers `cargo audit`, which resolves the lockfile
