@@ -42,9 +42,11 @@ panic=unwind  ->  RESULT CAUGHT -- in-process isolation works
                   exit 0
 ```
 
-The tree contains **9 `catch_unwind` call sites in `src/`** whose surrounding comments promise containment.
-**8 are on shipped code paths; 1 is inside a unit test** — a split I had wrong when this document was first
-written (it said 7 shipped), corrected while annotating them:
+The tree contains **10 `catch_unwind` call sites** whose surrounding comments promise containment:
+**9 under `src/`** (8 on shipped code paths, 1 inside a unit test) and **1 under `crates/tallow-egress/src/`**
+(a shipped library path) — the `src/` split I had wrong when this document was first written (it said 7 shipped),
+corrected while annotating them, and the tenth site arrived with the sharded egress fetcher and was missed by
+this table until 2026-11-07:
 
 | file | sites | lines |
 |---|---|---|
@@ -52,6 +54,7 @@ written (it said 7 shipped), corrected while annotating them:
 | `src/interp.rs` | 4 | 3616, 4645, 4796, 32312 shipped — "prevent panic propagation", "Execute child in catch_unwind for crash isolation". The fifth site was the unit test `secret_type_cannot_be_printed`, which in 4ec8206 stopped being a tautology and now asserts with `assert_eq!`; the count follows the code. |
 | `src/supply_chain.rs` | 2 | `signing_roundtrip_works` — the supply-chain self-test. Both shipped, annotated in place 2026-10-20. |
 | `src/mesh/worker.rs` | 1 | 94 — a worker catches a panicking TASK so one bad task does not take the pool down. Inert in release (`panic = "abort"`); tests run with unwind and use it to prove the worker survives. |
+| `crates/tallow-egress/src/pool.rs` | 1 | 340 — the sharded range fetcher catches a panicking `fetch_shard` in each worker thread and turns it into `FetchError::WorkerPanic`, so one bad shard fails the transfer instead of poisoning the remaining shards. Inert in release (`panic = "abort"`): the process aborts at the panic point, exactly like the other nine. Declared 2026-11-07, when the release gate caught it declared-in-tree/absent-from-table. |
 
 **They do nothing in release.** They work in dev and in `cargo test`, because both use `unwind` — which is
 exactly why two in-tree tests pass while the guarantee they describe is absent from everything that ships:
@@ -59,7 +62,7 @@ exactly why two in-tree tests pass while the guarantee they describe is absent f
 (`src/main.rs`, which asserts `run_guarded_probe(|| panic!("boom")) == Panicked`). A test that runs under a
 profile the artifact is not built with does not test the artifact.
 
-**Annotated in place — decision taken 2026-10-16: keep `abort`, correct the comments.** All 9 sites and both
+**Annotated in place — decision taken 2026-10-16: keep `abort`, correct the comments.** All 10 sites and both
 tests now carry a short note stating the dev/test-only scope and pointing here, so the next reader cannot take
 them for a release guarantee. The change is **comment-only** and was verified as such: every added line in the
 diff is a comment, and the gate's call-site counts are unchanged.
