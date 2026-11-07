@@ -236,11 +236,34 @@ jobs:
     # after ~45 minutes of work. The wall was the defect, not the tests.
     # Three shards put each leg near 15 min; parity adds ~15 (see RUNNER_TIMEOUT_S).
     timeout-minutes: 45
+    # Measured 2026-11-07 on this tree: target/debug/deps is 3.8 GB per crate
+    # build — libtallow-*.a is 1066 MB, the rlib 493 MB, a test binary
+    # 490-730 MB. Three shards each pay that, and on the runner the link died
+    # with "Free space left: 36 MB" (run 42341057091).
+    #   * debug = 0: a stripped tallow binary is 184 MB of 464 MB, so ~60% of
+    #     every artefact here is debuginfo no test reads.
+    #   * CARGO_INCREMENTAL = 0: nothing is reused across a one-shot shard.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2]
     steps:
+      - name: Reclaim runner disk
+        # The Ubuntu image ships ~15 GB of toolchains these suites never touch
+        # (Android NDK, .NET, GHC, CodeQL, the hosted toolcache). Removing them
+        # is the difference between "36 MB free" and a completed link.
+        run: |
+          set -euxo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      /usr/lib/jvm 2>/dev/null || true
+          sudo apt-get clean
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (SHA pin)
         with:
@@ -294,12 +317,10 @@ jobs:
         # so the live-approval binding it covers could regress with the pipeline
         # green. It runs standalone (unittest), so there is no pytest dependency.
         run: python3 tests/test_phase9_compliance_gate.py
-      - name: Parity fixtures (interpreter vs native, both planes)
-        # parity_runner was excluded as unclassified. It was failing because the
-        # runner treated every non-zero interpreter exit as an error, so the
-        # *_refusal fixtures could never land in a named class. With
-        # `Expect::RefuseBoth` they do: 10 MATCH, 4 REFUSED, 0 diverge.
-        run: cargo test --locked --test parity_runner
+      # parity_runner is not run in the shards: the dedicated `parity` job runs
+      # it once, and here it cost three extra full links of the 1.07 GB
+      # libtallow.a for a suite that adds ~3 minutes. It also keeps the parity
+      # verdict in one place instead of three partial copies.
       - name: Run this shard's contract and CLI targets
         # Index split, not hand-picked groups: the slowest target
         # (codegen_fallthrough, ~11 min of native relinking on its own) lands
@@ -710,6 +731,15 @@ jobs:
           test "$n" -ge 1
       - name: Build debug tallow (--locked)
         run: cargo build --locked --bin tallow
+      - name: Parity fixtures (interpreter vs native, both planes)
+        # Moved here from the contract shards (2026-11-07), which ran it three
+        # times. This job already builds the runtime archive the runner links
+        # against, so the marginal cost is the suite itself (~3 min) rather
+        # than three more full links.
+        # scripts/check_test_coverage.py finds targets by the literal
+        # `--test <name>` text, so this line is what keeps parity_runner
+        # accounted for.
+        run: cargo test --locked --test parity_runner
       - name: Ensure the native toolchain (clang + liblzma/libbz2)
         # The native plane links generated programs through clang, and the
         # runtime archive references -llzma and -lbz2. Without the dev packages
