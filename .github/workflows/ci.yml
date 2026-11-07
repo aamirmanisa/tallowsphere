@@ -731,15 +731,15 @@ jobs:
           test "$n" -ge 1
       - name: Build debug tallow (--locked)
         run: cargo build --locked --bin tallow
-      - name: Parity fixtures (interpreter vs native, both planes)
-        # Moved here from the contract shards (2026-11-07), which ran it three
-        # times. This job already builds the runtime archive the runner links
-        # against, so the marginal cost is the suite itself (~3 min) rather
-        # than three more full links.
-        # scripts/check_test_coverage.py finds targets by the literal
-        # `--test <name>` text, so this line is what keeps parity_runner
-        # accounted for.
-        run: cargo test --locked --test parity_runner
+      # Moved here from the contract shards (2026-11-07), which ran it three
+      # times; this job already builds the runtime archive the runner links
+      # against. It runs AFTER the native dependencies below: the runner links
+      # every fixture with clang, so `libbz2`/`liblzma` must already be
+      # installed. Measured on run 42344762311: placed before that step, all 13
+      # fixtures died with "ld.bfd: cannot find -lbz2".
+      #
+      # scripts/check_test_coverage.py finds targets by the literal
+      # `--test <name>` text, so the step that runs it must keep that text.
       - name: Ensure the native toolchain (clang + liblzma/libbz2)
         # The native plane links generated programs through clang, and the
         # runtime archive references -llzma and -lbz2. Without the dev packages
@@ -760,6 +760,9 @@ jobs:
           sudo apt-get install -y -o Acquire::Retries=3 --fix-missing \
             clang liblzma-dev libbz2-dev
           clang --version
+
+      - name: Parity fixtures (interpreter vs native, both planes)
+        run: cargo test --locked --test parity_runner
       - name: Run parity runner (DIVERGE fails)
         run: |
           set -uo pipefail
