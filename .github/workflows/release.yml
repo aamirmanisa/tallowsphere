@@ -497,9 +497,17 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
+          # 1 day, not 30: this artifact exists only to hand dist/ to the
+          # publish job in the SAME workflow run, and the same archives are
+          # attached to the GitHub Release by that job. At ~160 MB per target
+          # and five targets per run, a 30-day retention filled the artifact
+          # quota (measured 2026-11-07: 800 artifacts / 31.9 GB, of which 204
+          # binaries were 99.99%) and made every later upload fail with
+          # "Artifact storage quota has been hit" -- a red job for a reason
+          # that had nothing to do with the build.
           name: tallow-${{ matrix.label }}
           path: dist/*
-          retention-days: 30
+          retention-days: 1
 
   # ── Draft release (manual dispatch with publish=true, or a v* tag) ─────
   publish:
