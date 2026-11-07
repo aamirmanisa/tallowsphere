@@ -46,6 +46,23 @@ fn rust(args: &[&str]) -> Output {
         .expect("the tallow binary must run")
 }
 
+/// Strip the "offline resolution unavailable" note before comparing stderr.
+///
+/// Both implementations print it when `cargo metadata --offline` fails and they
+/// fall back to registry access — but that fallback depends on whether the
+/// cargo cache is warm at the moment of the call, not on anything the gate
+/// decided. Measured on CI run 42345671035: within one test the python
+/// invocation hit a cold cache and printed the note; the rust invocation,
+/// running seconds later, did not. The exit code and stdout were identical,
+/// which is what the gate judges, so the note is not part of the comparison.
+fn without_offline_note(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .filter(|l| !l.starts_with("sbom-gen: note: offline resolution unavailable"))
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
 fn compare(args: &[&str], label: &str) {
     let py = python(args);
     let rs = rust(args);
@@ -66,9 +83,9 @@ fn compare(args: &[&str], label: &str) {
         rs.stdout.len()
     );
     assert_eq!(
-        String::from_utf8_lossy(&py.stderr),
-        String::from_utf8_lossy(&rs.stderr),
-        "[{label}] stderr differs"
+        without_offline_note(&py.stderr),
+        without_offline_note(&rs.stderr),
+        "[{label}] stderr differs (offline-cache note excluded)"
     );
 }
 
