@@ -9,6 +9,47 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [v1.7.2] — 2026-11-07 — The CI that judged this tree stops lying about it
+
+### Added
+
+- `cargo audit` runs as the `Security Audit` job's own step, so the job's exit
+  status is the advisory verdict. The `rustsec/audit-check` action posted a
+  second check run named `Security audit` through the API and left its own job
+  green regardless, which is why CI showed two audit rows and neither proved a
+  scan had run.
+- The egress shard fetcher's `catch_unwind` is declared in `docs/PANIC-POLICY.md`
+  (`crates/tallow-egress/src/pool.rs:340`), so the panic-policy gate and the
+  policy document describe the same tree.
+- `parity_runner` now runs inside the `Parity` job, after the native link
+  dependencies are installed, instead of in each contract shard.
+
+### What was wrong
+
+Two places in CI could report a pass for work that had not succeeded. The audit
+job delegated its verdict to an action that reported elsewhere; measured on run
+42160420148, `cargo-audit 0.21` aborted on `RUSTSEC-2026-0276` with
+`unsupported CVSS version: 4.0` while the wrapper action's own job still went
+green. Separately, all three contract shards were dying at link time on the
+runner's disk (`Free space left: 36 MB`), and the `gate_sbom_parity` test
+compared a cache-state note as if it were a gate output.
+
+### What was fixed
+
+- `cargo-audit` is pinned to the 0.22 line, which parses CVSS 4.0 advisories;
+  measured `warning: 15 allowed warnings found`, exit 0.
+- The contract shards reclaim the runner's unused SDKs before compiling
+  (measured `88G` → `108G` free), build without debuginfo
+  (`CARGO_PROFILE_{DEV,TEST}_DEBUG=0`) and with `CARGO_INCREMENTAL=0`.
+- `gate_sbom_parity` filters the `offline resolution unavailable` note from both
+  sides before comparing stderr, so a cold cache no longer reads as a divergence.
+- Release-binary artifacts are retained for 1 day instead of 30, and the three
+  report uploads whose content is already in the log or the tree are gone;
+  measured before the change: 800 artifacts, 31,962 MB, of which 204 binaries
+  were 31,961 MB.
+- `.cargo/audit.toml` and `deny.toml` keep the zstd advisory trio ignored with
+  the 2027-01-31 review deadline enforced by `scripts/check_deny_expiry.py`.
+
 ## [v1.7.1] — 2026-11-03 — The scope tool works outside the repo, and the spec stops disagreeing with the compiler
 
 ### Added
