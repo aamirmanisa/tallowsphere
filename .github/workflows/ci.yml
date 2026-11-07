@@ -772,16 +772,6 @@ jobs:
           grep -q '^RESULT: ' parity-report.txt || { echo "parity runner did not reach its RESULT line"; exit 1; }
           echo "parity rc=$rc (rc 0 = no DIVERGE; rc 1 = divergence, failing)"
           exit "$rc"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: parity-report
-          path: parity-report.txt
-          # Report-only upload: 7 days is enough to read a failing run. The
-          # default is 90, which is how 596 tiny reports accumulated while the
-          # quota was already exhausted by release binaries.
-          retention-days: 7
-
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -948,12 +938,6 @@ jobs:
           cargo install cargo-cyclonedx --locked
           cargo cyclonedx --format json --override-filename tallow.sbom.json
           cargo cyclonedx --format json --override-filename tallow-crypto.sbom.json --manifest-path crates/tallow-crypto/Cargo.toml
-      - name: Upload SBOM
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sbom
-          path: '*.sbom.json'
-          retention-days: 7
 
   # ── SBOM drift gate (blocking) ─────────────────────────────────────────────
   # Regenerates the committed package inventory from `cargo metadata --offline --locked` (no build;
@@ -1125,9 +1109,6 @@ jobs:
           --baseline benchmarks/baseline
           --corpus-manifest benchmarks/corpus/manifest.json
           --current benchmarks/out/current.json --report perf-verdict.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: perf-verdict
-          path: perf-verdict.json
-          retention-days: 7
+          # Printed so the verdict survives without an artifact upload: the
+          # artifact store is exhausted and GitHub recounts usage every 6-12 h.
+          cat perf-verdict.json
