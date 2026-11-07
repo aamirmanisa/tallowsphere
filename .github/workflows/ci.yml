@@ -744,6 +744,10 @@ jobs:
         with:
           name: parity-report
           path: parity-report.txt
+          # Report-only upload: 7 days is enough to read a failing run. The
+          # default is 90, which is how 596 tiny reports accumulated while the
+          # quota was already exhausted by release binaries.
+          retention-days: 7
 
   clippy:
     name: Clippy
@@ -916,6 +920,7 @@ jobs:
         with:
           name: sbom
           path: '*.sbom.json'
+          retention-days: 7
 
   # ── SBOM drift gate (blocking) ─────────────────────────────────────────────
   # Regenerates the committed package inventory from `cargo metadata --offline --locked` (no build;
@@ -1092,3 +1097,4 @@ jobs:
         with:
           name: perf-verdict
           path: perf-verdict.json
+          retention-days: 7
