@@ -34,7 +34,61 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TALLOW="${TALLOW_BIN:-$REPO/target/debug/tallow}"
+# Resolve the binary under test. An explicit TALLOW_BIN always wins; otherwise
+# prefer the INSTALLED CLI over build artefacts.
+#
+# This used to be TALLOW="${TALLOW_BIN:-$REPO/target/debug/tallow}", which made
+# the test suite unable to describe the runtime it ships: with no build in the
+# checkout it exits 2 ("cargo build first"), and with a stale debug artefact it
+# grades that instead. A guard that claims to describe the shipped runtime must
+# resolve to it, and the debug tree is the least reliable candidate, not the
+# most (disk reclaim prunes it regularly).
+if [ -n "${TALLOW_BIN:-}" ]; then
+  TALLOW="$TALLOW_BIN"
+else
+  TALLOW=""
+  for _cand in "$(command -v tallow 2>/dev/null || true)" /usr/local/bin/tallow \
+               "$REPO/target/release/tallow" "$REPO/target/debug/tallow"; do
+    if [ -n "$_cand" ] && [ -x "$_cand" ]; then TALLOW="$_cand"; break; fi
+  done
+fi
+# Say which binary was judged. A verdict that does not name its subject is how
+# a battery can grade the wrong runtime for a week and look green or red with
+# no way to tell.
+echo "battery subject: ${TALLOW:-<none>} ($("$TALLOW" --version 2>/dev/null | head -1 || echo unknown))"
+
+# The scope gate denies by default: a host absent from the authorization
+# register is refused before a socket is opened. This battery exists to fetch
+# IP-echo services, which are not (and should not be) in the production
+# configs/tallow/scope/authorized-hosts.toml — that register is an operator
+# artifact where every entry is a decision to touch someone else's system.
+# Testing against it would either widen the production register for test
+# plumbing or fail all 16 checks on one missing file and look like a leak.
+# So the battery declares its own narrow register.
+#
+# Detect ENFORCEMENT — and specifically whether this runtime can READ the
+# register at all. The test: ask the gate about a host the battery register
+# definitely authorizes, WITH that register supplied.
+#   exit 0 -> the gate is live and honours a register (1.7.x)  => use it
+#   exit 2 -> no register can satisfy it (1.5.8, whose fetch path also ignores
+#             the register)  => leave the environment alone
+# Neither a fetch probe nor a bare `scope check` works: in 1.7.2 a gated fetch
+# returns nil rather than a `scope:` token, and in 1.5.8 `scope check` refuses
+# everything because no register is readable — the same exit 2 for opposite
+# reasons. Only "authorized host + valid register" separates them.
+#
+# An explicit TALLOW_SCOPE_REGISTER from the caller always wins.
+if [ -z "${TALLOW_SCOPE_REGISTER:-}" ]; then
+  _reg="$REPO/tests/egress/egress-scope.toml"
+  if [ ! -f "$_reg" ]; then
+    echo "scope register: tests/egress/egress-scope.toml is MISSING — on a gated runtime every check will be refused" >&2
+  elif TALLOW_SCOPE_REGISTER="$_reg" "$TALLOW" scope check https://api.ipify.org >/dev/null 2>&1; then
+    export TALLOW_SCOPE_REGISTER="$_reg"
+    echo "scope gate: ENFORCED — using battery register $_reg"
+  else
+    echo "scope gate: not enforced by this runtime (register unnecessary)"
+  fi
+fi
 TOR_SOCKS_HOST="${TALLOW_TOR_SOCKS_HOST:-127.0.0.1:9050}"
 PROXY="${TALLOW_PROXY:-}"
 
