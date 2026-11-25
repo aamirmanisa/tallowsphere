@@ -9,6 +9,60 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
+## [Unreleased] — the egress battery can name the binary it grades
+
+### Added
+
+- `tests/egress/egress-scope.toml` — a narrow authorization register the battery
+  supplies through `TALLOW_SCOPE_REGISTER` (two IP-echo hosts, read-only verbs),
+  so a deny-by-default runtime can be graded without touching the production
+  register.
+- `TALLOW_RUNTIME_LIB_TRACE=1` prints the exe, CWD, running profile, host
+  compatibility and the archive the compiler chose, so a link failure names the
+  archive search instead of leaving clang's `undefined reference` as the only
+  evidence.
+
+### What was wrong
+
+`tests/egress/check_egress.sh` could not pass against the binary this repository
+ships. Two defects, both present at `v1.7.2`:
+
+- The subject was hardcoded to `target/debug/tallow` with no fallback. On a
+  checkout with no build the battery exited 2; with a stale debug artefact it
+  graded that instead of the runtime, and nothing in the output said which binary
+  was measured — so it could grade the wrong binary for a week undetected.
+- The battery had no scope-register awareness. Since the gate is
+  deny-by-default and the shipped register does not (and should not) list
+  ipify, every check was refused on one missing entry and reported as
+  `EGRESS LEAK`.
+
+Separately, the **installed** compiler could not link any program that calls a
+runtime symbol (`env.args()`, `print(<array>)`): every native build died
+`undefined reference to tallow_env_args` from any directory that was not the
+source tree. Measured on the 1.7.2 install — `runtime-search: chosen=None` with
+`host_compatible=true`, and clang's argv contained no archive at all, while the
+same source compiled from the repository root.
+
+### What was fixed
+
+- The battery subject resolves `TALLOW_BIN`, then the installed CLI, then build
+  artefacts last, and prints `battery subject: <path> (<version>)` on every run.
+- The battery detects enforcement by asking the gate about an authorized host
+  with its own register supplied: exit 0 = gate live and honours a register
+  (1.7.x), exit 2 = no register can satisfy it (1.5.8, whose fetch path also
+  ignores the register). A fetch probe cannot work — 1.7.2 returns `nil` rather
+  than a `scope:` token — and a bare `scope check` cannot either, since 1.5.8
+  refuses everything for an unreadable register.
+- The archive search resolves the exe through symlinks, probes the sibling
+  `<prefix>/lib/` as well as `<exe>/` and `<exe>/lib/` (an install that puts the
+  compiler in `bin/` and the archive in `lib/` was previously invisible), and
+  treats a profile-less installed archive as the running profile's build.
+  Measured after the fix: `chosen=Some("/root/.local/lib/libtallow.a")`,
+  `tallow build` succeeds from `/tmp`, and `env.args()` runs on the native plane
+  with the expected argc.
+- Verified 1.5.8/1.7.1/1.7.2 classify as not-enforced/enforced/enforced; 16/0
+  against the installed v1.7.2 binary, and `wc.tl` still runs on both planes.
+
 ## [v1.7.2] — 2026-11-07 — The CI that judged this tree stops lying about it
 
 ### Added
