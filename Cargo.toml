@@ -118,7 +118,7 @@ walkdir = "2"
 #   parquet-storage -> real Arrow/Parquet columnar `ParquetBackend`
 #   s3-storage      -> real S3/MinIO object-store `S3Backend` via `object_store`
 arrow = { version = "59", optional = true }
-parquet = { version = "59", optional = true }
+parquet = { version = "59.3.3", optional = true }
 object_store = { version = "0.14", features = ["aws"], optional = true }
 # Post-Quantum Crypto — real PQClean C implementations.
 # W5 decision C (2026-09-26): the legacy family (SLH-DSA/SPHINCS+, Falcon,

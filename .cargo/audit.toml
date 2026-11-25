@@ -73,4 +73,10 @@ ignore = [
     # `unmaintained = "all"` makes unmaintained advisories blocking there.
     # Same review-deadline: 2027-01-31, enforced by scripts/check_deny_expiry.py.
     "RUSTSEC-2026-0543",
+    # ── humantime 2.4.0 (RUSTSEC-2026-0542, unmaintained) ────────────────────
+    # NOT a vulnerability, and no patched release exists: the advisory exists
+    # because humantime wraps chrono and chrono lost its maintainer — the same
+    # cause as RUSTSEC-2026-0543 above. Reached only through object_store 0.14
+    # (optional `s3-storage`). Re-decide at the deadline with the chrono entry.
+    "RUSTSEC-2026-0542",
 ]

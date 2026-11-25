@@ -50,6 +50,14 @@ ignore = [
     # its encoding is load-bearing (key serialization), so swapping encoders
     # would change persisted formats. Deferred by decision; revisit on CVE.
     "RUSTSEC-2025-0141",
+    # humantime 2.4.0 (RUSTSEC-2026-0542, "unmaintained") — NOT a vulnerability.
+    # All versions are affected and there is no patched release: the advisory
+    # exists because humantime wraps chrono and chrono lost its maintainer (same
+    # cause as RUSTSEC-2026-0543 above), so the two stand or fall together.
+    # Reachable only through object_store 0.14 (the optional `s3-storage`
+    # feature), where it parses the duration strings object stores take in
+    # configuration. Re-decide at the marker above, with the chrono entry.
+    "RUSTSEC-2026-0542",
     # chrono 0.4.45 (RUSTSEC-2026-0543, "unmaintained") — NOT a vulnerability:
     # the advisory records that the crate lost its maintainer, and cargo-deny's
     # `unmaintained = "all"` setting makes that blocking. It is a DIRECT
