@@ -33,7 +33,7 @@ rand = "0.9"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
-rusqlite = { version = "0.34", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 ml-kem = "0.2"
 kem = "0.3.0-pre.0"
 rand_core_06 = { package = "rand_core", version = "0.6", features = ["getrandom"] }

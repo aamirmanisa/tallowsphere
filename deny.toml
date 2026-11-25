@@ -50,6 +50,17 @@ ignore = [
     # its encoding is load-bearing (key serialization), so swapping encoders
     # would change persisted formats. Deferred by decision; revisit on CVE.
     "RUSTSEC-2025-0141",
+    # chrono 0.4.45 (RUSTSEC-2026-0543, "unmaintained") — NOT a vulnerability:
+    # the advisory records that the crate lost its maintainer, and cargo-deny's
+    # `unmaintained = "all"` setting makes that blocking. It is a DIRECT
+    # dependency of this crate (no alternative parent, no yanked or vulnerable
+    # version in play): 117 `chrono::` call sites across src/, used for
+    # timestamps, RFC 3339 formatting and date parsing. Replacing it is a
+    # refactor of its own, not a version bump. `cargo audit` already carries it
+    # as an allowed warning; this entry only aligns the deny gate with that.
+    # Re-decide at the marker above: adopt a maintained fork, or delete this
+    # entry in the commit that removes the last chrono call site.
+    "RUSTSEC-2026-0543",
     # fxhash (RUSTSEC-2025-0057) — transitive via selectors <- scraper
     # (HTML parsing). No patched line; replacing requires a scraper/selectors
     # upgrade arc. Build-time-only hashing (fxhash is a hasher impl), no

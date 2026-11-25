@@ -64,4 +64,13 @@ ignore = [
     "RUSTSEC-2026-0124",  # libcrux-chacha20poly1305 0.0.7 — panic on overlong buffer
     "RUSTSEC-2026-0330",  # libcrux-kem 0.0.7 — panic on short seed
     "RUSTSEC-2026-0331",  # libcrux-kem 0.0.7 — panic on short hybrid keys
+    # ── chrono 0.4.45 (RUSTSEC-2026-0543, unmaintained) ─────────────────────
+    # NOT a vulnerability — the advisory records an unmaintained crate, and it
+    # was already surfacing here as an allowed warning. It is a DIRECT
+    # dependency (Cargo.toml:52) with 117 call sites across src/ for timestamps,
+    # RFC 3339 formatting and date parsing; removing it is a refactor, not a
+    # bump. Listed so the file matches deny.toml, which must ignore it because
+    # `unmaintained = "all"` makes unmaintained advisories blocking there.
+    # Same review-deadline: 2027-01-31, enforced by scripts/check_deny_expiry.py.
+    "RUSTSEC-2026-0543",
 ]

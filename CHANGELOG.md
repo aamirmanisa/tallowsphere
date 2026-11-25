@@ -24,6 +24,12 @@ Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-
 
 ### What was wrong
 
+Three vulnerabilities published since the v1.7.2 cut had turned both dependency
+gates red: `cookie 0.18.2` (`RUSTSEC-2026-0594`, private nonces repeat across
+forks), `url 2.5.8` (`RUSTSEC-2026-0592`, stack overflow in `Url::origin()` on
+nested `blob:` URLs each `2^4` levels deep) and `libsqlite3-sys 0.32.0`
+(`RUSTSEC-2026-0459`, the C SQLite CVE). Patched releases existed for all three.
+
 `tests/egress/check_egress.sh` could not pass against the binary this repository
 ships. Two defects, both present at `v1.7.2`:
 
@@ -45,6 +51,21 @@ same source compiled from the repository root.
 
 ### What was fixed
 
+- `cookie 0.18.3`, `url 2.5.9` and `rusqlite 0.43.0` / `libsqlite3-sys 0.40.0`.
+  The SQLite pair could not be moved in the lockfile alone: `rusqlite 0.34` pins
+  `libsqlite3-sys ^0.32`, so both manifests carrying it were bumped. `cargo audit
+  --file Cargo.lock` then reports 0 vulnerabilities and 27 allowed warnings.
+- rusqlite 0.43 dropped the blanket `ToSql`/`FromSql` impls for unsigned
+  integers, so eleven call sites now cast explicitly at the boundary
+  (`src/agent_observability.rs`: `sequence`, `event_sequence`, `since_sequence`,
+  `steps_executed`, `requests_used`, `memory_used_bytes`, `goals_attempted`,
+  `goals_completed`; `src/browser/job_queue.rs`: `attempts`, `max_attempts`,
+  `backoff_ms`). The columns stay `INTEGER`; no schema or stored value changes.
+- `RUSTSEC-2026-0543` (`chrono 0.4.45`, unmaintained) is recorded as a
+  time-boxed exception in both `deny.toml` and `.cargo/audit.toml`. It is a
+  direct dependency with 117 call sites; the advisory reports a lost
+  maintainer, not a defect, and no patched release exists. Same
+  2027-01-31 review deadline, enforced by `scripts/check_deny_expiry.py`.
 - The battery subject resolves `TALLOW_BIN`, then the installed CLI, then build
   artefacts last, and prints `battery subject: <path> (<version>)` on every run.
 - The battery detects enforcement by asking the gate about an authorized host
@@ -60,8 +81,11 @@ same source compiled from the repository root.
   Measured after the fix: `chosen=Some("/root/.local/lib/libtallow.a")`,
   `tallow build` succeeds from `/tmp`, and `env.args()` runs on the native plane
   with the expected argc.
-- Verified 1.5.8/1.7.1/1.7.2 classify as not-enforced/enforced/enforced; 16/0
-  against the installed v1.7.2 binary, and `wc.tl` still runs on both planes.
+- Verified: `cargo check --locked --workspace` clean, `cargo deny check` all four
+  groups ok, `cargo test -p tallow-daemon` 184 passed, the
+  `agent_observability` lib tests 49 passed, 1.5.8/1.7.1/1.7.2 classify as
+  not-enforced/enforced/enforced in the battery, 16/0 against the installed
+  v1.7.2 binary, and `wc.tl` still runs on both planes.
 
 ## [v1.7.2] — 2026-11-07 — The CI that judged this tree stops lying about it
 
