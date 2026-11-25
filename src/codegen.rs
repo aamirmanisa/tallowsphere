@@ -32080,6 +32080,18 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
     // produced; programs that don't call runtime FFI symbols still link.
     let host_compatible = target_arch_matches_host(&target.triple);
 
+    if std::env::var_os("TALLOW_RUNTIME_LIB_TRACE").is_some() {
+        let exe = std::env::current_exe()
+            .map(|e| std::fs::canonicalize(&e).unwrap_or(e))
+            .map(|e| e.display().to_string())
+            .unwrap_or_else(|e| format!("<{e}>"));
+        eprintln!(
+            "runtime-search: exe={exe} cwd={:?} profile={:?} host_compatible={host_compatible}",
+            std::env::current_dir(),
+            Profile::running()
+        );
+    }
+
     // Collect the first archive that the legacy search order (steps 1–4: next
     // to the tallow binary, its lib/ subdir, then CWD-relative
     // target/{release,debug}) would find. Do NOT return it yet: cargo only
@@ -32093,23 +32105,34 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
     let mut legacy: Option<RuntimeArchive> = None;
     if host_compatible {
         if let Ok(exe) = std::env::current_exe() {
+            // The installed compiler is often a SYMLINK (`~/.local/bin`,
+            // `/usr/local/bin`); its lib/ lives beside the real file, not beside
+            // the link. Measured on the 1.7.2 install: resolving only through the
+            // symlinked path found nothing and every native link died
+            // `undefined reference to tallow_env_args`.
+            let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
             if let Some(dir) = exe.parent() {
-                // 1. Next to the tallow binary
-                for candidate in [dir.join(primary), dir.join(fallback)] {
-                    if candidate.exists() {
-                        legacy = Some(RuntimeArchive::at(candidate));
-                        break;
-                    }
+                // The archive an install ships may sit beside the binary or in a
+                // sibling `bin/lib/`. An installer that puts the compiler at
+                // `<prefix>/bin/tallow` and the archive at `<prefix>/lib/` names
+                // the second shape explicitly, so both are probed.
+                let mut dirs = vec![dir.to_path_buf()];
+                if let Some(prefix) = dir.parent() {
+                    dirs.push(prefix.join("lib"));
                 }
-                // 2. lib/ subdirectory
-                if legacy.is_none() {
+                // 1./2. Next to the tallow binary, in `<exe>/lib/`, and in the
+                //       sibling `<prefix>/lib/`: the installed shape, which names
+                //       no profile — see `RuntimeArchive::installed`.
+                'found: for d in &dirs {
                     for candidate in [
-                        dir.join("lib").join(primary),
-                        dir.join("lib").join(fallback),
+                        d.join(primary),
+                        d.join(fallback),
+                        d.join("lib").join(primary),
+                        d.join("lib").join(fallback),
                     ] {
                         if candidate.exists() {
-                            legacy = Some(RuntimeArchive::at(candidate));
-                            break;
+                            legacy = Some(RuntimeArchive::installed(candidate));
+                            break 'found;
                         }
                     }
                 }
@@ -32154,6 +32177,7 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
     if host_compatible {
         // 5a. Next to the tallow binary (e.g. target/debug/tallow -> target/debug/deps/)
         if let Ok(exe) = std::env::current_exe() {
+            let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
             if let Some(dir) = exe.parent() {
                 collect_deps_archives(&dir.join("deps"), fallback, &mut deps_candidates);
             }
@@ -32167,8 +32191,14 @@ fn find_runtime_lib_for_target(target: &TargetConfig) -> Option<String> {
             );
         }
     }
-    pick_runtime_archive(legacy, deps_candidates, Profile::running())
-        .map(|p| p.display().to_string())
+    let chosen = pick_runtime_archive(legacy, deps_candidates, Profile::running());
+    if std::env::var_os("TALLOW_RUNTIME_LIB_TRACE").is_some() {
+        eprintln!(
+            "runtime-search: chosen={:?}",
+            chosen.as_ref().map(|p| p.display().to_string())
+        );
+    }
+    chosen.map(|p| p.display().to_string())
 }
 
 /// Which cargo profile an artifact was built for. The runtime archive must come
@@ -32226,6 +32256,27 @@ struct RuntimeArchive {
 impl RuntimeArchive {
     fn at(path: std::path::PathBuf) -> Self {
         let profile = Profile::from_path(&path);
+        Self { path, profile }
+    }
+
+    /// An archive placed beside an installed compiler (or in its `lib/`) has no
+    /// `target/<profile>/` component, so `from_path` reads it as `Unknown` — and
+    /// `pick_runtime_archive` then discards it whenever the compiler itself is a
+    /// release build. That is the shipped install shape, so the archive the
+    /// install was built with was silently unlinkable: measured on the 1.7.2
+    /// install, a program calling `env.args()` died `undefined reference to
+    /// tallow_env_args` from any directory without a usable `target/`, while one
+    /// printing a literal linked fine without the archive at all.
+    ///
+    /// Such an archive is assumed to be the running profile's own build: that is
+    /// what the install step and `release.yml` produce (bin and `--lib` from the
+    /// same profile). When both placements exist, `Profile::from_path` still wins
+    /// for anything that names a profile explicitly.
+    fn installed(path: std::path::PathBuf) -> Self {
+        let profile = match Profile::from_path(&path) {
+            Profile::Unknown => Profile::running(),
+            known => known,
+        };
         Self { path, profile }
     }
 }

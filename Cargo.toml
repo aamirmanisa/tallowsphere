@@ -33,7 +33,7 @@ rand = "0.9"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
-rusqlite = { version = "0.34", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 ml-kem = "0.2"
 kem = "0.3.0-pre.0"
 rand_core_06 = { package = "rand_core", version = "0.6", features = ["getrandom"] }
@@ -118,7 +118,7 @@ walkdir = "2"
 #   parquet-storage -> real Arrow/Parquet columnar `ParquetBackend`
 #   s3-storage      -> real S3/MinIO object-store `S3Backend` via `object_store`
 arrow = { version = "59", optional = true }
-parquet = { version = "59", optional = true }
+parquet = { version = "59.3.3", optional = true }
 object_store = { version = "0.14", features = ["aws"], optional = true }
 # Post-Quantum Crypto — real PQClean C implementations.
 # W5 decision C (2026-09-26): the legacy family (SLH-DSA/SPHINCS+, Falcon,

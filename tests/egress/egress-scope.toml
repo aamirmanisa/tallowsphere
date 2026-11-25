@@ -1,0 +1,45 @@
+# Tallowsphere — egress battery authorization register
+#
+# Read by src/scope.rs via TALLOW_SCOPE_REGISTER, exported by check_egress.sh so
+# the weekly egress-leak battery keeps working against a runtimes that ships the
+# scope gate. It is NOT the production register: configs/tallow/scope/
+# authorized-hosts.toml stays exactly as shipped, and this file grants nothing
+# beyond what the battery needs.
+#
+# Why a separate file instead of adding two lines to the shipped register:
+# the shipped register is an operator authorization artifact. Every entry there
+# is a decision to touch someone else's system, with a named grantor and an
+# expiry. The battery's hosts are not a business relationship — they are
+# instrumentation, and the subject of the measurement. Folding test plumbing
+# into the production register would make the register less meaningful, and a
+# register that grows for convenience stops being read carefully.
+#
+# This file grants read-only GET to two IP-echo services. It cannot unlock an
+# authentication surface (src/scope.rs refuses those on every basis), and it
+# grants no CONNECT.
+#
+# Scope note — the battery asserts that traffic leaving this runtime does NOT
+# come from the box IP. api.ipify.org reports the IPv4 source address,
+# api64.ipify.org the dual-stack address, so both are needed: one check proves
+# the v4 path rides a circuit, the other proves a dual-stack target does not
+# silently fall back to the box's own IPv6.
+
+[[authorized]]
+host = "api.ipify.org"
+basis = "public-read-only"
+granted_by = "egress battery (tests/egress/check_egress.sh) — test instrumentation, not a data source"
+granted_at = "2026-11-09"
+expires_at = "2028-11-09"
+evidence = "IP-echo only: the response is the requester's own source address, no account, no content"
+methods = ["GET", "HEAD"]
+notes = "IPv4 egress subject. Purpose is to read the shape of our own traffic, not to collect anything."
+
+[[authorized]]
+host = "api64.ipify.org"
+basis = "public-read-only"
+granted_by = "egress battery (tests/egress/check_egress.sh) — test instrumentation, not a data source"
+granted_at = "2026-11-09"
+expires_at = "2028-11-09"
+evidence = "IP-echo only: the response is the requester's own source address, no account, no content"
+methods = ["GET", "HEAD"]
+notes = "Dual-stack egress subject. A v6-capable target must not escape over the box's own IPv6."

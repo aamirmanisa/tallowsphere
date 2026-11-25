@@ -427,7 +427,7 @@ impl EventStore {
                 "INSERT INTO agent_events (agent_id, sequence, timestamp, event_type, payload, trace_id, span_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 rusqlite::params![
-                    agent_id, sequence, timestamp, event_type, payload, trace_id, span_id
+                    agent_id, sequence as i64, timestamp, event_type, payload, trace_id, span_id
                 ],
             )
             .map_err(|e| format!("failed to append event: {e}"))?;
@@ -470,7 +470,7 @@ impl EventStore {
                     .map_err(|e| format!("failed to prepare event batch: {e}"))?;
                 for (agent_id, sequence, timestamp, event_type, payload, trace_id, span_id) in &owned {
                     stmt.execute(rusqlite::params![
-                        agent_id, sequence, timestamp, event_type, payload, trace_id, span_id
+                        agent_id, *sequence as i64, timestamp, event_type, payload, trace_id, span_id
                     ])
                     .map_err(|e| format!("failed to append event in batch: {e}"))?;
                 }
@@ -513,7 +513,7 @@ impl EventStore {
                 .map_err(|e| format!("failed to prepare query: {e}"))?;
 
             let rows = stmt
-                .query_map(rusqlite::params![agent_id, since_sequence], |row| {
+                .query_map(rusqlite::params![agent_id, since_sequence as i64], |row| {
                     Ok(AgentEvent {
                         agent_id: row.get(0)?,
                         sequence: row.get::<_, i64>(1)? as u64,
@@ -669,8 +669,9 @@ impl CheckpointStore {
                   llm_tracker, event_sequence, goals_attempted, goals_completed) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 rusqlite::params![
-                    agent_id, steps, requests, memory, confidence, urgency, uncertainty,
-                    working_memory_json, llm_tracker_json, event_sequence, ga, gc,
+                    agent_id, steps as i64, requests as i64, memory as i64, confidence, urgency,
+                    uncertainty, working_memory_json, llm_tracker_json, event_sequence as i64, ga as i64,
+                    gc as i64,
                 ],
             )
             .map_err(|e| format!("failed to save checkpoint: {e}"))?;
