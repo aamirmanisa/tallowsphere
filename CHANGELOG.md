@@ -9,7 +9,7 @@ not say what broke and what repaired it cannot be published.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions: [SemVer](https://semver.org/).
 Release identity for V1 is **local-only (R0)** — see `docs/release/versioning-policy.md`.
 
-## [Unreleased] — the egress battery can name the binary it grades
+## [v1.7.3] — 2026-11-25 — an installed compiler can link again, and three advisories close
 
 ### Added
 
