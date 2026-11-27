@@ -200,9 +200,11 @@ redis = { version = "0.27", optional = true, features = ["tokio-comp"] }
 # protobuf RPC server/client, and obfs4/meek/snowflake clients.
 h2 = { version = "0.4", optional = true }
 # Real Tor circuit — provided by the daemon-based TorManager/TorPool (src/tor/).
-# Embedded `arti-client` is intentionally NOT declared here: tor-dirmgr's
-# libsqlite3-sys 0.34 conflicts with the crate's rusqlite 0.34 (libsqlite3-sys
-# 0.32) on the native `links="sqlite3"` lib. See the `tor` feature note.
+# Embedded `arti-client` is NOT declared here and no code uses it: the `tor`
+# feature below is an empty gate. The libsqlite3-sys 0.34-vs-0.32 conflict once
+# cited here was retired by the v1.7.3 rusqlite 0.43 / libsqlite3-sys 0.40 bump,
+# so nothing on the dependency side blocks embedded Tor any more; writing the
+# arti wiring is the open work, not aligning versions. See the `tor` feature note.
 # Real SOPS-over-TLS not required; transports use QUIC/WebRTC scaffolding above.
 # AEGIS (W2-11, E-2-01 §1(c)/§3 recommendation — narrower gate applied):
 # the crate policy is "AEGIS optional at most — feature-gated, never a default
@@ -275,12 +277,16 @@ packet-capture = ["dep:pcap"]
 # pinning/TOFU remains the close-out arc.
 dangerous_skip_verify = []
 # Real Tor circuit via arti-client — replaces the simulated 3-hop circuit.
-# NOTE: `arti-client 0.41` (embedded Tor) is currently disabled because its
-# `tor-dirmgr` pulls libsqlite3-sys 0.34, which hard-conflicts with the crate's
-# `rusqlite 0.34 -> libsqlite3-sys 0.32` on the native `links="sqlite3"` lib.
-# Real Tor routing still works via the daemon-based TorManager/TorPool
-# (src/tor/), which talks to a system tor daemon. Re-enable arti-client only
-# after aligning rusqlite's libsqlite3-sys with tor-dirmgr's requirement.
+# NOTE: the `tor` feature is an EMPTY gate: no code in this tree is behind
+# `cfg(feature = "tor")` and no `arti_*` symbol is called anywhere in src/.
+# `arti-client` was never declared as a dependency — the 0.34/0.32
+# libsqlite3-sys conflict recorded here until v1.7.3 is now moot: rusqlite
+# 0.43 / libsqlite3-sys 0.40 landed in v1.7.3, so the `links="sqlite3"`
+# collision that blocked `tor-dirmgr` no longer exists. Adding embedded Tor
+# is therefore an unimplemented feature, not a dependency alignment problem;
+# it needs the arti wiring written first. Real Tor routing today works via
+# the daemon-based TorManager/TorPool (src/tor/), which talks to a system tor
+# daemon.
 tor = []
 # io_uring (W2-12 qualifiers, cycle-02/06 §3.4 — labels landed, no default-enable):
 # opt-in EXPERIMENTAL file-I/O backend — single-operation submit, file I/O only,
