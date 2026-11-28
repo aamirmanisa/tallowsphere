@@ -59,22 +59,66 @@ Exit 0 on both. 1.7.0 fixed the FFI-produced shape (`zip`, `chunk`, cookie
 arrays — the element of a `NonScalar` array is not a string); a literal nested
 array is a different producer.
 
-Mechanism, measured by isolating the shapes (`print(m[1])` prints nothing at all,
-which is the tell):
+**RE-MEASURED 2026-11-26.** The three-site note that used to sit here was
+written from reading code, not from running it. A ten-program two-plane probe
+set (`scripts/parity-probe.sh`, interpreter vs compiled plane) found FIVE
+divergences, not one, and two of them in producers the note never named. All
+figures below are from `tallow 1.7.3` (tag `43a3ccf`):
 
-- `ExprKind::Array` in the compiled plane stores every element through
-  `coerce_to_i64` into an `i64` slot (`src/codegen.rs:7908-7977`, comment: "Each
-  element stored as i64 for simplicity"). For a nested array the element is an
-  `I8Ptr`, so the slot does not round-trip through `ptrtoint`/`inttoptr` and the
-  inner array's identity is lost.
-- Reading it back, `m[1]` yields an `i64`, and `[0]` on that i64 indexes nothing
-  meaningful — hence `0`.
+| probe | program | at 1.7.3 |
+|---|---|---|
+| p01 | `let m = [[10,20],[30,40]]; print(m[1][0])` | DIFFER 30 vs 0 |
+| p02 | `print([[10,20],[30,40]][1][0])` (no binding) | DIFFER 30 vs 0 |
+| p03 | `m.len` on the nested literal | SAME |
+| p04 | `print(m[1])` — print an inner array | NATIVE-REFUSED by name |
+| p05 | `let s = [["a","b"],["c","d"]]; print(s[1][0])` | DIFFER `c` vs `0` |
+| p06 | flat int array control | SAME |
+| p07 | flat string array control | SAME |
+| p08 | `Result` array control | NATIVE-REFUSED by name |
+| p09 | `for row in g { print(row[0]) }` | DIFFER `1,3` vs `0,0` |
+| p10 | `let m = {"a":[1,2],"b":[3,4]}; print(m["b"][1])` | DIFFER `4` vs `nil` |
 
-The fix is a lowering feature, not a correction: store `ptrtoint` for
-`NonScalar` elements, `inttoptr` + `I8Ptr` at the index when the parent's element
-shape is `NonScalar`, and route the result to the array printer. Three sites, one
-shape rule, and a native test for each. That is 1.8 work unless a 1.7.1 patch
-release is meant to carry a feature.
+So the note was wrong on two counts: the defect is **not literal-only**
+(`p10` is the tagged-map producer at `emit_nested_index`, not `ExprKind::Array`),
+and it **survives iteration and binding** (`p09`, `p01`), so a fix at the index
+site alone does not close it. `p05` also rules out an integer-only cause.
+
+**FIXED on branch `fix/nested-array-index` (local, unpushed, 2026-11-26):**
+`p01`, `p02`, `p09`, `p10` are SAME on a build carrying `e8d49cb` +
+`14ce0f6`; `p06`/`p07` unchanged SAME and `p04`/`p08` unchanged NATIVE-REFUSED.
+Probe summary on that branch: `same=7 differ=1 native_refused=2`.
+
+Two mechanisms, both now measured rather than inferred:
+
+- **Literal shape.** The producer `ptrtoint`s a nested element but nothing
+  records that the slot is pointer-shaped: `array_expr_elem_is_ptr` asked only
+  `expr_is_string_like`, and an inner array literal is not string-like; and the
+  binding never inserted `variable_array_elem_is_ptr`. Both fixed
+  (`e8d49cb`), which is what closes `p01`/`p02`/`p09`.
+- **Tagged-box contract.** `emit_nested_index`'s doc comment promised a tag-6
+  (array) branch; the code had only the tag-5 map search and fell through to
+  the nil default (`p10`). The contract, read out of the emitted IR:
+
+  ```
+  map literal layout  [count, k0, v0, k1, v1, ..., t0, t1, ...]
+  array value         tag 6 in the trailing tag array
+  tag-6 payload       ptrtoint of a [count, slot...] array buffer
+  tagged-box tags     0=int  1=str (inttoptr'd)  2=float (bitcast)
+                      3=bool  4=nil  5=map  6=array
+  ```
+
+  Writing tag 1 (string) for a scalar slot inttoptr'd the integer 4 into a
+  pointer and crashed at rc=139; tag 0 is the integer tag (`14ce0f6`).
+
+**Still open — `p05`.** A string matrix `s[1][0]` still prints `0` natively.
+The outer slot `inttoptr`s correctly now, but the loaded inner value is then
+classified as a string and indexed as one. A loaded `i8*` cannot say whether it
+points at a string or at an array buffer, so this is a representation change,
+not a flag: 1.8 work.
+
+The three-site plan this note used to prescribe would not have fixed `p10` and
+would not have fixed `p05`; deleting it in favour of the table above is the
+point of this edit.
 
 ### 3. `tallow scope check` only works from a directory containing the register — FIXED (f90471f)
 
